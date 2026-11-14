@@ -1,5 +1,7 @@
 # Flare 开发者文档
 
+新增类型、脚本或资产字段时，先查阅[命名规范](development/命名规范.md)。
+
 一帧画面从[窗口与主循环](platform/frame.md)开始。运行时提取场景数据，渲染器编排[前向 Pass 与帧图](render/pipeline.md)，最后由[D3D12 命令提交](render/device.md)送到 GPU。编辑器和 C# 宿主都复用这条链上的引擎接口。
 
 **渲染与光照**

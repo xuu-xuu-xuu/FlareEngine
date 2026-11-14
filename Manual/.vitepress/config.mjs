@@ -36,6 +36,7 @@ export default defineConfig({
     nav: [{ text: '引擎源码', link: 'https://github.com/xuu-xuu-xuu/FlareEngine' }],
     sidebar: [
       { text: "开发者文档", link: '/' },
+      { text: "命名规范", link: "/development/命名规范" },
       { text: "渲染与光照", collapsed: true, items: [
         { text: "灯光组件", link: "/runtime/light" },
         { text: "前向管线与帧图", link: "/render/pipeline" },
