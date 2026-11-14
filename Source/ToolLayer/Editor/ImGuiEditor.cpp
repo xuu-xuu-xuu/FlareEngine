@@ -1244,6 +1244,8 @@ bool ImGuiEditor::EditUi(UiTree& ui,const std::function<bool(UiTree&)>& operatio
     return UiChanged(ui,before);
 }
 void ImGuiEditor::BeginUiEdit(UiTree& ui){if(uiTransaction_.empty())uiTransaction_=ui.SaveJson();}
+void ImGuiEditor::MarkUiSavedForToolkit(UiTree& ui,const std::filesystem::path& path)
+{BindUi(ui);uiSaved_=ui.SaveJson();uiSavedPath_=path;if(!path.empty())RecordStamp(uiStamp_,path);}
 void ImGuiEditor::EndUiEdit(UiTree& ui,bool commit)
 {
     if(uiTransaction_.empty())return;

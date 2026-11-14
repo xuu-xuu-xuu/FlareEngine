@@ -24,6 +24,8 @@
 
 **编辑器**
 
+[功能与默认编辑器的连接](editor/features.md)：组件、物理代理、资源任务及 UI/昼夜编辑的数据流与定义。
+
 [项目入口、启动进度与编辑器外壳](editor/workspace.md) · [面板模型、默认场景与界面合成](editor/panels.md) · [面板拖出与吸附](editor/docking.md) · [场景视口、变换手柄与选中描边](editor/viewport.md) · [编辑会话、撤销与播放](editor/session.md) · [资产操作、属性面板与项目文档](editor/documents.md)
 
 **平台与基础服务**

@@ -10,7 +10,10 @@ add_custom_target(CopyFlareBranding ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Branding/Flare.ico"
         "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Branding/FlareMark.png"
-        "${CMAKE_BINARY_DIR}/Resources/Branding" VERBATIM)
+        "${CMAKE_BINARY_DIR}/Resources/Branding"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Branding/FlareMark-README.png"
+        "${CMAKE_BINARY_DIR}/Resources/Branding/FlareMarkTransparent.png" VERBATIM)
 add_dependencies(SelfEngineEditor CopyFlareBranding)
 add_custom_target(CopyEditorTemplates ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Resources"

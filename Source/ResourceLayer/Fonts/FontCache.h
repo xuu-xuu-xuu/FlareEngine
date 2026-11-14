@@ -40,6 +40,8 @@ public:
     bool Layout(std::string_view utf8, float fontSize, float maximumWidth, TextLayout& output,
         std::string& error, std::wstring_view family = L"Microsoft YaHei UI", float pixelsPerDip = 1.0f);
     const std::vector<FontPage>& Pages() const;
+    // 丢弃旧密度的图集和字形。调用方须同时清除持有旧 UV 的布局缓存。
+    void ClearAtlas();
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

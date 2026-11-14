@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -47,6 +48,7 @@ enum class EditorPropertyType : std::uint8_t
     Asset,
     Color,
     Combo,
+    Action,
 };
 
 struct EditorProperty
@@ -57,6 +59,17 @@ struct EditorProperty
     std::string value;
     bool readOnly = false;
     std::vector<std::string> options;
+    // 属性来源描述分组与轴，Inspector 无需解析绑定命令或猜测本地化名称。
+    std::string section;
+    bool sectionInitiallyClosed = false;
+    char axis = 0;
+    std::string displayValue;
+    bool sectionEnabled = false;
+    // 显示标签与持久选项值分开；数值拖动由属性来源显式声明。
+    std::vector<std::string> optionLabels;
+    float dragStep = 0;
+    std::optional<float> dragMinimum;
+    std::optional<float> dragMaximum;
 
     bool operator==(const EditorProperty&) const = default;
 };

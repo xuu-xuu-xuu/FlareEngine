@@ -334,6 +334,13 @@ void UiListView::SetRowTextProvider(std::function<std::string(int)> provider)
     dirty_ = true;
 }
 
+void UiListView::SetRowTextLayout(UiTextFlow flow, UiEdges padding)
+{
+    rowTextFlow_ = flow;
+    rowPadding_ = padding;
+    dirty_ = true;
+}
+
 UiVisibleRange UiListView::VisibleRange() const noexcept
 {
     UiVisibleRange range;
@@ -374,7 +381,7 @@ void UiListView::Sync()
     const UiVisibleRange range = VisibleRange();
     for (int index = range.first; index < range.last; ++index)
     {
-        const UiElementHandle row = document_->CreateElement(UiElementKind::Label);
+        const UiElementHandle row = document_->CreateElement(rowBuilder_ ? UiElementKind::Panel : UiElementKind::Label);
         if (!document_->SetParent(row, content_))
         {
             continue;
@@ -388,8 +395,13 @@ void UiListView::Sync()
         // UiStyle 默认 background 是不透明黑；列表行必须显式透明，否则整行画成黑块。
         style.background = rowBackground_ ? rowBackground_(index) : UiColor{0.0f, 0.0f, 0.0f, 0.0f};
         style.color = rowTextColor_;
+        style.textFlow = rowTextFlow_;
+        style.padding = rowPadding_;
         document_->SetStyle(row, style);
-        document_->SetText(row, rowText_ ? rowText_(index) : "item " + std::to_string(index));
+        if (rowBuilder_)
+            rowBuilder_(index, row);
+        else
+            document_->SetText(row, rowText_ ? rowText_(index) : "item " + std::to_string(index));
         rows_.push_back(row);
     }
 }

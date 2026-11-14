@@ -3,6 +3,7 @@
 #include "CoreLayer/Math/Math.h"
 #include "RuntimeComponents.h"
 #include "RegisteredComponentPool.h"
+#include "ObjectHeap.h"
 #include "ResourceLayer/Environment/TODProfile.h"
 #include <cstdint>
 #include <deque>
@@ -55,6 +56,9 @@ public:
     World& operator=(const World& other);
     World(World&& other) noexcept;
     World& operator=(World&& other) noexcept;
+    // 每个世界独占逻辑对象堆；快照仅复制组件数据，重新创建运行对象。
+    ObjectHeap& Objects();
+    ObjectHeapStats CollectObjects();
     const SceneEnvironmentSettings& EnvironmentSettings()const noexcept{return sceneEnvironment_;}
     bool SetEnvironmentSettings(SceneEnvironmentSettings settings);
 
@@ -222,5 +226,6 @@ private:
     std::function<bool(EntityHandle,EntityHandle)> sceneParent_;
     std::function<bool(StableEntityId)> externalReference_;
     mutable std::string lastError_;
+    std::unique_ptr<ObjectHeap> objects_;
 };
 }

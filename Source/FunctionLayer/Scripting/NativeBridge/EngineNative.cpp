@@ -4,12 +4,15 @@
 #include "FunctionLayer/Runtime/Environment.h"
 #include "ResourceLayer/Scenes/SceneSerializer.h"
 #include "FunctionLayer/Physics/PhysicsWorld.h"
+#include "FunctionLayer/Physics/ScenePhysics.h"
+#include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "FunctionLayer/GameUI/UiTree.h"
 #include <nlohmann/json.hpp>
 #include "FunctionLayer/Application/FrameData.h"
 #include "FunctionLayer/Application/SandboxApp.h"
 #include "FunctionLayer/Rendering/SandboxRenderer.h"
 #include "WindowProfile.h"
+#include "NativeLogicObjects.h"
 #include "PlatformLayer/InputState.h"
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
@@ -41,6 +44,7 @@ struct Session
     Session(){environment.ConfigureClock(1.0/60,8,false);environment.Events().RegisterType({4,"engine.scene_state",1,8});}
     ~Session(){environment.BeginShutdown();world.Clear();while(world.HasPendingCommands())world.FlushCommands();}
     se::Environment environment;
+    NativeLogicObjects logicObjects;
     se::World& world=environment.GetWorld();
     se::Environment* borrowedEnvironment=nullptr;
     se::Environment& Env(){return borrowedEnvironment?*borrowedEnvironment:environment;}
@@ -49,6 +53,7 @@ struct Session
     se::World& WorldRef() { return borrowedWorld?*borrowedWorld:world; }
     const se::World& ReadWorld() const {return borrowedWorld?*borrowedWorld:editor?editor->EditWorld():world;}
     se::PhysicsWorld physics;
+    se::ScenePhysics scenePhysics;
     std::unordered_map<std::uint64_t,se::EntityHandle> bodyOwners;
     bool physicsDebugDraw=true;
     se::FixedStepClock physicsClock;
@@ -291,10 +296,12 @@ int32_t PhysicsStep(Session& session, double dt)
 {
     if (!std::isfinite(dt)||dt<=0||dt>1) return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidDelta");
     SweepBodies(session);
+    if(!session.scenePhysics.Synchronize(session.WorldRef(),session.physics))return Error(SE_INVALID_ARGUMENT,"Bridge.PhysicsFailed");
     const bool stepped=session.environmentDriven?session.physics.StepFromEnvironment(static_cast<float>(dt)):session.physics.Step(static_cast<float>(dt));
     if(!stepped)return Error(SE_INVALID_ARGUMENT,"Bridge.PhysicsFailed");
     for (auto body:session.physics.Bodies())
     {
+        if(session.scenePhysics.Owns(body))continue;
         const auto& state=*session.physics.GetBody(body);
         const auto entity=session.WorldRef().FindByStableId(state.description.entityStableId);
         if (const auto* original=session.WorldRef().GetTransform(entity))
@@ -305,6 +312,8 @@ int32_t PhysicsStep(Session& session, double dt)
             if (!session.WorldRef().SetTransform(entity,transform)) return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
         }
     }
+    if(!session.scenePhysics.ApplyTransforms(session.WorldRef(),session.physics)||
+        !session.scenePhysics.AdvanceCharacters(session.WorldRef(),session.physics,static_cast<float>(dt)))return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
     for (const auto& event:session.physics.Events())
         session.contactEvents.push_back({event.entityA,event.entityB,event.began?1:0,event.ended?1:0});
     return SE_OK;
@@ -873,7 +882,7 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
         struct EditorGuard{Session& s;~EditorGuard(){s.editor=nullptr;s.borrowedWorld=nullptr;s.borrowedEnvironment=nullptr;s.borrowedUi=nullptr;s.windowRunning=false;s.input={};s.pointer={};}} guard{*s};
         s->windowRunning=true;s->stopWindow=false;s->pendingPlay=-1;
         bool callbackFailed=false;
-        auto clearRuntime=[s]{for(auto body:s->physics.Bodies())s->physics.DestroyBody(body);s->bodyOwners.clear();s->characters.clear();s->physicsClock.Reset();s->contactEvents.clear();s->uiEvents.clear();s->environmentDriven=s->environmentPhysics=s->pendingEnvironmentRelease=false;s->physics.SetEnvironmentDriven(false);};
+        auto clearRuntime=[s]{s->scenePhysics.Clear(s->physics);for(auto body:s->physics.Bodies())s->physics.DestroyBody(body);s->bodyOwners.clear();s->characters.clear();s->physicsClock.Reset();s->contactEvents.clear();s->uiEvents.clear();s->environmentDriven=s->environmentPhysics=s->pendingEnvironmentRelease=false;s->physics.SetEnvironmentDriven(false);};
         se::EditorApplicationHooks hooks;hooks.resourceDirectory=resources;hooks.startPlaying=startPlaying!=0;
         hooks.initialize=[s,sceneFile](se::EditorSession& editor,se::UiTree& ui){
             s->editor=&editor;ui=s->ui;
@@ -949,9 +958,23 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
         hooks.extract=[s](se::World& world,se::UiTree& ui,se::FrameData& frame){
             se::BuildFrameData(world,&ui,s->physicsDebugDraw?&s->physics:nullptr,frame);
             if(s->Env().TimeOfDay().Profile())frame.timeOfDay=s->Env().Snapshot();
-            if(s->physicsDebugDraw){for(const auto& item:s->characters){const auto lines=item.second.DebugLines();frame.debugLines.insert(frame.debugLines.end(),lines.begin(),lines.end());}}
+            if(s->physicsDebugDraw){const auto authored=s->scenePhysics.CharacterLines();frame.debugLines.insert(frame.debugLines.end(),authored.begin(),authored.end());for(const auto& item:s->characters){const auto lines=item.second.DebugLines();frame.debugLines.insert(frame.debugLines.end(),lines.begin(),lines.end());}}
         };
         hooks.inspector=[s,handle](uint64_t entity,bool playing){DrawScriptInspector(handle,*s,entity,playing);};
+        hooks.scriptQuery=[handle](uint64_t entity,std::string& document,std::string& error){
+            uint32_t required=0;
+            if(se_editor_inspector_query(handle,entity,nullptr,0,&required)!=SE_BUFFER_TOO_SMALL || required>4*1024*1024)
+            {error="Script.MetadataFailed";return false;}
+            std::vector<char> buffer(required);
+            if(se_editor_inspector_query(handle,entity,buffer.data(),required,&required)!=SE_OK)
+            {error="Script.MetadataFailed";return false;}
+            document.assign(buffer.data());return true;
+        };
+        hooks.scriptApply=[handle](uint64_t entity,const std::string& command,std::string& error){
+            if(se_editor_inspector_apply(handle,entity,command.data(),static_cast<uint32_t>(command.size()))!=SE_OK)
+            {error="Script.FieldValueInvalid";return false;}
+            return true;
+        };
         hooks.closing=[s](se::EditorSession& editor,se::UiTree& ui){s->environment.Clear();s->world=editor.EditWorld();s->environment.Scenes().SynchronizeIdle();s->ui=ui;s->editor=nullptr;};
         se::EditorRenderer renderer(resources);int exitCode=1;
         const auto captureFile=EditorEnvironmentPath(L"SELFENGINE_EDITOR_CAPTURE_FILE");
@@ -1093,6 +1116,7 @@ int32_t SE_CALL se_scene_import(SE_Session handle, const char* text, uint32_t le
         auto& events=EventsFor(*session);
         const std::uint8_t state[8]={1,0,0,0,2,0,0,0};
         events.GetPublisher().Post(4,1,state,se::EventPhase::NextFrame);
+        session->scenePhysics.Clear(session->physics);
         for (auto body:session->physics.Bodies()) session->physics.DestroyBody(body);
         session->bodyOwners.clear();
         session->contactEvents.clear(); session->physicsClock.Reset();
@@ -1172,9 +1196,29 @@ int32_t SE_CALL se_body_create(SE_Session handle, SE_Entity entity, const SE_Box
         *output=body.Pack(); return SE_OK;
     });
 }
+int32_t SE_CALL se_body_find(SE_Session handle,SE_Entity entity,SE_Body* output)noexcept
+{
+    return Protect([&]()->int32_t{auto* session=Find(handle);if(!session)return MissingSession();if(!output)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        const auto owner=se::EntityHandle::FromPacked(entity);if(!session->WorldRef().IsAlive(owner))return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");
+        if(!session->scenePhysics.Synchronize(session->WorldRef(),session->physics))return Error(SE_INTERNAL_ERROR,"Bridge.PhysicsFailed");
+        *output=0;const auto id=session->WorldRef().Get(owner)->stableId;for(auto body:session->physics.Bodies())if(session->physics.GetBody(body)->description.entityStableId==id){*output=body.Pack();break;}return SE_OK;});
+}
+int32_t SE_CALL se_character_component_state(SE_Session handle,SE_Entity entity,SE_CharacterState* state)noexcept
+{
+    return Protect([&]()->int32_t{auto* session=Find(handle);if(!session)return MissingSession();if(!state)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        const auto owner=se::EntityHandle::FromPacked(entity);if(!session->WorldRef().IsAlive(owner))return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");
+        if(!session->scenePhysics.Synchronize(session->WorldRef(),session->physics))return Error(SE_INTERNAL_ERROR,"Bridge.PhysicsFailed");
+        const auto* character=session->scenePhysics.Character(session->WorldRef().Get(owner)->stableId);if(!character)return Error(SE_INVALID_HANDLE,"Bridge.InvalidCharacter");
+        *state={{character->position.x,character->position.y,character->position.z},character->verticalVelocity,character->grounded?1:0};return SE_OK;});
+}
 int32_t SE_CALL se_body_destroy(SE_Session handle, SE_Body body) noexcept
 {
     return Protect([&]() -> int32_t {auto* s=Find(handle); if(!s)return MissingSession();
+        if(s->scenePhysics.Owns(BodyFromPacked(body)))
+        {
+            const auto* state=s->physics.GetBody(BodyFromPacked(body));
+            if(state){const auto owner=s->WorldRef().FindByStableId(state->description.entityStableId);const auto component=s->WorldRef().FindComponent(owner,se::PhysicsBodyComponent::TypeId);if(component&&!s->WorldRef().RemoveComponent(component))return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");}
+        }
         if(!s->physics.DestroyBody(BodyFromPacked(body)))return Error(SE_INVALID_HANDLE,"Bridge.InvalidBody");s->bodyOwners.erase(body);return SE_OK;});
 }
 int32_t SE_CALL se_body_get_state(SE_Session handle,SE_Body body,SE_BodyState* output) noexcept
@@ -1273,7 +1317,13 @@ int32_t SE_CALL se_character_move(SE_Session handle, SE_Entity entity, SE_Vector
     return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
         if(!state)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
         const auto found=s->characters.find(entity);const auto* transform=s->WorldRef().GetTransform(se::EntityHandle::FromPacked(entity));
-        if(found==s->characters.end()||!transform)return Error(SE_INVALID_HANDLE,"Bridge.InvalidCharacter");
+        if(!transform)return Error(SE_INVALID_HANDLE,"Bridge.InvalidCharacter");
+        if(found==s->characters.end())
+        {
+            const auto owner=se::EntityHandle::FromPacked(entity);const auto id=s->WorldRef().Get(owner)->stableId;
+            if(!s->scenePhysics.MoveCharacter(s->WorldRef(),s->physics,id,Vector(direction),jump!=0,seconds))return Error(SE_INVALID_HANDLE,"Bridge.InvalidCharacter");
+            const auto* value=s->scenePhysics.Character(id);*state={{value->position.x,value->position.y,value->position.z},value->verticalVelocity,value->grounded?1:0};return SE_OK;
+        }
         auto& value=found->second;
         if(!value.Move(s->physics,Vector(direction),jump!=0,seconds))return Error(SE_INVALID_ARGUMENT,"Bridge.PhysicsFailed");
         auto updated=*transform;updated.position=value.position;
@@ -1285,14 +1335,18 @@ int32_t SE_CALL se_character_teleport(SE_Session handle, SE_Entity entity, SE_Ve
     return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
         if(!std::isfinite(position.x)||!std::isfinite(position.y)||!std::isfinite(position.z))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidTransform");
         const auto found=s->characters.find(entity);const auto* transform=s->WorldRef().GetTransform(se::EntityHandle::FromPacked(entity));
-        if(found==s->characters.end()||!transform)return Error(SE_INVALID_HANDLE,"Bridge.InvalidCharacter");
+        if(!transform)return Error(SE_INVALID_HANDLE,"Bridge.InvalidCharacter");
+        if(found==s->characters.end())return s->scenePhysics.TeleportCharacter(s->WorldRef(),s->WorldRef().Get(se::EntityHandle::FromPacked(entity))->stableId,Vector(position))?SE_OK:Error(SE_INVALID_HANDLE,"Bridge.InvalidCharacter");
         auto& value=found->second;value.position=Vector(position);value.verticalVelocity=0;value.grounded=false;
         auto updated=*transform;updated.position=value.position;
         return s->WorldRef().SetTransform(se::EntityHandle::FromPacked(entity),updated)?SE_OK:Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");});
 }
 int32_t SE_CALL se_character_destroy(SE_Session handle, SE_Entity entity) noexcept
 {
-    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();return s->characters.erase(entity)?SE_OK:Error(SE_INVALID_HANDLE,"Bridge.InvalidCharacter");});
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        const auto component=s->WorldRef().FindComponent(se::EntityHandle::FromPacked(entity),se::CharacterSettingsComponent::TypeId);
+        if(component)return s->WorldRef().RemoveComponent(component)?SE_OK:Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
+        return s->characters.erase(entity)?SE_OK:Error(SE_INVALID_HANDLE,"Bridge.InvalidCharacter");});
 }
 
 int32_t SE_CALL se_ui_create(SE_Session handle, int32_t kind, uint64_t parent, uint64_t* output) noexcept
@@ -1463,3 +1517,4 @@ int32_t SE_CALL se_ui_load_json(SE_Session handle, const char* text, uint32_t le
         std::string error;if(!s->UiRef().LoadJson(std::string_view(text,length),error))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidUi");
         s->uiEvents.clear();return SE_OK;});
 }
+#include "NativeLogicExports.inl"

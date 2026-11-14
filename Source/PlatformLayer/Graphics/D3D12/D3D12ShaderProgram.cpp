@@ -32,11 +32,12 @@ constexpr ShaderField pbrFields[]{
     {"radiance",offsetof(rhi::PbrDrawConstants,radiance),16,false},
     {"parameters",offsetof(rhi::PbrDrawConstants,parameters),16,false},
     {"options",offsetof(rhi::PbrDrawConstants,options),16,false}};
-Json UserPbrInterface()
+bool UserSurfaceKind(rhi::PipelineKind kind){return kind==rhi::PipelineKind::PbrMesh||kind==rhi::PipelineKind::ForwardMesh||kind==rhi::PipelineKind::ShadowedMesh||kind==rhi::PipelineKind::EnvironmentMesh;}
+Json UserPbrInterface(rhi::PipelineKind kind=rhi::PipelineKind::PbrMesh)
 {
     Json fields=Json::array();for(const auto& field:pbrFields)fields.push_back({{"name",field.name},{"offset",field.offset},{"size",field.size},
         {"type",field.matrix?"column_major float4x4":"float4"}});
-    return {{"type","SelfEngine.UserPbrInterface"},{"version",1},{"backend","D3D12"},{"vertex_profile","vs_5_1"},{"pixel_profile","ps_5_1"},
+    Json result{{"type","SelfEngine.UserPbrInterface"},{"version",1},{"backend","D3D12"},{"vertex_profile","vs_5_1"},{"pixel_profile","ps_5_1"},
         {"layout",rhi::PbrMaterialLayoutVersion},{"vertex_stride",sizeof(rhi::Vertex)},
         {"vertex",Json::array({{{"semantic","POSITION0"},{"type","float3"},{"offset",offsetof(rhi::Vertex,position)}},
                               {{"semantic","NORMAL0"},{"type","float3"},{"offset",offsetof(rhi::Vertex,normal)}},
@@ -46,6 +47,13 @@ Json UserPbrInterface()
             {"upload_stride",rhi::PbrConstantStride},{"fields",fields}}},
         {"textures",Json::array({"PS:t0:space0:Texture2D<float4>","PS:t1:space0:Texture2D<float4>","PS:t2:space0:Texture2D<float4>"})},
         {"sampler","PS:s0:space0:point-wrap"},{"target","SV_Target0:float4"}};
+    if(kind!=rhi::PipelineKind::PbrMesh)
+    {
+        result["version"]=2;result["layout"]=rhi::BindingLayout(kind);result["pass"]=static_cast<int>(kind);
+        result["frame_constants"]={{"register","b1"},{"bytes",kind==rhi::PipelineKind::EnvironmentMesh?sizeof(rhi::EnvironmentFrameConstants):kind==rhi::PipelineKind::ShadowedMesh?sizeof(rhi::ShadowFrameConstants):sizeof(rhi::ForwardFrameConstants)}};
+        result["texture_count"]=kind==rhi::PipelineKind::EnvironmentMesh?7:kind==rhi::PipelineKind::ShadowedMesh?4:3;result["output"]="linear HDR";
+    }
+    return result;
 }
 std::string Utf8(const fs::path& path){const auto value=path.generic_u8string();return {reinterpret_cast<const char*>(value.data()),value.size()};}
 bool Read(const fs::path& path,std::vector<std::uint8_t>& output,size_t maximum)
@@ -493,10 +501,12 @@ bool PackageSource(const Json& metadata,D3D12ShaderSource& source)
 {
     try
     {
+        const auto kind=static_cast<rhi::PipelineKind>(metadata.at("kind").get<int>());if(!UserSurfaceKind(kind))return false;
+        const auto expectedInterface=UserPbrInterface(kind);
         if(metadata.at("package_type")!="SelfEngine.UserPbr"||metadata.at("package_schema")!=1||metadata.at("debug_data_stripped")!=true
-            ||metadata.at("interface")!=UserPbrInterface()||metadata.at("interface_sha256")!=D3D12UserPbrInterfaceHash()
+            ||metadata.at("interface")!=expectedInterface||metadata.at("interface_sha256")!=se::Sha256(expectedInterface.dump())
             ||!metadata.at("flags").is_number_unsigned()||metadata.at("flags").get<UINT64>()>UINT_MAX)return false;
-        source.kind=rhi::PipelineKind::PbrMesh;source.layoutVersion=rhi::PbrMaterialLayoutVersion;source.flags=metadata.at("flags").get<UINT>();
+        source.kind=kind;source.layoutVersion=rhi::BindingLayout(kind);source.flags=metadata.at("flags").get<UINT>();
         constexpr UINT strict=D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_WARNINGS_ARE_ERRORS;
         if(source.flags!=(strict|D3DCOMPILE_DEBUG|D3DCOMPILE_SKIP_OPTIMIZATION)&&source.flags!=(strict|D3DCOMPILE_OPTIMIZATION_LEVEL3))return false;
         const auto& macros=metadata.at("macros");const auto& dependencies=metadata.at("dependencies");
@@ -534,7 +544,7 @@ std::string D3D12UserPbrInterfaceDescription(){return UserPbrInterface().dump(2)
 std::string D3D12UserPbrInterfaceHash(){return se::Sha256(UserPbrInterface().dump());}
 bool WriteD3D12UserPbrPackage(const D3D12ShaderProgram& program,const fs::path& artifact,const Localization& text)
 {
-    if(program.source.kind!=rhi::PipelineKind::PbrMesh||program.source.layoutVersion!=rhi::PbrMaterialLayoutVersion
+    if(!UserSurfaceKind(program.source.kind)||program.source.layoutVersion!=rhi::BindingLayout(program.source.kind)
         ||!program.vertex||!program.pixel||!Layout(program)||artifact.empty())
     {Diagnostic(text,"Shader.UserPackageInvalid",artifact);return false;}
     D3D12ShaderProgram packed;packed.source=program.source;packed.source.preprocessed.clear();
@@ -545,8 +555,8 @@ bool WriteD3D12UserPbrPackage(const D3D12ShaderProgram& program,const fs::path& 
     {Diagnostic(text,"Shader.UserPackageInvalid",artifact);return false;}
     auto metadata=Metadata(packed.source);metadata["source_key"]=packed.source.key;
     metadata["vertex_sha256"]=BlobHash(*packed.vertex.Get());metadata["pixel_sha256"]=BlobHash(*packed.pixel.Get());
-    metadata["package_type"]="SelfEngine.UserPbr";metadata["package_schema"]=1;metadata["interface"]=UserPbrInterface();
-    metadata["interface_sha256"]=D3D12UserPbrInterfaceHash();metadata["debug_data_stripped"]=true;
+    metadata["package_type"]="SelfEngine.UserPbr";metadata["package_schema"]=1;metadata["interface"]=UserPbrInterface(program.source.kind);
+    metadata["interface_sha256"]=se::Sha256(metadata["interface"].dump());metadata["debug_data_stripped"]=true;
     D3D12ShaderSource check;std::vector<std::uint8_t> bytes;
     if(!PackageSource(metadata,check)||!EncodeArtifact(metadata,packed,bytes))
     {Diagnostic(text,"Shader.UserPackageInvalid",artifact);return false;}
@@ -556,10 +566,10 @@ std::shared_ptr<const D3D12ShaderProgram> LoadD3D12UserPbrPackage(const rhi::Pip
     D3D12ShaderLoadStatistics& stats,const Localization& text)
 {
     const auto reject=[&]()->std::shared_ptr<const D3D12ShaderProgram>{++stats.artifactRejections;Diagnostic(text,"Shader.UserPackageInvalid",description.shader);return {};};
-    if(description.shaderInput!=rhi::ShaderInput::Artifact||description.kind!=rhi::PipelineKind::PbrMesh
-        ||description.bindingLayoutVersion!=rhi::PbrMaterialLayoutVersion||description.shader.empty()||!description.macros.empty())return reject();
+    if(description.shaderInput!=rhi::ShaderInput::Artifact||!UserSurfaceKind(description.kind)
+        ||description.bindingLayoutVersion!=rhi::BindingLayout(description.kind)||description.shader.empty()||!description.macros.empty())return reject();
     ArtifactParts parts;D3D12ShaderSource source;
-    if(!ReadArtifactParts(description.shader,parts)||!PackageSource(parts.metadata,source)
+    if(!ReadArtifactParts(description.shader,parts)||!PackageSource(parts.metadata,source)||source.kind!=description.kind
         ||!NoPrivateShaderParts(*parts.vertex.Get())||!NoPrivateShaderParts(*parts.pixel.Get()))return reject();
     auto program=std::make_shared<D3D12ShaderProgram>();source.path=description.shader;program->source=std::move(source);
     program->vertex=std::move(parts.vertex);program->pixel=std::move(parts.pixel);std::string reason;

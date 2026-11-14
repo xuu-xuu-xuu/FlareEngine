@@ -114,6 +114,13 @@ public:
     void SetViewportHeight(float height);
     void SetScrollOffset(float offset);
     void SetRowTextProvider(std::function<std::string(int)> provider);
+    // 复合行沿用列表的滚动与虚拟化。子控件随行一起释放。
+    void SetRowBuilder(std::function<void(int, UiElementHandle)> builder)
+    {
+        rowBuilder_ = std::move(builder);
+        dirty_ = true;
+    }
+    void SetRowTextLayout(UiTextFlow flow, UiEdges padding);
     void SetRowTextColor(UiColor color) { rowTextColor_=color; dirty_=true; }
     // 行背景（颜色）由调用方按行提供；默认透明。
     void SetRowBackgroundProvider(std::function<UiColor(int)> provider) { rowBackground_ = std::move(provider); dirty_ = true; }
@@ -137,6 +144,9 @@ private:
     int bufferRows_ = 2;
     bool dirty_ = true;
     std::function<std::string(int)> rowText_;
+    std::function<void(int, UiElementHandle)> rowBuilder_;
+    UiTextFlow rowTextFlow_ = UiTextFlow::Wrap;
+    UiEdges rowPadding_{};
     UiColor rowTextColor_{0.92f,0.94f,0.97f,1.0f};
     std::function<UiColor(int)> rowBackground_;
     std::vector<UiElementHandle> rows_;

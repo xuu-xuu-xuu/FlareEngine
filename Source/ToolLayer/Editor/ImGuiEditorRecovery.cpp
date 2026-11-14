@@ -329,7 +329,11 @@ void ImGuiEditor::RecoveryDialogs(EditorSession& editor,AssetStore& assets,UiTre
         if(!errorKey_.empty())ImGui::TextWrapped("%s",text.GetText(errorKey_).c_str());
         ImGui::EndPopup();
     }
-    if(recoveryOffered_||editor.IsPlaying()||gizmo_.Active()||inspectorEditing_||material_.Editing()||!uiTransaction_.empty())return;
+    UpdateRecovery(editor,ui);
+}
+void ImGuiEditor::UpdateRecovery(const EditorSession& editor,UiTree* ui)
+{
+    if(recoveryDirectory_.empty()||recoveryOffered_||editor.IsPlaying()||gizmo_.Active()||inspectorEditing_||material_.Editing()||!uiTransaction_.empty())return;
     const auto documents=CaptureRecoveryDocuments(editor,ui);
     PruneRecoveryDocuments(documents);
     const auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count());

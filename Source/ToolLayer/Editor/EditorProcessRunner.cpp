@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <utility>
 
 namespace se
 {
@@ -50,11 +51,41 @@ struct Handle
     explicit Handle(HANDLE handle=nullptr):value(handle){}
     ~Handle(){if(value&&value!=INVALID_HANDLE_VALUE)CloseHandle(value);}
     Handle(const Handle&)=delete;Handle& operator=(const Handle&)=delete;
+    Handle(Handle&& other)noexcept:value(std::exchange(other.value,nullptr)){}
 };
 bool JobEmpty(HANDLE job)
 {JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info{};return QueryInformationJobObject(job,JobObjectBasicAccountingInformation,&info,sizeof(info),nullptr)&&!info.ActiveProcesses;}
 bool WaitTree(HANDLE job,DWORD milliseconds)
 {const auto deadline=GetTickCount64()+milliseconds;do{if(JobEmpty(job))return true;Sleep(10);}while(GetTickCount64()<deadline);return JobEmpty(job);}
+// Job 的活动计数会先于进程对象进入 signaled 状态归零。终止前保留本 Job 的
+// 实际句柄，避免计数归零就返回，也避免终止后按可能复用的 PID 等待其他程序。
+bool HoldJobProcesses(HANDLE job,std::vector<Handle>& processes)
+{
+    for(DWORD capacity=16;capacity<=1024*1024;capacity*=2)
+    {
+        const auto bytes=sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST)+capacity*sizeof(ULONG_PTR);
+        std::vector<ULONG_PTR> storage((bytes+sizeof(ULONG_PTR)-1)/sizeof(ULONG_PTR));
+        auto* list=reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(storage.data());
+        if(!QueryInformationJobObject(job,JobObjectBasicProcessIdList,list,static_cast<DWORD>(bytes),nullptr))
+        {if(GetLastError()==ERROR_MORE_DATA)continue;return false;}
+        for(DWORD index=0;index<list->NumberOfProcessIdsInList;++index)
+        {
+            Handle process(OpenProcess(SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,static_cast<DWORD>(list->ProcessIdList[index])));
+            if(!process.value){if(GetLastError()==ERROR_INVALID_PARAMETER)continue;return false;}
+            if(WaitForSingleObject(process.value,0)==WAIT_OBJECT_0)continue;
+            BOOL belongs=FALSE;if(!IsProcessInJob(process.value,job,&belongs))return false;
+            if(belongs)processes.push_back(std::move(process));
+        }
+        return true;
+    }
+    SetLastError(ERROR_NOT_ENOUGH_MEMORY);return false;
+}
+bool WaitProcesses(const std::vector<Handle>& processes,ULONGLONG deadline)
+{
+    for(const auto& process:processes)
+    {const auto now=GetTickCount64();if(WaitForSingleObject(process.value,now<deadline?static_cast<DWORD>(deadline-now):0)!=WAIT_OBJECT_0)return false;}
+    return true;
+}
 struct CloseWindows{HANDLE job;bool posted=false;};
 BOOL CALLBACK CloseJobWindow(HWND window,LPARAM context)
 {
@@ -150,16 +181,20 @@ bool detail::RunEditorProcessWithApi(const std::wstring& executable,const std::v
     }
     // 根进程结束不等于内部进程树结束；强制回收仅针对归属已确认的内部任务。
     if(result.exited)WaitTree(job.value,100); // 让内核进程计数完成更新，避免把刚正常结束误报为强杀。
+    std::vector<Handle> descendants;bool observed=true;
     if(!JobEmpty(job.value))
     {
+        observed=HoldJobProcesses(job.value,descendants);
+        if(!observed)result.systemError=GetLastError();
         result.forced=true;
-        LogCheckpoint("Process.Tree.Terminate","pid="+std::to_string(result.processId));
+        LogCheckpoint("Process.Tree.Terminate","pid="+std::to_string(result.processId)+" handles="+std::to_string(descendants.size()));
         if(!TerminateJobObject(job.value,1))result.systemError=GetLastError();
     }
     const auto cleanupDeadline=GetTickCount64()+5000;
     result.exited=WaitForSingleObject(process.value,result.exited?0:5000)==WAIT_OBJECT_0;
     const auto now=GetTickCount64();
-    result.treeExited=WaitTree(job.value,now<cleanupDeadline?static_cast<DWORD>(cleanupDeadline-now):0);
+    result.treeExited=WaitTree(job.value,now<cleanupDeadline?static_cast<DWORD>(cleanupDeadline-now):0)
+        &&observed&&WaitProcesses(descendants,cleanupDeadline);
     if(!result.exited||!result.treeExited)return fail("Editor.ProcessCleanupFailed",result.systemError?result.systemError:ERROR_TIMEOUT);
     DWORD exitCode=0;
     if(!GetExitCodeProcess(process.value,&exitCode))return fail("Editor.ProcessWaitFailed",GetLastError());

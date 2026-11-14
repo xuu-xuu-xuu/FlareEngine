@@ -19,6 +19,20 @@ inline constexpr Color Disabled{118,127,142};
 inline constexpr Color Silver{194,202,215};
 inline constexpr Color Gold{254,206,123}; // B 款图标亮部的中位色。
 
+// 密集桌面工具的颜色：字段低于面板一层，焦点与对象选中分别绘制。
+namespace workspace
+{
+inline constexpr Color Panel{53,53,53};
+inline constexpr Color Field{41,41,41};
+inline constexpr Color Header{62,62,62};
+inline constexpr Color Divider{35,35,35};
+inline constexpr Color Hover{79,79,79};
+inline constexpr Color Pressed{50,84,108};
+inline constexpr Color Focus{65,148,216};
+inline constexpr Color Selection{47,92,134};
+inline constexpr Color InactiveSelection{73,73,73};
+}
+
 template<class T>
 constexpr T Rgba(Color color, float alpha = 1.0f)
 {

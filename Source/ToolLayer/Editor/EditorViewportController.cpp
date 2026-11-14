@@ -1,7 +1,9 @@
 #include "EditorViewportController.h"
+#include "EditorSceneGizmos.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace se
 {
@@ -9,6 +11,7 @@ namespace
 {
 using ui::UiColor;
 constexpr UiColor colors[]={{.95f,.25f,.25f,1},{.25f,.9f,.35f,1},{.3f,.6f,1,1}};
+constexpr float ClickSlop = 4.0f;
 Vec2 Screen(const CameraSnapshot& c,Vec4 p)
 {return {c.viewport.x+(p.x/p.w*.5f+.5f)*c.viewport.width,c.viewport.y+(.5f-p.y/p.w*.5f)*c.viewport.height};}
 // 在齐次空间裁剪近面；视口 scissor 负责左右上下边界，避免跨越相机的网格爆炸。
@@ -82,6 +85,52 @@ void EditorViewportController::Cancel(EditorSession& s)
 {
     if(gizmo_.Active())gizmo_.End(s,false);
     gesture_=Gesture::None;dragAxis_=-1;keys_.fill(false);
+    clickPending_=false;contextClick_.reset();lastPick_.reset();
+}
+std::optional<Vec2> EditorViewportController::TakeContextClick()
+{
+    return std::exchange(contextClick_, std::nullopt);
+}
+
+void EditorViewportController::SelectAt(Vec2 mouse, EditorSession& session, AssetStore& assets, PickIntent intent)
+{
+    const auto& world = session.EditWorld();
+    const auto mesh = PickEditorBounds(world, assets, *snapshot_,
+        (mouse.x - viewport_.x) / viewport_.width, (mouse.y - viewport_.y) / viewport_.height);
+    // 图标可能直接盖在立方体上。首次点中实体表面，重复点同一位置可依次选中图标。
+    struct Icon { float separation, depth; StableEntityId id; };
+    std::vector<Icon> icons;
+    if (gizmos_) for (auto entity : world.Entities())
+    {
+        const auto center=EditorSceneIconCenter(world,entity,*snapshot_);
+        if(!center)continue;
+        const auto screen = ProjectWorldPoint(*snapshot_, TransformPoint(world.GetWorldMatrix(entity), {}));
+        const auto separation = std::hypot(mouse.x - center->x, mouse.y - center->y);
+        const auto id = world.Get(entity)->stableId;
+        if (separation <= EditorSceneIconRadius && id != mesh) icons.push_back({separation, screen->z, id});
+    }
+    std::sort(icons.begin(), icons.end(), [](const Icon& a, const Icon& b) {
+        if (a.separation != b.separation) return a.separation < b.separation;
+        if (a.depth != b.depth) return a.depth < b.depth;
+        return a.id < b.id;
+    });
+    std::vector<StableEntityId> choices;
+    if (mesh) choices.push_back(mesh);
+    for (const auto& icon : icons) choices.push_back(icon.id);
+    const bool samePoint = lastPick_ && std::hypot(mouse.x - lastPick_->x, mouse.y - lastPick_->y) <= ClickSlop;
+    lastPick_ = mouse;
+    if (choices.empty())
+    {
+        if (intent == PickIntent::Surface) session.Select(0);
+        return;
+    }
+    auto chosen = choices.begin();
+    if (samePoint && intent != PickIntent::Context)
+    {
+        const auto current = std::find(choices.begin(), choices.end(), session.Selected());
+        if (current != choices.end() && std::next(current) != choices.end()) chosen = std::next(current);
+    }
+    session.Select(*chosen);
 }
 void EditorViewportController::Blur(EditorSession& s){Cancel(s);focused_=false;}
 bool EditorViewportController::Action(std::string_view action,EditorSession& s,AssetStore& assets)
@@ -141,7 +190,7 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
         if(ev.key==27){Cancel(s);return true;}
         if(ev.key>=keys_.size())return false;
         const bool repeated=keys_[ev.key];keys_[ev.key]=true;
-        if(Flying())return true;
+        if(Flying()){clickPending_=false;return true;}
         if(Captured()||ev.control||ev.alt||repeated)return false;
         if(ev.key=='F')return FrameSelection(s,assets,ev.shift);
         if(ev.key=='Q'||ev.key=='W'||ev.key=='E'||ev.key=='R'||ev.key=='X'||ev.key=='Z')
@@ -151,13 +200,14 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
     const Vec2 mouse{ev.x,ev.y};
     if(ev.type==PointerWheel&&(canStart||Flying()))
     {
-        if(Flying())speed_=std::clamp(speed_*std::exp(ev.wheel*.2f),.05f,1000.f);
+        if(Flying()){clickPending_=false;speed_=std::clamp(speed_*std::exp(ev.wheel*.2f),.05f,1000.f);}
         else {follow_=0;Dolly(-ev.wheel*.12f);}
         return true;
     }
     if(ev.type==PointerDown&&canStart&&!Captured()&&snapshot_)
     {
-        focused_=true;lastMouse_=mouse;dragButton_=ev.button;
+        focused_=true;lastMouse_=pressedMouse_=mouse;dragButton_=ev.button;
+        clickPending_=!ev.alt&&(ev.button==0||ev.button==1);
         if(ev.alt&&ev.button==0)gesture_=Gesture::Orbit;
         else if(ev.alt&&ev.button==1)gesture_=Gesture::Zoom;
         else if(ev.button==2||(ev.button==0&&viewTool_))gesture_=Gesture::Pan;
@@ -173,11 +223,9 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
                 if(gizmo_.Begin(s,mode_,static_cast<GizmoAxis>(hit->axis),mouse,direction,80,space_,&*snapshot_,&origin))
                 {gesture_=Gesture::Gizmo;dragAxis_=hit->axis;return true;}
             }
-            auto picked=PickEditorBounds(s.EditWorld(),assets,*snapshot_,(ev.x-viewport_.x)/viewport_.width,(ev.y-viewport_.y)/viewport_.height);
-            if(gizmos_)for(auto e:s.EditWorld().Entities())if(s.EditWorld().IsEnabled(e)&&(s.EditWorld().GetCamera(e)||s.EditWorld().GetLight(e)))
-                if(auto p=ProjectWorldPoint(*snapshot_,TransformPoint(s.EditWorld().GetWorldMatrix(e),{}));p&&p->z>=0&&p->z<=1&&std::hypot(ev.x-p->x,ev.y-p->y)<10)
-                    picked=s.EditWorld().Get(e)->stableId;
-            s.Select(picked);return true;
+            SelectAt(mouse,s,assets);
+            clickPending_=false;
+            return true;
         }
         follow_=0;keys_[16]=ev.shift;return true;
     }
@@ -186,6 +234,11 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
         hoverAxis_=-1;
         if(canStart)for(const auto& h:handles_)if(Distance(mouse,h.a,h.b)<8)hoverAxis_=h.axis;
         if(!Captured())return false;
+        if(clickPending_)
+        {
+            if(std::hypot(mouse.x-pressedMouse_.x,mouse.y-pressedMouse_.y)<=ClickSlop)return true;
+            clickPending_=false;lastPick_.reset();
+        }
         const Vec2 delta{mouse.x-lastMouse_.x,mouse.y-lastMouse_.y};lastMouse_=mouse;
         if(gesture_==Gesture::Gizmo){gizmo_.Update(s,mouse);return true;}
         if(gesture_==Gesture::Fly||gesture_==Gesture::Orbit)
@@ -205,7 +258,19 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
     }
     if(ev.type==PointerUp&&Captured()&&ev.button==dragButton_)
     {
+        const bool click=clickPending_&&std::hypot(mouse.x-pressedMouse_.x,mouse.y-pressedMouse_.y)<=ClickSlop;
+        clickPending_=false;
         if(gizmo_.Active())gizmo_.End(s,true);
+        if(click&&snapshot_&&canStart)
+        {
+            if(gesture_==Gesture::Fly)
+            {
+                SelectAt(mouse,s,assets,PickIntent::Context);
+                contextClick_=mouse;
+            }
+            else if(gesture_==Gesture::Pan)SelectAt(mouse,s,assets);
+            else if(gesture_==Gesture::Gizmo)SelectAt(mouse,s,assets,PickIntent::Handle);
+        }
         gesture_=Gesture::None;dragAxis_=-1;keys_.fill(false);return true;
     }
     return false;
@@ -232,11 +297,7 @@ void EditorViewportController::Draw(EditorSession& s,AssetStore& assets)
         // XZ 网格由渲染器解析无限平面，单位固定；这里只保留原点的 Y 轴标记。
         line({0,0,0},{0,1,0},colors[1],2);
     }
-    if(gizmos_)for(auto e:s.EditWorld().Entities())if(s.EditWorld().IsEnabled(e)&&(s.EditWorld().GetCamera(e)||s.EditWorld().GetLight(e)))
-    {
-        const auto p=ProjectWorldPoint(c,TransformPoint(s.EditWorld().GetWorldMatrix(e),{}));
-        if(p&&p->z>=0&&p->z<=1){overlay_.CanvasCircle(p->x,p->y,7,{1,.8f,.3f,1});overlay_.Text({p->x-4,p->y-7,16,16},s.EditWorld().GetCamera(e)?"C":"L",12,{.1f,.1f,.1f,1});}
-    }
+    if(gizmos_)AppendEditorSceneGizmos(s.EditWorld(),s.Selected(),c,overlay_,sceneLines_);
     const auto e=s.EditWorld().FindByStableId(s.Selected());
     if(e)
     {

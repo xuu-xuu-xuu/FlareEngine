@@ -155,6 +155,7 @@ struct UiDirectWriteTextService::Impl
     mutable FontCache fontCache;
     std::wstring family;
     float rasterScale=1.0f;
+    std::uint64_t atlasRevisionBase=0;
     mutable std::list<CacheKey> order;
     mutable std::unordered_map<CacheKey, CachedLayout, CacheKeyHash> cache;
     mutable CacheStats stats;
@@ -321,7 +322,7 @@ bool UiDirectWriteTextService::FontAtlas(std::vector<unsigned char>& rgba, int& 
     const FontPage& page = pages.front();
     width = static_cast<int>(page.width);
     height = static_cast<int>(page.height);
-    revision = page.revision;
+    revision = impl_->atlasRevisionBase + page.revision;
     rgba.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
     for (std::size_t index = 0; index < page.alpha.size() && index * 4 + 3 < rgba.size(); ++index)
     {
@@ -353,6 +354,11 @@ bool UiDirectWriteTextService::SetRasterScale(float pixelsPerDip)
     {
         impl_->rasterScale=pixelsPerDip;
         ClearCache();
+        // 跨 DPI 后旧像素密度不再使用；保留它们会使中文界面最终进入未上传的第二页。
+        const auto& pages=impl_->fontCache.Pages();
+        impl_->atlasRevisionBase+=pages.empty()?1:pages.front().revision+1;
+        impl_->fontCache.ClearAtlas();
+        impl_->lastError.clear();
     }
     return true;
 }

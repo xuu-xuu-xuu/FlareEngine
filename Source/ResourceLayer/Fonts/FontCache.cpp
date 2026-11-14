@@ -69,10 +69,33 @@ struct FontCache::Impl : IDWriteTextRenderer
     HRESULT STDMETHODCALLTYPE GetPixelsPerDip(void* context,FLOAT* value) override
     {*value=static_cast<DrawContext*>(context)->pixelsPerDip;return S_OK;}
     HRESULT STDMETHODCALLTYPE DrawGlyphRun(void* context,FLOAT x,FLOAT y,DWRITE_MEASURING_MODE mode,
-        const DWRITE_GLYPH_RUN* run,const DWRITE_GLYPH_RUN_DESCRIPTION*,IUnknown*) override
+        const DWRITE_GLYPH_RUN* run,const DWRITE_GLYPH_RUN_DESCRIPTION* description,IUnknown*) override
     {
         try
         {
+            // 数字参数会产生大量不同 run。只缓存已整形的独立数字字形，避免每个新值
+            // 都消耗一块图集；其余文字保留原 run 栅格化，继续支持连字、回退和双向文本。
+            bool numeric=description&&description->string&&run->glyphAdvances&&run->glyphCount>1&&
+                run->glyphCount==description->stringLength&&!run->isSideways&&!(run->bidiLevel&1);
+            if(numeric)for(UINT32 i=0;i<description->stringLength;++i)
+            {
+                const auto c=description->string[i];
+                if(!((c>=L'0'&&c<=L'9')||c==L'.'||c==L'-'||c==L'+'||c==L'e'||c==L'E')){numeric=false;break;}
+            }
+            if(numeric)
+            {
+                float advance=0;
+                for(UINT32 i=0;i<run->glyphCount;++i)
+                {
+                    auto glyph=*run;glyph.glyphCount=1;glyph.glyphIndices=run->glyphIndices+i;
+                    glyph.glyphAdvances=run->glyphAdvances+i;
+                    glyph.glyphOffsets=run->glyphOffsets?run->glyphOffsets+i:nullptr;
+                    const auto result=DrawGlyphRun(context,x+advance,y,mode,&glyph,nullptr,nullptr);
+                    if(FAILED(result))return result;
+                    advance+=run->glyphAdvances[i];
+                }
+                return S_OK;
+            }
             auto& draw=*static_cast<DrawContext*>(context);
             const float scale=draw.pixelsPerDip;
             std::string key;
@@ -136,6 +159,11 @@ struct FontCache::Impl : IDWriteTextRenderer
 FontCache::FontCache():impl_(std::make_unique<Impl>()){}
 FontCache::~FontCache()=default;
 const std::vector<FontPage>& FontCache::Pages() const{return impl_->pages;}
+void FontCache::ClearAtlas()
+{
+    impl_->entries.clear();impl_->faces.clear();impl_->pages.clear();
+    impl_->cursorX=impl_->cursorY=1;impl_->rowHeight=0;impl_->lastError.clear();
+}
 bool FontCache::Layout(std::string_view utf8,float fontSize,float maximumWidth,TextLayout& output,std::string& error,std::wstring_view family,float pixelsPerDip)
 {
     error.clear();std::u32string decoded;

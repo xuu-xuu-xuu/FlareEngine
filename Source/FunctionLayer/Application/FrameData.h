@@ -68,6 +68,10 @@ struct FrameData
     EnvironmentView environment;
     std::optional<EnvironmentSnapshot> timeOfDay; // 自有 CPU 昼夜值；GPU 消费另行接入。
     std::optional<rhi::PostProcessSettings> post; // 只有数值；不含 GPU 句柄或 prepared 对象。
+    bool sceneRenderSettings=false,acesToneMap=false,modelLod=false,fullPbr=false;
+    bool modelHlod=false;
+    float hlodRadius=0;
+    bool occlusion=false,occlusionCounters=false,occlusionTiming=false,frameGraph=false;
     // G15：编辑器 LUT 选择（绝对路径，空表示不启用）；由 BasicLit 输出采样并热重载。
     std::filesystem::path colorLutPath;
     bool frustumCulling=false; // 只裁剪主相机不透明列表，阴影投射列表独立保留。
@@ -93,5 +97,7 @@ struct ApplicationServices
     Profiler* profiler=nullptr; // 借用，可选的应用更新/提取与渲染 CPU 采集。
     std::uint32_t initialWidth=0,initialHeight=0; // 同为 0 使用默认窗口；否则在渲染器初始化前设置客户区。
     double fixedDeltaSeconds=0; // 0 使用真实 dt；受控演示可覆盖更新步长，原始时间仍保留。
+    bool liveWindowResize=false; // 编辑器在 Win32 拖边循环内按新尺寸运行帧。
+    std::uint32_t minimumClientWidthDip=0,minimumClientHeightDip=0; // 同为 0 时沿用系统最小窗口尺寸。
 };
 }

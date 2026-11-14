@@ -757,6 +757,13 @@ Result CommandContext::ConfigureComposition(const FrameComposition& composition)
         return Fail(Error::Unsupported);
     impl_->composition=composition;impl_->leases.insert(impl_->leases.end(),{hdr,ldr});return {};
 }
+Result CommandContext::ConfigureView(const Mat4& viewProjection)
+{
+    auto device=impl_?impl_->device.lock():nullptr;
+    if(!device||!device->Usable()||impl_->phase)return Fail(Error::InvalidState);
+    if(!IsFinite(viewProjection)||!Inverse(viewProjection))return Fail(Error::InvalidArgument);
+    impl_->viewProjection=viewProjection;return {};
+}
 Result CommandContext::ConfigureForward(const ForwardLighting& lighting,PipelineHandle outputPipeline,PipelineHandle skyPipeline)
 {
     auto device=impl_?impl_->device.lock():nullptr;if(!device||!device->Usable()||impl_->phase||impl_->forward||(impl_->guiScene&&!impl_->composition))return Fail(Error::InvalidState);

@@ -3,6 +3,7 @@
 #include "WindowsInput.h"
 #include <imm.h>
 #include "CoreLayer/Log.h"
+#include <algorithm>
 #include <exception>
 #include <iostream>
 #include <string>
@@ -66,6 +67,33 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 
 	switch (message)
 	{
+        case WM_GETMINMAXINFO:
+            if (lParam && ApplyEngineWindowMinimumTrackSize(hwnd,*reinterpret_cast<MINMAXINFO*>(lParam),
+                    state->minimumClientWidthDip,state->minimumClientHeightDip))
+                return 0;
+            break;
+
+        case WM_ENTERSIZEMOVE:
+            state->interactiveResize = true;
+            break;
+
+        case WM_EXITSIZEMOVE:
+            state->interactiveResize = false;
+            break;
+
+        case EngineWindowDrawResizeFrame:
+            try
+            {
+                if (state->drawable && !state->closeRequested && state->drawResizeFrame)
+                    state->drawResizeFrame();
+            }
+            catch (const std::exception& exception)
+            {
+                state->callbackFailed = state->closeRequested = true;
+                Log(LogLevel::Error, exception.what());
+            }
+            catch (...) { state->callbackFailed = state->closeRequested = true; }
+            return 0;
 
 		// WM_SIZE：wParam 表示尺寸状态，lParam 携带客户区宽高。
 		case WM_SIZE:
@@ -95,6 +123,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 				OutputDebugStringW(L"记录窗口尺寸时发生 C++ 异常。\n");
 			}
 
+            if (state->interactiveResize && state->drawable && state->drawResizeFrame)
+                SendMessageW(hwnd, EngineWindowDrawResizeFrame, 0, 0);
 			return 0;
 		}
 
@@ -236,6 +266,20 @@ bool SetEngineWindowClientSize(WindowState& window,UINT width,UINT height)
     if(!AdjustWindowRectExForDpi(&size,style,GetMenu(window.hwnd)!=nullptr,extended,dpi?dpi:96)
         ||!SetWindowPos(window.hwnd,nullptr,0,0,size.right-size.left,size.bottom-size.top,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE))return false;
     RECT actual{};return GetClientRect(window.hwnd,&actual)&&actual.right-actual.left==LONG(width)&&actual.bottom-actual.top==LONG(height);
+}
+
+bool ApplyEngineWindowMinimumTrackSize(HWND window,MINMAXINFO& limits,UINT widthDip,UINT heightDip)
+{
+    if (!window || !widthDip || !heightDip || widthDip > 16384 || heightDip > 16384) return false;
+    const UINT currentDpi=GetDpiForWindow(window);
+    const UINT dpi=currentDpi?currentDpi:96;
+    RECT minimum{0,0,MulDiv(static_cast<int>(widthDip),dpi,96),MulDiv(static_cast<int>(heightDip),dpi,96)};
+    const auto style=static_cast<DWORD>(GetWindowLongPtrW(window,GWL_STYLE));
+    const auto extended=static_cast<DWORD>(GetWindowLongPtrW(window,GWL_EXSTYLE));
+    if (!AdjustWindowRectExForDpi(&minimum,style,GetMenu(window)!=nullptr,extended,dpi)) return false;
+    limits.ptMinTrackSize.x=std::max(limits.ptMinTrackSize.x,minimum.right-minimum.left);
+    limits.ptMinTrackSize.y=std::max(limits.ptMinTrackSize.y,minimum.bottom-minimum.top);
+    return true;
 }
 
 bool DestroyEngineWindow(WindowState& window)

@@ -120,11 +120,17 @@ void UiDisplayList::NineSlice(const UiRect& rect,
 
 void UiDisplayList::Text(const UiRect& rect, std::string_view text, float fontSize, const UiColor& color)
 {
+    Text(rect, text, fontSize, color, UiTextFlow::Wrap);
+}
+
+void UiDisplayList::Text(const UiRect& rect, std::string_view text, float fontSize, const UiColor& color, UiTextFlow flow)
+{
     UiPaintCommand command;
     command.kind = UiPaintCommandKind::Text;
     command.rect = rect;
     command.text.assign(text);
     command.fontSize = fontSize;
+    command.textFlow = flow;
     command.color = color;
     commands.push_back(std::move(command));
 }
@@ -254,7 +260,17 @@ void UiPainter::Visit(UiElementHandle element, UiDisplayList& displayList, UiPai
     const std::string_view text = document_->Text(element);
     if (!text.empty())
     {
-        displayList.Text(rect, text, style.fontSize, style.color);
+        UiRect content = rect;
+        if (style.textFlow == UiTextFlow::SingleLineEllipsis)
+        {
+            const float left = std::max(0.0f, style.padding.left);
+            const float top = std::max(0.0f, style.padding.top);
+            content.x += left;
+            content.y += top;
+            content.width = std::max(0.0f, rect.width - left - std::max(0.0f, style.padding.right));
+            content.height = std::max(0.0f, rect.height - top - std::max(0.0f, style.padding.bottom));
+        }
+        displayList.Text(content, text, style.fontSize, style.color, style.textFlow);
         ++stats.textRuns;
     }
     if (!style.image.empty())
@@ -270,6 +286,39 @@ void UiPainter::Visit(UiElementHandle element, UiDisplayList& displayList, UiPai
 
 namespace
 {
+// 用当前窗口的字形度量取前缀。插入光标命中取最近的位置，末字因此可能还需退一格。
+std::string_view FitSingleLine(const UiPaintCommand& command, UiTextService& service, std::string& shortened)
+{
+    const std::string_view text = command.text;
+    const std::string_view line = text.substr(0, text.find_first_of("\r\n"));
+    const auto widthOf = [&](std::string_view value) {
+        return service.Measure(value, command.fontSize, command.rect.width, false).width;
+    };
+    if (line.size() == text.size() && widthOf(line) <= command.rect.width)
+    {
+        return line;
+    }
+    constexpr std::string_view ellipsis = "…";
+    const float available = command.rect.width - widthOf(ellipsis);
+    if (available < 0.0f)
+    {
+        return {};
+    }
+    std::size_t end = std::min<std::size_t>(line.size(),
+        service.HitTestCaret(line, command.fontSize, command.rect.width, false, available, 0));
+    for (;;)
+    {
+        // 测试用等宽服务按字节命中；真实服务返回字符边界。
+        while (end > 0 && end < line.size() && (static_cast<unsigned char>(line[end]) & 0xc0) == 0x80)
+            --end;
+        shortened.assign(line.substr(0, end));
+        shortened.append(ellipsis);
+        if (end == 0 || widthOf(shortened) <= command.rect.width)
+            return shortened;
+        --end;
+    }
+}
+
 struct GeometryContext
 {
     GuiGeometry& geometry;
@@ -481,8 +530,16 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
                 context.Reject("UI.PaintTextUnavailable");
                 break;
             }
+            const bool wrap = command.textFlow == UiTextFlow::Wrap;
+            const UiRect textClip = wrap ? clip : Intersect(clip, command.rect);
+            if (Empty(textClip)) break;
+            std::string shortened;
+            const std::string_view run = wrap ? std::string_view(command.text) : FitSingleLine(command, *textService, shortened);
+            if (run.empty()) break;
+            const float top = wrap ? command.rect.y :
+                command.rect.y + (command.rect.height - textService->Measure(run, command.fontSize, command.rect.width, false).height) * 0.5f;
             std::vector<UiGlyphQuad> glyphs;
-            if (!textService->LayoutGlyphs(command.text, command.fontSize, command.rect.width, true, glyphs))
+            if (!textService->LayoutGlyphs(run, command.fontSize, command.rect.width, wrap, glyphs))
             {
                 context.Reject("UI.PaintTextUnavailable");
                 break;
@@ -502,14 +559,14 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
                     context.Reject("UI.PaintInvalidTextureToken");
                     continue;
                 }
-                UiRect destination{command.rect.x + glyph.x, command.rect.y + glyph.y, glyph.width, glyph.height};
+                UiRect destination{command.rect.x + glyph.x, top + glyph.y, glyph.width, glyph.height};
                 if(options.textPixelScale.x>0.0f)
                     destination.x=std::round(destination.x*options.textPixelScale.x)/options.textPixelScale.x;
                 if(options.textPixelScale.y>0.0f)
                     destination.y=std::round(destination.y*options.textPixelScale.y)/options.textPixelScale.y;
                 context.AppendQuad(destination,
                                    {glyph.u0, glyph.v0, glyph.u1 - glyph.u0, glyph.v1 - glyph.v0},
-                                   command.color, texture, clip);
+                                   command.color, texture, textClip);
             }
             break;
         }

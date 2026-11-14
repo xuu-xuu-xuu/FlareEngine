@@ -17,13 +17,16 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class Localization;
 
 namespace se::ui::editor
 {
+enum class EditorPropertyEditPhase { Begin, Commit, Cancel };
 
 // 编辑器 Toolkit 组合根的 CPU 侧：文档、Chrome、Dock、面板与命令。
 // 仍由 EditorApplication/EditorRenderer 提供窗口和 RHI；本类不拥有 GPU 资源。
@@ -76,6 +79,7 @@ public:
     [[nodiscard]] UiElementHandle CurrentInputRoot() const {return SurfaceRoot(inputSurface_);}
     [[nodiscard]] std::uint32_t SurfaceForElement(UiElementHandle element) const;
     [[nodiscard]] UiRect SurfaceDockRect(std::uint32_t id) const;
+    [[nodiscard]] std::optional<DockAxis> SplitterCursorAt(float x, float y) const;
     [[nodiscard]] EditorPanelId DraggingPanel() const noexcept {return dragTabPanel_;}
     void SetFloatRequestHandler(std::function<void(EditorPanelId)> handler){floatRequest_=std::move(handler);}
     [[nodiscard]] std::string WindowLabel(std::uint32_t id) const;
@@ -86,6 +90,15 @@ public:
     void SetInspector(std::uint64_t id, std::string label, std::vector<EditorProperty> properties);
     void SetSelectionHandler(std::function<void(std::uint64_t)> handler);
     void SetPropertyHandler(std::function<bool(std::uint64_t, std::string, std::string)> handler);
+    void SetPropertyEditHandler(std::function<bool(std::uint64_t, EditorPropertyEditPhase)> handler);
+    [[nodiscard]] bool InspectorNumericCursorAt(float x, float y) const;
+    [[nodiscard]] bool ColorPickerOpen() const noexcept { return inspectorColor_ != nullptr; }
+    [[nodiscard]] UiElementHandle ColorPickerDialog() const noexcept;
+    [[nodiscard]] UiElementHandle ColorPickerSquare() const noexcept;
+    [[nodiscard]] UiElementHandle ColorPickerHue() const noexcept;
+    [[nodiscard]] UiElementHandle ColorPickerChannel(std::size_t index) const noexcept;
+    [[nodiscard]] UiElementHandle ColorPickerApplyButton() const noexcept;
+    void CancelPropertyInteraction();
     void SetReparentHandler(std::function<bool(std::uint64_t, std::uint64_t)> handler);
     void SetAssetSelectionHandler(std::function<void(std::string)> handler);
     void SetAssetImportHandler(std::function<void()> handler);
@@ -93,7 +106,7 @@ public:
     void SetGizmo(float x, float y, bool visible);
     void SetGizmoDragHandler(std::function<void(int, float, float)> handler);
     void SetViewportActionHandler(std::function<void(std::string_view)> handler){viewportAction_=std::move(handler);}
-    void SetViewportState(int tool,bool local,bool center,bool sky,bool grid,bool gizmos,bool playing);
+    void SetViewportState(int tool,bool local,bool center,bool sky,bool grid,bool gizmos,bool playing,bool paused=false);
 
     // 状态栏与面板开关；Chrome/菜单/快捷键共用同一命令总线。
     void SetStatus(std::string status);
@@ -110,12 +123,16 @@ public:
     void SetFormAction(EditorPanelId panel, std::string label, std::function<bool()> action);
     void SetFormActionLabel(EditorPanelId panel, std::string label);
     void SetFormStatus(EditorPanelId panel, std::string status);
+    void SetFormPreview(EditorPanelId panel,std::string image,float aspect=1);
+    void SetFormPrimaryLabel(EditorPanelId panel,std::string label);
+    void SetFormManagedStatus(EditorPanelId panel,bool managed);
     // About/Diagnostics 等只读面板；文本直接写在 content 元素上。
     void SetPanelText(EditorPanelId panel, std::string text);
     // Assets 底部预览文本（材质摘要等）；空字符串恢复“Preview: path”。
     void SetAssetsPreviewText(std::string text);
     // 程序化选择资产（测试/恢复用）；会同步列表、预览与选择回调。
     void SelectAsset(const std::string& path);
+    void OpenCreateMenu(EditorPanelId panel, float x, float y, std::uint64_t parent = 0);
     // 资产图片预览；空 image 隐藏。width/height 为源图尺寸（仅用于记录）。
     void SetAssetPreviewImage(std::string image,float width,float height);
     // F2：聚焦 Inspector 的 name 行并进入编辑；无选中/不可编辑返回 false。
@@ -203,15 +220,18 @@ private:
         std::uint32_t surface=0;
         std::vector<EditorPanelId> tabs;
         EditorPanelId active = EditorPanelId::None;
-        std::vector<std::size_t> path;
         UiElementHandle tabBar{};
+        UiElementHandle focusLine{};
+        UiElementHandle previousTab{}, nextTab{};
         std::vector<UiElementHandle> tabButtons;
         std::vector<UiElementHandle> closeButtons;
+        std::vector<float> widths;
         UiRect rect{};
     };
 
     struct SplitHandle
     {
+        UiElementHandle line{};
         std::uint32_t surface=0;
         std::vector<std::size_t> path;
         DockAxis axis = DockAxis::Horizontal;
@@ -236,12 +256,16 @@ private:
         std::function<bool()> action;
         std::string actionLabel;
         std::string status;
+        UiElementHandle preview{};
+        std::string previewImage;
+        float previewAspect=1;
+        bool managedStatus=false;
         UiElementHandle comboPopup{};
         std::vector<UiElementHandle> comboOptions;
         int comboRow = -1;
     };
 
-    static constexpr std::size_t kPanelCount = 13;
+    static constexpr std::size_t kPanelCount = 14;
 
     PanelSlot& Slot(EditorPanelId panel);
     const PanelSlot& Slot(EditorPanelId panel) const;
@@ -250,6 +274,25 @@ private:
     const FormPanel& Form(EditorPanelId panel) const;
     void BuildPanels();
     void BuildPanelContent(PanelSlot& slot);
+    void BuildInspector(PanelSlot& slot);
+    void BuildInspectorRow(int index, UiElementHandle element);
+    void RefreshInspectorRows();
+    void LayoutInspector(float width);
+    void ActivateInspectorRow(UiInputEvent& event);
+    bool BeginInspectorEdit(std::size_t index);
+    void EndInspectorEdit(bool commit);
+    void PaintInspectorEdit(float width);
+    void ShowInspectorCombo(std::size_t index);
+    std::optional<std::size_t> InspectorNumericAt(float x, float y) const;
+    void BeginInspectorDrag(std::size_t index, const UiInputEvent& event);
+    void UpdateInspectorDrag(const UiInputEvent& event);
+    void EndInspectorDrag(bool commit);
+    void OpenInspectorColor(std::size_t index);
+    void CloseInspectorColor(bool commit);
+    void LayoutInspectorColor();
+    void RefreshInspectorColor(int editingChannel = -1);
+    void MoveInspectorColor(const UiInputEvent& event);
+    void ApplyInspectorColorChannel(std::size_t index);
     void BuildFormPanel(PanelSlot& slot);
     void RefreshForm(FormPanel& form);
     void ShowFormCombo(EditorPanelId panel, FormPanel& form, int row);
@@ -258,15 +301,21 @@ private:
     void BuildDesignerPanel(PanelSlot& slot);
     void RefreshDesignerNodes();
     void BuildChrome();
+    void UpdateTransport();
     void BuildChromeMenus();
     void RefreshStatus();
     void RebuildGroupViews();
     void UpdateDockRects();
     void LayoutDockNode(const DockNode& node, const UiRect& rect, std::vector<std::size_t>& path);
     void RebuildTabBar(GroupView& group);
+    void LayoutTabBar(GroupView& group);
+    void SetActivePanel(EditorPanelId panel);
+    void FocusClickedContent(UiElementHandle target);
     void UpdatePanelContentRects();
     void MarkDockDirty(bool structural, bool save);
     void OpenMenu(const std::string& menu);
+    void ShowMenu(UiElementHandle surface, float x, float y, float width,
+                  const std::vector<EditorMenuItem>& items, std::uint64_t target = 0);
     void CloseMenu();
     void ShowCloseModal();
     void HideCloseModal();
@@ -279,7 +328,8 @@ private:
     void CancelTabDrag();
     void BeginSplitter(float x, float y);
     void DragSplitter(float x, float y);
-    void EndSplitter();
+    void EndSplitter(bool commit);
+    [[nodiscard]] const SplitHandle* FindSplitter(float x, float y) const;
     void SaveLayoutIfConfigured();
     [[nodiscard]] std::string Text(std::string_view key, std::string_view fallback) const;
     [[nodiscard]] std::string PanelLabel(EditorPanelId panel) const;
@@ -306,11 +356,12 @@ private:
     std::array<PanelSlot, kPanelCount> slots_{};
     std::vector<GroupView> groups_;
     UiElementHandle viewportTools_{};
+    UiElementHandle transformTools_{};
     std::vector<UiElementHandle> viewportToolButtons_;
     std::function<void(std::string_view)> viewportAction_;
     std::vector<SplitHandle> splitHandles_;
     std::vector<UiElementHandle> pendingDestroy_;
-    std::array<FormPanel, 4> forms_{};
+    std::array<FormPanel, 5> forms_{};
     std::string assetsPreviewText_;
     std::string assetsPreviewImage_;
     UiElementHandle assetsPreviewImageElement_{};
@@ -338,8 +389,45 @@ private:
     EditorHierarchyModel hierarchyModel_;
     EditorAssetsModel assetsModel_;
     EditorInspectorModel inspectorModel_;
+    struct InspectorRow
+    {
+        std::string title;
+        bool header = false;
+        bool closed = false;
+        std::vector<std::size_t> fields;
+    };
+    std::vector<InspectorRow> inspectorRows_;
+    std::unordered_map<std::string, bool> inspectorFolds_;
+    float inspectorWidth_ = 0.0f;
     std::function<void(std::uint64_t)> selectionHandler_;
     std::function<bool(std::uint64_t, std::string, std::string)> propertyHandler_;
+    std::function<bool(std::uint64_t, EditorPropertyEditPhase)> propertyEditHandler_;
+    struct InspectorDrag
+    {
+        EditorProperty field;
+        std::uint64_t target = 0;
+        std::uint32_t surface = 0;
+        double original = 0, value = 0, applied = 0;
+        float startX = 0, lastX = 0;
+        bool active = false;
+    };
+    std::optional<InspectorDrag> inspectorDrag_;
+    struct InspectorColor
+    {
+        std::uint64_t target = 0;
+        std::uint32_t surface = 0;
+        std::string key;
+        UiColor original{}, current{};
+        float hue = 0, saturation = 0, value = 0, paintedHue = -1;
+        int dragging = 0;
+        UiRect anchor{};
+        UiElementHandle backdrop{}, panel{}, square{}, hueBar{}, cursor{}, cursorInner{}, hueCursor{}, title{};
+        UiElementHandle previous{}, preview{}, previousLabel{}, previewLabel{}, apply{}, cancel{};
+        std::vector<UiElementHandle> tiles, hues;
+        std::array<UiElementHandle,3> channels{}, channelLabels{}, channelSelections{};
+        std::array<std::unique_ptr<UiTextEdit>,3> editors;
+    };
+    std::unique_ptr<InspectorColor> inspectorColor_;
     std::function<bool(std::uint64_t, std::uint64_t)> reparentHandler_;
     std::function<void(std::string)> assetSelectionHandler_;
     std::function<void()> assetImportHandler_;
@@ -351,6 +439,8 @@ private:
     bool draggingHierarchy_ = false;
     std::unique_ptr<UiTextEdit> inspectorEdit_;
     UiElementHandle inspectorEditElement_{};
+    UiElementHandle inspectorEditSelection_{};
+    float inspectorEditScroll_ = 0;
     std::unique_ptr<UiTextEdit> assetsFilter_;
     UiElementHandle assetsFilterElement_{};
     UiElementHandle dragGhost_{};
@@ -385,10 +475,13 @@ private:
     UiElementHandle menuDropdown_{};
     std::vector<UiElementHandle> menuButtons_;
     std::vector<UiElementHandle> toolbarButtons_;
+    UiElementHandle hoveredChrome_;
+    UiElementHandle pressedTransport_;
+    bool previewPlaying_ = false;
+    bool previewPaused_ = false;
     std::vector<std::string> menuNames_;
     std::vector<std::size_t> menuFirstItem_;
     std::string openMenu_;
-    std::vector<std::size_t> dropdownIndices_;
 
     std::string status_ = "Ready";
     std::string selectionLabel_;
@@ -408,7 +501,8 @@ private:
 
     std::uint64_t dockRevision_ = 0;
     std::uint64_t builtDockRevision_ = ~std::uint64_t{0};
-    int splitterActive_ = 0;
+    bool splitterActive_ = false;
+    float splitterOriginalRatio_ = 0.5f;
     std::vector<std::size_t> splitterPath_;
     DockAxis splitterAxis_ = DockAxis::Horizontal;
     float splitterStartRatio_ = 0.5f;
@@ -421,7 +515,11 @@ private:
     float tabDragStartY_ = 0.0f;
     EditorPanelId dropTarget_ = EditorPanelId::None;
     bool dropBefore_ = false;
-    int dropZone_ = 0;
+    enum class DockZone { Merge, Left, Right, Top, Bottom };
+    DockZone dropZone_ = DockZone::Merge;
+    EditorPanelId dropGroup_ = EditorPanelId::None;
+    bool dropOnTabBar_ = false;
+    [[nodiscard]] static DockZone ContentDropZone(const UiRect& group, float x, float y, DockZone previous);
 };
 
 } // namespace se::ui::editor

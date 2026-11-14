@@ -361,6 +361,8 @@ public:
     ~CommandContext();
     CommandContext(CommandContext&&) noexcept;
     CommandContext& operator=(CommandContext&&) noexcept;
+    // 即使没有网格，天空也需要当前相机；必须在录制 Pass 前设置。
+    Result ConfigureView(const Mat4& viewProjection);
     Result ConfigureForward(const ForwardLighting& lighting,PipelineHandle outputPipeline,PipelineHandle skyPipeline);
     // G06.08：在 Clear 之后、DrawInstanced 之前声明遮挡批次。bounds 与 instances 由调用方保活。
     // 非 Forward 帧只允许一次实例化绘制；G06.10 起 Forward 实例化可同时配置 Forward，但仍与阴影/后处理/GUI 互斥。

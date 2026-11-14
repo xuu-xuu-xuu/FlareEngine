@@ -22,7 +22,22 @@ public sealed class CharacterController
         if(destroyed)throw new EngineException("Bridge.InvalidCharacter",2);
     }
     public Entity Entity { get; }
-    public CharacterState State { get; private set; }
+    private CharacterState currentState;
+    private readonly bool authored;
+    public CharacterState State
+    {
+        get
+        {
+            if(!authored)return currentState;
+            RequireAlive();
+            return Entity.Session.Invoke(handle=>{EngineSession.Check(NativeMethods.CharacterComponentState(handle,Entity.Handle,out var state));return new CharacterState(state.Position,state.VerticalVelocity,state.Grounded!=0);});
+        }
+        private set=>currentState=value;
+    }
+    private CharacterController(Entity entity,NativeCharacterState state)
+    {Entity=entity;authored=true;State=new(state.Position,state.VerticalVelocity,state.Grounded!=0);}
+    public static CharacterController FromComponent(Entity entity)=>entity.Session.Invoke(handle=>
+    {EngineSession.Check(NativeMethods.CharacterComponentState(handle,entity.Handle,out var state));return new CharacterController(entity,state);});
     public CharacterController(Entity entity, CharacterDescription description)
     {
         Entity = entity;
@@ -56,6 +71,8 @@ public sealed class CharacterController
 }
 internal static partial class NativeMethods
 {
+    [LibraryImport(Library, EntryPoint="se_character_component_state")]
+    internal static partial int CharacterComponentState(ulong session,ulong entity,out NativeCharacterState state);
     [LibraryImport(Library, EntryPoint="se_character_create")]
     internal static partial int CharacterCreate(ulong session,ulong entity,in CharacterDescription description);
     [LibraryImport(Library, EntryPoint="se_character_move")]

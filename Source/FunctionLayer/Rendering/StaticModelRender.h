@@ -54,6 +54,10 @@ public:
     void Prune(const AssetStore* assets,std::span<const AssetId> needed,std::span<const AssetId> neededMaterials={});
     std::size_t TextureCount() const noexcept;
     std::size_t ModelCount() const noexcept { return models_.size(); }
+    // 改变离线层数前由调用方等待 GPU；只失效模型派生缓存，保持资产源不变。
+    void SetLodLevels(std::uint32_t levels){if(lodLevels_!=levels){lodLevels_=levels;models_.clear();attempted_.clear();}}
+    void SetMaterialPipelineKind(rhi::PipelineKind kind){if(materialKind_!=kind){materialKind_=kind;materials_.clear();}}
+    void SetCustomMaterialPipelinesEnabled(bool enabled){if(customMaterialPipelines_!=enabled){customMaterialPipelines_=enabled;materials_.clear();}}
     // G04：压缩派生纹理。默认关闭保持 RGBA8；目录非空时读写 .sebc 跨进程缓存。
     // bc1Color → baseColor 用 BC1 sRGB；bc1Data → MR 用 BC1 线性；bc5Normal → 法线用 BC5（XY，Shader 重建 Z）。
     void EnableBc1Textures(bool enabled,std::filesystem::path bakeDirectory={},bool dataTextures=false);
@@ -98,6 +102,9 @@ private:
         std::string shaderKey; // 用户产物内容 SHA-256；空表示默认 PBR。
     };
     bool pbr_=false;
+    bool customMaterialPipelines_=true;
+    rhi::PipelineKind materialKind_=rhi::PipelineKind::PbrMesh;
+    std::uint32_t lodLevels_=0;
     bool bc1Textures_=false;
     bool bc1DataTextures_=false;
     bool bc5Normals_=false;

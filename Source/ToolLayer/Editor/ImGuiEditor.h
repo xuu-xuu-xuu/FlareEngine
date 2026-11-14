@@ -91,6 +91,7 @@ public:
     void QueueAssetImport(std::vector<std::filesystem::path> sources);
     bool AssetOperationBusy() const noexcept{return importPlanning_.valid()||importExecution_.valid()||assetActionPlanning_.valid()||assetActionExecution_.valid();}
     void ConfigureRecovery(std::filesystem::path directory,bool offerRecovery);
+    void UpdateRecovery(const EditorSession&,UiTree*);
     std::vector<RecoveryDocument> CaptureRecoveryDocuments(const EditorSession&,UiTree*);
     bool RestoreRecovery(const RecoveryGroup&,EditorSession&,AssetStore&,UiTree&);
     bool SaveRecoveryCopy(const RecoveryGroup&,std::filesystem::path& destination);
@@ -138,6 +139,12 @@ public:
     bool SetMaterialPropertyForToolkit(std::string_view key, const PropertyValue& value);
     // Toolkit UI Designer：复用同一 UICanvasEditor 手势与撤销事务。
     void SelectUiForToolkit(UiId id) { selectedUi_ = id; }
+    bool EditUiForToolkit(UiTree& ui,const std::function<bool(UiTree&)>& operation){return EditUi(ui,operation);}
+    void BeginUiEditForToolkit(UiTree& ui){BindUi(ui);BeginUiEdit(ui);}
+    void EndUiEditForToolkit(UiTree& ui,bool commit){EndUiEdit(ui,commit);}
+    bool UiUndoForToolkit(UiTree& ui,bool redo=false){return redo?UiRedo(ui):UiUndo(ui);}
+    void MarkUiSavedForToolkit(UiTree& ui,const std::filesystem::path& path);
+    bool UiDirtyForToolkit(UiTree& ui)const{return UiDirty(&ui);}
     bool BeginUiCanvasDragForToolkit(UiTree& ui, UiId id, UiPoint screen);
     bool UpdateUiCanvasDragForToolkit(UiTree& ui, UiPoint screen);
     bool EndUiCanvasDragForToolkit(UiTree& ui, bool commit);

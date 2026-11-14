@@ -1,4 +1,5 @@
 #include "FunctionLayer/Runtime/ComponentMetadata.h"
+#include "FeatureComponents.h"
 #include <array>
 #include <algorithm>
 #include <unordered_set>
@@ -154,6 +155,7 @@ std::vector<ComponentDescriptor>& Registry()
         const std::array ids{ComponentTypes::Transform,ComponentTypes::Camera,ComponentTypes::Mesh,ComponentTypes::Light};
         const std::array factories{CreateBuiltin<ComponentTypes::Transform>,CreateBuiltin<ComponentTypes::Camera>,CreateBuiltin<ComponentTypes::Mesh>,CreateBuiltin<ComponentTypes::Light>};
         for(std::size_t i=0;i<result.size();++i){result[i].type=ids[i];result[i].read=ReadBuiltin;result[i].write=WriteBuiltin;result[i].create=factories[i];}
+        AppendEngineFeatureMetadata(result);
         return result;
     }();return values;
 }
@@ -172,13 +174,16 @@ bool RegisterComponent(const ComponentDescriptor& descriptor,std::string& error)
     if(descriptor.type<1024||descriptor.key.empty()||descriptor.key.size()>128||descriptor.key.find('.')!=std::string_view::npos||!descriptor.version
         ||!descriptor.read||!descriptor.write||!descriptor.create||descriptor.properties.size()>256||Registry().size()>=1024)
         return Fail(error,"Metadata.InvalidDescriptor");
-    std::unordered_set<std::string_view> keys;const auto prefix=std::string(descriptor.key)+'.';
+    std::unordered_set<std::string_view> keys,propertyKeys;const auto prefix=std::string(descriptor.key)+'.';
     constexpr std::array<std::size_t,9> indices{0,1,2,3,4,5,4,6,7};
     for(const auto& property:descriptor.properties)
     {
         const auto type=static_cast<std::size_t>(property.type);
         if(!property.key.starts_with(prefix)||property.key.size()==prefix.size()||type>=indices.size()||property.defaultValue.index()!=indices[type]
-            ||!keys.insert(SerializedPropertyKey(property)).second||FindProperty(property.key)||!ValidatePropertyValue(property,property.defaultValue))
+            ||!propertyKeys.insert(property.key).second||!keys.insert(SerializedPropertyKey(property)).second
+            ||FindProperty(property.key)||!ValidatePropertyValue(property,property.defaultValue)
+            ||(property.minimum&&!IsFinite(*property.minimum))||(property.maximum&&!IsFinite(*property.maximum))
+            ||(property.minimum&&property.maximum&&*property.minimum>*property.maximum))
             return Fail(error,"Metadata.InvalidDescriptor");
     }
     Registry().push_back(descriptor);return true;

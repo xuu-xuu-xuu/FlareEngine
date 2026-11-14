@@ -166,6 +166,7 @@ bool World::RemoveComponent(ComponentHandle handle)
 }
 void World::ResetStorage()noexcept
 {
+    objects_.reset();
     TouchSpatial();
     sceneEnvironment_={};
     slots_.clear();freeSlots_.clear();stableIds_.clear();usedStableIds_.clear();commands_.clear();nextFrameCommands_.clear();frameActive_=false;preparingFrame_=false;

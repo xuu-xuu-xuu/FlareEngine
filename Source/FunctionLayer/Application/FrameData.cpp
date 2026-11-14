@@ -1,4 +1,5 @@
 #include "FrameData.h"
+#include "FeatureFrameData.h"
 namespace se
 {
 void BuildFrameData(const Environment& environment,const UiTree* ui,const PhysicsWorld* physics,FrameData& output)
@@ -25,6 +26,7 @@ void BuildFrameData(const World& world,const UiTree* ui,const PhysicsWorld* phys
     }
     if(ui)next.ui=ui->Visuals();
     if(physics)next.debugLines=physics->DebugLines();
+    ApplyFeatureFrameData(world,next);
     output=std::move(next);
 }
 }

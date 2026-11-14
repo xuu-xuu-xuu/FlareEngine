@@ -29,6 +29,8 @@ public:
     World& GetWorld()noexcept{return world_;}
     const World& GetWorld()const noexcept{return world_;}
     bool Flush();
+    // 原生编辑器可提供默认物理服务；托管宿主显式 hooks.physics 时由宿主管理。
+    void SetPhysicsService(std::function<bool(double)> service){physicsService_=std::move(service);}
     void Clear();
     bool BeginShutdown();
     bool Closing()const noexcept{return closing_;}
@@ -69,6 +71,7 @@ private:
     bool Stage(World& world,TickStage stage,double frameSeconds,double simulationDelta,const EnvironmentHooks& hooks);
     bool SchedulingPaused()const noexcept{return (paused_||framePaused_)&&!forceFixedStep_;}
     World world_;
+    std::function<bool(double)> physicsService_;
     TickScheduler ticks_;
     EventBus events_;
     SceneManager scenes_;

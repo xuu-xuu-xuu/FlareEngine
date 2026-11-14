@@ -40,6 +40,7 @@ struct SandboxLifetime
     {
         if(shutdownFinished)return true;
         shutdownFinished=true;
+        window.drawResizeFrame = {};
         if (rendererStarted)
         {
             rendererStarted = false;
@@ -93,10 +94,17 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
         }
     }
     if(services&&((!services->initialWidth)!=(!services->initialHeight)||services->initialWidth>16384||services->initialHeight>16384
+        ||(!services->minimumClientWidthDip)!=(!services->minimumClientHeightDip)
+        ||services->minimumClientWidthDip>16384||services->minimumClientHeightDip>16384
         ||!std::isfinite(services->fixedDeltaSeconds)||services->fixedDeltaSeconds<0||services->fixedDeltaSeconds>0.1))
     {Log(LogLevel::Error,localization.GetText("App.ServicesInvalid"));return 1;}
     SandboxLifetime lifetime(renderer);
     WindowState& window = lifetime.window;
+    if (services)
+    {
+        window.minimumClientWidthDip=services->minimumClientWidthDip;
+        window.minimumClientHeightDip=services->minimumClientHeightDip;
+    }
     if (IsDebugLoggingEnabled())
         std::cout << "[Debug] RunSandboxApp 中 window 的地址：" << &window << '\n';
     LogCheckpoint("Window.Create.Begin");
@@ -148,13 +156,13 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
         if(services&&services->fixedDeltaSeconds>0)Log(LogLevel::Info,localization.GetText("Sample.FixedStep")+": "+std::to_string(services->fixedDeltaSeconds));
         SandboxDiagnostics diagnostics(window.input);
         constexpr double maxUpdateDeltaSeconds = 0.1;
-        while (PumpWindowMessages(exitCode) && !window.closeRequested)
-        {
+        RenderResult result = RenderResult::Success;
+        auto drawFrame = [&]() -> bool {
             if (!UpdateFrameTimer(timer))
             {
                 Log(LogLevel::Error, localization.GetText("Timer.UpdateFailed"));
                 exitCode = 1;
-                break;
+                return false;
             }
             const double updateDeltaSeconds = services&&services->fixedDeltaSeconds>0?services->fixedDeltaSeconds:
                 timer.deltaSeconds > maxUpdateDeltaSeconds ? maxUpdateDeltaSeconds : timer.deltaSeconds;
@@ -169,15 +177,15 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
                     (lifetime.uiInput && lifetime.uiInput->KeyboardConsumed()) || (services->captureKeyboard && services->captureKeyboard()),
                     (lifetime.uiInput && lifetime.uiInput->PointerConsumed()) || (services->capturePointer && services->capturePointer()));
                 if (lifetime.uiInput) lifetime.uiInput->EndFrame();
-                if(services->runEnvironmentFrame){if(!services->runEnvironmentFrame(updateDeltaSeconds)){exitCode=1;break;}}
-                else if (services->update && !services->update(updateDeltaSeconds)) { exitCode = 1; break; }
+                if(services->runEnvironmentFrame){if(!services->runEnvironmentFrame(updateDeltaSeconds)){exitCode=1;return false;}}
+                else if (services->update && !services->update(updateDeltaSeconds)) { exitCode = 1; return false; }
                 if (services->ui) services->ui->Layout(float(window.width),float(window.height));
                 if (lifetime.uiInput) {lifetime.uiInput->SynchronizeCapture(window.hwnd);lifetime.uiInput->PositionIme(window.hwnd);}
             }
             }
             diagnostics.ObserveInput(window.input);
             diagnostics.ObserveTiming(timer,updateDeltaSeconds,services&&services->fixedDeltaSeconds>0,&localization);
-            RenderResult result = RenderResult::Success;
+            result = RenderResult::Success;
             if (window.drawable)
             {
                 se::FrameData data;
@@ -195,21 +203,41 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
             {
                 Log(LogLevel::Error, localization.GetText("App.RendererFrameFailed"));
                 exitCode = 1;
-                break;
+                return false;
             }
             if(startupLoading&&window.drawable)
             {
-                if(se::StartupCancelled())break;
+                if(se::StartupCancelled())return false;
                 // 隐藏窗口的 Present 可以返回 Occluded；此时首帧命令仍已成功提交。
                 // 先显示已绘制的主窗口，再通知监督进程收起加载窗口。
                 if(showWindow){ShowWindow(window.hwnd,SW_SHOW);SetForegroundWindow(window.hwnd);}
-                if(!se::ReportStartup(se::StartupStage::Ready))break;
+                if(!se::ReportStartup(se::StartupStage::Ready))return false;
                 startupLoading=false;
             }
-            if (services && services->maximumFrames && timer.frameCount >= services->maximumFrames) break;
-            profileFrame.End();
+            return !(services && services->maximumFrames && timer.frameCount >= services->maximumFrames);
+        };
+        bool pumping = false;
+        bool finished = false;
+        if (services && services->liveWindowResize)
+        {
+            // 系统拖边会阻塞 DispatchMessage。只允许从消息泵的空闲边界进入一帧，
+            // 避免布局同步、窗口创建或 GPU 提交触发的嵌套尺寸消息重复进入。
+            window.drawResizeFrame = [&] {
+                if (!pumping || finished) return;
+                pumping = false;
+                finished = !drawFrame();
+                pumping = true;
+            };
+        }
+        for (;;)
+        {
+            pumping = true;
+            const bool running = PumpWindowMessages(exitCode);
+            pumping = false;
+            if (!running || finished || window.closeRequested || !drawFrame()) break;
             Sleep(!window.drawable || result == RenderResult::Occluded ? 16 : 1);
         }
+        window.drawResizeFrame = {};
     }
     catch (const std::exception& exception)
     {

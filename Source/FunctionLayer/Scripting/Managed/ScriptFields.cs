@@ -14,8 +14,22 @@ public static class ScriptFields
         foreach(var field in Fields(value.GetType()))if(field.FieldType==typeof(EntityReference)&&field.GetValue(value) is EntityReference reference&&invalidated.Contains(reference.StableId))field.SetValue(value,new EntityReference(0));
     }
     private static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, WriteIndented = true };
-    private static IEnumerable<FieldInfo> Fields(Type type) => type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-        .Where(field => field.IsDefined(typeof(ExposeAttribute)) && !field.IsInitOnly && !field.IsStatic);
+    // 每次操作临时枚举，避免长期缓存 FieldInfo 将可卸载项目程序集保活。
+    // 字段名是绑定文档的稳定键，继承链上的同名暴露字段必须明确拒绝。
+    private static IEnumerable<FieldInfo> Fields(Type type)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        for (Type? current = type; current is not null && current != typeof(Behaviour); current = current.BaseType)
+        {
+            foreach (var field in current.GetFields(BindingFlags.Instance | BindingFlags.Public |
+                         BindingFlags.NonPublic | BindingFlags.DeclaredOnly).OrderBy(field => field.Name, StringComparer.Ordinal))
+            {
+                if (!field.IsDefined(typeof(ExposeAttribute)) || field.IsInitOnly || field.IsStatic) continue;
+                if (!names.Add(field.Name)) throw new InvalidOperationException("Script.FieldTypeChanged");
+                yield return field;
+            }
+        }
+    }
     private static string? Kind(Type type) => type == typeof(int) ? "i32" : type == typeof(float) ? "f32"
         : type == typeof(double) ? "f64" : type == typeof(bool) ? "bool" : type == typeof(string) ? "string"
         : type == typeof(Vector3) ? "vec3" : type == typeof(EntityReference) ? "entity" : null;

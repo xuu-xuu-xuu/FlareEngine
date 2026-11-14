@@ -34,12 +34,14 @@ enum class EditorCommandId : std::uint32_t
     SetProperty,
     CreateEntity,
     ReparentEntity,
+    CreateAsset,
 };
 
 struct EditorCommand
 {
     EditorCommandId id = EditorCommandId::Save;
     std::string argument;
+    std::uint64_t target = 0;
 };
 
 using EditorCommandHandler = std::function<bool(const EditorCommand&)>;

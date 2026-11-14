@@ -104,6 +104,7 @@ const char* EditorPanelName(EditorPanelId panel) noexcept
     case EditorPanelId::Preferences: return "preferences";
     case EditorPanelId::About: return "about";
     case EditorPanelId::Diagnostics: return "diagnostics";
+    case EditorPanelId::AssetTools: return "asset-tools";
     }
     return "none";
 }
@@ -122,6 +123,7 @@ bool EditorPanelFromName(std::string_view name, EditorPanelId& panel) noexcept
     else if (name == "preferences") panel = EditorPanelId::Preferences;
     else if (name == "about") panel = EditorPanelId::About;
     else if (name == "diagnostics") panel = EditorPanelId::Diagnostics;
+    else if (name == "asset-tools") panel = EditorPanelId::AssetTools;
     else return false;
     return true;
 }

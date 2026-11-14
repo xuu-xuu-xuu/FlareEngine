@@ -21,5 +21,10 @@ include(BuildConfig/CMake/Rendering.cmake)
 include(BuildConfig/CMake/Editor.cmake)
 include(BuildConfig/CMake/Resources.cmake)
 
-# 本地开发扩展不属于公开发布内容。
-include("${CMAKE_CURRENT_SOURCE_DIR}/Tests/LocalBuild.cmake" OPTIONAL)
+# 正常构建只生成编辑器和必要工具；本地回归/基准按需显式启用。
+option(FLARE_BUILD_DEVELOPMENT_TOOLS "Build local tests, samples and benchmarks" OFF)
+# 即使关闭本地扩展也生成当前测试清单，避免旧 CTest 文件仍指向已清理的程序。
+enable_testing()
+if(FLARE_BUILD_DEVELOPMENT_TOOLS)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/Tests/LocalBuild.cmake" OPTIONAL)
+endif()

@@ -5,6 +5,7 @@
 #include <objidl.h>
 #include <gdiplus.h>
 #include "PlatformLayer/Windows/AppBranding.h"
+#include "PlatformLayer/Windows/ExecutablePath.h"
 #include "CoreLayer/Localization.h"
 #include <array>
 #include <numbers>
@@ -42,6 +43,7 @@ struct EditorLoadingScreen::Impl
     std::wstring title,project,cancel,cancelling,subtitle;
     HFONT heading=nullptr,label=nullptr,detailFont=nullptr;
     ULONG_PTR graphicsToken=0;
+    std::unique_ptr<Gdiplus::Bitmap> loadingMark;
     ULONGLONG animationStart=0;
     bool animate=true;
     void UpdateMotion(HWND hwnd)
@@ -79,7 +81,12 @@ struct EditorLoadingScreen::Impl
         };
         const int width=MulDiv(client.right,96,dpi),height=MulDiv(client.bottom,96,dpi);
         const int logo=n(164);
-        if(const auto icon=AppIcon(logo))DrawIconEx(dc,(client.right-logo)/2,n(40),icon,logo,logo,0,nullptr,DI_NORMAL);
+        if(loadingMark)
+        {
+            Gdiplus::Graphics graphics(dc);
+            graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            graphics.DrawImage(loadingMark.get(),(client.right-logo)/2,n(40),logo,logo);
+        }
         text(L"Flare",heading,flare::Native(flare::Heading),Margin,207,width-2*Margin,42,DT_CENTER);
         const auto progress=owner.channel_.Read();
         const bool cancelled=owner.Cancelled() || progress.cancelled;
@@ -183,6 +190,12 @@ struct EditorLoadingScreen::Impl
         {
             Gdiplus::GdiplusStartupInput input;
             if(Gdiplus::GdiplusStartup(&graphicsToken,&input,nullptr)!=Gdiplus::Ok)graphicsToken=0;
+            if(graphicsToken)
+            {
+                const auto path=GetExecutableDirectory()/"Resources/Branding/FlareMarkTransparent.png";
+                loadingMark=std::make_unique<Gdiplus::Bitmap>(path.c_str());
+                if(loadingMark->GetLastStatus()!=Gdiplus::Ok)loadingMark.reset();
+            }
             animationStart=GetTickCount64();
             // 创建位置所在屏幕的实际 DPI 可能与系统 DPI 不同（含屏外自动测试）。
             const UINT actual=GetDpiForWindow(window);Fonts(actual?actual:96);
@@ -194,6 +207,7 @@ struct EditorLoadingScreen::Impl
         SetEvent(ready);
         if(window)while(GetMessageW(&message,nullptr,0,0)>0){TranslateMessage(&message);DispatchMessageW(&message);}
         if(window)DestroyWindow(window);
+        loadingMark.reset();
         if(graphicsToken){Gdiplus::GdiplusShutdown(graphicsToken);graphicsToken=0;}
         for(const auto font:{heading,label,detailFont})if(font)DeleteObject(font);heading=label=detailFont=nullptr;
     }

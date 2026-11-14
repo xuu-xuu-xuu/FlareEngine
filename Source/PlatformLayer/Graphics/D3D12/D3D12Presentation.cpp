@@ -255,7 +255,8 @@ bool InitializeD3D12Presentation(D3D12Presentation& presentation,
     swapChainDescription.SampleDesc = { 1, 0 }; // 交换链不使用 MSAA。
     swapChainDescription.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     swapChainDescription.BufferCount = D3D12Presentation::bufferCount;
-    swapChainDescription.Scaling = DXGI_SCALING_STRETCH;
+    // 拖边换缓冲区的间隙，桌面合成器按原像素显示上一帧，文字和场景保持比例。
+    swapChainDescription.Scaling = DXGI_SCALING_NONE;
     swapChainDescription.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     swapChainDescription.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
 
@@ -943,7 +944,7 @@ void ReleaseD3D12Presentation(D3D12Presentation& presentation) noexcept
         frame.sceneOverlay.reset();
         frame.allocator.Reset();frame.fenceValue=0;
         frame.timestampQueries.Reset();frame.timestampReadback.Reset();frame.timestampsPending=false;
-        frame.drawConstants.clear();frame.instanceSlices.clear();frame.uploadDestinations.clear();frame.uploads.Release();frame.baselineConstants.Release();frame.descriptors.Release();frame.outputDescriptors.Release();frame.environmentDescriptors.Release();frame.postDescriptors.Release();frame.guiDescriptors.Release();frame.gameUiDescriptors.Release();frame.forwardConstants={};frame.shadow.reset();frame.constantCursor=0;
+        frame.drawConstants.clear();frame.instanceSlices.clear();frame.uploadDestinations.clear();frame.uploads.Release();frame.baselineConstants.Release();frame.descriptors.Release();frame.outputDescriptors.Release();frame.environmentDescriptors.Release();frame.postDescriptors.Release();frame.guiDescriptors.Release();frame.gameUiDescriptors.Release();frame.forwardConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
     }
     presentation.fenceEvent.Close();
     presentation.sceneOverlay.reset();
@@ -983,7 +984,7 @@ void CollectD3D12UploadReferences(D3D12Presentation& p)
     if(!p.fence)return;const auto completed=p.fence->GetCompletedValue();if(completed==UINT64_MAX)return;
     for(UINT index=0;index<p.frameCount;++index)
         if((!p.uploadStates||index!=p.frameCursor)&&p.frames[index].fenceValue<=completed)
-        {p.frames[index].uploadDestinations.clear();p.frames[index].shadow.reset();}
+        {p.frames[index].uploadDestinations.clear();p.frames[index].shadow.reset();p.frames[index].post.reset();}
 }
 bool BeginD3D12FrameCommands(D3D12Presentation& p,const Localization& text)
 {
@@ -996,7 +997,7 @@ bool BeginD3D12FrameCommands(D3D12Presentation& p,const Localization& text)
         ||!CheckGraphicsResult(frame.allocator->Reset(),text,"D3D12.ResetCommandAllocatorFailed")
         ||!CheckGraphicsResult(p.commandList->Reset(frame.allocator.Get(),nullptr),text,"D3D12.ResetCommandListFailed"))
     {p.failed=true;if(DeviceWasRemoved(p))ReportDeviceRemoval(p,text);return false;}
-    frame.uploadDestinations.clear();frame.drawConstants.clear();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.forwardConstants={};frame.shadow.reset();frame.constantCursor=0;
+    frame.uploadDestinations.clear();frame.drawConstants.clear();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.forwardConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
     CollectD3D12UploadReferences(p);return true;
 }
 bool BeginD3D12UploadBatch(D3D12Presentation& p,const Localization& text)

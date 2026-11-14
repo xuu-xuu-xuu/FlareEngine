@@ -169,6 +169,9 @@ try {
         Copy-EngineRendererResources -NativeDirectory $NativeDirectory -Destination (Join-Path $runtime 'Resources')
         Copy-Item -LiteralPath (Join-Path $engineRoot 'Resources/Localization') -Destination (Join-Path $runtime 'Resources') -Recurse -Force
     }
+    # 编辑器资源工具在脚本候选中同样可用；它不属于游戏脚本依赖。
+    $shaderTool=if($packageMode){Join-Path $engineRoot 'Tools/ShaderBuilder.exe'}else{Join-Path $NativeDirectory 'ShaderBuilder.exe'}
+    if(Test-Path -LiteralPath $shaderTool -PathType Leaf){Copy-Item -LiteralPath $shaderTool -Destination (Join-Path $runtime 'ShaderBuilder.exe') -Force}
     # 不加载原生引擎、不创建窗口；发布图和真实加载均通过后才能成为可用候选。
     foreach($name in @('System.IO.Pipelines.dll','System.Text.Json.dll','coreclr.dll','hostfxr.dll','hostpolicy.dll')){
         if(!(Test-Path -LiteralPath (Join-Path $runtime $name) -PathType Leaf)){throw ('Preview.BuildFailed runtime missing '+$name)}

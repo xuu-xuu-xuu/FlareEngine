@@ -45,8 +45,6 @@ try {
     $sourceIdentity=Get-EngineSourceIdentity $root
     AddStep 'copy_editor'
     CopyFile $executable (Join-Path $stage 'FlareEditor.exe')
-    CopyFile $executable (Join-Path $stage 'GearEditor.exe')
-    CopyFile $executable (Join-Path $stage 'SelfEngineEditor.exe')
     AddStep 'copy_resources'
     CopyTree (Join-Path $native 'Resources') (Join-Path $stage 'Resources')
     AddStep 'strip_derived_caches'

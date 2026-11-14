@@ -26,6 +26,8 @@ public sealed class ScriptBindings
     public string Json => document.ToJsonString(Options);
     public bool Dirty=>restoredDirty||!JsonNode.DeepEquals(document,savedDocument);
     public ulong Revision=>revision;
+    // 仅持弱引用，供开发诊断验证字段检查不会保活项目程序集。
+    public WeakReference? LastUnloadedSchemaContext { get; private set; }
     public string SourceDigest=>sourceDigest;
     public string RelativePath=>documentRoot is null||documentPath is null?"":Path.GetRelativePath(documentRoot,documentPath).Replace('\\','/');
     public static IReadOnlyList<string> ScriptTypes(string json)
@@ -144,7 +146,11 @@ public sealed class ScriptBindings
                 if(!next.TryAdd(id,fields))throw new InvalidOperationException("Script.DuplicateType");
             }
         }
-        finally {context.Unload();}
+        finally
+        {
+            LastUnloadedSchemaContext = new WeakReference(context);
+            context.Unload();
+        }
         schemas.Clear();foreach(var pair in next)schemas.Add(pair.Key,pair.Value);
         schemaStamp=file.LastWriteTimeUtc;schemaLength=file.Length;
     }

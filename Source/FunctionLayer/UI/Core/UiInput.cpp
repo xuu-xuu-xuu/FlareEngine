@@ -155,7 +155,7 @@ struct UiDispatcher::Impl
         UiElementHandle element;
         UiEventType type = UiEventType::PointerMove;
         UiEventPhase phase = UiEventPhase::Target;
-        UiEventHandler function;
+        std::shared_ptr<UiEventHandler> function;
     };
 
     UiDocument* document = nullptr;
@@ -183,16 +183,18 @@ struct UiDispatcher::Impl
     {
         event.currentTarget = element;
         event.phase = phase;
+        // 回调可打开菜单、注册新控件或销毁旧控件。先取本轮接收者，避免使迭代器失效。
+        std::vector<std::shared_ptr<UiEventHandler>> listeners;
         for (const Handler& handler : handlers)
         {
             if (handler.element == element && handler.type == event.type && handler.phase == phase)
-            {
-                handler.function(event);
-                if (event.propagationStopped)
-                {
-                    break;
-                }
-            }
+                listeners.push_back(handler.function);
+        }
+        for (auto& listener : listeners)
+        {
+            if (!document->Element(element)) break;
+            (*listener)(event);
+            if (event.propagationStopped) break;
         }
     }
 
@@ -283,7 +285,7 @@ void UiDispatcher::AddHandler(UiElementHandle element, UiEventType type, UiEvent
     {
         return;
     }
-    impl_->handlers.push_back({element, type, phase, std::move(handler)});
+    impl_->handlers.push_back({element, type, phase, std::make_shared<UiEventHandler>(std::move(handler))});
 }
 
 void UiDispatcher::RemoveHandlers(UiElementHandle element)

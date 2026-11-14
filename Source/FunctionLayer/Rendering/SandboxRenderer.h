@@ -67,6 +67,12 @@ private:
     se::PbrInstanceBatcher instances_;
     se::rhi::Pipeline outputPipeline_;
     se::rhi::Pipeline skyPipeline_;
+    se::rhi::Pipeline featureEnvironmentPipeline_,featureEnvironmentSky_;
+    se::rhi::Pipeline featurePbrPipeline_;
+    bool featureFullPbr_=false;
+    bool featureEnvironment_=false,featurePostAces_=false;
+    se::rhi::Pipeline featureForwardOutput_;
+    bool featureForward_=false;
     se::rhi::Pipeline shadowPipeline_;
     std::shared_ptr<const se::StaticRenderModel> cube_;
     std::shared_ptr<const se::StaticRenderModel> sphere_;
@@ -111,6 +117,7 @@ private:
     bool hlodEnabled_=false,hlodBaked_=false,hlodFailed_=false;
     std::uint32_t hlodLevel_=0;
     std::size_t hlodInstanceCount_=0;
+    std::string featureHlodSignature_;
     std::vector<se::HlodCell> hlodCells_;
     std::vector<std::shared_ptr<const se::StaticRenderModel>> hlodProxies_;
     std::vector<std::vector<std::shared_ptr<const se::PbrRenderMaterial>>> hlodOverrides_;

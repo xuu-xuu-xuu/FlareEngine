@@ -65,7 +65,7 @@ public:
     static std::shared_ptr<const ImageData> LoadImageSnapshot(const AssetSourceSnapshot& source,
         std::vector<AssetDiagnostic>& diagnostics, std::uint64_t maximumRgbaBytes = 256ull * 1024 * 1024);
     bool SaveMaterialSource(const std::filesystem::path& path,const MaterialDocument& material,
-        AssetId& id,std::vector<AssetDiagnostic>& diagnostics);
+        AssetId& id,std::vector<AssetDiagnostic>& diagnostics,bool replaceExisting=true);
     const std::filesystem::path& SourceRoot() const noexcept { return sourceRoot_; }
     std::filesystem::path Resolve(const AssetId& id) const;
     std::vector<AssetId> ListIds() const;

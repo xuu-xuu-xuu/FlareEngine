@@ -68,6 +68,12 @@ public sealed unsafe class Physics
         if (entity.Session != session) throw new ArgumentException("Bridge.InvalidEntity");
         return session.Invoke(handle => { EngineSession.Check(NativeMethods.CreateBody(handle, entity.Handle, in description, out var body)); return new RigidBody(session, body, entity); });
     }
+    // 取得编辑器刚体组件生成的实例，避免脚本再创建第二个刚体。
+    public RigidBody? GetBody(Entity entity)
+    {
+        if(entity.Session!=session)throw new ArgumentException("Bridge.InvalidEntity");
+        return session.Invoke(handle=>{EngineSession.Check(NativeMethods.FindBody(handle,entity.Handle,out var body));return body==0?null:new RigidBody(session,body,entity);});
+    }
     public void Step(double seconds)
     {
         if (ClockOwner is not null) throw new InvalidOperationException("Script.PhysicsClockOwned");
@@ -105,6 +111,8 @@ internal static unsafe partial class NativeMethods
     internal static partial int CreateBody(ulong session, ulong entity, in BoxBodyDescription description, out ulong body);
     [LibraryImport(Library, EntryPoint = "se_body_destroy")]
     internal static partial int DestroyBody(ulong session, ulong body);
+    [LibraryImport(Library, EntryPoint = "se_body_find")]
+    internal static partial int FindBody(ulong session,ulong entity,out ulong body);
     [LibraryImport(Library, EntryPoint = "se_body_get_state")]
     internal static partial int GetBodyState(ulong session, ulong body, out RigidBodyState state);
     [LibraryImport(Library, EntryPoint = "se_body_set_velocity")]

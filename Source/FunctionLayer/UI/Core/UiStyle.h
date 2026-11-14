@@ -68,6 +68,12 @@ enum class UiOverflow : std::uint8_t
     Scroll,
 };
 
+enum class UiTextFlow : std::uint8_t
+{
+    Wrap,
+    SingleLineEllipsis,
+};
+
 enum class UiUnit : std::uint8_t
 {
     Auto = 0,
@@ -145,6 +151,7 @@ struct UiStyle
     float flexGrow = 0.0f;
     float flexShrink = 1.0f;
     float fontSize = 14.0f;
+    UiTextFlow textFlow = UiTextFlow::Wrap;
 
     UiColor background{};
     UiColor color{1.0f, 1.0f, 1.0f, 1.0f};
@@ -192,6 +199,7 @@ enum : UiStyleMask
     FontSize = 1ull << 27,
     Image = 1ull << 28,
     PointerEvents = 1ull << 29,
+    TextFlow = 1ull << 30,
 };
 } // namespace UiStyleBits
 
@@ -228,6 +236,7 @@ enum : UiStyleMask
     if (style.flexGrow != defaults.flexGrow) mask |= UiStyleBits::FlexGrow;
     if (style.flexShrink != defaults.flexShrink) mask |= UiStyleBits::FlexShrink;
     if (style.fontSize != defaults.fontSize) mask |= UiStyleBits::FontSize;
+    if (style.textFlow != defaults.textFlow) mask |= UiStyleBits::TextFlow;
     if (style.image != defaults.image) mask |= UiStyleBits::Image;
     if (style.pointerEvents != defaults.pointerEvents) mask |= UiStyleBits::PointerEvents;
     return mask;
@@ -263,6 +272,7 @@ inline void ApplyStyleMask(UiStyle& target, const UiStyle& source, UiStyleMask m
     if (mask & UiStyleBits::FlexGrow) target.flexGrow = source.flexGrow;
     if (mask & UiStyleBits::FlexShrink) target.flexShrink = source.flexShrink;
     if (mask & UiStyleBits::FontSize) target.fontSize = source.fontSize;
+    if (mask & UiStyleBits::TextFlow) target.textFlow = source.textFlow;
     if (mask & UiStyleBits::Image) target.image = source.image;
     if (mask & UiStyleBits::PointerEvents) target.pointerEvents = source.pointerEvents;
 }

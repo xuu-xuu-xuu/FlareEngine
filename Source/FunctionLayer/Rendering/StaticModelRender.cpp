@@ -1,4 +1,5 @@
 #include "StaticModelRender.h"
+#include "ResourceLayer/Assets/UserShaderVariants.h"
 #include "MaterialInstance.h"
 #include "ResourceLayer/Assets/VertexCompression.h"
 #include "FunctionLayer/Rendering/MeshOptimization.h"
@@ -371,7 +372,7 @@ std::shared_ptr<const StaticRenderModel> StaticModelRenderCache::Load(AssetStore
     if(attempted!=attempted_.end()&&attempted->second==cpu)return old;
     attempted_.insert_or_assign(key,cpu);
     std::shared_ptr<const StaticRenderModel> candidate;
-    if(!Upload(std::move(cpu),source,assets.SourceRoot(),device,candidate,diagnostics))return old;
+    if(!Upload(std::move(cpu),source,assets.SourceRoot(),device,candidate,diagnostics,false,lodLevels_))return old;
     // 指定贴图加载失败不能把已就绪的旧版本替换为降级候选。
     if(old&&candidate->state==ModelRenderState::Fallback)return old;
     models_.insert_or_assign(key,candidate);
@@ -395,9 +396,19 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
     if(!source)return old;
     // 先按内容修订解析用户产物：失败时保留上一有效材质/Pipeline；首次加载失败退回默认 PBR 并记录诊断。
     ShaderArtifactSource artifact;std::string shaderKey;
-    if(!source->shader.empty())
+    if(!source->shader.empty()&&customMaterialPipelines_)
     {
-        if(assets.LoadShaderArtifact(source->shader,artifact,diagnostics))shaderKey=artifact.content_sha256;
+        if(assets.LoadShaderArtifact(source->shader,artifact,diagnostics))
+        {
+            if(materialKind_==rhi::PipelineKind::PbrMesh)shaderKey=artifact.content_sha256;
+            else
+            {
+                const auto pass=materialKind_==rhi::PipelineKind::EnvironmentMesh?"environment":materialKind_==rhi::PipelineKind::ShadowedMesh?"shadowed":"forward";
+                const auto path=UserShaderVariantPath(artifact.source,pass);std::vector<std::uint8_t> bytes;
+                if(asset_io::Within(assets.SourceRoot(),path)&&asset_io::Read(path,bytes)){artifact.source=path;shaderKey=asset_io::Hash(bytes);}
+                if(shaderKey.empty())asset_io::Diagnostic(diagnostics,"Material.ShaderFallback",source->shader);
+            }
+        }
         else
         {
             if(previous!=materials_.end())return old;
@@ -440,9 +451,10 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
         else
         {
             rhi::PipelineDescription description;
-            description.kind=rhi::PipelineKind::PbrMesh;
+            description.kind=materialKind_;
+            description.colorFormat=rhi::IsForward(materialKind_)?rhi::ColorFormat::Rgba16Float:rhi::ColorFormat::Rgba8Unorm;
             description.shader=artifact.source;
-            description.bindingLayoutVersion=rhi::PbrMaterialLayoutVersion;
+            description.bindingLayoutVersion=rhi::BindingLayout(materialKind_);
             description.shaderInput=rhi::ShaderInput::Artifact;
             rhi::Pipeline created;
             if(device.CreatePipeline(description,created))gpu->pipeline=created;

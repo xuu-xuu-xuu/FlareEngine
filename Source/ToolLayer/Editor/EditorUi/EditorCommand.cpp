@@ -64,6 +64,7 @@ const char* EditorCommandName(EditorCommandId id) noexcept
     case EditorCommandId::SetProperty: return "set-property";
     case EditorCommandId::CreateEntity: return "create-entity";
     case EditorCommandId::ReparentEntity: return "reparent-entity";
+    case EditorCommandId::CreateAsset: return "create-asset";
     }
     return "unknown";
 }

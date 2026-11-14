@@ -4,6 +4,7 @@
 #include "ResourceLayer/Assets/Primitives.h"
 #include "ResourceLayer/Scenes/SceneSerializer.h"
 #include "FunctionLayer/GameUI/UiTree.h"
+#include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "ToolLayer/Tools/Project.h"
 #include <nlohmann/json.hpp>
 #include <Windows.h>
@@ -73,6 +74,8 @@ std::string Type(const fs::path& path)
     if(IsMaterialDocumentPath(path))return "material";
     if(extension==".sebin")return "shader";
     if(extension==".tod")return "tod";
+    if(extension==".seenv")return "environment";
+    if(extension==".selod"||extension==".sehlod"||extension==".semeshlet"||extension==".seimp"||extension==".sebc"||extension==".ppm")return "data";
     return {};
 }
 std::optional<EditorAssetDocumentKind> Kind(const fs::path& path)
@@ -422,6 +425,8 @@ bool EditorAssetActions::SyncProjectAssets(const fs::path& requested,AssetStore&
             else if(type=="image")valid=static_cast<bool>(assets.LoadTextureImage(id,errors));
             else if(type=="material")valid=static_cast<bool>(assets.LoadMaterial(id,errors));
             else if(type=="tod")valid=static_cast<bool>(assets.LoadTODProfile(id,errors));
+            else if(type=="environment")valid=static_cast<bool>(assets.LoadEnvironment(id,errors));
+            else if(type=="data")valid=true;
             else{ShaderArtifactSource shader;valid=assets.LoadShaderArtifact(id,shader,errors);}
             if(!valid)return Issue(diagnostics,"Assets.ProjectSyncFailed",path,errors.empty()?id:errors.back().key+": "+errors.back().detail);
             json["assets"].push_back({{"id",id},{"type",type}});changed=true;
@@ -509,6 +514,8 @@ bool EditorAssetActions::ValidatePlayAssets(const World& world,const UiTree* ui,
         const auto& id=world.EnvironmentSettings().todProfile;std::vector<AssetDiagnostic> errors;
         if(!assets.LoadTODProfile(id,errors))report(errors,{id,{},"/environment/todProfile",0,true},"TOD.InvalidProfile");
     }
+    for(const auto entity:world.Entities())if(world.FindComponent(entity,EnvironmentSettingsComponent::TypeId))
+    {const auto id=std::get<std::string>(FeatureValue(world,entity,"environmentmap.asset"));if(id.empty())continue;std::vector<AssetDiagnostic> errors;if(!assets.LoadEnvironment(id,errors))report(errors,{id,{},"/environmentmap/asset",world.Get(entity)->stableId,true},"Assets.ReadFailed");}
     if(ui)for(const auto node:ui->Ids())image(ui->Get(node)->imageAsset,{{},{},"/nodes/"+std::to_string(node)+"/image",node,true,EditorAssetDocumentKind::Ui});
     return diagnostics.empty();
     }

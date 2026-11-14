@@ -26,6 +26,8 @@ enum SE_Result {
     SE_WRONG_THREAD = 6, SE_OUT_OF_MEMORY = 7, SE_INTERNAL_ERROR = 8
 };
 typedef uint64_t SE_Session;
+SE_API int32_t SE_CALL se_logic_operation(SE_Session session,uint32_t operation,uint64_t object,
+    uint64_t target,double value,uint64_t* out_token,double* out_value) SE_NOEXCEPT;
 typedef uint64_t SE_Entity;
 typedef uint64_t SE_Body;
 typedef struct SE_Vector3 { float x,y,z; } SE_Vector3;
@@ -180,6 +182,8 @@ SE_API int32_t SE_CALL se_scene_create_entity(SE_Session session,uint64_t scene,
 SE_API int32_t SE_CALL se_scene_callback_scope(SE_Session session,uint64_t scene,uint64_t* previous) SE_NOEXCEPT;
 // 每实体最多一个 box body，只允许根实体；物理拥有位置/旋转写权，移动必须使用 teleport。
 SE_API int32_t SE_CALL se_body_create(SE_Session session, SE_Entity entity, const SE_BoxBodyDesc* description, SE_Body* body) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_body_find(SE_Session session, SE_Entity entity, SE_Body* body) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_character_component_state(SE_Session session, SE_Entity entity, SE_CharacterState* state) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_body_destroy(SE_Session session, SE_Body body) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_body_get_state(SE_Session session, SE_Body body, SE_BodyState* state) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_body_set_velocity(SE_Session session, SE_Body body, SE_Vector3 linear, SE_Vector3 angular) SE_NOEXCEPT;

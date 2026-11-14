@@ -338,13 +338,20 @@ bool ParseEnum(const Json& value, std::string_view property, UiStyle& style)
         else return false;
         return true;
     }
+    if (property == "text-flow")
+    {
+        if (text == "wrap") style.textFlow = UiTextFlow::Wrap;
+        else if (text == "single-line-ellipsis") style.textFlow = UiTextFlow::SingleLineEllipsis;
+        else return false;
+        return true;
+    }
     return false;
 }
 
 bool ApplyProperty(std::string_view property, const Json& value, const UiTheme& theme, UiStyle& style)
 {
     if (property == "display" || property == "flex-direction" || property == "justify-content" ||
-        property == "align-items" || property == "position" || property == "overflow")
+        property == "align-items" || property == "position" || property == "overflow" || property == "text-flow")
     {
         return ParseEnum(value, property, style);
     }
@@ -457,7 +464,7 @@ bool KnownProperty(std::string_view property) noexcept
 {
     return property == "display" || property == "flex-direction" || property == "justify-content" ||
         property == "align-items" || property == "position" || property == "overflow" || property == "pointer-events" ||
-        property == "gap" || property == "padding" || property == "margin" ||
+        property == "gap" || property == "padding" || property == "margin" || property == "text-flow" ||
         property == "flex-grow" || property == "flex-shrink" || property == "font-size" ||
         property == "border-width" || property == "radius" || property == "corner-radius" ||
         property == "background" || property == "background-color" || property == "color" || property == "image" ||

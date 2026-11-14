@@ -17,6 +17,7 @@ struct D3D12PostTexture
 // 窗口 resize 先 drain，再替换整组；开关不会重建目标。
 struct D3D12PostTargets
 {
+    Microsoft::WRL::ComPtr<ID3D12Resource> hdrSource,depthSource;
     std::array<D3D12PostTexture,2> bloom;
     D3D12PostTexture ldr;
     std::shared_ptr<D3D12DescriptorRange> outputRtvs;

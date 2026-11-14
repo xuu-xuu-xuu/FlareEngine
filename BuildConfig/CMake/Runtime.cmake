@@ -44,11 +44,13 @@ se_target(EngineEnvironmentAssets)
 target_link_libraries(EngineEnvironmentAssets PUBLIC EngineCore)
 
 add_library(EngineRuntime STATIC
+    Source/FunctionLayer/Runtime/ObjectHeap.cpp
     Source/FunctionLayer/Runtime/World.cpp
     Source/FunctionLayer/Runtime/WorldComponents.cpp
     Source/FunctionLayer/Runtime/Environment.cpp
     Source/ResourceLayer/Scenes/SceneSerializer.cpp
     Source/FunctionLayer/Runtime/ComponentMetadata.cpp
+    Source/FunctionLayer/Runtime/FeatureComponents.cpp
     Source/FunctionLayer/Runtime/Camera.cpp
     Source/FunctionLayer/Runtime/TickScheduler.cpp
     Source/FunctionLayer/Runtime/EventBus.cpp
@@ -62,6 +64,10 @@ target_link_libraries(EngineRuntime PUBLIC EngineCore EngineEnvironmentAssets)
 add_library(EnginePhysics STATIC Source/FunctionLayer/Physics/PhysicsWorld.cpp Source/FunctionLayer/Physics/CharacterController.cpp)
 se_target(EnginePhysics)
 target_link_libraries(EnginePhysics PUBLIC EngineCore)
+
+add_library(EngineScenePhysics STATIC Source/FunctionLayer/Physics/ScenePhysics.cpp)
+se_target(EngineScenePhysics)
+target_link_libraries(EngineScenePhysics PUBLIC EngineRuntime EnginePhysics)
 
 add_library(ufbx STATIC ThirdParty/ufbx/ufbx.c)
 set_target_properties(ufbx PROPERTIES C_STANDARD 99)
@@ -105,9 +111,9 @@ target_link_libraries(EngineGameUI PUBLIC EngineCore PRIVATE dwrite)
 
 add_library(EngineNative SHARED Source/FunctionLayer/Scripting/NativeBridge/EngineNative.cpp Source/FunctionLayer/Scripting/NativeBridge/WindowProfile.cpp)
 se_target(EngineNative)
-target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineGameUI EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
+target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineGameUI EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
 
-add_library(EngineApplication STATIC Source/FunctionLayer/Application/FrameData.cpp Source/FunctionLayer/Application/FreeCameraInput.cpp)
+add_library(EngineApplication STATIC Source/FunctionLayer/Application/FrameData.cpp Source/FunctionLayer/Application/FeatureFrameData.cpp Source/FunctionLayer/Application/FreeCameraInput.cpp)
 se_target(EngineApplication)
 target_link_libraries(EngineApplication PUBLIC EngineRuntime EnginePhysics EngineGameUI EngineAssets)
 

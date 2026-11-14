@@ -3,16 +3,20 @@
 #include "D3D12Memory.h"
 #include "D3D12PipelineCache.h"
 #include "D3D12Result.h"
+#include "D3D12Gui.h"
 #include <algorithm>
 #include <cmath>
 
 bool PrepareD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,const Localization& text)
 {
-    if(!content.post||!p.hdr||std::any_of(content.postPipelines.begin(),content.postPipelines.end(),[](const auto* pipeline){return !pipeline||!pipeline->prepared;}))return false;
+    const auto hdrResource=content.sceneHdr?content.sceneHdr->color.resource.Get():p.hdr.Get();
+    const auto depthResource=content.sceneHdr?content.sceneHdr->depth.Get():p.depth.Get();
+    const UINT width=content.sceneHdr?content.sceneHdr->color.width:p.width,height=content.sceneHdr?content.sceneHdr->color.height:p.height;
+    if(!content.post||!hdrResource||!depthResource||std::any_of(content.postPipelines.begin(),content.postPipelines.end(),[](const auto* pipeline){return !pipeline||!pipeline->prepared;}))return false;
     Microsoft::WRL::ComPtr<ID3D12Device> device;if(FAILED(p.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf()))))return false;
-    if(!p.post)
+    if(!p.post||p.post->width!=width||p.post->height!=height||p.post->hdrSource.Get()!=hdrResource||p.post->depthSource.Get()!=depthResource)
     {
-        auto candidate=std::make_shared<D3D12PostTargets>();candidate->width=p.width;candidate->height=p.height;candidate->bloomWidth=(p.width+1)/2;candidate->bloomHeight=(p.height+1)/2;
+        auto candidate=std::make_shared<D3D12PostTargets>();candidate->hdrSource=hdrResource;candidate->depthSource=depthResource;candidate->width=width;candidate->height=height;candidate->bloomWidth=(width+1)/2;candidate->bloomHeight=(height+1)/2;
         const auto create=[&](UINT width,UINT height,DXGI_FORMAT format,const char* name,D3D12PostTexture& target){
             D3D12_RESOURCE_DESC desc{};desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=width;desc.Height=height;desc.DepthOrArraySize=desc.MipLevels=1;
             desc.Format=format;desc.SampleDesc={1,0};desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
@@ -25,7 +29,7 @@ bool PrepareD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const
         };
         if(!create(candidate->bloomWidth,candidate->bloomHeight,DXGI_FORMAT_R16G16B16A16_FLOAT,"Bloom.Ping",candidate->bloom[0])
             ||!create(candidate->bloomWidth,candidate->bloomHeight,DXGI_FORMAT_R16G16B16A16_FLOAT,"Bloom.Pong",candidate->bloom[1])
-            ||!create(p.width,p.height,DXGI_FORMAT_R8G8B8A8_UNORM,"ToneMap.Ldr",candidate->ldr))return false;
+            ||!create(width,height,DXGI_FORMAT_R8G8B8A8_UNORM,"ToneMap.Ldr",candidate->ldr))return false;
         if(!CheckGraphicsResult(p.rtvPool->Allocate(D3D12Presentation::bufferCount,candidate->outputRtvs),text,"D3D12.DescriptorCapacityExceeded"))return false;
         D3D12_RENDER_TARGET_VIEW_DESC view{};view.ViewDimension=D3D12_RTV_DIMENSION_TEXTURE2D;view.Format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
         for(UINT index=0;index<D3D12Presentation::bufferCount;++index)device->CreateRenderTargetView(p.backBuffers[index].Get(),&view,candidate->outputRtvs->Cpu(index));
@@ -33,7 +37,7 @@ bool PrepareD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const
         auto kernel=std::make_shared<D3D12Exposure>();
         const auto shaders=content.postPipelines[2]->prepared->program->source.path.parent_path();
         if(FAILED(kernel->Initialize(*device.Get(),*p.memory,shaders,text))
-            ||FAILED(kernel->CreateOutput(*p.hdr.Get(),p.width,p.height,candidate->exposure)))
+            ||FAILED(kernel->CreateOutput(*hdrResource,width,height,candidate->exposure)))
         {CheckGraphicsResult(E_FAIL,text,"D3D12.ExposureInputsInvalid");return false;}
         candidate->exposureKernel=std::move(kernel);
         const auto addBytes=[&](ID3D12Resource* resource)
@@ -57,7 +61,8 @@ bool PrepareD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const
         device->CreateShaderResourceView(candidate->exposure.lut.Get(),&lutView,candidate->exposureSrvs->Cpu(2));
         p.post=std::move(candidate);++p.postCreations;
     }
-    auto& targets=*p.post;if(targets.width!=p.width||targets.height!=p.height)return false;
+    frame.post=p.post;
+    auto& targets=*p.post;
     if(frame.postDescriptors.Maximum()!=20&&!frame.postDescriptors.Configure(20,20))return false;
     const auto& settings=*content.post;
     // G14：首次启用 TAA 时创建速度/历史资源；关闭 TAA 不产生任何 GPU 工作。
@@ -66,7 +71,7 @@ bool PrepareD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const
         auto kernel=std::make_shared<D3D12Taa>();
         const auto shaders=content.postPipelines[2]->prepared->program->source.path.parent_path();
         if(FAILED(kernel->Initialize(*device.Get(),*p.memory,shaders,text))
-            ||FAILED(kernel->CreateOutput(*p.hdr.Get(),*p.depth.Get(),p.width,p.height,targets.taa)))
+            ||FAILED(kernel->CreateOutput(*hdrResource,*depthResource,width,height,targets.taa)))
         {CheckGraphicsResult(E_FAIL,text,"D3D12.TaaInputsInvalid");return false;}
         if(!CheckGraphicsResult(p.srvPool->Allocate(2,targets.taaSrvs),text,"D3D12.DescriptorCapacityExceeded"))return false;
         D3D12_SHADER_RESOURCE_VIEW_DESC view{};
@@ -98,7 +103,8 @@ bool PrepareD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const
         targets.lutAssetUploaded=false;
         if(!lutAsset)targets.lutDirty=true;
     }
-    const auto hdr=p.hdrSrv->Cpu(),a=targets.bloom[0].srv->Cpu(),b=targets.bloom[1].srv->Cpu(),ldr=targets.ldr.srv->Cpu();
+    const auto hdr=content.sceneHdr?content.sceneHdr->color.views->Cpu(1):p.hdrSrv->Cpu();
+    const auto a=targets.bloom[0].srv->Cpu(),b=targets.bloom[1].srv->Cpu(),ldr=targets.ldr.srv->Cpu();
     const UINT nextExposure=1-targets.exposure.exposureIndex;
     const auto exposureSrv=targets.exposureSrvs->Cpu(nextExposure),lutSrv=targets.exposureSrvs->Cpu(2);
     const bool taa=settings.taa&&targets.taaKernel;
@@ -115,6 +121,8 @@ bool PrepareD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const
 bool RecordD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,D3D12StateRecording& states,UINT backBufferIndex,const Localization& text)
 {
     auto& commands=*p.commandList.Get();auto& targets=*p.post;const auto& settings=*content.post;const UINT first=content.shadow?8:6;
+    const auto hdrResource=targets.hdrSource.Get(),depthResource=targets.depthSource.Get();
+    const auto width=targets.width,height=targets.height;
     const auto use=[&](ID3D12Resource& resource,D3D12_RESOURCE_STATES state,const char* name){return CheckGraphicsResult(states.Use(commands,resource,state,name),text,"D3D12.StateTrackingFailed");};
     const auto stamp=[&](UINT stage,bool end){if(p.timingEnabled)commands.EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,first+stage*2+(end?1:0));};
     const auto fullscreen=[&](UINT pipeline,UINT table,UINT width,UINT height,D3D12_CPU_DESCRIPTOR_HANDLE rtv,se::Vec4 options){
@@ -126,17 +134,17 @@ bool RecordD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const 
         commands.RSSetViewports(1,&viewport);commands.RSSetScissorRects(1,&scissor);commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);commands.DrawInstanced(3,1,0,0);
     };
     // G14：速度 Pass 复用主场景深度；解析写历史 ping-pong，ToneMap/Bloom 改读解析结果。
-    ID3D12Resource* sceneColor=p.hdr.Get();
+    ID3D12Resource* sceneColor=hdrResource;
     if(settings.taa&&targets.taaKernel)
     {
         if(!CheckGraphicsResult(targets.taaKernel->RecordVelocity(commands,states,targets.taa,content.meshes,
-            content.viewProjection,*p.depth.Get()),text,"D3D12.TaaRecordFailed"))return false;
+            content.viewProjection,*depthResource),text,"D3D12.TaaRecordFailed"))return false;
         D3D12TaaParameters parameters;
         parameters.staticBlend=settings.taaStaticBlend;parameters.dynamicBlend=settings.taaDynamicBlend;
         parameters.depthThreshold=settings.taaDepthThreshold;parameters.velocityThreshold=settings.taaVelocityThreshold;
         parameters.sharpen=settings.taaSharpen;
         parameters.historyValid=(settings.taaHistoryValid&&targets.taa.frames>0)?1.0f:0.0f;
-        if(!CheckGraphicsResult(targets.taaKernel->Resolve(commands,states,targets.taa,*p.hdr.Get(),*p.depth.Get(),parameters),
+        if(!CheckGraphicsResult(targets.taaKernel->Resolve(commands,states,targets.taa,*hdrResource,*depthResource,parameters),
             text,"D3D12.TaaRecordFailed"))return false;
         sceneColor=targets.taa.historyColor[targets.taa.historyIndex].Get();
     }
@@ -179,25 +187,26 @@ bool RecordD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const 
         }
         stamp(stage,true);
     }
-    if(!use(*p.hdr.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"ToneMapInput")
+    if(!use(*sceneColor,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"ToneMapInput")
         ||(settings.bloom&&!use(*targets.bloom[0].resource.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"BloomComposite"))
         ||!use(*targets.ldr.resource.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"ToneMapTarget"))return false;
     // G15：ToneMap 预算只统计采样+全屏绘制本身；资源屏障属于帧级提交成本，单独由帧时间覆盖。
     stamp(3,false);
-    fullscreen(2,3,p.width,p.height,targets.ldr.rtv->Cpu(),{settings.autoExposure?1.0f:0.0f,settings.lutEnabled?1.0f:0.0f,0,0});stamp(3,true);
+    fullscreen(2,3,width,height,targets.ldr.rtv->Cpu(),{settings.autoExposure?1.0f:0.0f,settings.lutEnabled?1.0f:0.0f,0,0});stamp(3,true);
     stamp(4,false);
-    if(!use(*targets.ldr.resource.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"FxaaInput")||!use(*p.backBuffers[backBufferIndex].Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"FxaaTarget"))return false;
-    const auto output=targets.outputRtvs->Cpu(backBufferIndex);fullscreen(3,4,p.width,p.height,output,{settings.fxaa?1.0f:0.0f,0,0,0});stamp(4,true);
+    const auto destination=content.sceneLdr?content.sceneLdr->color.resource.Get():p.backBuffers[backBufferIndex].Get();
+    if(!use(*targets.ldr.resource.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"FxaaInput")||!use(*destination,D3D12_RESOURCE_STATE_RENDER_TARGET,"FxaaTarget"))return false;
+    const auto output=content.sceneLdr?content.sceneLdr->srgbRtv->Cpu():targets.outputRtvs->Cpu(backBufferIndex);fullscreen(3,4,width,height,output,{settings.fxaa?1.0f:0.0f,0,0,0});stamp(4,true);
     stamp(5,false);
     if(!content.overlays.empty())
     {
         const auto& pipeline=*content.postPipelines[4];commands.SetPipelineState(pipeline.pipeline.Get());commands.SetGraphicsRootSignature(pipeline.rootSignature.Get());
         for(const auto& quad:content.overlays)
         {
-            const D3D12_RECT scissor{LONG(std::clamp(std::floor(quad.clip.x),0.0f,float(p.width))),LONG(std::clamp(std::floor(quad.clip.y),0.0f,float(p.height))),
-                LONG(std::clamp(std::ceil(quad.clip.x+quad.clip.z),0.0f,float(p.width))),LONG(std::clamp(std::ceil(quad.clip.y+quad.clip.w),0.0f,float(p.height)))};
+            const D3D12_RECT scissor{LONG(std::clamp(std::floor(quad.clip.x),0.0f,float(width))),LONG(std::clamp(std::floor(quad.clip.y),0.0f,float(height))),
+                LONG(std::clamp(std::ceil(quad.clip.x+quad.clip.z),0.0f,float(width))),LONG(std::clamp(std::ceil(quad.clip.y+quad.clip.w),0.0f,float(height)))};
             if(scissor.right<=scissor.left||scissor.bottom<=scissor.top||quad.rectangle.z<=0||quad.rectangle.w<=0||quad.color.w<=0)continue;
-            const se::rhi::OverlayConstants constants{quad.rectangle,quad.color,{float(p.width),float(p.height),0,0}};commands.SetGraphicsRoot32BitConstants(0,12,&constants,0);commands.RSSetScissorRects(1,&scissor);commands.DrawInstanced(6,1,0,0);
+            const se::rhi::OverlayConstants constants{quad.rectangle,quad.color,{float(width),float(height),0,0}};commands.SetGraphicsRoot32BitConstants(0,12,&constants,0);commands.RSSetScissorRects(1,&scissor);commands.DrawInstanced(6,1,0,0);
         }
     }
     stamp(5,true);return true;

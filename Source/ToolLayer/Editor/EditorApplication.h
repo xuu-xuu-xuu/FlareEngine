@@ -25,6 +25,8 @@ struct EditorApplicationHooks
     std::function<void(const InputState&,bool,bool)> input;
     std::function<void(World&,UiTree&,FrameData&)> extract;
     std::function<void(std::uint64_t,bool)> inspector;
+    std::function<bool(std::uint64_t,std::string&,std::string&)> scriptQuery;
+    std::function<bool(std::uint64_t,const std::string&,std::string&)> scriptApply;
     EditorExternalDocuments externalDocuments;
     // 每帧绘制前的 Tool 内部观察口；自检入口用它驱动真实导出面板状态机，不参与正常编辑流程。
     std::function<void(ImGuiEditor&,EditorSession&)> operationFrame;

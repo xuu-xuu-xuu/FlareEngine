@@ -23,6 +23,7 @@ enum class EditorPanelId : std::uint8_t
     Preferences,
     About,
     Diagnostics,
+    AssetTools,
 };
 
 // Horizontal = 子节点左右排列；Vertical = 子节点上下排列。

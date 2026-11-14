@@ -122,7 +122,20 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
             &&!(occlusionTimingLength==1&&occlusionTimingValue[0]==L'0');
         occlusionCommitted_=false;
         previousViewProjectionValid_=false;previousWorlds_.clear();
-        if(scene_==SandboxScene::PostProcess&&!post_.Initialize(*device_,resources/"Shaders",acesToneMap))return false;
+        if((scene_==SandboxScene::PostProcess||basic)&&!post_.Initialize(*device_,resources/"Shaders",acesToneMap))return false;
+        featurePostAces_=acesToneMap;
+        if(basic)
+        {
+            se::rhi::PipelineDescription fullPbr{se::rhi::PipelineKind::ShadowedMesh,resources/"Shaders/ShadowedForward.hlsl",4};
+            fullPbr.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+            if(!device_->CreatePipeline(fullPbr,featurePbrPipeline_))return false;
+            se::rhi::PipelineDescription material{se::rhi::PipelineKind::EnvironmentMesh,resources/"Shaders/EnvironmentForward.hlsl",5};
+            material.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+            se::rhi::PipelineDescription sky{se::rhi::PipelineKind::EnvironmentSky,resources/"Shaders/EnvironmentSky.hlsl",5};
+            sky.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+            if(!device_->CreatePipeline(material,featureEnvironmentPipeline_)||!device_->CreatePipeline(sky,featureEnvironmentSky_))return false;
+            if(!device_->CreatePipeline({se::rhi::PipelineKind::FinalOutput,resources/"Shaders/FinalOutput.hlsl",3},featureForwardOutput_))return false;
+        }
         if(forward)
         {
             se::rhi::PipelineDescription output{shadow?se::rhi::PipelineKind::ShadowOutput:se::rhi::PipelineKind::FinalOutput,
@@ -334,6 +347,53 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     std::optional<se::CpuScope> preparation;preparation.emplace(frame.profiler,"CPU.CommandPrepare");
     camera_.reset();
     if (!frame.surface.width || !frame.surface.height) return RenderResult::Occluded;
+    const bool postFrame=scene_==SandboxScene::PostProcess||(BasicLitScene(scene_)&&frame.data&&frame.data->sceneRenderSettings&&frame.data->post.has_value());
+    if(BasicLitScene(scene_))
+    {
+        // 编辑期间实例姿态、材质或资源改变后失效代理；相机变化不触发重烘焙。
+        const bool hlod=frame.data&&frame.data->modelHlod;
+        std::string signature;
+        if(hlod)for(const auto& mesh:frame.data->meshes)
+        {
+            signature.append(reinterpret_cast<const char*>(&mesh.entity),sizeof(mesh.entity));
+            signature.append(reinterpret_cast<const char*>(mesh.world.values.data()),sizeof(float)*16);
+            signature+=mesh.mesh.meshAsset;signature+='\0';for(const auto& id:mesh.mesh.materials){signature+=id;signature+='\0';}
+            if(frame.data->assets){const auto revision=[&](const auto& id){const auto path=frame.data->assets->Resolve(id);std::error_code ec;const auto stamp=std::filesystem::last_write_time(path,ec);if(!ec){const auto ticks=stamp.time_since_epoch().count();signature.append(reinterpret_cast<const char*>(&ticks),sizeof(ticks));}};revision(mesh.mesh.meshAsset);for(const auto& id:mesh.mesh.materials)revision(id);}
+        }
+        if(hlod!=hlodEnabled_||signature!=featureHlodSignature_)
+        {
+            if(!device_->WaitIdle())return RenderResult::Failed;
+            hlodBaked_=hlodFailed_=false;hlodInstanceCount_=0;hlodCells_.clear();hlodProxies_.clear();hlodOverrides_.clear();hlodProxyActive_.clear();hlodCandidateCell_.clear();hlodProxyBytes_.clear();hlodProxyCache_.Reset();
+            featureHlodSignature_=std::move(signature);hlodEnabled_=hlod;
+        }
+        hlodResidentRadius_=frame.data?frame.data->hlodRadius:0;
+        const bool pbr=frame.data&&frame.data->fullPbr;
+        if(pbr!=featureFullPbr_){std::swap(featureEnvironment_?featureEnvironmentPipeline_:pipeline_,featurePbrPipeline_);featureFullPbr_=pbr;previousViewProjectionValid_=false;}
+        const bool instanced=frame.data&&frame.data->instancing;
+        if(instanced!=featureForward_){std::swap(outputPipeline_,featureForwardOutput_);featureForward_=instanced;previousViewProjectionValid_=false;}
+        const bool environment=frame.data&&!frame.data->environment.asset.empty()&&!instanced;
+        if(environment!=featureEnvironment_)
+        {std::swap(pipeline_,featureEnvironmentPipeline_);std::swap(skyPipeline_,featureEnvironmentSky_);featureEnvironment_=environment;previousViewProjectionValid_=false;}
+        const bool taa=postFrame&&frame.data->post->taa;
+        if(taa!=taaEnabled_){previousViewProjectionValid_=false;previousWorlds_.clear();}
+        taaEnabled_=taa;autoExposureEnabled_=postFrame&&frame.data->post->autoExposure;lutEnabled_=postFrame&&frame.data->post->lutEnabled;
+        if(frame.data&&frame.data->sceneRenderSettings){occlusionEnabled_=frame.data->occlusion;occlusionHudEnabled_=frame.data->occlusionCounters;occlusionTimingEnabled_=frame.data->occlusionTiming;frameGraphEnabled_=frame.data->frameGraph;}
+        else {occlusionEnabled_=occlusionHudEnabled_=occlusionTimingEnabled_=frameGraphEnabled_=false;}
+        const bool aces=frame.data&&frame.data->sceneRenderSettings&&frame.data->acesToneMap;
+        if(aces!=featurePostAces_)
+        {
+            se::PostProcessRenderer candidate;
+            if(!candidate.Initialize(*device_,ResourceDirectory()/"Shaders",aces)||!device_->WaitIdle())return RenderResult::Failed;
+            post_=std::move(candidate);
+            featurePostAces_=aces;
+        }
+        const bool lod=frame.data&&frame.data->modelLod;
+        if(lod!=lodEnabled_)
+        {
+            if(!device_->WaitIdle())return RenderResult::Failed;
+            models_.SetLodLevels(lod?4:0);lodEnabled_=lod;lodTransitions_.clear();
+        }
+    }
     if (frame.data)
     {
         se::CameraViewport viewport{ 0, 0, static_cast<float>(frame.surface.width), static_cast<float>(frame.surface.height) };
@@ -400,9 +460,11 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 +(status.detail.empty()?"":", "+status.detail));
         }
     }
+    models_.SetMaterialPipelineKind(featureEnvironment_||EnvironmentScene(scene_)?se::rhi::PipelineKind::EnvironmentMesh:BasicLitScene(scene_)||scene_==SandboxScene::Shadows?se::rhi::PipelineKind::ShadowedMesh:ForwardScene(scene_)?se::rhi::PipelineKind::ForwardMesh:se::rhi::PipelineKind::PbrMesh);
+    models_.SetCustomMaterialPipelinesEnabled(!frame.data||!frame.data->instancing);
     const bool instancing=frame.data&&frame.data->instancing;
     // G06.10：Forward 实例化本轮只接 Lighting（无阴影/环境的 FinalOutput HDR 路径）。
-    const bool forwardInstancing=instancing&&scene_==SandboxScene::Lighting;
+    const bool forwardInstancing=instancing&&(scene_==SandboxScene::Lighting||BasicLitScene(scene_));
     if(instancing&&!MaterialScene(scene_)&&!forwardInstancing){Log(LogLevel::Error,localization.GetText("Rhi.Unsupported"));return RenderResult::Failed;}
     if(instancing&&!instancedPipeline_)
         if(!device_->CreatePipeline({se::rhi::PipelineKind::PbrInstancedMesh,ResourceDirectory()/"Shaders/PbrInstanced.hlsl",se::rhi::InstancingLayoutVersion},instancedPipeline_))return RenderResult::Failed;
@@ -479,9 +541,10 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     }
     if(result&&!forward){result=commands->BeginPass({se::rhi::PassKind::Clear,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Clear"});if(result)result=commands->EndPass();}
     const auto viewProjectionBase=camera_?camera_->viewProjection:se::Mat4{};
-    const bool taaFrame=taaEnabled_&&scene_==SandboxScene::PostProcess&&frame.surface.width&&frame.surface.height;
+    const bool taaFrame=taaEnabled_&&postFrame&&frame.surface.width&&frame.surface.height;
     const auto viewProjection=taaFrame?se::ApplyProjectionJitter(viewProjectionBase,
         se::HaltonJitter(static_cast<std::uint32_t>(frame.updateIndex)),frame.surface.width,frame.surface.height):viewProjectionBase;
+    if(result&&forward)result=commands->ConfigureView(viewProjection);
     if(result&&scene_==SandboxScene::Triangle&&(!frame.data||frame.data->cameras.empty()||camera_))
     {
         result=commands->BeginPass({se::rhi::PassKind::Triangle,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Triangle"});
@@ -592,6 +655,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 std::vector<se::HlodCellCoordinate> assignments;
                 std::vector<std::size_t> instanceCandidates;
                 std::vector<se::AssetDiagnostic> diagnostics;
+                std::unordered_map<std::string,std::shared_ptr<const se::PbrRenderMaterial>> embeddedMaterials;
                 if(hlodFileLoaded_&&hlodStream_.Loaded())
                 {
                     baked=hlodStream_.Scene();haveScene=true;
@@ -615,8 +679,10 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                                 error=renderMesh.lod->levels[hlodLevel_].worldError;
                             }
                             std::string material;
-                            if(!candidate.instance->mesh.materials.empty())material=candidate.instance->mesh.materials.front();
-                            instances.push_back({&sourceMesh,indices,part.modelFromMesh*candidate.instance->world,error,std::move(material)});
+                            if(sourceMesh.material>=0&&static_cast<std::size_t>(sourceMesh.material)<candidate.instance->mesh.materials.size())material=candidate.instance->mesh.materials[sourceMesh.material];
+                            if(material.empty()&&renderMesh.material)
+                            {material="embedded:"+std::to_string(candidate.instance->entity)+":"+std::to_string(part.mesh);embeddedMaterials.emplace(material,renderMesh.material);}
+                            instances.push_back({&sourceMesh,indices,candidate.instance->world*part.modelFromMesh,error,std::move(material)});
                             instanceCandidates.push_back(index);
                         }
                     }
@@ -651,7 +717,8 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                             se::MeshData partMesh=part.mesh;partMesh.material=static_cast<std::int32_t>(proxy->materials.size());
                             proxy->meshes.push_back(std::move(partMesh));proxy->materials.emplace_back();
                             std::shared_ptr<const se::PbrRenderMaterial> material;
-                            if(!part.material.empty()&&frame.data->assets)
+                            if(const auto found=embeddedMaterials.find(part.material);found!=embeddedMaterials.end())material=found->second;
+                            else if(!part.material.empty()&&frame.data->assets)
                                 material=models_.LoadMaterial(*frame.data->assets,part.material,*device_,diagnostics);
                             overrides.push_back(std::move(material));
                         }
@@ -1055,7 +1122,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 se::rhi::ShadowSettings shadows;
                 std::shared_ptr<const se::RenderEnvironment> environment;
                 std::optional<se::rhi::EnvironmentBindings> environmentBindings;
-                if(EnvironmentScene(scene_))
+                if(EnvironmentScene(scene_)||featureEnvironment_)
                 {
                     if(frame.data&&frame.data->assets)environment=environments_.Load(*frame.data->assets,frame.data->environment.asset,*device_,diagnostics);
                     if(!environment)environment=environments_.Fallback(*device_,diagnostics);
@@ -1067,7 +1134,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 {
                     std::optional<se::rhi::PostProcessSettings> settings;std::vector<se::rhi::OverlayQuad> overlays;
                     const auto pipelines=post_.Bindings();
-                    if(scene_==SandboxScene::PostProcess){settings=se::PreparePostProcessSettings(frame.data&&frame.data->post?*frame.data->post:se::rhi::PostProcessSettings{},diagnostics);
+                    if(postFrame){settings=se::PreparePostProcessSettings(frame.data&&frame.data->post?*frame.data->post:se::rhi::PostProcessSettings{},diagnostics);
                         settings->autoExposure=autoExposureEnabled_;settings->lutEnabled=lutEnabled_;
                         // 文件 LUT 与 LGG 生成互斥；revision 变化时由 D3D12 后处理上传一次。
                         if(lutEnabled_&&lutFile_.Ready())
@@ -1254,9 +1321,10 @@ void SandboxRenderer::Shutdown() noexcept
     if(editorGui_)editorGui_->Clear();
     editorGui_.reset();editorTarget_.reset();
     gameUi_.Clear();
-    cube_.reset();sphere_.reset();pipeline_.reset();instancedPipeline_.reset();forwardInstancedPipeline_.reset();compressedPipeline_.reset();instances_.Clear();outputPipeline_.reset();skyPipeline_.reset();shadowPipeline_.reset();models_.Clear();environments_.Clear();post_.Clear();bounds_.Clear();reportedDiagnostics_.clear();device_.reset();
+    featureEnvironmentPipeline_.reset();featureEnvironmentSky_.reset();featureForwardOutput_.reset();featurePbrPipeline_.reset();featureEnvironment_=featureForward_=featureFullPbr_=false;
+    cube_.reset();sphere_.reset();pipeline_.reset();instancedPipeline_.reset();forwardInstancedPipeline_.reset();compressedPipeline_.reset();instances_.Clear();outputPipeline_.reset();skyPipeline_.reset();shadowPipeline_.reset();models_.Clear();models_.SetLodLevels(0);environments_.Clear();post_.Clear();bounds_.Clear();reportedDiagnostics_.clear();device_.reset();
     camera_.reset();
-    hlodBaked_=false;hlodFailed_=false;hlodInstanceCount_=0;
+    hlodBaked_=false;hlodFailed_=false;hlodInstanceCount_=0;featureHlodSignature_.clear();
     hlodCells_.clear();hlodProxies_.clear();hlodOverrides_.clear();hlodProxyActive_.clear();hlodCandidateCell_.clear();hlodStream_.Clear();
     hlodProxyCache_.Reset();hlodProxyBytes_.clear();
     impostorEnabled_=false;impostorTexture_.reset();impostorPipeline_.reset();impostorQuad_.reset();

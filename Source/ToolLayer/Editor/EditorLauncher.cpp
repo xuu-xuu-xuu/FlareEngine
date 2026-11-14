@@ -1,5 +1,6 @@
 #include "EditorLauncher.h"
 #include "LauncherStyle.h"
+#include "LauncherIntro.h"
 #include "PlatformLayer/Windows/AppBranding.h"
 #include "EditorWorker.h"
 #include "ProjectWorkspaceSession.h"
@@ -113,6 +114,7 @@ struct LauncherState
     std::string locale;
     bool safeMode=false,uiErrors=true;
     ProjectWorkspaceSession workspace;
+    LauncherIntro intro;
     HWND window=nullptr,title=nullptr,note=nullptr;
     HWND newProject=nullptr,openProject=nullptr,openSample=nullptr,quit=nullptr;
     HWND recentList=nullptr,recentLabel=nullptr,recentOpen=nullptr,recentRemove=nullptr,recentRelocate=nullptr;
@@ -440,11 +442,27 @@ LRESULT CALLBACK LauncherProcedure(HWND window,UINT message,WPARAM wParam,LPARAM
     }
     case WM_GETMINMAXINFO:
         reinterpret_cast<MINMAXINFO*>(lParam)->ptMinTrackSize={510,450};return 0;
+    case WM_TIMER:
+        if(state && state->intro.Active() && wParam==LauncherIntro::Timer){state->intro.Tick(window);return 0;}
+        break;
+    case WM_PRINTCLIENT:
+        if(state && state->intro.Active()){state->intro.Paint(reinterpret_cast<HDC>(wParam));return 0;}
+        break;
+    case WM_PAINT:
+        if(state && state->intro.Active())
+        {
+            PAINTSTRUCT ps{};const auto dc=BeginPaint(window,&ps);
+            state->intro.Paint(dc);EndPaint(window,&ps);return 0;
+        }
+        break;
     case WM_SIZE:
+        if(state && state->intro.Active() && !state->intro.Fits(LOWORD(lParam),HIWORD(lParam)))
+            state->intro.Finish(window);
         if(state && state->note && wParam!=SIZE_MINIMIZED)LayoutLauncher(*state);
         return 0;
     case WM_ERASEBKGND:
     {
+        if(state && state->intro.Active())return 1;
         RECT rect{};GetClientRect(window,&rect);launcher_style::Fill(reinterpret_cast<HDC>(wParam),rect,flare::Background);return 1;
     }
     case WM_CTLCOLORSTATIC:case WM_CTLCOLORLISTBOX:
@@ -462,7 +480,7 @@ LRESULT CALLBACK LauncherProcedure(HWND window,UINT message,WPARAM wParam,LPARAM
         break;
     case WM_CREATE:return 0;
     case WM_COMMAND:
-        if(!state)break;
+        if(!state || state->intro.Active())return 0;
         switch(LOWORD(wParam))
         {
         case ControlNewProject:
@@ -608,6 +626,8 @@ int RunLauncherWindow(LauncherState& state,const EditorLaunchOptions& options,st
     state.bodyFont=CreateFontW(-14,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
     if(!CreateControls(state)){DestroyWindow(state.window);return 5;}
     if(state.safeMode)SetNote(state,state.strings.safeMode);
+    if(options.captureLauncher.empty() && !smokeMilliseconds && smokeProject.empty() && options.smokeCreateParent.empty())
+        state.intro.Start(state.window);
     ShowWindow(state.window,SW_SHOW);
     UpdateWindow(state.window);
     FILETIME processCreated{},exited{},kernel{},user{},now{};

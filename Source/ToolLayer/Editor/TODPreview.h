@@ -1,6 +1,7 @@
 #pragma once
 #include "FunctionLayer/Runtime/Environment.h"
 #include "ResourceLayer/Assets/AssetStore.h"
+#include <optional>
 
 namespace se
 {
@@ -19,6 +20,9 @@ public:
     const AssetId& Id()const{return id_;}
     bool Ready()const{return !id_.empty();}
     bool Dirty()const;
+    void BeginEdit(){if(Ready()&&!edit_)edit_=profile_;}
+    bool EndEdit(bool commit);
+    bool Undo();bool Redo();
     EnvironmentSnapshot Snapshot()const{return environment_.Snapshot();}
     const std::string& LastError()const{return error_;}
 private:
@@ -26,5 +30,7 @@ private:
     TODProfile profile_;
     AssetId id_;std::filesystem::path path_;
     std::string saved_,error_;
+    std::vector<TODProfile> undo_,redo_;
+    std::optional<TODProfile> edit_;
 };
 }

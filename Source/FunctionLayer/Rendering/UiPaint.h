@@ -50,6 +50,7 @@ struct UiPaintCommand
     float centerY = 0.0f;
     float radius = 0.0f;
     float fontSize = 14.0f;
+    UiTextFlow textFlow = UiTextFlow::Wrap;
     std::uint64_t texture = 0;
     std::string text;
     std::string image;
@@ -86,6 +87,7 @@ public:
                    std::uint64_t texture,
                    const UiColor& color) override;
     void Text(const UiRect& rect, std::string_view text, float fontSize, const UiColor& color) override;
+    void Text(const UiRect& rect, std::string_view text, float fontSize, const UiColor& color, UiTextFlow flow);
     void Image(const UiRect& rect, std::string_view image, const UiColor& color) override;
     void Line(float x0, float y0, float x1, float y1, float width, const UiColor& color) override;
     void CanvasRect(const UiRect& rect, const UiColor& color) override;

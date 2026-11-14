@@ -16,6 +16,7 @@ public:
     void Prepare(EditorSession&,AssetStore&,ui::UiRect,std::uint64_t frame);
     void Update(double seconds,EditorSession&,AssetStore&);
     bool Handle(ui::UiInputEvent&,EditorSession&,AssetStore&,bool canStart);
+    std::optional<Vec2> TakeContextClick();
     void Cancel(EditorSession&);
     void Blur(EditorSession&);
     bool Action(std::string_view action,EditorSession&,AssetStore&);
@@ -36,8 +37,10 @@ public:
     const std::string& LastError()const{return gizmo_.LastError();}
 private:
     enum class Gesture {None,Fly,Pan,Orbit,Zoom,Gizmo};
+    enum class PickIntent { Surface, Handle, Context };
     struct HandleSegment {Vec2 a,b;int axis;};
     void Draw(EditorSession&,AssetStore&);
+    void SelectAt(Vec2 mouse, EditorSession&, AssetStore&, PickIntent intent = PickIntent::Surface);
     void Dolly(float amount);
     Vec3 Pivot(const World&,AssetStore&,EntityHandle)const;
     std::optional<Aabb> SceneBounds(const World&,AssetStore&)const;
@@ -56,6 +59,9 @@ private:
     int dragAxis_=-1,hoverAxis_=-1;
     std::uint8_t dragButton_=0;
     Vec2 lastMouse_{};
+    Vec2 pressedMouse_{};
+    bool clickPending_ = false;
+    std::optional<Vec2> lastPick_, contextClick_;
     Vec3 pivot_{};
     StableEntityId follow_=0;
     Vec3 followPosition_{};

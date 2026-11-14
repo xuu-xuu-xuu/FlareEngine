@@ -82,7 +82,8 @@ bool Environment::FixedStep(World& world,double seconds,double frameSeconds,cons
     TickContext context{TickStage::FixedPreTick,frame_,fixedStep_,seconds,frameSeconds,simulationSeconds_,SchedulingPaused()};
     if(!Phase(world,EnvironmentPhase::BeforePhysics,context,hooks))return false;
     // 本子步已开始，完成一次物理；暂停清空余量，阻止随后子步重放。
-    if(hooks.physics&&!hooks.physics(seconds)){error_="Tick.ServiceFailed";return false;}
+    const auto& physics=hooks.physics?hooks.physics:physicsService_;
+    if(physics&&!physics(seconds)){error_="Tick.ServiceFailed";return false;}
     ++completedFixedSteps_;simulationSeconds_+=seconds;context.simulationSeconds=simulationSeconds_;
     if(hooks.synchronize&&!hooks.synchronize()){error_="Tick.ServiceFailed";return false;}
     if(!spatial_.Synchronize()){error_=spatial_.LastError();return false;}

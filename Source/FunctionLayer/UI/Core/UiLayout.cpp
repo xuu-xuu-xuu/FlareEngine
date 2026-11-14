@@ -435,10 +435,15 @@ Size UiLayoutEngine::Impl::MeasureNode(UiElementHandle handle, float availableWi
         : contentAvailableHeight;
 
     const float textMaxWidth = hasWidth ? std::max(0.0f, explicitWidth - paddingHorizontal) : contentAvailableWidth;
-    const std::string_view text = document->Text(handle);
+    std::string_view text = document->Text(handle);
+    const bool wrap = style.textFlow == UiTextFlow::Wrap;
+    if (!wrap)
+    {
+        text = text.substr(0, text.find_first_of("\r\n"));
+    }
     const UiTextMeasure textMeasure = text.empty()
         ? UiTextMeasure{}
-        : textService->Measure(text, style.fontSize, textMaxWidth, true);
+        : textService->Measure(text, style.fontSize, textMaxWidth, wrap);
 
     const bool row = style.flexDirection == UiFlexDirection::Row;
     const float gap = std::max(0.0f, Sanitize(style.gap));

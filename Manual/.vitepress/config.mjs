@@ -24,6 +24,7 @@ export default defineConfig({
             { text: '导入 FBX', link: '/user/import-fbx' },
             { text: '运行预览', link: '/user/run-preview' }
           ] },
+          { text: '物理、渲染和资源工具', link: '/user/feature-tools' },
           { text: '从源码启动编辑器', link: '/user/build-from-source' }
         ]
       }
@@ -80,7 +81,8 @@ export default defineConfig({
         { text: "面板拖出与吸附", link: "/editor/docking" },
         { text: "场景视口、变换手柄与选中描边", link: "/editor/viewport" },
         { text: "编辑会话、撤销与播放", link: "/editor/session" },
-        { text: "资产操作、属性面板与项目文档", link: "/editor/documents" }
+        { text: "资产操作、属性面板与项目文档", link: "/editor/documents" },
+        { text: "功能与默认编辑器的连接", link: "/editor/features" }
       ] },
       { text: "平台与基础服务", collapsed: true, items: [
         { text: "从窗口消息到一帧画面", link: "/platform/frame" },

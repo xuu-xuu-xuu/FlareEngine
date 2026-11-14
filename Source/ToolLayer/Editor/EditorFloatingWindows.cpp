@@ -6,6 +6,7 @@
 #include "CoreLayer/Log.h"
 #include "CoreLayer/Localization.h"
 #include "PlatformLayer/Windows/WindowsInput.h"
+#include "PlatformLayer/Windows/Window.h"
 #include <algorithm>
 #include <windowsx.h>
 
@@ -41,12 +42,14 @@ struct EditorFloatingWindows::Entry
     std::uint32_t id=0;
     HWND window=nullptr;
     bool scene=false;
+    bool interactiveResize=false;
     EditorInputAdapter input;
     InputState rawInput;
     UiDirectWriteTextService text{L"Segoe UI"};
     std::unique_ptr<SandboxRenderer> renderer;
     std::vector<unsigned char> font;
     std::uint64_t frame=0;
+    ULONGLONG lastTick=0;
 };
 EditorFloatingWindows::EditorFloatingWindows(HWND owner,EditorShell& shell,const Localization& text,
     std::filesystem::path resources,MessageHandler handler,bool visible)
@@ -129,13 +132,19 @@ bool EditorFloatingWindows::Render(const FrameData& base,ui::UiImageProvider& im
                 {display.commands.insert(it+1,overlay.commands.begin(),overlay.commands.end());break;}
         FrameData data=base;ui::UiGeometryStats geometryStats;std::vector<std::string> errors;
         ui::UiGeometryOptions options;options.whiteTexture=3;options.fontPageBase=1;options.textPixelScale={dpi,dpi};
-        if(!ui::UiGeometryBuilder{}.Build(display,&entry->text,&images,options,data.editorGui,geometryStats,errors))return false;
+        if(!ui::UiGeometryBuilder{}.Build(display,&entry->text,&images,options,data.editorGui,geometryStats,errors))
+        {
+            for(const auto& error:errors)Log(LogLevel::Error,"EditorUi.ToolkitGeometryFailed "+error);
+            if(!entry->text.LastError().empty())Log(LogLevel::Error,entry->text.LastError());
+            return false;
+        }
         int width=0,height=0;std::uint64_t revision=0;
         if(!entry->text.FontAtlas(entry->font,width,height,revision))return false;
         data.editorFontPixels=entry->font.data();data.editorFontWidth=width;data.editorFontHeight=height;data.editorFontRevision=revision;
         data.editorGui.framebufferScale={dpi,dpi};
         if(!entry->scene)data.sceneViewport={0,0,1,1};
-        const RenderFrame frame{{entry->window,static_cast<unsigned>(area.right),static_cast<unsigned>(area.bottom)},0,0,GetTickCount64()/1000.0,++entry->frame,&data};
+        const auto now=GetTickCount64();const double seconds=entry->lastTick?std::min(.25,(now-entry->lastTick)/1000.0):1.0/60;entry->lastTick=now;
+        const RenderFrame frame{{entry->window,static_cast<unsigned>(area.right),static_cast<unsigned>(area.bottom)},seconds,seconds,now/1000.0,++entry->frame,&data};
         if(entry->renderer->Render(frame,text_)==RenderResult::Failed)return false;
     }
     for(auto& entry:entries_)entry->rawInput.ClearEvents();
@@ -210,16 +219,32 @@ std::optional<LRESULT> EditorFloatingWindows::Message(Entry& entry,UINT message,
     if(message==WM_ERASEBKGND)return 1;
     if(message==WM_PAINT){PAINTSTRUCT paint;BeginPaint(entry.window,&paint);EndPaint(entry.window,&paint);return 0;}
     if(message==WM_GETMINMAXINFO)
-    {auto* info=reinterpret_cast<MINMAXINFO*>(l);info->ptMinTrackSize={240,160};return 0;}
+    {
+        auto* info=reinterpret_cast<MINMAXINFO*>(l);
+        info->ptMinTrackSize.x=std::max(info->ptMinTrackSize.x,240L);
+        info->ptMinTrackSize.y=std::max(info->ptMinTrackSize.y,160L);
+        ApplyEngineWindowMinimumTrackSize(entry.window,*info,160,120);
+        return 0;
+    }
     if(message==WM_DPICHANGED)
     {
         const auto* bounds=reinterpret_cast<const RECT*>(l);
+        entry.input.SetDpiScale(HIWORD(w)/96.0f);entry.text.SetRasterScale(entry.input.DpiScale());
         if(bounds)SetWindowPos(entry.window,nullptr,bounds->left,bounds->top,bounds->right-bounds->left,bounds->bottom-bounds->top,SWP_NOZORDER|SWP_NOACTIVATE);
-        entry.input.SetDpiScale(HIWORD(w)/96.0f);entry.text.SetRasterScale(entry.input.DpiScale());return 0;
+        return 0;
     }
+    if(message==WM_ENTERSIZEMOVE)entry.interactiveResize=true;
     if(message==WM_EXITSIZEMOVE)
-    {RECT bounds{};GetWindowRect(entry.window,&bounds);shell_.SetFloatingBounds(entry.id,bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top);}
-    if(message==WM_SIZE)return 0;
+    {
+        entry.interactiveResize=false;
+        RECT bounds{};GetWindowRect(entry.window,&bounds);shell_.SetFloatingBounds(entry.id,bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top);
+    }
+    if(message==WM_SIZE)
+    {
+        if(entry.interactiveResize&&w!=SIZE_MINIMIZED&&LOWORD(l)&&HIWORD(l))
+            SendMessageW(owner_,EngineWindowDrawResizeFrame,0,0);
+        return 0;
+    }
     if(handler_&&message!=WM_NCCREATE&&message!=WM_NCDESTROY)
     {
         const auto handled=handler_(entry.window,message,w,l);

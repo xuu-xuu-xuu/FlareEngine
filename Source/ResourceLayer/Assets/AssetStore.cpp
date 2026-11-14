@@ -437,7 +437,7 @@ bool AssetStore::LoadShaderArtifact(const AssetId& id,ShaderArtifactSource& outp
     output={record->second.source,key};return true;
 }
 bool AssetStore::SaveMaterialSource(const std::filesystem::path& requested,const MaterialDocument& material,
-    AssetId& id,std::vector<AssetDiagnostic>& diagnostics)
+    AssetId& id,std::vector<AssetDiagnostic>& diagnostics,bool replaceExisting)
 {
     try
     {
@@ -453,6 +453,8 @@ bool AssetStore::SaveMaterialSource(const std::filesystem::path& requested,const
         const auto metadataPath=Metadata(path);
         if(!asset_io::Within(sourceRoot_,metadataPath)){Diagnostic(diagnostics,"Assets.ReferenceOutsideRoot");return false;}
         const bool hadSource=std::filesystem::exists(path),hadMetadata=std::filesystem::exists(metadataPath);
+        if(!replaceExisting && (hadSource || hadMetadata))
+        {Diagnostic(diagnostics,"Assets.DestinationExists",asset_io::Utf8(path));return false;}
         AssetId targetId;ImportOptions options;options.allowedRoot=sourceRoot_;
         if(hadMetadata)
         {

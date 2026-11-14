@@ -219,10 +219,13 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     // 这些 kind 跳过库加载并新建 PSO；其余 kind 继续命中持久库。
     // GUI 的同类问题已由真实像素回归复现：旧库加载后场景 sRGB 采样变为
     // 79/118/154，重新创建为正确的 20/46/82。保留进程内缓存，GUI 不读写持久库。
+    // ToneMap 同样在历史库中复现边缘像素 161/期望 163；独立冷库和新库复用均正确。
+    // 不复用这个不可信条目，保留源码/字节码缓存和进程内 PSO 共享。
     const bool libraryLoadAllowed=description.kind!=rhi::PipelineKind::ShadowedMesh
         &&description.kind!=rhi::PipelineKind::EnvironmentMesh
         &&description.kind!=rhi::PipelineKind::EnvironmentSky
-        &&description.kind!=rhi::PipelineKind::Gui;
+        &&description.kind!=rhi::PipelineKind::Gui
+        &&description.kind!=rhi::PipelineKind::ToneMap;
     if(p.library&&libraryLoadAllowed&&!prepared->pipeline
         &&SUCCEEDED(p.library->LoadGraphicsPipeline(libraryName.c_str(),&pipeline,IID_PPV_ARGS(prepared->pipeline.GetAddressOf()))))
         ++p.stats.libraryHits;
@@ -230,7 +233,7 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     {
         if(!CheckGraphicsResult(p.device->CreateGraphicsPipelineState(&pipeline,IID_PPV_ARGS(prepared->pipeline.GetAddressOf())),text,"D3D12.CreatePipelineFailed"))return {};
         ++p.stats.pipelineCreations;
-        if(p.library&&description.kind!=rhi::PipelineKind::Gui&&SUCCEEDED(p.library->StorePipeline(libraryName.c_str(),prepared->pipeline.Get()))){++p.stats.libraryStores;p.libraryDirty=true;}
+        if(p.library&&description.kind!=rhi::PipelineKind::Gui&&description.kind!=rhi::PipelineKind::ToneMap&&SUCCEEDED(p.library->StorePipeline(libraryName.c_str(),prepared->pipeline.Get()))){++p.stats.libraryStores;p.libraryDirty=true;}
     }
     prepared->rootSignature->SetName(L"SelfEngine.PreparedRootSignature");prepared->pipeline->SetName(L"SelfEngine.PreparedPipeline");
     p.livePipelines.push_back(prepared);if(description.cachePrepared)p.pipelines.insert_or_assign(key,prepared);return prepared;

@@ -69,6 +69,7 @@ struct D3D12FrameContext
     D3D12FrameDescriptors gameUiDescriptors;
     std::shared_ptr<D3D12SceneOverlayFrame> sceneOverlay;
     std::shared_ptr<D3D12ShadowTarget> shadow;
+    std::shared_ptr<D3D12PostTargets> post; // 保持该帧后处理资源至 Fence 完成，视口可独立调整尺寸。
     bool timestampShadow=false;
     bool timestampPost=false,timestampBloom=false,timestampToneMapping=false,timestampFxaa=false,timestampUi=false;
 };

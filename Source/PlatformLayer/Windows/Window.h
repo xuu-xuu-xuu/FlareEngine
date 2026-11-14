@@ -16,14 +16,24 @@ struct WindowState
     bool closeRequested = false;
     bool callbackFailed = false;
     bool postQuitOnDestroy = true;
+    UINT minimumClientWidthDip = 0, minimumClientHeightDip = 0;
     std::function<std::optional<LRESULT>(HWND,UINT,WPARAM,LPARAM)> messageHandler;
+    bool interactiveResize = false;
+    std::function<void()> drawResizeFrame;
 };
+
+// 独立面板与主窗口共用应用帧。尺寸消息在系统拖边循环中到达宿主线程。
+inline constexpr UINT EngineWindowDrawResizeFrame = WM_APP + 0x172;
 
 // 在主线程启动时调用一次，注册窗口类并创建、关联窗口；默认显示，检查程序可隐藏。
 // window 传引用，成功返回 true；失败记录原因并返回 false。
 bool CreateEngineWindow(WindowState& window, bool showWindow = true);
 // 按客户区设置尺寸；系统最小窗口或其他约束未满足请求时返回 false，不伪称成功。
 bool SetEngineWindowClientSize(WindowState& window,UINT width,UINT height);
+
+// 由 WM_GETMINMAXINFO 调用；以当前窗口 DPI 计算客户区下限和非客户区外框。
+// 宽高同为 0 时不修改系统限制。
+bool ApplyEngineWindowMinimumTrackSize(HWND window,MINMAXINFO& limits,UINT widthDip,UINT heightDip);
 
 // 仍有系统窗口时销毁它；已经销毁则直接成功。
 bool DestroyEngineWindow(WindowState& window);

@@ -77,6 +77,16 @@ World& World::operator=(const World& other)
 }
 
 World::World(World&& other) noexcept { *this=std::move(other); }
+ObjectHeap& World::Objects()
+{
+    if(!objects_)objects_=std::make_unique<ObjectHeap>();
+    return *objects_;
+}
+ObjectHeapStats World::CollectObjects()
+{
+    if(IsInFrame()||IsIterating()||HasPendingCommands())throw std::logic_error("World.SnapshotPending");
+    return objects_?objects_->Collect():ObjectHeapStats{};
+}
 World& World::operator=(World&& other) noexcept
 {
     if(this==&other) return *this;
@@ -89,6 +99,7 @@ World& World::operator=(World&& other) noexcept
     cameras_=std::move(other.cameras_); meshes_=std::move(other.meshes_); lights_=std::move(other.lights_);
     scripts_=std::move(other.scripts_);componentSlots_=std::move(other.componentSlots_);freeComponentSlots_=std::move(other.freeComponentSlots_);scriptControls_=std::move(other.scriptControls_);
     registeredPools_=std::move(other.registeredPools_);
+    objects_=std::move(other.objects_);
     commands_=std::move(other.commands_); aliveCount_=std::exchange(other.aliveCount_,0);
     nextFrameCommands_=std::move(other.nextFrameCommands_);
     lastError_=std::move(other.lastError_);

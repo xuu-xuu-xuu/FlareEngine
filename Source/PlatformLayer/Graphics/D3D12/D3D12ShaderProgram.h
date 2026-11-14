@@ -28,7 +28,8 @@ bool ReadD3D12ShaderSource(const se::rhi::PipelineDescription& description,D3D12
 std::shared_ptr<const D3D12ShaderProgram> CompileD3D12ShaderProgram(D3D12ShaderSource source,const Localization& text);
 std::shared_ptr<const D3D12ShaderProgram> LoadD3D12ShaderProgram(D3D12ShaderSource source,D3D12ShaderLoadStatistics& stats,const Localization& text);
 bool WriteD3D12ShaderProgram(const D3D12ShaderProgram& program,const std::filesystem::path& artifact,const Localization& text);
-// 固定PBR接口包：单文件原子发布，保留反射，去除源码调试/私有/内嵌Root Signature块。
+// 固定表面接口包：保留旧 PBR v1，并支持 Forward/Shadowed/Environment 的 HDR v2。
+// 各通道独立单文件原子发布；保留反射，去除源码调试/私有/内嵌 Root Signature 块。
 std::string D3D12UserPbrInterfaceDescription();
 std::string D3D12UserPbrInterfaceHash();
 bool WriteD3D12UserPbrPackage(const D3D12ShaderProgram& program,const std::filesystem::path& artifact,const Localization& text);

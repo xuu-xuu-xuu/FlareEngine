@@ -12,16 +12,24 @@ int wmain(int argc,wchar_t** argv)
     // 启动期语言表损坏时的独立回退，不依赖尚未可用的键。
     if(!text.Load(GetExecutableDirectory()/"Resources/Localization/en-US.txt",error))
     {std::cerr<<"ShaderBuilder could not load localization: "<<error<<'\n';return 1;}
-    if(argc<4||(std::wstring_view(argv[1])!=L"mesh"&&std::wstring_view(argv[1])!=L"triangle"&&std::wstring_view(argv[1])!=L"pbr"&&std::wstring_view(argv[1])!=L"forward"&&std::wstring_view(argv[1])!=L"output"&&std::wstring_view(argv[1])!=L"sky"
+    const auto mode=argc>1?std::wstring_view(argv[1]):std::wstring_view{};
+    const bool userSurface=mode==L"user-pbr"||mode==L"user-forward"||mode==L"user-shadowed"||mode==L"user-environment";
+    if(argc<4||(!userSurface&&std::wstring_view(argv[1])!=L"mesh"&&std::wstring_view(argv[1])!=L"triangle"&&std::wstring_view(argv[1])!=L"pbr"&&std::wstring_view(argv[1])!=L"forward"&&std::wstring_view(argv[1])!=L"output"&&std::wstring_view(argv[1])!=L"sky"
         &&std::wstring_view(argv[1])!=L"shadowed"&&std::wstring_view(argv[1])!=L"shadowdepth"&&std::wstring_view(argv[1])!=L"shadowoutput"
         &&std::wstring_view(argv[1])!=L"environment"&&std::wstring_view(argv[1])!=L"environmentsky"&&std::wstring_view(argv[1])!=L"pbr-instanced"
         &&std::wstring_view(argv[1])!=L"pbr-forward-instanced"
         &&std::wstring_view(argv[1])!=L"bloomextract"&&std::wstring_view(argv[1])!=L"bloomblur"&&std::wstring_view(argv[1])!=L"tonemap"&&std::wstring_view(argv[1])!=L"fxaa"&&std::wstring_view(argv[1])!=L"overlay"&&std::wstring_view(argv[1])!=L"gui"&&std::wstring_view(argv[1])!=L"user-pbr"&&std::wstring_view(argv[1])!=L"basiclit"))
     {Log(LogLevel::Error,text.GetText("ShaderBuilder.Usage"));return 1;}
     se::rhi::PipelineDescription description;
-    const bool userPbr=std::wstring_view(argv[1])==L"user-pbr";
+    const bool userPbr=userSurface;
     description.kind=std::wstring_view(argv[1])==L"pbr"?se::rhi::PipelineKind::PbrMesh:std::wstring_view(argv[1])==L"mesh"?se::rhi::PipelineKind::TexturedMesh:se::rhi::PipelineKind::Triangle;
     if(userPbr)description.kind=se::rhi::PipelineKind::PbrMesh;
+    if(mode==L"user-forward")description.kind=se::rhi::PipelineKind::ForwardMesh;
+    if(mode==L"user-shadowed")description.kind=se::rhi::PipelineKind::ShadowedMesh;
+    if(mode==L"user-environment")description.kind=se::rhi::PipelineKind::EnvironmentMesh;
+    if(userSurface&&mode!=L"user-pbr")description.macros.push_back({"SE_FORWARD","1"});
+    if(mode==L"user-shadowed"||mode==L"user-environment")description.macros.push_back({"SE_SHADOWS","1"});
+    if(mode==L"user-environment")description.macros.push_back({"SE_ENVIRONMENT","1"});
     if(std::wstring_view(argv[1])==L"forward")description.kind=se::rhi::PipelineKind::ForwardMesh;
     if(std::wstring_view(argv[1])==L"output")description.kind=se::rhi::PipelineKind::FinalOutput;
     if(std::wstring_view(argv[1])==L"sky")description.kind=se::rhi::PipelineKind::Sky;

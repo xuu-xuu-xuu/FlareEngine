@@ -6,6 +6,8 @@ add_library(EngineEditorUi STATIC
     Source/ToolLayer/Editor/EditorUi/EditorChrome.cpp
     Source/ToolLayer/Editor/EditorUi/EditorInputAdapter.cpp
     Source/ToolLayer/Editor/EditorUi/EditorShell.cpp
+    Source/ToolLayer/Editor/EditorUi/EditorInspector.cpp
+    Source/ToolLayer/Editor/EditorUi/EditorColorPicker.cpp
     Source/ToolLayer/Editor/EditorUi/EditorPanels.cpp)
 se_target(EngineEditorUi)
 target_link_libraries(EngineEditorUi PUBLIC EngineUiCore EngineUiWidgets EngineCore PRIVATE user32 imm32)
@@ -59,19 +61,28 @@ add_library(EngineEditor STATIC
     Source/ToolLayer/Editor/ImGuiEditorDocking.cpp
     Source/ToolLayer/Editor/UICanvasEditor.cpp)
 se_target(EngineEditor)
-target_link_libraries(EngineEditor PUBLIC EngineRuntime EngineAssets EngineGameUI imgui EnginePlatform EngineProjectSession EngineColorGrading)
+target_link_libraries(EngineEditor PUBLIC EngineRuntime EngineScenePhysics EngineAssets EngineGameUI imgui EnginePlatform EngineProjectSession EngineColorGrading)
 target_link_libraries(EngineEditor PRIVATE comdlg32 shell32)
 
 add_library(EngineEditorApp STATIC
     Source/ToolLayer/Editor/EditorApplication.cpp
+    Source/ToolLayer/Editor/SceneInspector.cpp
+    Source/ToolLayer/Editor/FeatureInspector.cpp
+    Source/ToolLayer/Editor/UiInspector.cpp
+    Source/ToolLayer/Editor/TodInspector.cpp
+    Source/ToolLayer/Editor/EditorFeatureTools.cpp
+    Source/ToolLayer/Editor/EditorCreation.cpp
+    Source/ToolLayer/Editor/EditorScriptWorkflow.cpp
     Source/ToolLayer/Editor/EditorPlayInput.cpp
     Source/ToolLayer/Editor/EditorViewportController.cpp
+    Source/ToolLayer/Editor/EditorSceneGizmos.cpp
     Source/ToolLayer/Editor/EditorFloatingWindows.cpp)
 se_target(EngineEditorApp)
-target_link_libraries(EngineEditorApp PUBLIC EngineEditor EngineSandboxHost EngineEditorUi EngineUiRender EnginePlatform EngineSandboxRenderer PRIVATE dwmapi)
+target_link_libraries(EngineEditorApp PUBLIC EngineEditor EngineScenePhysics EngineSandboxHost EngineEditorUi EngineUiRender EnginePlatform EngineSandboxRenderer PRIVATE dwmapi)
 
 add_library(EngineEditorProduct STATIC
     Source/ToolLayer/Editor/EditorLauncher.cpp
+    Source/ToolLayer/Editor/LauncherIntro.cpp
     Source/ToolLayer/Editor/LauncherStyle.cpp
     Source/ToolLayer/Editor/EditorWorker.cpp
     Source/ToolLayer/Editor/EditorLoadingScreen.cpp
@@ -91,7 +102,4 @@ foreach(flare_target SelfEngineEditor EngineNative)
     target_sources(${flare_target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/FlareResources.rc")
 endforeach()
 target_compile_definitions(EngineNative PRIVATE FLARE_NATIVE_LIBRARY)
-# 旧快捷方式/脚本仍能启动同一个 Flare 程序；正式入口和新打包均使用 FlareEditor.exe。
-add_custom_command(TARGET SelfEngineEditor POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SelfEngineEditor>" "$<TARGET_FILE_DIR:SelfEngineEditor>/GearEditor.exe"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SelfEngineEditor>" "$<TARGET_FILE_DIR:SelfEngineEditor>/SelfEngineEditor.exe" VERBATIM)
+# SelfEngineEditor 保留为内部 CMake 目标名，对外交付单一 FlareEditor.exe。
