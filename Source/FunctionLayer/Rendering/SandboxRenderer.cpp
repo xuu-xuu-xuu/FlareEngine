@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 #include "ResourceLayer/Assets/Primitives.h"
 #include "ResourceLayer/Assets/AssetStore.h"
@@ -37,6 +38,24 @@ std::filesystem::path SandboxRenderer::ResourceDirectory() const
 {
     if(!resourceDirectory_.empty())return resourceDirectory_;
     const auto executable=GetExecutableDirectory();return executable.empty()?std::filesystem::path{}:executable/"Resources";
+}
+std::span<const std::byte> SandboxRenderer::BuildSkinPalette(const std::vector<se::Mat4>& palette,std::size_t jointCount,
+    std::uint32_t& outJointCount)
+{
+    outJointCount=static_cast<std::uint32_t>(palette.empty()?jointCount:palette.size());
+    if(!outJointCount)return {};
+    skinPaletteStorage_.emplace_back(static_cast<std::size_t>(outJointCount)*48);
+    auto& bytes=skinPaletteStorage_.back();
+    for(std::uint32_t joint=0;joint<outJointCount;++joint)
+    {
+        const auto& matrix=palette.empty()?se::Mat4{}:palette[joint];
+        // 行主序 3×4 与 Shaders/Skinning.hlsli 的 LoadSkinMatrix 一一对应。
+        const float rows[12]{matrix(0,0),matrix(0,1),matrix(0,2),matrix(0,3),
+            matrix(1,0),matrix(1,1),matrix(1,2),matrix(1,3),
+            matrix(2,0),matrix(2,1),matrix(2,2),matrix(2,3)};
+        std::memcpy(bytes.data()+static_cast<std::size_t>(joint)*48,rows,sizeof(rows));
+    }
+    return {bytes.data(),bytes.size()};
 }
 bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localization& localization)
 {
@@ -152,6 +171,22 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
             if(!device_->CreatePipeline(output,outputPipeline_))return false;
         }
         if(shadow&&!device_->CreatePipeline({se::rhi::PipelineKind::ShadowDepth,resources/"Shaders/ShadowDepth.hlsl",4},shadowPipeline_))return false;
+        // W03：蒙皮变体。前向家族用 ShadowedMesh + 31 号绑定布局 + v3 顶点布局；
+        // 阴影深度用 ShadowDepth + 31 号布局（b0 常量 + t8 调色板）。
+        // 环境场景走 EnvironmentMesh，本变体不参与，避免 pass 类别不一致。
+        if((basic||scene_==SandboxScene::Shadows)&&!EnvironmentScene(scene_))
+        {
+            se::rhi::PipelineDescription skinned{se::rhi::PipelineKind::ShadowedMesh,resources/"Shaders/SkinnedForward.hlsl",
+                se::rhi::SkinnedLayoutVersion};
+            skinned.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;
+            skinned.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+            skinned.macros.push_back({"SE_SKINNED","1"});
+            se::rhi::PipelineDescription skinnedShadow{se::rhi::PipelineKind::ShadowDepth,resources/"Shaders/SkinnedShadowDepth.hlsl",
+                se::rhi::SkinnedLayoutVersion};
+            skinnedShadow.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;
+            skinnedShadow.macros.push_back({"SE_SKINNED","1"});
+            if(!device_->CreatePipeline(skinned,skinnedPipeline_)||!device_->CreatePipeline(skinnedShadow,skinnedShadowPipeline_))return false;
+        }
         if(forward)
         {
             se::rhi::PipelineDescription sky{environment?se::rhi::PipelineKind::EnvironmentSky:se::rhi::PipelineKind::Sky,resources/(environment?"Shaders/EnvironmentSky.hlsl":"Shaders/Sky.hlsl"),environment?5u:9u};sky.colorFormat=se::rhi::ColorFormat::Rgba16Float;
@@ -868,12 +903,24 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 }
             }
         }
+        // W03：调色板字节在本帧内被绘制列表借用，只在帧开始时整体清空；
+        // 逐候选清空会让先前绘制的 span 失效。
+        skinPaletteStorage_.clear();
         for(std::size_t candidateIndex=0;candidateIndex<candidates.size();++candidateIndex)
         {
             const auto& candidate=candidates[candidateIndex];
             const auto& mesh=*candidate.instance;const auto& model=candidate.model;
+            // W03：每演员每帧一份调色板（行主序 3×4，48 字节/关节）。演员没有姿态时
+            // 写单位矩阵，蒙皮顶点缓冲仍以绑定姿势出现在原位置。
+            const bool skinnedModel=std::any_of(model->meshes.begin(),model->meshes.end(),
+                [](const auto& entry){return entry.skinned;});
+            std::uint32_t skinJointCount=0;
+            std::span<const std::byte> skinPalette;
+            if(skinnedModel)skinPalette=BuildSkinPalette(mesh.skinPalette,model->source->joints.size(),skinJointCount);
+            const auto skinDrawPipeline=skinnedPipeline_&&!featureEnvironment_&&!instancing?*skinnedPipeline_:se::rhi::PipelineHandle{};
+            const auto skinShadowPipeline=skinnedShadowPipeline_?*skinnedShadowPipeline_:se::rhi::PipelineHandle{};
             if((scene_==SandboxScene::Shadows||BasicLitScene(scene_)||EnvironmentScene(scene_))&&mesh.mesh.castsShadow)
-                se::AppendShadowModelDraws(*model,mesh.world,casters);
+                se::AppendShadowModelDraws(*model,mesh.world,casters,0,skinPalette,skinJointCount,skinShadowPipeline);
             if(!candidate.visible)continue;
             if(candidateIndex<proxyCandidate.size()&&proxyCandidate[candidateIndex])continue;
             ++instanceDrawCount;
@@ -949,10 +996,12 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             // 避免两套 LOD 深度互相遮挡；blend 为 0 时只画旧级，为 1 时只画新级。
             const auto previous=previousWorlds_.find(mesh.entity);
             const se::Mat4* previousWorld=previous!=previousWorlds_.end()?&previous->second:nullptr;
+            const auto look=se::Vec4{frame.data?frame.data->lookMode:0.0f,frame.data?frame.data->lookBlend:0.0f,3.0f,1.0f};
             const auto appendLod=[&](std::uint32_t level,float dither)
             {
                 se::AppendPbrModelDraws(*model,mesh.world,overrides,meshes,drawPipeline,viewProjection,camera_->position,
-                    forward?se::Vec3{0,0,1}:lightDirection,forward?se::Vec3{}:radiance,level,dither,previousWorld);
+                    forward?se::Vec3{0,0,1}:lightDirection,forward?se::Vec3{}:radiance,level,dither,previousWorld,look,
+                    skinPalette,skinJointCount,skinDrawPipeline);
             };
             if(lodTransitionActive&&lodBlend<1.0f)
             {
@@ -1074,6 +1123,16 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             std::vector<se::AssetDiagnostic> diagnostics;
             auto lighting=se::PrepareForwardLighting(frame.data?std::span<const se::LightInstance>(frame.data->lights):std::span<const se::LightInstance>{},
                 frame.data?frame.data->exposure:1,frame.data?frame.data->skyColor:se::Vec3{},diagnostics);report(diagnostics);
+            if(frame.data&&frame.data->sky.enabled)
+            {
+                // W07：项目天空覆盖；太阳方向仍来自场景方向光，圆盘与品牌合成共用同一方向。
+                lighting.skySettings.zenithColor=frame.data->sky.zenith;
+                lighting.skySettings.horizonColor=frame.data->sky.horizon;
+                lighting.skySettings.groundColor=frame.data->sky.ground;
+                lighting.skySettings.sunColor=frame.data->sky.sunColor;
+                lighting.skySettings.sunIntensity=frame.data->sky.sunIntensity;
+                lighting.skySettings.sunAngularRadius=frame.data->sky.sunAngularRadius;
+            }
             if(editor&&!frame.data->editorSkyEnabled)
             {
                 lighting.skySettings.zenithColor=lighting.skySettings.horizonColor=lighting.skySettings.groundColor=frame.data->skyColor;
@@ -1322,7 +1381,7 @@ void SandboxRenderer::Shutdown() noexcept
     editorGui_.reset();editorTarget_.reset();
     gameUi_.Clear();
     featureEnvironmentPipeline_.reset();featureEnvironmentSky_.reset();featureForwardOutput_.reset();featurePbrPipeline_.reset();featureEnvironment_=featureForward_=featureFullPbr_=false;
-    cube_.reset();sphere_.reset();pipeline_.reset();instancedPipeline_.reset();forwardInstancedPipeline_.reset();compressedPipeline_.reset();instances_.Clear();outputPipeline_.reset();skyPipeline_.reset();shadowPipeline_.reset();models_.Clear();models_.SetLodLevels(0);environments_.Clear();post_.Clear();bounds_.Clear();reportedDiagnostics_.clear();device_.reset();
+    cube_.reset();sphere_.reset();pipeline_.reset();instancedPipeline_.reset();forwardInstancedPipeline_.reset();compressedPipeline_.reset();instances_.Clear();outputPipeline_.reset();skyPipeline_.reset();shadowPipeline_.reset();skinnedPipeline_.reset();skinnedShadowPipeline_.reset();skinPaletteStorage_.clear();models_.Clear();models_.SetLodLevels(0);environments_.Clear();post_.Clear();bounds_.Clear();reportedDiagnostics_.clear();device_.reset();
     camera_.reset();
     hlodBaked_=false;hlodFailed_=false;hlodInstanceCount_=0;featureHlodSignature_.clear();
     hlodCells_.clear();hlodProxies_.clear();hlodOverrides_.clear();hlodProxyActive_.clear();hlodCandidateCell_.clear();hlodStream_.Clear();

@@ -24,7 +24,9 @@ struct PbrRenderMaterial
     // 材质引用的用户 PBR 产物；空表示使用调用方传入的默认 PBR Pipeline。
     rhi::Pipeline pipeline;
 };
-struct StaticRenderMesh {rhi::Buffer vertices,indices;std::vector<rhi::Buffer> lodIndices;std::shared_ptr<const LodChain> lod;rhi::Texture texture;std::shared_ptr<const PbrRenderMaterial> material;std::uint32_t indexCount=0;std::uint32_t vertexLayoutVersion=rhi::VertexLayoutVersionLegacy;Vec3 quantizationMinimum{};float quantizationExtent=1;};
+// W03：skinned 表示顶点缓冲是 80 字节 v3 布局（rhi::SkinnedVertex），
+// skinJointCount 是资产的关节数，用于校验调色板大小；静态网格保持 48 字节参考布局。
+struct StaticRenderMesh {rhi::Buffer vertices,indices;std::vector<rhi::Buffer> lodIndices;std::shared_ptr<const LodChain> lod;rhi::Texture texture;std::shared_ptr<const PbrRenderMaterial> material;std::uint32_t indexCount=0;std::uint32_t vertexLayoutVersion=rhi::VertexLayoutVersionLegacy;Vec3 quantizationMinimum{};float quantizationExtent=1;bool skinned=false;std::uint32_t skinJointCount=0;};
 void ConfigurePbrMaterial(const MaterialData* material,PbrRenderMaterial& output,
     std::string_view name,std::vector<AssetDiagnostic>& diagnostics);
 struct StaticRenderModel
@@ -121,10 +123,15 @@ private:
 void AppendStaticModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
     std::vector<rhi::DrawIndexed>& output,rhi::PipelineHandle pipeline,const Mat4& viewProjection,bool unlit=false,
     std::uint32_t lodLevel=0);
+// W03：蒙皮部件必须同时给出调色板字节（每关节 48 字节，由调用方保活到 Submit 结束）、
+// 关节数与蒙皮 PSO；缺任一项时该部件不进入绘制列表（不会按参考布局误读 80 字节顶点）。
 void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
     std::span<const std::shared_ptr<const PbrRenderMaterial>> overrides,std::vector<rhi::DrawIndexed>& output,
     rhi::PipelineHandle pipeline,const Mat4& viewProjection,Vec3 camera,Vec3 directionToLight,Vec3 radiance,
-    std::uint32_t lodLevel=0,float lodDither=0,const Mat4* previousWorld=nullptr);
+    std::uint32_t lodLevel=0,float lodDither=0,const Mat4* previousWorld=nullptr,
+    Vec4 look={},std::span<const std::byte> skinPalette={},std::uint32_t skinJointCount=0,
+    rhi::PipelineHandle skinPipeline={});
 void AppendShadowModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,std::vector<rhi::DrawIndexed>& output,
-    std::uint32_t lodLevel=0);
+    std::uint32_t lodLevel=0,std::span<const std::byte> skinPalette={},std::uint32_t skinJointCount=0,
+    rhi::PipelineHandle skinPipeline={});
 }

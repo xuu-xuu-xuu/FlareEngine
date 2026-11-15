@@ -17,7 +17,7 @@ namespace se
 {
 class AssetStore;
 class Profiler;
-struct MeshInstance { StableEntityId entity; Mat4 world; MeshComponent mesh; };
+struct MeshInstance { StableEntityId entity; Mat4 world; MeshComponent mesh; std::vector<Mat4> skinPalette; };
 struct LightInstance { StableEntityId entity; Mat4 world; LightComponent light; };
 struct DirectionalShadowView
 {
@@ -28,6 +28,13 @@ struct DirectionalShadowView
     bool enabled=true,pcf=true,preview=false;
 };
 struct EnvironmentView {std::string asset;float intensity=1,yaw=0;};
+// W07：项目对程序化天空的可选覆盖。关闭时沿用引擎默认天空，不改动环境贴图路径。
+struct SkyView
+{
+    bool enabled=false;
+    Vec3 zenith{0.10f,0.18f,0.34f},horizon{0.55f,0.66f,0.78f},ground{0.16f,0.15f,0.14f},sunColor{1.0f,0.96f,0.90f};
+    float sunIntensity=12.0f,sunAngularRadius=0.012f;
+};
 // 一帧自有 CPU 快照，不含可变 World 指针、COM 对象或 GPU 句柄。
 struct FrameData
 {
@@ -66,8 +73,11 @@ struct FrameData
     Vec3 skyColor{0.02f,0.04f,0.08f}; // 线性 HDR；普通 Sky 的固定背景，环境模式使用 environment。
     DirectionalShadowView shadow;
     EnvironmentView environment;
+    SkyView sky;
     std::optional<EnvironmentSnapshot> timeOfDay; // 自有 CPU 昼夜值；GPU 消费另行接入。
     std::optional<rhi::PostProcessSettings> post; // 只有数值；不含 GPU 句柄或 prepared 对象。
+    // W06：运行时外观覆盖。mode 0=基础色 1=白模 2=Toon；blend 在场景层统一推进。
+    float lookMode=0,lookBlend=0;
     bool sceneRenderSettings=false,acesToneMap=false,modelLod=false,fullPbr=false;
     bool modelHlod=false;
     float hlodRadius=0;

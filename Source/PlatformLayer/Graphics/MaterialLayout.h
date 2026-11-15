@@ -71,12 +71,17 @@ struct alignas(16) PbrDrawConstants
 {
     Mat4 clipFromLocal,worldFromLocal,normalFromLocal;
     Vec4 baseColor,cameraPosition,directionToLight,radiance,parameters,options;
+    // W06：外观覆盖。x=模式（0 基础色/1 白模/2 Toon），y=混合，z=Toon 分档数，w=轮廓/边缘强度。
+    Vec4 look;
+    // W03：蒙皮调色板。x=调色板字节偏移，y=关节数，zw 保留；空 buffer 时静态绘制。
+    Vec4 skin;
 };
-static_assert(sizeof(PbrDrawConstants)==288&&alignof(PbrDrawConstants)==16);
+static_assert(sizeof(PbrDrawConstants)==320&&alignof(PbrDrawConstants)==16);
 static_assert(offsetof(PbrDrawConstants,worldFromLocal)==64&&offsetof(PbrDrawConstants,normalFromLocal)==128);
 static_assert(offsetof(PbrDrawConstants,baseColor)==192&&offsetof(PbrDrawConstants,cameraPosition)==208);
 static_assert(offsetof(PbrDrawConstants,directionToLight)==224&&offsetof(PbrDrawConstants,radiance)==240);
 static_assert(offsetof(PbrDrawConstants,parameters)==256&&offsetof(PbrDrawConstants,options)==272);
+static_assert(offsetof(PbrDrawConstants,look)==288&&offsetof(PbrDrawConstants,skin)==304);
 
 // G 系列预留的绑定布局版本。G00 只登记，不创建对应描述符布局；
 // 新版本不得复用 1–9 的既有布局，也不得与 BasicLit 技术号混用。
@@ -100,6 +105,10 @@ inline constexpr std::uint32_t ForwardInstancingLayoutVersion=30;
 // G15：ToneMap 的扩展绑定布局。t0 场景、t1 Bloom、t2 1×1 曝光、t3 33³ LUT；
 // 与旧 PostProcessLayoutVersion 的 t0/t1 布局不兼容，因此单独占用 27 而不复用 6。
 inline constexpr std::uint32_t ToneMapLayoutVersion=ExposureColorLayoutVersion;
+// W03：蒙皮绑定布局。在受光/阴影技术原有槽位（b0 逐绘制常量、贴图表、b1 帧常量）
+// 之外追加 VS 的 t8 ByteAddressBuffer 调色板；阴影深度只用 b0 + t8。
+// 与 4 号 ShadowLayoutVersion / 3 号 ForwardLayoutVersion 不兼容，因此单独占用 31。
+inline constexpr std::uint32_t SkinnedLayoutVersion=31;
 
 struct LayoutVersionRecord
 {
@@ -122,5 +131,6 @@ inline constexpr LayoutVersionRecord GSeriesLayoutVersions[] =
     {MeshletLayoutVersion,"G07","cluster 描述与间接参数",0},
     {OutputLutLayoutVersion,"G15","输出 LUT strip（t0 场景/t1 阴影/t2 33³，Rgba8 或 Rgba16F）",0},
     {ForwardInstancingLayoutVersion,"G06","Forward 实例化（b0/纹理表/b1/实例 SRV）",0},
+    {SkinnedLayoutVersion,"W03","蒙皮调色板（受光：b0/纹理表/b1/t8；阴影深度：b0/t8）",0},
 };
 }

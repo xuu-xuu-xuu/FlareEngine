@@ -12,6 +12,9 @@ struct D3D12ShaderSource
     UINT flags=0;
     UINT layoutVersion=se::rhi::MaterialLayoutVersion;
     bool compressedVertex=false;
+    // W03：顶点布局 v3（JOINTS0/WEIGHTS0）与 t8 调色板；由 vertexLayoutVersion 推导，
+    // 参与反射校验但不进入元数据（布局版本与宏已在键里）。
+    bool skinnedVertex=false;
     std::vector<se::rhi::ShaderMacro> macros;
     std::vector<D3D12ShaderDependency> dependencies;
     std::string key,preprocessed;

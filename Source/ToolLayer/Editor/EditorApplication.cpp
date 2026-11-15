@@ -1669,7 +1669,10 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                     }
                 }
                 if(toolkitShell->ConsumeCloseRequest())PostMessageW(hostWindow,WM_CLOSE,0,0);
-                BuildFrameData(session.IsPlaying()?*session.PlayWorld():session.EditWorld(),session.IsPlaying()?playUi.get():nullptr,nullptr,frame);
+                // Play 时必须用播放环境的快照：蒙皮调色板在 Environment 的姿态系统里，
+            // 只传 World 会得到空调色板，角色停在绑定姿态（E18）。
+            if(session.IsPlaying())BuildFrameData(*session.PlayEnvironment(),playUi.get(),nullptr,frame);
+            else BuildFrameData(session.EditWorld(),nullptr,nullptr,frame);
                 if(session.IsPlaying()&&playUi&&hooks&&hooks->extract)hooks->extract(*session.PlayWorld(),*playUi,frame);
                 else if(viewportController.Gizmos())
                 {
@@ -1791,7 +1794,7 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                 else
                 {
                     navigating=false;navigationCancelled=false;
-                    FrameData play;BuildFrameData(*session.PlayWorld(),nullptr,nullptr,play);
+                    FrameData play;BuildFrameData(*session.PlayEnvironment(),nullptr,nullptr,play);
                     currentCamera=SelectCamera(play.cameras,area,++editorFrame).snapshot;
                 }
                 view.hasCamera=currentCamera.has_value();view.camera=currentCamera;if(currentCamera)view.viewProjection=currentCamera->viewProjection;
@@ -1805,7 +1808,10 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
             if(frontend.CloseApproved())PostMessageW(hostWindow,WM_CLOSE,0,0);
             if(hooks&&hooks->drawn)hooks->drawn(frontend.Context(),result);
             playInput->SetViewport(hostWindow,{result.viewport.x,result.viewport.y,result.viewport.width,result.viewport.height});
-            BuildFrameData(session.IsPlaying()?*session.PlayWorld():session.EditWorld(),session.IsPlaying()?playUi.get():nullptr,nullptr,frame);
+            // Play 时必须用播放环境的快照：蒙皮调色板在 Environment 的姿态系统里，
+            // 只传 World 会得到空调色板，角色停在绑定姿态（E18）。
+            if(session.IsPlaying())BuildFrameData(*session.PlayEnvironment(),playUi.get(),nullptr,frame);
+            else BuildFrameData(session.EditWorld(),nullptr,nullptr,frame);
             if(session.IsPlaying()&&session.PlayEnvironment()->TimeOfDay().Profile())frame.timeOfDay=session.PlayEnvironment()->Snapshot();
             if(!session.IsPlaying()&&frontend.TimeOfDayPreview().Ready())frame.timeOfDay=frontend.TimeOfDayPreview().Snapshot();
             if(result.uiCanvas)

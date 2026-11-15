@@ -60,6 +60,34 @@ try
         var path=ProjectFile(capture);Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);session.SetWindowCapture(path,captureFrame);
     }
     else if(Option("--capture-frame") is not null)throw new ArgumentException("Bridge.InvalidArgument");
+    if(Option("--resolution") is { } resolution)
+    {
+        if(!args.Contains("--window"))throw new ArgumentException("Bridge.InvalidArgument");
+        var parts=resolution.Split('x');
+        if(parts.Length!=2||!uint.TryParse(parts[0],out var width)||!uint.TryParse(parts[1],out var height)
+            ||width<64||height<64||width>16384||height>16384)throw new ArgumentException("Bridge.InvalidArgument");
+        session.SetWindowResolution(width,height);
+    }
+    if(Option("--fixed-step") is { } fixedStep && fixedStep.Length>0)
+    {
+        if(!double.TryParse(fixedStep,System.Globalization.NumberStyles.Float,System.Globalization.CultureInfo.InvariantCulture,out var seconds)
+            ||seconds<0||seconds>0.1)throw new ArgumentException("Bridge.InvalidArgument");
+        session.SetWindowFixedStep(seconds);
+    }
+    if(Option("--capture-sequence") is { } captureDirectory)
+    {
+        if(!args.Contains("--window")||args.Contains("--editor")||Option("--capture") is not null)throw new ArgumentException("Bridge.InvalidArgument");
+        if(!ulong.TryParse(Option("--capture-count"),out var count)||count==0||count>100000)throw new ArgumentException("Bridge.InvalidArgument");
+        session.SetCaptureSequence(ProjectFile(captureDirectory),count);
+    }
+    else if(Option("--capture-count") is not null)throw new ArgumentException("Bridge.InvalidArgument");
+    // 逐帧耗时要靠 window profile 落盘（frames.csv 的 raw_delta_ms）；实时帧时间验收用它。
+    if(Option("--profile") is { } profileDirectory)
+    {
+        if(!args.Contains("--window"))throw new ArgumentException("Bridge.InvalidArgument");
+        // 目录必须由宿主新建（已有输出拒绝覆盖），这里只解析路径，不预建目录。
+        session.SetWindowProfile(ProjectFile(profileDirectory));
+    }
     var entity = fieldsPath is null&&!editorMode?session.CreateEntity("ManagedMover"):null;
     var defaultFields=new JsonObject();
     if(script=="sample.project_mover")defaultFields["Speed"]=new JsonObject{["Kind"]="f32",["Value"]=2};

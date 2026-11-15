@@ -135,6 +135,31 @@ bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3
             ||std::abs(draw.world(3,2))>1e-5f||std::abs(draw.world(3,3)-1)>1e-5f
             ||color.x<0||color.y<0||color.z<0||color.w<0||color.x>1||color.y>1||color.z>1||color.w>1)
         {Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;}
+        // W03：蒙皮管线的顶点缓冲必须是 80 字节 v3 布局，且调色板字节数 = 关节数 × 48；
+        // 静态管线收到调色板同样视为调用方错误，避免静默丢弃数据。
+        const bool skinned=active.prepared->program->source.skinnedVertex;
+        const bool skinnedStride=mesh->vertexView.StrideInBytes==sizeof(se::rhi::SkinnedVertex);
+        if(skinned!=skinnedStride)
+        {
+            Log(LogLevel::Error,"蒙皮校验: pipelineSkinned="+std::to_string(skinned)+" stride="+std::to_string(mesh->vertexView.StrideInBytes)
+                +" expected="+std::to_string(sizeof(se::rhi::SkinnedVertex))+" palette="+std::to_string(draw.skinPalette.size())+" joints="+std::to_string(draw.skinJointCount));
+            Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;
+        }
+        if(skinned)
+        {
+            if(draw.skinPalette.empty()||!draw.skinJointCount||draw.skinJointOffset>draw.skinPalette.size()
+                ||draw.skinPalette.size()-draw.skinJointOffset!=static_cast<std::size_t>(draw.skinJointCount)*48)
+            {
+                Log(LogLevel::Error,"蒙皮调色板校验: size="+std::to_string(draw.skinPalette.size())+" offset="+std::to_string(draw.skinJointOffset)
+                    +" joints="+std::to_string(draw.skinJointCount));
+                Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;
+            }
+        }
+        else if(!draw.skinPalette.empty()||draw.skinJointCount)
+        {
+            Log(LogLevel::Error,"静态绘制带调色板: size="+std::to_string(draw.skinPalette.size())+" joints="+std::to_string(draw.skinJointCount));
+            Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;
+        }
         if(se::rhi::UsesLitLayout(active.prepared->program->source.kind))
         {
             const auto& p=draw.pbr;const auto length=se::LengthSquared(p.directionToLight);
@@ -189,7 +214,8 @@ void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12Me
             const se::rhi::PbrDrawConstants constants{viewProjection*draw.world,draw.world,se::Transpose(*se::Inverse(draw.world)),draw.tint,
                 {p.cameraPosition.x,p.cameraPosition.y,p.cameraPosition.z,1},{p.directionToLight.x,p.directionToLight.y,p.directionToLight.z,0},
                 {p.radiance.x,p.radiance.y,p.radiance.z,0},{p.metallic,p.roughness,p.normalScale,sign},
-                {p.normalMapping?1.0f:0.0f,draw.unlit?1.0f:0.0f,p.doubleSided?1.0f:0.0f,p.lodDither!=0.0f?p.lodDither:(p.receivesShadow?1.0f:0.0f)}};
+                {p.normalMapping?1.0f:0.0f,draw.unlit?1.0f:0.0f,p.doubleSided?1.0f:0.0f,p.lodDither!=0.0f?p.lodDither:(p.receivesShadow?1.0f:0.0f)},
+                draw.look,{static_cast<float>(draw.skinJointOffset),static_cast<float>(draw.skinJointCount),0,0}};
             std::memcpy(slice.cpu,&constants,sizeof(constants));
         }
         else
@@ -213,6 +239,13 @@ void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12Me
             const UINT instanceParameter=se::rhi::IsInstanced(program.prepared->program->source.kind)
                 &&se::rhi::IsForward(program.prepared->program->source.kind)?3u:2u;
             commands.SetGraphicsRootShaderResourceView(instanceParameter,frame.instanceSlices[index-1].Gpu());++binds.instanceBuffers;
+        }
+        // W03：蒙皮管线的调色板在参数 4（Visibility ALL）；字节偏移由 b0 的 skin.x 给出。
+        if(program.prepared->program->source.skinnedVertex)
+        {
+            const auto& skin=frame.skinSlices[index-1];
+            if(!skin.resource)return;
+            commands.SetGraphicsRootShaderResourceView(4,skin.Gpu());++binds.instanceBuffers;
         }
         if(!indirect.empty())commands.ExecuteIndirect(indirect[index-1].signature,1,indirect[index-1].arguments,0,indirect[index-1].arguments,D3D12Indirect::commandCountOffset);
         else commands.DrawIndexedInstanced(draw.mesh->indexCount,draw.instances.empty()?1u:static_cast<UINT>(draw.instances.size()),0,0,0);

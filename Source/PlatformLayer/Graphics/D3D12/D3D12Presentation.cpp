@@ -579,6 +579,33 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         frame.instanceSlices.push_back(slice);
     }
     instancePacking.reset();
+    // W03：蒙皮调色板。每次绘制一份上传环切片；同一帧里相邻绘制若引用同一段
+    // 调色板字节（同一演员的多个材质部件、以及同演员的阴影投射），复用同一片，
+    // 保证“一层演员一份调色板”的语义同时避免逐网格重复上传。
+    {
+        std::vector<std::pair<const std::byte*,std::size_t>> uploaded;
+        std::vector<D3D12UploadSlice> shared;
+        const auto pack=[&](std::span<const D3D12MeshDraw> draws,std::vector<D3D12UploadSlice>& slices)
+        {
+            slices.assign(draws.size(),D3D12UploadSlice{});
+            for(size_t index=0;index<draws.size();++index)
+            {
+                const auto palette=draws[index].skinPalette;
+                if(palette.empty())continue;
+                const auto key=std::pair{palette.data(),palette.size()};
+                const auto found=std::find(uploaded.begin(),uploaded.end(),key);
+                if(found!=uploaded.end()){slices[index]=shared[static_cast<std::size_t>(found-uploaded.begin())];continue;}
+                D3D12UploadSlice slice;
+                if(!CheckGraphicsResult(frame.uploads.Allocate(draws[index].skinJointOffset+palette.size(),16,slice),
+                    localization,"D3D12.UploadCapacityExceeded"))return false;
+                std::memcpy(slice.cpu+draws[index].skinJointOffset,palette.data(),palette.size());
+                uploaded.push_back(key);shared.push_back(slice);slices[index]=slice;
+            }
+            return true;
+        };
+        if(!pack(content.meshes,frame.skinSlices)){presentation.commandList->Close();return false;}
+        if(!pack(content.shadowMeshes,frame.shadowSkinSlices)){presentation.commandList->Close();return false;}
+    }
     std::vector<D3D12IndirectPrepared> indirectPrepared(indirects.size());
     std::vector<D3D12IndirectOcclusion> indirectOcclusion(indirects.size());
     if(indirect)
@@ -632,6 +659,12 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
                 if(!use(texture.resource.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"PbrTexture"))return false;
         }
     }
+    // W03：调色板是有根 SRV 的 UPLOAD 页，与实例数据同样按 GENERIC_READ 登记；
+    // 阴影投射的调色板独立登记，避免与不透明列表的生命周期混淆。
+    for(const auto& slice:frame.skinSlices)if(slice.resource)
+        if(!use(slice.resource,D3D12_RESOURCE_STATE_GENERIC_READ,"SkinData"))return false;
+    for(const auto& slice:frame.shadowSkinSlices)if(slice.resource)
+        if(!use(slice.resource,D3D12_RESOURCE_STATE_GENERIC_READ,"ShadowSkinData"))return false;
 
     const auto rtv=forward?(content.sceneHdr?content.sceneHdr->rtv->Cpu():presentation.hdrRtv->Cpu()):gui?gui->scene->rtv->Cpu():presentation.rtvs->Cpu(index);
     constexpr float clearColor[] = { 0.08f, 0.18f, 0.32f, 1.0f }; // 深蓝色 RGBA。

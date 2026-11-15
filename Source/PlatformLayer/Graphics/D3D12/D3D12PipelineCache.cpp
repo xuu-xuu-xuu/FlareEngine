@@ -50,7 +50,10 @@ D3D12PipelineCache::D3D12PipelineCache(ID3D12Device& device):impl_(std::make_uni
     const auto luid=device.GetAdapterLuid();
     // G15.09：库文件名带格式版本，布局变更（如 29 号输出 LUT）后提升版本，使旧条目失效。
     // G02.04：根签名序列化哈希已进入 PSO 键；v3 同时让旧 v2 库整体失效，避免历史条目混用。
-    static constexpr const char* libraryVersion="v3";
+    // W06：逐绘制常量新增外观覆盖/蒙皮槽（PbrDrawConstants 288→320），旧库条目不再兼容，提升到 v4。
+    // W03：根签名扩到 5 个参数（t8 调色板）、v3 顶点布局、31 号绑定布局与 Skinning.hlsli 进入
+    // 着色器依赖；旧 v4 库条目的键与本版本不同，提升到 v5 直接作废旧库。
+    static constexpr const char* libraryVersion="v5";
     std::ostringstream name;name<<"library-"<<libraryVersion<<"-"<<std::hex<<luid.HighPart<<"-"<<luid.LowPart<<".bin";
     p.libraryPath=directory/name.str();
     if(std::filesystem::exists(p.libraryPath,error)&&!error)
@@ -73,7 +76,9 @@ D3D12PipelineCache::~D3D12PipelineCache()
     return;
 #endif
     auto& p=*impl_;
-    if(!p.library||!p.libraryDirty||p.libraryPath.empty())return;
+    // 从磁盘加载的库再次 Serialize 在本机驱动上会访问越界（首个从空库建立的进程正常）。
+    // 交付包首次运行写盘、后续运行只读；这样既保留热身收益，也避免退出时崩溃。
+    if(!p.library||!p.libraryDirty||p.libraryPath.empty()||p.stats.libraryLoaded)return;
     try
     {
         LogCheckpoint("GPU.PipelineCache.Serialize.Begin");
@@ -90,14 +95,21 @@ D3D12PipelineCache::~D3D12PipelineCache()
 std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const rhi::PipelineDescription& description,const Localization& text)
 {
     auto& p=*impl_;if(p.owner!=std::this_thread::get_id())return {};
+    // W03：31 号蒙皮布局只对可蒙皮技术开放，且必须与 v3 顶点布局成对出现。
+    const bool skinnedLayout=description.bindingLayoutVersion==rhi::SkinnedLayoutVersion
+        &&rhi::SupportsSkinning(description.kind);
+    const bool skinnedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned;
     if((description.bindingLayoutVersion!=rhi::BindingLayout(description.kind)
-            &&!(rhi::IsOutput(description.kind)&&description.bindingLayoutVersion==rhi::OutputLutLayoutVersion))
+            &&!(rhi::IsOutput(description.kind)&&description.bindingLayoutVersion==rhi::OutputLutLayoutVersion)
+            &&!skinnedLayout)
+        ||skinnedLayout!=skinnedVertex
         ||!rhi::ValidPipelineKind(description.kind)
         ||(description.shaderInput!=rhi::ShaderInput::Source&&description.shaderInput!=rhi::ShaderInput::Artifact)
         ||(description.depth!=rhi::DepthMode::Default&&description.depth!=rhi::DepthMode::Disabled&&description.depth!=rhi::DepthMode::ReadWriteLess&&description.depth!=rhi::DepthMode::ReadOnlyLessEqual)
         ||(description.blend!=rhi::BlendMode::Opaque&&description.blend!=rhi::BlendMode::Alpha)
         ||(description.colorFormat!=rhi::ColorFormat::Rgba8Unorm&&description.colorFormat!=rhi::ColorFormat::Rgba16Float&&description.colorFormat!=rhi::ColorFormat::Rgba8Srgb)
-        ||(description.vertexLayoutVersion!=rhi::VertexLayoutVersionLegacy&&description.vertexLayoutVersion!=rhi::VertexLayoutVersionCompressed))return {};
+        ||(description.vertexLayoutVersion!=rhi::VertexLayoutVersionLegacy&&description.vertexLayoutVersion!=rhi::VertexLayoutVersionCompressed
+            &&description.vertexLayoutVersion!=rhi::VertexLayoutVersionSkinned))return {};
     std::erase_if(p.programs,[](const auto& item){return item.second.expired();});std::erase_if(p.pipelines,[](const auto& item){return item.second.expired();});
     std::erase_if(p.livePipelines,[](const auto& item){return item.expired();});
     std::shared_ptr<const D3D12ShaderProgram> program;
@@ -131,6 +143,8 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     const bool fullscreen=output||rhi::IsSky(description.kind)||post;
     const bool mesh=pbr||description.kind==rhi::PipelineKind::TexturedMesh;
     const bool compressed=description.vertexLayoutVersion==rhi::VertexLayoutVersionCompressed;
+    // W03：蒙皮管线在受光家族追加参数 4 的 t8 调色板 SRV；阴影深度单独用 b0 常量 + 参数 1 的 t8。
+    const bool skinned=skinnedLayout&&skinnedVertex;
     const auto depth=description.depth==rhi::DepthMode::Default?(mesh||depthOnly?rhi::DepthMode::ReadWriteLess:rhi::DepthMode::Disabled):description.depth;
     // G02.04：先构建根签名描述并序列化，再把序列化字节的 SHA-256 纳入 PSO 键。
     // 只靠 kind/layout/格式无法区分根参数/描述符表/静态采样器不同的技术；旧键会让
@@ -141,7 +155,7 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     if(rhi::IsOutput(description.kind)&&description.bindingLayoutVersion==rhi::OutputLutLayoutVersion)
         range.NumDescriptors=3;
     if(post)range.NumDescriptors=description.bindingLayoutVersion==rhi::ToneMapLayoutVersion?4u:2u;
-    D3D12_ROOT_PARAMETER parameters[4]{};
+    D3D12_ROOT_PARAMETER parameters[5]{};
     parameters[0].ParameterType=mesh?D3D12_ROOT_PARAMETER_TYPE_CBV:D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     parameters[0].ShaderVisibility=mesh||environmentSky||overlay?D3D12_SHADER_VISIBILITY_ALL:fullscreen?D3D12_SHADER_VISIBILITY_PIXEL:D3D12_SHADER_VISIBILITY_VERTEX;
     if(!mesh)parameters[0].Constants={0,0,description.kind==rhi::PipelineKind::Sky?40u:post?12u:environmentSky?20u:fullscreen?4u:16u};
@@ -150,6 +164,14 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     parameters[2].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;parameters[2].Descriptor={1,0};parameters[2].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
     if(instanced&&!forwardInstanced){parameters[2].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;parameters[2].Descriptor={7,0};parameters[2].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;}
     if(forwardInstanced){parameters[3].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;parameters[3].Descriptor={7,0};parameters[3].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;}
+    // W03：受光家族把调色板放在新参数 4（ALL）；阴影深度没有 b1/贴图表，调色板直接占参数 1。
+    if(skinned)
+    {
+        const UINT bonesParameter=mesh?4u:1u;
+        parameters[bonesParameter].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;
+        parameters[bonesParameter].Descriptor={8,0};
+        parameters[bonesParameter].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+    }
     D3D12_STATIC_SAMPLER_DESC sampler{};sampler.Filter=D3D12_FILTER_MIN_MAG_MIP_POINT;sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     sampler.MaxAnisotropy=1;sampler.ComparisonFunc=D3D12_COMPARISON_FUNC_ALWAYS;sampler.BorderColor=D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
     sampler.MaxLOD=D3D12_FLOAT32_MAX;sampler.ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
@@ -160,6 +182,19 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     samplers[2].AddressU=samplers[2].AddressV=samplers[2].AddressW=D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     if(post){samplers[0]=samplers[2];samplers[0].ShaderRegister=0;}
     D3D12_ROOT_SIGNATURE_DESC root{};root.NumParameters=forwardInstanced?4u:instanced?3u:overlay?1u:post?2u:forward?3u:mesh||output||environmentSky?2u:1u;root.pParameters=parameters;
+    if(skinned)root.NumParameters=mesh?5u:2u;
+    // 蒙皮材质管线把参数 3 留给实例 SRV，但非实例化时它是空表；补一个不冲突的 t7 单槽表，
+    // 避免调试层报“空根描述符表”。该寄存器不在任何着色器里读取。
+    // 注意：不能用参数 1 的 range（t0..t2），两段描述符范围重叠会让根签名序列化返回 E_INVALIDARG。
+    D3D12_DESCRIPTOR_RANGE spareRange{};
+    spareRange.RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_SRV;spareRange.NumDescriptors=1;spareRange.BaseShaderRegister=7;
+    spareRange.RegisterSpace=0;spareRange.OffsetInDescriptorsFromTableStart=D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    if(skinned&&mesh)
+    {
+        parameters[3].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        parameters[3].DescriptorTable={1,&spareRange};
+        parameters[3].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+    }
     root.NumStaticSamplers=environment?3u:shadow?2u:mesh||environmentSky?1u:0u;root.pStaticSamplers=environmentSky?&samplers[2]:mesh?samplers:nullptr;root.Flags=D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
     if(post){root.NumStaticSamplers=description.kind==rhi::PipelineKind::ToneMap||description.kind==rhi::PipelineKind::Fxaa?1u:0u;root.pStaticSamplers=samplers;}
     if(gui){root.NumParameters=2;root.NumStaticSamplers=1;samplers[0]=samplers[2];samplers[0].ShaderRegister=0;root.pStaticSamplers=samplers;}
@@ -168,6 +203,8 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     const auto rootHash=se::Sha256(std::span<const std::uint8_t>(
         static_cast<const std::uint8_t*>(serialized->GetBufferPointer()),serialized->GetBufferSize()));
     if(rootHash.empty())return {};
+    // 键已包含着色器源码键（= 宏 + 依赖 + 布局的 SHA-256）、绑定布局与顶点布局版本，
+    // 因此蒙皮/非蒙皮、压缩/参考顶点、不同 SE_* 宏组合不会共用同一条目。
     const auto key=se::Sha256(program->source.key+":"+program->bytecodeKey+":"+std::to_string(static_cast<int>(description.kind))
         +":"+std::to_string(description.bindingLayoutVersion)+":"+std::to_string(description.vertexLayoutVersion)+":"+std::to_string(static_cast<int>(depth))+":"+std::to_string(static_cast<int>(description.blend))
         +":"+std::to_string(static_cast<int>(description.colorFormat))+":root:"+rootHash+":triangle-list:cull-none:one-sample:d32-if-depth:v1");
@@ -189,6 +226,18 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
         {"NORMAL",0,DXGI_FORMAT_R8G8_UNORM,0,6,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
         {"TEXCOORD",0,DXGI_FORMAT_R16G16_FLOAT,0,8,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
         {"TANGENT",0,DXGI_FORMAT_R8G8B8A8_UNORM,0,12,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}};
+    // W03：v3 蒙皮顶点（80 字节）。JOINTS0 在 48、WEIGHTS0 在 64，偏移与 rhi::SkinnedVertex 一致。
+    const D3D12_INPUT_ELEMENT_DESC skinnedInputs[]{
+        {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,offsetof(rhi::SkinnedVertex,base.position),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"NORMAL",0,DXGI_FORMAT_R32G32B32_FLOAT,0,offsetof(rhi::SkinnedVertex,base.normal),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,offsetof(rhi::SkinnedVertex,base.uv),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"TANGENT",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,offsetof(rhi::SkinnedVertex,base.tangent),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"JOINTS",0,DXGI_FORMAT_R16G16B16A16_UINT,0,offsetof(rhi::SkinnedVertex,joints),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"WEIGHTS",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,offsetof(rhi::SkinnedVertex,weights),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}};
+    const D3D12_INPUT_ELEMENT_DESC skinnedDepthInputs[]{
+        {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,offsetof(rhi::SkinnedVertex,base.position),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"JOINTS",0,DXGI_FORMAT_R16G16B16A16_UINT,0,offsetof(rhi::SkinnedVertex,joints),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"WEIGHTS",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,offsetof(rhi::SkinnedVertex,weights),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}};
     const D3D12_INPUT_ELEMENT_DESC triangleInputs[]{
         {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,offsetof(D3D12TriangleVertex,position),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
         {"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,offsetof(D3D12TriangleVertex,color),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}};
@@ -210,7 +259,7 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     pipeline.DepthStencilState.DepthWriteMask=depth==rhi::DepthMode::ReadWriteLess?D3D12_DEPTH_WRITE_MASK_ALL:D3D12_DEPTH_WRITE_MASK_ZERO;
     pipeline.DepthStencilState.DepthFunc=depth==rhi::DepthMode::ReadOnlyLessEqual?D3D12_COMPARISON_FUNC_LESS_EQUAL:depth==rhi::DepthMode::ReadWriteLess?D3D12_COMPARISON_FUNC_LESS:D3D12_COMPARISON_FUNC_ALWAYS;
     pipeline.DepthStencilState.FrontFace=pipeline.DepthStencilState.BackFace={D3D12_STENCIL_OP_KEEP,D3D12_STENCIL_OP_KEEP,D3D12_STENCIL_OP_KEEP,D3D12_COMPARISON_FUNC_ALWAYS};
-    pipeline.InputLayout=fullscreen?D3D12_INPUT_LAYOUT_DESC{}:depthOnly?(compressed?D3D12_INPUT_LAYOUT_DESC{compressedInputs,1}:D3D12_INPUT_LAYOUT_DESC{meshInputs,1}):mesh?(compressed?D3D12_INPUT_LAYOUT_DESC{compressedInputs,4}:D3D12_INPUT_LAYOUT_DESC{meshInputs,pbr?4u:3u}):D3D12_INPUT_LAYOUT_DESC{triangleInputs,2};pipeline.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pipeline.InputLayout=fullscreen?D3D12_INPUT_LAYOUT_DESC{}:depthOnly?(skinned?D3D12_INPUT_LAYOUT_DESC{skinnedDepthInputs,3}:compressed?D3D12_INPUT_LAYOUT_DESC{compressedInputs,1}:D3D12_INPUT_LAYOUT_DESC{meshInputs,1}):mesh?(skinned?D3D12_INPUT_LAYOUT_DESC{skinnedInputs,6}:compressed?D3D12_INPUT_LAYOUT_DESC{compressedInputs,4}:D3D12_INPUT_LAYOUT_DESC{meshInputs,pbr?4u:3u}):D3D12_INPUT_LAYOUT_DESC{triangleInputs,2};pipeline.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     if(gui)pipeline.InputLayout={guiInputs,3};
     pipeline.NumRenderTargets=depthOnly?0:1;pipeline.RTVFormats[0]=depthOnly?DXGI_FORMAT_UNKNOWN:description.colorFormat==rhi::ColorFormat::Rgba8Unorm?DXGI_FORMAT_R8G8B8A8_UNORM:description.colorFormat==rhi::ColorFormat::Rgba8Srgb?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R16G16B16A16_FLOAT;
     pipeline.DSVFormat=mesh||pipeline.DepthStencilState.DepthEnable?DXGI_FORMAT_D32_FLOAT:DXGI_FORMAT_UNKNOWN;pipeline.SampleDesc={1,0};

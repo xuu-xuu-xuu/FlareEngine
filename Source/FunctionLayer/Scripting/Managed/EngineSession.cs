@@ -92,6 +92,34 @@ public sealed unsafe partial class EngineSession : IDisposable
         var target=string.IsNullOrEmpty(path)?null:Path.GetFullPath(path);
         Invoke(value=>{Check(NativeMethods.SetWindowCapture(value,target,target is null?0:checked((uint)Encoding.UTF8.GetByteCount(target)),target is null?0:frame));return 0;});
     }
+    // 固定回放尺寸；0x0 清除。只在窗口运行前配置。
+    public void SetWindowResolution(uint width,uint height)
+        => Invoke(value=>{Check(NativeMethods.SetWindowResolution(value,width,height));return 0;});
+    // 固定步长（秒）；0 清除。序列抓帧缺省 1/30 秒。
+    public void SetWindowFixedStep(double seconds)
+        => Invoke(value=>{Check(NativeMethods.SetWindowFixedStep(value,seconds));return 0;});
+    // 连续固定步抓帧目录与帧数；count 0 清除。与单帧抓帧互斥。
+    public void SetCaptureSequence(string? directory,ulong count)
+    {
+        var target=string.IsNullOrEmpty(directory)||count==0?null:Path.GetFullPath(directory);
+        if(target is not null)Directory.CreateDirectory(target);
+        Invoke(value=>{Check(NativeMethods.SetCaptureSequence(value,target,target is null?0:checked((uint)Encoding.UTF8.GetByteCount(target)),target is null?0:count));return 0;});
+    }
+    // W06：运行时外观覆盖。mode 0 基础色 / 1 白模 / 2 Toon；传 -1 清除并回到场景设置。
+    public void SetLook(int mode,float blend=1f)
+        => Invoke(value=>{Check(NativeMethods.SetLook(value,mode,blend));return 0;});
+    // W07：程序化天空覆盖；null 清除。颜色为显示线性 0..1，太阳方向仍来自场景方向光。
+    public void SetSky(SkyState? state)
+    {
+        if(state is null){Invoke(value=>{Check(NativeMethods.SetSky(value,null,0));return 0;});return;}
+        var s=state.Value;
+        var culture=System.Globalization.CultureInfo.InvariantCulture;
+        var text=string.Format(culture,
+            "{{\"zenith\":[{0:R},{1:R},{2:R}],\"horizon\":[{3:R},{4:R},{5:R}],\"ground\":[{6:R},{7:R},{8:R}],\"sunColor\":[{9:R},{10:R},{11:R}],\"sunIntensity\":{12:R},\"sunAngularRadius\":{13:R}}}",
+            s.Zenith.X,s.Zenith.Y,s.Zenith.Z,s.Horizon.X,s.Horizon.Y,s.Horizon.Z,s.Ground.X,s.Ground.Y,s.Ground.Z,
+            s.SunColor.X,s.SunColor.Y,s.SunColor.Z,s.SunIntensity,s.SunAngularRadius);
+        Invoke(value=>{Check(NativeMethods.SetSky(value,text,checked((uint)Encoding.UTF8.GetByteCount(text))));return 0;});
+    }
     public void RunWindow(string locale = "zh-CN", bool visible = true, ulong maximumFrames = 0)
     {
         if (IsWindowRunning) throw new EngineException("Bridge.SessionBusy", 4);
@@ -270,9 +298,15 @@ public sealed unsafe partial class EngineSession : IDisposable
     }
 }
 
-public sealed class Entity
+// W07：程序化天空覆盖。颜色是显示线性 0..1；太阳方向取场景方向光，不在这里重复定义。
+public struct SkyState
 {
-    internal Entity(EngineSession session, ulong handle) { Session = session; Handle = handle; }
+    public Vector3 Zenith, Horizon, Ground, SunColor;
+    public float SunIntensity, SunAngularRadius;
+}
+
+public sealed class Entity
+{    internal Entity(EngineSession session, ulong handle) { Session = session; Handle = handle; }
     public EngineSession Session { get; }
     public ulong Handle { get; }
     public bool Enabled
@@ -290,4 +324,29 @@ public sealed class Entity
         set => Session.Invoke(native => { EngineSession.Check(NativeMethods.SetTransform(native, Handle, in value)); return 0; });
     }
     public void Destroy() => Session.Invoke(value => { EngineSession.Check(NativeMethods.DestroyEntity(value, Handle)); return 0; });
+    // W03：角色播放与关节查询。clip 名来自资产；关节不存在返回 null，不是异常。
+    public void PlayAnimation(string clip,float speed=1f,bool loop=false)
+        => Session.Invoke(value=>{EngineSession.Check(NativeMethods.ActorPlay(value,StableId,clip,checked((uint)Encoding.UTF8.GetByteCount(clip)),speed,loop?1:0));return 0;});
+    public Vector3? JointPosition(string joint)
+    {
+        return Session.Invoke(value=>
+        {
+            EngineSession.Check(NativeMethods.JointPosition(value,StableId,joint,checked((uint)Encoding.UTF8.GetByteCount(joint)),out var position,out var found));
+            return found!=0?(Vector3?)position:null;
+        });
+    }
+    public void SetCameraFieldOfView(float radians)
+        => Session.Invoke(value=>{EngineSession.Check(NativeMethods.SetCameraFov(value,StableId,radians));return 0;});
+    // 挂接或替换静态网格；运行时可用来布景和生成植株。
+    public void SetMesh(string assetId,bool castsShadow=true,bool receivesShadow=true)
+        => Session.Invoke(value=>{EngineSession.Check(NativeMethods.SetMesh(value,Handle,assetId,checked((uint)Encoding.UTF8.GetByteCount(assetId)),castsShadow?1:0,receivesShadow?1:0));return 0;});
+    // W07：世界方向投影到相机归一化屏幕坐标（左上原点，0..1）；不在前方返回 null。
+    public Vector2? ProjectDirection(Vector3 direction)
+    {
+        return Session.Invoke(value=>
+        {
+            EngineSession.Check(NativeMethods.ProjectDirection(value,StableId,direction,out var uv,out var front));
+            return front!=0?(Vector2?)uv:null;
+        });
+    }
 }

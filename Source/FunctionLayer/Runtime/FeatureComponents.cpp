@@ -36,7 +36,8 @@ const std::array rendering{
     P{"render.cacheBindings","Feature.Render.Bindings",PropertyType::Boolean,true},
     P{"render.shadowEnabled","Feature.Render.Shadow",PropertyType::Boolean,true},
     P{"render.shadowPcf","Feature.Render.Pcf",PropertyType::Boolean,true},
-    P{"render.shadowExtent","Feature.Render.ShadowExtent",PropertyType::Number,8.f,.1f,10000.f},
+    P{"render.shadowExtent","Feature.Render.ShadowExtent",PropertyType::Number,8.f,.1f,1000.f},
+    P{"render.shadowDistance","Feature.Render.ShadowDistance",PropertyType::Number,16.f,1.f,10000.f},
     P{"render.shadowBias","Feature.Render.ShadowBias",PropertyType::Number,.0008f,0.f,.1f},
     P{"render.shadowNormalBias","Feature.Render.NormalBias",PropertyType::Number,.015f,0.f,1.f},
     P{"render.lutLift","Feature.Render.Lift",PropertyType::Vector3,Vec3{},-1.f,1.f},
@@ -50,7 +51,16 @@ const std::array rendering{
     P{"render.occlusion","Feature.Render.Occlusion",PropertyType::Boolean,false},
     P{"render.occlusionCounters","Feature.Render.OcclusionCounters",PropertyType::Boolean,false},
     P{"render.occlusionTiming","Feature.Render.OcclusionTiming",PropertyType::Boolean,false},
-    P{"render.frameGraph","Feature.Render.FrameGraph",PropertyType::Boolean,false}};
+    P{"render.frameGraph","Feature.Render.FrameGraph",PropertyType::Boolean,false},
+    // W06：运行时外观覆盖。0=基础色、1=白模、2=Toon；blend 只读取覆盖结果，不回写资产材质。
+    P{"render.lookMode","Feature.Render.LookMode",PropertyType::Number,0.f,0.f,2.f},
+    P{"render.lookBlend","Feature.Render.LookBlend",PropertyType::Number,0.f,0.f,1.f}};
+const std::array actor{
+    P{"actor.asset","Feature.Actor.Asset",PropertyType::AssetId,std::string{}},
+    P{"actor.clip","Feature.Actor.Clip",PropertyType::Text,std::string{"Idle"}},
+    P{"actor.speed","Feature.Actor.Speed",PropertyType::Number,1.f,0.f,10.f},
+    P{"actor.loop","Feature.Actor.Loop",PropertyType::Boolean,true},
+    P{"actor.playing","Feature.Actor.Playing",PropertyType::Boolean,true}};
 const std::array environment{
     P{"environmentmap.asset","Feature.Environment.Asset",PropertyType::AssetId,std::string{}},
     P{"environmentmap.intensity","Feature.Environment.Intensity",PropertyType::Number,1.f,0.f,100.f},
@@ -95,8 +105,9 @@ void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors)
     descriptors.push_back(Descriptor<CharacterSettingsComponent>("character","Feature.Character",character));
     descriptors.push_back(Descriptor<RenderSettingsComponent>("render","Feature.Render",rendering));
     descriptors.push_back(Descriptor<EnvironmentSettingsComponent>("environmentmap","Feature.Environment",environment));
+    descriptors.push_back(Descriptor<ActorSettingsComponent>("actor","Feature.Actor",actor));
 }
-bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=EnvironmentSettingsComponent::TypeId;}
+bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=ActorSettingsComponent::TypeId;}
 ComponentHandle SceneFeature(const World& world,ComponentTypeId type)
 {
     ComponentHandle result;StableEntityId best=UINT64_MAX;

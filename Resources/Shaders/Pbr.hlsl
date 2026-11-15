@@ -12,7 +12,11 @@
 #endif
 #endif
 #ifdef SE_VERTEX_COMPRESSED
-struct VertexInput {float4 position:POSITION;float2 normal:NORMAL;float2 uv:TEXCOORD0;float4 tangent:TANGENT;};
+struct VertexInput {float4 position:POSITION;float2 normal:NORMAL;float2 uv:TEXCOORD0;float4 tangent:TANGENT;
+#ifdef SE_SKINNED
+    uint4 joints:JOINTS0;float4 weights:WEIGHTS0;
+#endif
+};
 float3 DecodeOctahedral(float2 encoded)
 {
     float2 e=encoded*2.0-1.0;
@@ -21,7 +25,15 @@ float3 DecodeOctahedral(float2 encoded)
     return normalize(n);
 }
 #else
-struct VertexInput {float3 position:POSITION;float3 normal:NORMAL;float2 uv:TEXCOORD0;float4 tangent:TANGENT;};
+struct VertexInput {float3 position:POSITION;float3 normal:NORMAL;float2 uv:TEXCOORD0;float4 tangent:TANGENT;
+#ifdef SE_SKINNED
+    uint4 joints:JOINTS0;float4 weights:WEIGHTS0;
+#endif
+};
+#endif
+// W03：蒙皮调色板（t8）。只有蒙皮变体需要，声明放在绑定之后以保持寄存器顺序。
+#ifdef SE_SKINNED
+#include "Skinning.hlsli"
 #endif
 struct PixelInput
 {
@@ -49,6 +61,14 @@ PixelInput VSMain(VertexInput input
     float3 localPosition=input.position;
     float3 localNormal=input.normal;
     float4 localTangent=input.tangent;
+#endif
+    // W03：先在实体局部空间蒙皮（调色板 = jointWorld * inverseBind），再走原有的
+    // clip/world/normal 变换；这样静态与蒙皮共用同一套世界/相机矩阵语义。
+#ifdef SE_SKINNED
+    const float4x4 skinFromSkinned=WeightedSkinMatrix((uint)max(0.0,skin.x),input.joints,input.weights);
+    localPosition=SkinPosition(skinFromSkinned,localPosition);
+    localNormal=SkinDirection(skinFromSkinned,localNormal);
+    localTangent=float4(SkinDirection(skinFromSkinned,localTangent.xyz),localTangent.w);
 #endif
 #ifdef SE_INSTANCED
     uint start=instanceIndex*instanceStrideBytes;
@@ -109,6 +129,7 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     float3 l=UnitVector(directionToLight.xyz,float3(0,0,1));
 #ifdef SE_FORWARD
     float3 lit=float3(0,0,0);
+    float lookNdl=0,lookVisibility=1;
     if(frameDirection.w>0.5)
     {
         float3 direction=UnitVector(frameDirection.xyz,float3(0,0,1));
@@ -116,6 +137,7 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
 #ifdef SE_SHADOWS
         visibility=ShadowVisibility(input.worldPosition,geometricNormal,direction);
 #endif
+        lookNdl=saturate(dot(n,direction));lookVisibility=visibility;
         lit+=DirectBrdf(color,metal,rough,n,v,direction)*frameRadiance.rgb*visibility;
     }
     [loop] for(uint index=0;index<(uint)framePointCount.x;++index)
@@ -129,9 +151,11 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
 #ifdef SE_ENVIRONMENT
     lit+=EnvironmentBrdf(color,metal,rough,n,v);
 #endif
-    return float4(min(max(materialOptions.y>0.5?color:lit,0),65504),1);
+    float3 shaded=materialOptions.y>0.5?color:ApplyLook(lit,color,n,v,lookNdl,lookVisibility);
+    return float4(min(max(shaded,0),65504),1);
 #else
     float3 lit=DirectBrdf(color,metal,rough,n,v,l)*radiance.rgb;
-    return float4(OutputSrgb(materialOptions.y>0.5?color:lit),1);
+    float3 shaded=materialOptions.y>0.5?color:ApplyLook(lit,color,n,v,saturate(dot(n,l)),1.0);
+    return float4(OutputSrgb(shaded),1);
 #endif
 }

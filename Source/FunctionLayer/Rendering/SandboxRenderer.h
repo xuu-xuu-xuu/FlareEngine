@@ -52,6 +52,9 @@ public:
 
 private:
     std::filesystem::path ResourceDirectory() const;
+    // W03：把实体局部调色板压成每关节 3×float4（行主序 3×4）的字节；空调色板时写单位矩阵
+    // （绑定姿势），保证蒙皮顶点缓冲也能以“未摆姿势”画出原位置。
+    std::span<const std::byte> BuildSkinPalette(const std::vector<se::Mat4>& palette,std::size_t jointCount,std::uint32_t& outJointCount);
     // G15：把当前 `.selut` 晶格烘成 1089×33 显示线性 strip；失败保留旧 strip。
     // G15.09：默认 Rgba16Float（保留 >1 值与精度），SELFENGINE_LUT_8BIT=1 回退 Rgba8 做 A/B。
     bool UpdateLutStrip(const Localization& localization);
@@ -74,6 +77,11 @@ private:
     se::rhi::Pipeline featureForwardOutput_;
     bool featureForward_=false;
     se::rhi::Pipeline shadowPipeline_;
+    // W03：蒙皮前向（ShadowedMesh）+ 蒙皮阴影深度（ShadowDepth）。只在阴影家族场景创建；
+    // 环境/实例化帧不启用，避免与默认 Pipeline 的 pass 类别不一致。
+    se::rhi::Pipeline skinnedPipeline_,skinnedShadowPipeline_;
+    // 每帧每演员一份调色板字节；RHI 只借用，存活到 Submit 结束，因此放在成员里而不是栈上。
+    std::vector<std::vector<std::byte>> skinPaletteStorage_;
     std::shared_ptr<const se::StaticRenderModel> cube_;
     std::shared_ptr<const se::StaticRenderModel> sphere_;
     se::StaticModelRenderCache models_;

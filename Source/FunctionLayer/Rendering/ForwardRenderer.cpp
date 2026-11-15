@@ -68,7 +68,7 @@ rhi::Result RecordShadowedFrame(rhi::CommandContext& commands,const rhi::Forward
     if(result)result=commands.EndPass();
     if(result)result=commands.BeginPass({rhi::PassKind::Shadow,rhi::ResourceUse::None,rhi::ResourceUse::DepthWrite,"Shadow"});
     if(result&&shadows.enabled)for(const auto& draw:casters)if(draw.castsShadow)
-    {result=commands.DrawShadow(draw.vertices,draw.indices,draw.world);if(!result)break;}
+    {result=commands.DrawShadow(draw);if(!result)break;}
     if(result)result=commands.EndPass();
     if(result)result=commands.BeginPass({rhi::PassKind::Sky,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::None,"Sky"});
     if(result)result=commands.EndPass();
@@ -216,7 +216,7 @@ rhi::Result RecordShadowedFrameGraph(rhi::CommandContext& commands,const rhi::Fo
     if(status!=FrameGraphStatus::Success)return {GraphFailure(status)};
     return ExecuteFrameGraph(commands,graph,
         [&]{rhi::Result record;if(!shadows.enabled)return record;
-            for(const auto& draw:casters){if(!draw.castsShadow)continue;record=commands.DrawShadow(draw.vertices,draw.indices,draw.world);if(!record)break;}
+            for(const auto& draw:casters){if(!draw.castsShadow)continue;record=commands.DrawShadow(draw);if(!record)break;}
             return record;},
         [&]{rhi::Result record;for(const auto& draw:visible){record=commands.Draw(draw);if(!record)break;}return record;},
         [&]{rhi::Result record;for(const auto& quad:overlays){record=commands.DrawOverlay(quad);if(!record)break;}return record;});

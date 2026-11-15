@@ -51,6 +51,12 @@ struct D3D12MeshDraw
     se::Mat4 previousWorld;
     bool compressedVertices=false;
     bool outline=false;
+    // W06/W03：外观覆盖与蒙皮调色板；由 RHI 绘制路径填充。
+    se::Vec4 look{};
+    // 调色板字节（每关节 3×float4，共 48 字节）；空表示静态绘制。
+    // 呈现层在本帧复制作业里写入上传环，再由 RecordD3D12Meshes 绑定到参数 4 的 t8。
+    std::span<const std::byte> skinPalette;
+    std::uint32_t skinJointOffset=0,skinJointCount=0;
 };
 
 bool InitializeD3D12MeshPipeline(D3D12MeshPipeline& pipeline,const D3D12Context& context,

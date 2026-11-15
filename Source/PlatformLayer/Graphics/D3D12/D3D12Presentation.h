@@ -52,6 +52,10 @@ struct D3D12FrameContext
     D3D12UploadArena baselineConstants; // 保留 T19 的每帧 4KB 常量缓冲作为实测基线。
     std::vector<D3D12UploadSlice> drawConstants;
     std::vector<D3D12UploadSlice> instanceSlices;
+    // W03：蒙皮调色板。skinSlices 与 content.meshes 一一对应，shadowSkinSlices 与
+    // content.shadowMeshes 一一对应；每帧从调用方字节复制进同一上传环，缺省为空。
+    std::vector<D3D12UploadSlice> skinSlices;
+    std::vector<D3D12UploadSlice> shadowSkinSlices;
     std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> uploadDestinations;
     D3D12FrameDescriptors descriptors;
     UINT constantCursor = 0;

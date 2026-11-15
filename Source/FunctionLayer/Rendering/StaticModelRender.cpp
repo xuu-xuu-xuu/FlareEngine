@@ -1,5 +1,6 @@
 #include "StaticModelRender.h"
 #include "ResourceLayer/Assets/UserShaderVariants.h"
+#include "CoreLayer/Log.h"
 #include "MaterialInstance.h"
 #include "ResourceLayer/Assets/VertexCompression.h"
 #include "FunctionLayer/Rendering/MeshOptimization.h"
@@ -270,9 +271,31 @@ bool StaticModelRenderCache::Upload(std::shared_ptr<const StaticModel> model,con
         rhi::Texture texture;
         if(!UploadTexture(*selected.images[0],mesh.name,device,texture,diagnostics,selected.keys[0],TextureRole::Color))return false;
         std::vector<rhi::Vertex> vertices;
+        std::vector<rhi::SkinnedVertex> skinnedVertices;
         std::vector<PackedVertex> packed;
         auto& gpu=candidate->meshes[index];gpu.texture=std::move(texture);
-        if(compress)
+        // W03：蒙皮网格不能走压缩顶点布局（IMPORT 已保证 skinning 与 vertices 等长），
+        // 80 字节 v3 顶点缓冲由 rhi::CreateBuffer 直接接受。
+        const bool skinnedMesh=mesh.skinned&&mesh.skinning.size()==mesh.vertices.size();
+        if(skinnedMesh)
+        {
+            skinnedVertices.resize(mesh.vertices.size());
+            for(std::size_t vertex=0;vertex<mesh.vertices.size();++vertex)
+            {
+                auto& target=skinnedVertices[vertex];
+                const auto& source=mesh.vertices[vertex];
+                target.base={source.position,source.normal,source.uv,source.tangent};
+                for(std::size_t influence=0;influence<4;++influence)
+                {
+                    target.joints[influence]=mesh.skinning[vertex].joints[influence];
+                    target.weights[influence]=mesh.skinning[vertex].weights[influence];
+                }
+            }
+            gpu.vertexLayoutVersion=rhi::VertexLayoutVersionSkinned;
+            gpu.skinned=true;
+            gpu.skinJointCount=static_cast<std::uint32_t>(data.joints.size());
+        }
+        else if(compress)
         {
             Aabb bounds;bounds.minimum={mesh.vertices[0].position[0],mesh.vertices[0].position[1],mesh.vertices[0].position[2]};bounds.maximum=bounds.minimum;
             for(const auto& vertex:mesh.vertices)
@@ -316,7 +339,9 @@ bool StaticModelRenderCache::Upload(std::shared_ptr<const StaticModel> model,con
             binding->featureMask=se::FeatureMaskFor(*binding);
             gpu.material=std::move(binding);
         }
-        auto result=compress
+        auto result=skinnedMesh
+            ?device.CreateBuffer({rhi::BufferUsage::Vertex,sizeof(rhi::SkinnedVertex),mesh.name+".vertices"},std::as_bytes(std::span(skinnedVertices)),gpu.vertices)
+            :compress
             ?device.CreateBuffer({rhi::BufferUsage::Vertex,sizeof(PackedVertex),mesh.name+".vertices"},std::as_bytes(std::span(packed)),gpu.vertices)
             :device.CreateBuffer({rhi::BufferUsage::Vertex,sizeof(rhi::Vertex),mesh.name+".vertices"},std::as_bytes(std::span(vertices)),gpu.vertices);
         const auto reordered=se::OptimizeVertexCache(mesh.indices);
@@ -506,19 +531,27 @@ void AppendStaticModelDraws(const StaticRenderModel& model,const Mat4& entityWor
     }
 }
 void AppendShadowModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,std::vector<rhi::DrawIndexed>& output,
-    std::uint32_t lodLevel)
+    std::uint32_t lodLevel,std::span<const std::byte> skinPalette,std::uint32_t skinJointCount,rhi::PipelineHandle skinPipeline)
 {
     for(const auto& part:model.layout.parts)
     {
         const auto& mesh=model.meshes[part.mesh];rhi::DrawIndexed draw;
         draw.vertices=*mesh.vertices;draw.indices=*LevelIndices(mesh,lodLevel);draw.world=DrawWorld(model,part,entityWorld);
+        // W03：蒙皮部件的顶点缓冲是 80 字节布局，必须配蒙皮深度 PSO 与调色板；
+        // 缺其中任何一项时跳过该部件，避免把蒙皮顶点当参考顶点读成错误几何。
+        if(mesh.skinned)
+        {
+            if(skinPalette.empty()||!skinPipeline||!skinJointCount)continue;
+            draw.pipeline=skinPipeline;draw.skinPalette=skinPalette;draw.skinJointCount=skinJointCount;
+        }
         output.push_back(draw);
     }
 }
 void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
     std::span<const std::shared_ptr<const PbrRenderMaterial>> overrides,std::vector<rhi::DrawIndexed>& output,
     rhi::PipelineHandle pipeline,const Mat4& viewProjection,Vec3 camera,Vec3 directionToLight,Vec3 radiance,
-    std::uint32_t lodLevel,float lodDither,const Mat4* previousWorld)
+    std::uint32_t lodLevel,float lodDither,const Mat4* previousWorld,Vec4 look,std::span<const std::byte> skinPalette,
+    std::uint32_t skinJointCount,rhi::PipelineHandle skinPipeline)
 {
     for(const auto& part:model.layout.parts)
     {
@@ -528,8 +561,11 @@ void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
         if(materialIndex>=0&&static_cast<std::size_t>(materialIndex)<overrides.size()&&overrides[static_cast<std::size_t>(materialIndex)])
         {material=overrides[static_cast<std::size_t>(materialIndex)];overridden=true;}
         if(!material)continue;
+        // W03：蒙皮部件按 80 字节布局绘制；调色板或蒙皮 PSO 缺失时不画（绝不按参考布局误读）。
+        if(mesh.skinned&&(skinPalette.empty()||!skinPipeline||!skinJointCount))continue;
         const auto indices=LevelIndices(mesh,lodLevel);
-        rhi::DrawIndexed draw{*mesh.vertices,*indices,*material->baseColor,material->pipeline?*material->pipeline:pipeline,DrawWorld(model,part,entityWorld),viewProjection,
+        rhi::DrawIndexed draw{*mesh.vertices,*indices,*material->baseColor,
+            mesh.skinned?skinPipeline:(material->pipeline?*material->pipeline:pipeline),DrawWorld(model,part,entityWorld),viewProjection,
             material->color,false,model.fallbackMeshes[part.mesh]&&!overridden};
         draw.normalTexture=*material->normal;draw.metallicRoughnessTexture=*material->metallicRoughness;
         draw.indexCount=LevelIndexCount(mesh,lodLevel);
@@ -537,6 +573,8 @@ void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
         draw.pbr.lodDither=lodDither;
         draw.hasPreviousWorld=previousWorld!=nullptr;
         if(previousWorld)draw.previousWorld=*previousWorld;
+        draw.look=look;
+        if(mesh.skinned){draw.skinPalette=skinPalette;draw.skinJointCount=skinJointCount;}
         output.push_back(draw);
     }
 }

@@ -15,7 +15,9 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame)
         if(frame.instancing)frame.modelLod=false;
         frame.modelHlod=flag("render.hlod")&&!frame.instancing;frame.hlodRadius=number("render.hlodRadius");
         frame.frustumCulling=flag("render.frustumCulling");frame.sortOpaque=flag("render.sortOpaque");frame.cacheOpaqueBindings=flag("render.cacheBindings");
+        frame.lookMode=number("render.lookMode");frame.lookBlend=number("render.lookBlend");
         frame.shadow.enabled=flag("render.shadowEnabled");frame.shadow.pcf=flag("render.shadowPcf");frame.shadow.halfExtent=number("render.shadowExtent");
+        frame.shadow.lightDistance=number("render.shadowDistance");
         frame.shadow.depthBias=number("render.shadowBias");frame.shadow.normalBias=number("render.shadowNormalBias");
         if(flag("render.post")&&!frame.instancing)
         {

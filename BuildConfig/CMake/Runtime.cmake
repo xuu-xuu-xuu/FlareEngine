@@ -57,7 +57,8 @@ add_library(EngineRuntime STATIC
     Source/FunctionLayer/Runtime/WorldSceneCommit.cpp
     Source/FunctionLayer/Runtime/SceneManager.cpp
     Source/FunctionLayer/Runtime/SceneSpatialIndex.cpp
-    Source/FunctionLayer/Runtime/TODSystem.cpp)
+    Source/FunctionLayer/Runtime/TODSystem.cpp
+    Source/FunctionLayer/Runtime/SkeletalAnimation.cpp)
 se_target(EngineRuntime)
 target_link_libraries(EngineRuntime PUBLIC EngineCore EngineEnvironmentAssets)
 

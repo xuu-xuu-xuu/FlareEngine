@@ -58,6 +58,17 @@ struct Vertex
     std::array<float,4> tangent{1,0,0,1};
 };
 static_assert(sizeof(Vertex)==48);
+// W03：蒙皮顶点布局 v3（80 字节）。前 48 字节仍是参考 Vertex，随后是
+// JOINTS0（R16G16B16A16_UINT，偏移 48）与 WEIGHTS0（R32G32B32A32_FLOAT，偏移 64）。
+// WEIGHTS0 需要 16 字节对齐，因此 56..63 是 8 字节保留间隙；不能靠编译器布局推导。
+struct SkinnedVertex
+{
+    Vertex base;
+    std::array<std::uint16_t,4> joints{};
+    std::array<std::uint8_t,8> reserved{};
+    std::array<float,4> weights{};
+};
+static_assert(sizeof(SkinnedVertex)==80&&offsetof(SkinnedVertex,joints)==48&&offsetof(SkinnedVertex,weights)==64);
 
 // G03：压缩顶点布局的格式描述。既有 Vertex（48 字节）保留为参考布局，
 // 新布局的版本号进入 PSO 键；后端按描述建立 input layout，不内嵌语义。
@@ -81,7 +92,8 @@ struct VertexLayoutDesc
     std::array<std::uint32_t,2> strides{};
     std::uint32_t version=0; // 参与 PSO 键与资产版本
 };
-inline constexpr std::uint32_t VertexLayoutVersionLegacy=1,VertexLayoutVersionCompressed=2;
+// W03：V3 = 参考 Vertex + JOINTS0/WEIGHTS0，共 80 字节；见 SkinnedVertex。
+inline constexpr std::uint32_t VertexLayoutVersionLegacy=1,VertexLayoutVersionCompressed=2,VertexLayoutVersionSkinned=3;
 enum class BufferUsage { Vertex, Index };
 struct BufferDescription {BufferUsage usage=BufferUsage::Vertex;std::uint32_t stride=sizeof(Vertex);std::string name;};
 enum class TextureFormat { Rgba8, Rgba16Float, Bc1Unorm, Bc1UnormSrgb, Bc5Unorm, Bc4Unorm };
@@ -115,6 +127,11 @@ constexpr bool IsOutput(PipelineKind kind){return kind==PipelineKind::FinalOutpu
 constexpr bool IsPbr(PipelineKind kind){return kind==PipelineKind::PbrMesh||IsInstanced(kind)||(IsForward(kind)&&!IsBasicLit(kind));}
 // 所有使用 PbrDrawConstants + 3 贴图 + 阴影绑定布局的“受光网格”技术。
 constexpr bool UsesLitLayout(PipelineKind kind){return IsPbr(kind)||IsBasicLit(kind);}
+// W03：可使用蒙皮顶点布局与调色板绑定（SkinnedLayoutVersion）的技术。
+// 目前只覆盖前向家族与阴影深度；实例化/后处理/天空不支持蒙皮。
+constexpr bool SupportsSkinning(PipelineKind kind)
+{return kind==PipelineKind::ShadowedMesh||kind==PipelineKind::ForwardMesh||kind==PipelineKind::PbrMesh
+    ||kind==PipelineKind::EnvironmentMesh||kind==PipelineKind::BasicLitMesh||kind==PipelineKind::ShadowDepth;}
 constexpr bool ValidPipelineKind(PipelineKind kind){return static_cast<unsigned>(kind)<=static_cast<unsigned>(PipelineKind::PbrForwardInstancedMesh);}
 enum class DepthMode { Default, Disabled, ReadWriteLess, ReadOnlyLessEqual };
 enum class BlendMode { Opaque, Alpha };
@@ -181,6 +198,13 @@ struct DrawIndexed
     Mat4 previousWorld;
     bool compressedVertices=false;
     bool outline=false; // 场景可见像素轮廓；不改变材质、阴影或物体深度。
+    // W06：外观覆盖参数。x=模式（0 基础色/1 白模/2 Toon），y=混合，z=Toon 分档，w=边缘强度。
+    Vec4 look{};
+    // W03：蒙皮调色板。每关节 3×float4（行主序 3×4 的实体局部蒙皮矩阵），共 48 字节；
+    // 空表示静态绘制。数据由调用方保活到本次 Submit 完成，后端每帧复制进上传环，
+    // 因此不需要常驻缓冲或 GPU 句柄。jointOffset 是调色板在本绘制绑定范围内的字节偏移。
+    std::span<const std::byte> skinPalette{};
+    std::uint32_t skinJointOffset=0,skinJointCount=0;
 };
 // 世界空间辅助线。width 为逻辑像素；隐藏部分 alpha=0 表示遵守正常遮挡。
 struct SceneLine
@@ -383,7 +407,8 @@ public:
     Result ConfigureEnvironment(const EnvironmentBindings& environment);
     Result ConfigurePostProcess(const PostProcessSettings& settings,const PostProcessPipelines& pipelines);
     Result DrawOverlay(const OverlayQuad& quad);
-    Result DrawShadow(BufferHandle vertices,BufferHandle indices,const Mat4& world);
+    // W03：阴影投射统一走整份绘制描述，蒙皮投射需要顶点缓冲已记录调色板。
+    Result DrawShadow(const DrawIndexed& draw);
     Result BeginPass(const PassDescription& pass);
     Result Draw(const DrawIndexed& draw);
     Result DrawInstanced(const DrawIndexed& draw,std::span<const InstanceParameters> instances);

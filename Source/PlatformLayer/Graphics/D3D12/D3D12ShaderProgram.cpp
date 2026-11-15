@@ -31,7 +31,9 @@ constexpr ShaderField pbrFields[]{
     {"directionToLight",offsetof(rhi::PbrDrawConstants,directionToLight),16,false},
     {"radiance",offsetof(rhi::PbrDrawConstants,radiance),16,false},
     {"parameters",offsetof(rhi::PbrDrawConstants,parameters),16,false},
-    {"options",offsetof(rhi::PbrDrawConstants,options),16,false}};
+    {"options",offsetof(rhi::PbrDrawConstants,options),16,false},
+    {"look",offsetof(rhi::PbrDrawConstants,look),16,false},
+    {"skin",offsetof(rhi::PbrDrawConstants,skin),16,false}};
 bool UserSurfaceKind(rhi::PipelineKind kind){return kind==rhi::PipelineKind::PbrMesh||kind==rhi::PipelineKind::ForwardMesh||kind==rhi::PipelineKind::ShadowedMesh||kind==rhi::PipelineKind::EnvironmentMesh;}
 Json UserPbrInterface(rhi::PipelineKind kind=rhi::PipelineKind::PbrMesh)
 {
@@ -245,8 +247,7 @@ bool OutputLutBindings(ID3D12ShaderReflection& shader,bool shadow,std::string& r
 }
 bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,UINT layoutVersion,std::string& reason)
 {
-    if(kind==rhi::PipelineKind::Gui)
-    {
+    if(kind==rhi::PipelineKind::Gui)    {
         D3D12_SHADER_DESC desc{};if(FAILED(shader.GetDesc(&desc))||desc.BoundResources!=(vertex?1u:2u))return false;
         bool cb=false,texture=false,sampler=false;
         for(UINT i=0;i<desc.BoundResources;++i)
@@ -275,17 +276,22 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
     const bool environment=kind==rhi::PipelineKind::EnvironmentMesh,environmentSky=kind==rhi::PipelineKind::EnvironmentSky;
     const bool instanced=rhi::IsInstanced(kind);
     const bool forwardInstanced=kind==rhi::PipelineKind::PbrForwardInstancedMesh;
+    // W03：31 号蒙皮布局只在 VS 追加 t8 调色板；PS 绑定与贴图表保持不变。
+    const bool skinned=layoutVersion==rhi::SkinnedLayoutVersion;
     const UINT textureCount=environment?7u:shadow?4u:pbr?3u:kind==rhi::PipelineKind::ShadowOutput?2u:1u;
     D3D12_SHADER_DESC desc{};if(FAILED(shader.GetDesc(&desc)))return false;
-    const UINT expected=forwardInstanced?(vertex?1u:7u):instanced?(vertex?1u:6u):environmentSky?(vertex?1u:3u):sky?(vertex?0u:1u):output?(vertex?0u:textureCount+1):mesh?(vertex?1u:environment?12u:shadow?8u:forward?6u:pbr?5u:3u):(vertex?1u:0u);
+    UINT expected=forwardInstanced?(vertex?1u:7u):instanced?(vertex?1u:6u):environmentSky?(vertex?1u:3u):sky?(vertex?0u:1u):output?(vertex?0u:textureCount+1):mesh?(vertex?1u:environment?12u:shadow?8u:forward?6u:pbr?5u:3u):(vertex?1u:0u);
+    if(skinned&&vertex)++expected;
     if(desc.BoundResources!=expected){reason="bindings="+std::to_string(desc.BoundResources)+", expected="+std::to_string(expected);return false;}
-    bool constants=false,frame=false,instances=false;UINT samplers=0,textures=0;
+    bool constants=false,frame=false,instances=false,bones=false;UINT samplers=0,textures=0;
     for(UINT index=0;index<desc.BoundResources;++index)
     {
         D3D12_SHADER_INPUT_BIND_DESC binding{};if(FAILED(shader.GetResourceBindingDesc(index,&binding)))return false;
         if(binding.Space||binding.BindCount!=1)
         {reason=std::string(binding.Name?binding.Name:"binding")+": space/count="+std::to_string(binding.Space)+"/"+std::to_string(binding.BindCount);return false;}
-        if(instanced&&binding.Type==D3D_SIT_BYTEADDRESS&&binding.BindPoint==7&&!instances&&binding.Dimension==D3D_SRV_DIMENSION_BUFFER)instances=true;
+        if(skinned&&vertex&&binding.Type==D3D_SIT_BYTEADDRESS&&binding.BindPoint==8&&!bones
+            &&binding.Dimension==D3D_SRV_DIMENSION_BUFFER)bones=true;
+        else if(instanced&&binding.Type==D3D_SIT_BYTEADDRESS&&binding.BindPoint==7&&!instances&&binding.Dimension==D3D_SRV_DIMENSION_BUFFER)instances=true;
         else if(binding.Type==D3D_SIT_CBUFFER&&!binding.BindPoint&&!constants&&!(instanced&&vertex)){constants=true;if(!(output||sky?ExtraFields(shader,true,reason,sky,false,environmentSky):Fields(shader,mesh,pbr,reason,depth)))return false;}
         else if(forward&&!vertex&&binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==1&&!frame){frame=true;if(!ExtraFields(shader,false,reason,false,shadow,environment))return false;}
         else if((mesh||output||environmentSky)&&!vertex&&binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint<textureCount
@@ -299,36 +305,65 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
         else {reason=std::string(binding.Name?binding.Name:"binding")+": type="+std::to_string(binding.Type)+", register="+std::to_string(binding.BindPoint);return false;}
     }
     return constants==(instanced?!vertex:environmentSky?true:(output||sky)?!vertex:mesh||vertex)&&textures==((mesh||output||environmentSky)&&!vertex?((1u<<textureCount)-1):0u)
-        &&samplers==(!vertex?(environmentSky?4u:environment?7u:mesh?(shadow?3u:1u):0u):0u)&&frame==(forward&&!vertex)&&instances==instanced;
+        &&samplers==(!vertex?(environmentSky?4u:environment?7u:mesh?(shadow?3u:1u):0u):0u)&&frame==(forward&&!vertex)&&instances==instanced
+        &&bones==(skinned&&vertex);
 }
 
 bool Layout(const D3D12ShaderProgram& program,std::string* detail=nullptr)
 {
     std::string reason;
     ComPtr<ID3D12ShaderReflection> vertex,pixel;
-    if(!Reflect(*program.vertex.Get(),vertex)||!Reflect(*program.pixel.Get(),pixel))return false;
+    if(!program.vertex||!program.pixel){if(detail)*detail="missing VS/PS bytecode";return false;}
+    if(!Reflect(*program.vertex.Get(),vertex)||!Reflect(*program.pixel.Get(),pixel)){if(detail)*detail="D3DReflect";return false;}
     const auto kind=program.source.kind;const bool pbr=rhi::UsesLitLayout(kind),sky=rhi::IsSky(kind),output=rhi::IsOutput(kind)||rhi::IsPostProcess(kind),depth=kind==rhi::PipelineKind::ShadowDepth;
     const bool mesh=pbr||kind==rhi::PipelineKind::TexturedMesh;
     if(!Bindings(*vertex.Get(),kind,true,program.source.layoutVersion,reason)){if(detail)*detail="VS "+reason;return false;}
     if(!Bindings(*pixel.Get(),kind,false,program.source.layoutVersion,reason)){if(detail)*detail="PS "+reason;return false;}
-    D3D12_SHADER_DESC vs{},ps{};if(FAILED(vertex->GetDesc(&vs))||FAILED(pixel->GetDesc(&ps)))return false;
+    D3D12_SHADER_DESC vs{},ps{};if(FAILED(vertex->GetDesc(&vs))||FAILED(pixel->GetDesc(&ps))){if(detail)*detail="shader desc";return false;}
     if(D3D12_SHVER_GET_TYPE(vs.Version)!=D3D12_SHVER_VERTEX_SHADER||D3D12_SHVER_GET_TYPE(ps.Version)!=D3D12_SHVER_PIXEL_SHADER
         ||D3D12_SHVER_GET_MAJOR(vs.Version)!=5||D3D12_SHVER_GET_MINOR(vs.Version)!=1
         ||D3D12_SHVER_GET_MAJOR(ps.Version)!=5||D3D12_SHVER_GET_MINOR(ps.Version)!=1)
     {if(detail)*detail="profiles: vs_5_1 / ps_5_1";return false;}
-    if(vs.InputParameters!=(kind==rhi::PipelineKind::Gui?3u:rhi::IsInstanced(kind)?5u:(output||sky||depth)?1u:pbr?4u:mesh?3u:2u)||ps.OutputParameters!=(depth?0u:1u)){if(detail)*detail="vertex inputs / pixel targets";return false;}
+    // W03：蒙皮顶点布局追加 JOINTS0（UINT4）与 WEIGHTS0（FLOAT4）；阴影深度只有位置 + 两路蒙皮。
+    // 反射把 "JOINTS0" 拆成语义名 "JOINTS" + 索引 0，与 D3D12 输入布局的 element 名一致。
+    const bool skinned=program.source.skinnedVertex;
+    UINT vertexInputs=kind==rhi::PipelineKind::Gui?3u:rhi::IsInstanced(kind)?5u:(output||sky||depth)?1u:pbr?4u:mesh?3u:2u;
+    if(skinned)vertexInputs=depth?3u:6u;
+    if(vs.InputParameters!=vertexInputs||ps.OutputParameters!=(depth?0u:1u)){if(detail)*detail="vertex inputs / pixel targets";return false;}
     const char* names[]{"POSITION",mesh?"NORMAL":"COLOR","TEXCOORD","TANGENT"};
     const bool compressedVertex=program.source.compressedVertex;
     const UINT masks[]{compressedVertex?15u:7u,mesh?(compressedVertex?3u:7u):15u,3,15};
     for(UINT index=0;index<vs.InputParameters;++index)
     {
-        D3D12_SIGNATURE_PARAMETER_DESC input{};if(FAILED(vertex->GetInputParameterDesc(index,&input)))return false;
+        D3D12_SIGNATURE_PARAMETER_DESC input{};if(FAILED(vertex->GetInputParameterDesc(index,&input))){if(detail)*detail="VS input desc";return false;}
         if(kind==rhi::PipelineKind::Gui)
-        {const char* guiNames[]{"POSITION","TEXCOORD","COLOR"};const UINT guiMasks[]{3,3,15};if(_stricmp(input.SemanticName,guiNames[index])||input.SemanticIndex||input.ComponentType!=D3D_REGISTER_COMPONENT_FLOAT32||input.Mask!=guiMasks[index])return false;continue;}
-        if(rhi::IsInstanced(kind)&&index==4){if(input.SystemValueType!=D3D_NAME_INSTANCE_ID||input.ComponentType!=D3D_REGISTER_COMPONENT_UINT32||input.Mask!=1)return false;continue;}
-        if(output||sky){if(input.SystemValueType!=D3D_NAME_VERTEX_ID||input.ComponentType!=D3D_REGISTER_COMPONENT_UINT32||input.Mask!=1)return false;continue;}
+        {const char* guiNames[]{"POSITION","TEXCOORD","COLOR"};const UINT guiMasks[]{3,3,15};if(_stricmp(input.SemanticName,guiNames[index])||input.SemanticIndex||input.ComponentType!=D3D_REGISTER_COMPONENT_FLOAT32||input.Mask!=guiMasks[index]){if(detail)*detail="GUI VS input "+std::to_string(index);return false;}continue;}
+        if(rhi::IsInstanced(kind)&&index==4){if(input.SystemValueType!=D3D_NAME_INSTANCE_ID||input.ComponentType!=D3D_REGISTER_COMPONENT_UINT32||input.Mask!=1){if(detail)*detail="instance id input";return false;}continue;}
+        if(output||sky){if(input.SystemValueType!=D3D_NAME_VERTEX_ID||input.ComponentType!=D3D_REGISTER_COMPONENT_UINT32||input.Mask!=1){if(detail)*detail="vertex id input";return false;}continue;}
+        if(skinned&&depth)
+        {
+            if(index==0)
+            {
+                if(_stricmp(input.SemanticName,"POSITION")||input.SemanticIndex||input.ComponentType!=D3D_REGISTER_COMPONENT_FLOAT32||input.Mask!=7){if(detail)*detail="skinned depth POSITION";return false;}
+            }
+            else if(index==1)
+            {
+                if(_stricmp(input.SemanticName,"JOINTS")||input.SemanticIndex||input.ComponentType!=D3D_REGISTER_COMPONENT_UINT32||input.Mask!=15){if(detail)*detail="skinned depth JOINTS0";return false;}
+            }
+            else if(_stricmp(input.SemanticName,"WEIGHTS")||input.SemanticIndex||input.ComponentType!=D3D_REGISTER_COMPONENT_FLOAT32||input.Mask!=15){if(detail)*detail="skinned depth WEIGHTS0";return false;}
+            continue;
+        }
+        if(skinned&&index>=4)
+        {
+            const bool joints=index==4;
+            if(_stricmp(input.SemanticName,joints?"JOINTS":"WEIGHTS")||input.SemanticIndex||input.Mask!=15
+                ||input.ComponentType!=(joints?D3D_REGISTER_COMPONENT_UINT32:D3D_REGISTER_COMPONENT_FLOAT32))
+            {if(detail)*detail=std::string("skinned VS input ")+(joints?"JOINTS":"WEIGHTS");return false;}
+            continue;
+        }
         if(_stricmp(input.SemanticName,names[index])
-            ||input.SemanticIndex||input.ComponentType!=D3D_REGISTER_COMPONENT_FLOAT32||input.Mask!=masks[index])return false;
+            ||input.SemanticIndex||input.ComponentType!=D3D_REGISTER_COMPONENT_FLOAT32||input.Mask!=masks[index])
+        {if(detail)*detail="VS input "+std::to_string(index)+" "+input.SemanticName;return false;}
     }
     for(UINT inputIndex=0;inputIndex<ps.InputParameters;++inputIndex)
     {
@@ -341,11 +376,14 @@ bool Layout(const D3D12ShaderProgram& program,std::string* detail=nullptr)
             matched|=!_stricmp(input.SemanticName,varying.SemanticName)&&input.SemanticIndex==varying.SemanticIndex
                 &&input.ComponentType==varying.ComponentType&&(input.Mask&varying.Mask)==input.Mask;
         }
-        if(!matched)return false;
+        if(!matched){if(detail)*detail="PS input "+std::string(input.SemanticName?input.SemanticName:"?")+std::to_string(input.SemanticIndex)+" has no VS output";return false;}
     }
     if(depth)return true;
-    D3D12_SIGNATURE_PARAMETER_DESC target{};return SUCCEEDED(pixel->GetOutputParameterDesc(0,&target))&&target.SystemValueType==D3D_NAME_TARGET
-        &&target.SemanticIndex==0&&target.ComponentType==D3D_REGISTER_COMPONENT_FLOAT32&&target.Mask==15;
+    D3D12_SIGNATURE_PARAMETER_DESC target{};
+    if(FAILED(pixel->GetOutputParameterDesc(0,&target))||target.SystemValueType!=D3D_NAME_TARGET
+        ||target.SemanticIndex||target.ComponentType!=D3D_REGISTER_COMPONENT_FLOAT32||target.Mask!=15)
+    {if(detail)*detail="pixel target signature";return false;}
+    return true;
 }
 std::string BlobHash(ID3DBlob& blob)
 {return se::Sha256(std::span(static_cast<const std::uint8_t*>(blob.GetBufferPointer()),blob.GetBufferSize()));}
@@ -419,11 +457,16 @@ UINT D3D12ShaderCompileFlags()
 }
 bool ReadD3D12ShaderSource(const rhi::PipelineDescription& description,D3D12ShaderSource& output,const Localization& text)
 {
+    // W03：31 号蒙皮布局只对可蒙皮技术开放，且必须与 v3 顶点布局成对出现。
+    const bool skinnedLayout=description.bindingLayoutVersion==rhi::SkinnedLayoutVersion
+        &&rhi::SupportsSkinning(description.kind);
     if(description.shaderInput!=rhi::ShaderInput::Source||description.shader.empty()
         ||(description.bindingLayoutVersion!=rhi::BindingLayout(description.kind)
-            &&!(rhi::IsOutput(description.kind)&&description.bindingLayoutVersion==rhi::OutputLutLayoutVersion))
+            &&!(rhi::IsOutput(description.kind)&&description.bindingLayoutVersion==rhi::OutputLutLayoutVersion)
+            &&!skinnedLayout)
+        ||(skinnedLayout!=(description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned))
         ||!rhi::ValidPipelineKind(description.kind))return false;
-    D3D12ShaderSource source;source.path=description.shader;source.kind=description.kind;source.flags=D3D12ShaderCompileFlags();source.layoutVersion=description.bindingLayoutVersion;source.macros=description.macros;source.compressedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionCompressed;
+    D3D12ShaderSource source;source.path=description.shader;source.kind=description.kind;source.flags=D3D12ShaderCompileFlags();source.layoutVersion=description.bindingLayoutVersion;source.macros=description.macros;source.compressedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionCompressed;source.skinnedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned;
     if(source.macros.size()>64){Diagnostic(text,"Shader.SourceInvalid",source.path);return false;}
     std::sort(source.macros.begin(),source.macros.end(),[](const auto& a,const auto& b){return a.name<b.name;});
     for(size_t index=0;index<source.macros.size();++index)
@@ -469,7 +512,10 @@ std::shared_ptr<const D3D12ShaderProgram> CompileD3D12ShaderProgram(D3D12ShaderS
 std::shared_ptr<const D3D12ShaderProgram> LoadD3D12ShaderProgram(D3D12ShaderSource source,D3D12ShaderLoadStatistics& stats,const Localization& text)
 {
     auto artifact=source.path;artifact+=".sebin";std::error_code error;
-    if(fs::exists(artifact,error)&&!error)
+    // 产物按文件路径落盘，但同一 .hlsl 会用不同宏/布局编译多份（如输出 LUT 变体、
+    // ACES 色调映射变体、SE_SKINNED 蒙皮变体）。带宏的变体无法用同名产物区分，
+    // 一律从源码编译：既不误用别的变体，也不把“另一个变体”误报成过期产物。
+    if(source.macros.empty()&&fs::exists(artifact,error)&&!error)
     {
         if(auto program=ReadArtifact(source,artifact)){++stats.artifactLoads;return program;}
         ++stats.artifactRejections;Log(LogLevel::Warning,text.GetText("Shader.ArtifactRejected")+": "+Utf8(artifact));

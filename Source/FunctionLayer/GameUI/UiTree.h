@@ -97,6 +97,7 @@ public:
     bool SetEnabled(UiId id, bool enabled);
     bool SetBlocksPointer(UiId id,bool blocks);
     void Layout(float width, float height);
+    UiPoint ViewportSize() const noexcept { return {width_, height_}; }
     bool PointerMove(UiPoint point);
     bool PointerDown(UiPoint point);
     bool PointerUp(UiPoint point);

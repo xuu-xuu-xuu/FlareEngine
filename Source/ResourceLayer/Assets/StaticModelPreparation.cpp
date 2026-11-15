@@ -40,7 +40,10 @@ bool BuildStaticModelLayout(const StaticModel& model,StaticModelLayout& output,s
         for(const auto meshIndex:model.nodes[index].meshes)
         {
             const auto& mesh=model.meshes[meshIndex];
-            StaticModelPart part;part.mesh=meshIndex;part.modelFromMesh=transforms[index];
+            // 蒙皮网格的顶点和逆绑定矩阵在导入时已经烘进实体局部空间，这里不能再乘一次节点变换：
+            // 保持单位 modelFromMesh，形变只来自运行时的 skin = jointWorld * inverseBind。
+            const bool skinned=mesh.skinned;
+            StaticModelPart part;part.mesh=meshIndex;part.modelFromMesh=skinned?Mat4{}:transforms[index];
             if(mesh.material>=0)
             {
                 const auto& color=model.materials[static_cast<std::size_t>(mesh.material)].baseColor;
@@ -49,7 +52,8 @@ bool BuildStaticModelLayout(const StaticModel& model,StaticModelLayout& output,s
             }
             for(const auto& vertex:mesh.vertices)
             {
-                const auto position=TransformPoint(part.modelFromMesh,{vertex.position[0],vertex.position[1],vertex.position[2]});
+                const auto position=skinned?Vec3{vertex.position[0],vertex.position[1],vertex.position[2]}
+                    :TransformPoint(part.modelFromMesh,{vertex.position[0],vertex.position[1],vertex.position[2]});
                 if(!IsFinite(position))return Invalid(diagnostics);
                 candidate.minimum={std::min(candidate.minimum.x,position.x),std::min(candidate.minimum.y,position.y),std::min(candidate.minimum.z,position.z)};
                 candidate.maximum={std::max(candidate.maximum.x,position.x),std::max(candidate.maximum.y,position.y),std::max(candidate.maximum.z,position.z)};

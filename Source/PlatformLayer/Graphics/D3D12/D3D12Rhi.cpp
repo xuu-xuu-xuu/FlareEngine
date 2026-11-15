@@ -341,6 +341,12 @@ struct CommandContext::Impl
     std::shared_ptr<PipelineEntry> shadowPipeline;
     std::vector<D3D12Mesh> shadowGeometry;
     std::vector<Mat4> shadowWorlds;
+    // W03：阴影投射的蒙皮信息。调色板字节只借用调用方存储（须覆盖到 Submit 结束）；
+    // shadowPipelines 为空表示该投射使用配置时的默认深度 Pipeline。
+    std::vector<std::span<const std::byte>> shadowPalettes;
+    // 与 shadowPalettes 一一对应的关节数与字节偏移；阴影校验需要它们与调色板一致。
+    std::vector<std::uint32_t> shadowJointCounts,shadowJointOffsets;
+    std::vector<std::shared_ptr<PipelineEntry>> shadowPipelines;
     std::optional<EnvironmentBindings> environment;
     std::array<std::shared_ptr<TextureEntry>,3> environmentTextures;
     std::optional<PostProcessSettings> post;
@@ -379,10 +385,13 @@ Result Device::CreateBuffer(const BufferDescription& description,std::span<const
     if(output||bytes.empty()||bytes.size()>256ull*1024*1024)return Fail(Error::InvalidArgument);
     const bool vertex=description.usage==BufferUsage::Vertex;
     const bool packedVertex=vertex&&description.stride==16;
+    // W03：蒙皮顶点布局 v3（80 字节）与参考 Vertex（48 字节）共用同一条校验路径：
+    // ValidateBufferContents 只读前 48 字节的位置/法线/UV/切线，蒙皮属性不参与。
+    const bool skinnedVertex=vertex&&description.stride==sizeof(SkinnedVertex);
     const bool narrowIndex=!vertex&&description.stride==2;
     const UINT stride=vertex?description.stride:(narrowIndex?2u:4u);
     if((description.usage!=BufferUsage::Vertex&&description.usage!=BufferUsage::Index)
-        ||(vertex&&!packedVertex&&description.stride!=sizeof(Vertex))
+        ||(vertex&&!packedVertex&&!skinnedVertex&&description.stride!=sizeof(Vertex))
         ||(!vertex&&description.stride!=stride)||bytes.size()%stride)
         return Fail(Error::Unsupported);
     auto entry=std::make_shared<BufferEntry>();entry->usage=description.usage;entry->stride=stride;
@@ -494,10 +503,11 @@ Result Device::CreateStagedBuffer(const BufferDescription& description,std::uint
     if(!impl_||!impl_->Usable())return Fail(Error::InvalidState);
     if(output||!bytes||bytes>256ull*1024*1024)return Fail(Error::InvalidArgument);
     const bool vertex=description.usage==BufferUsage::Vertex;const bool packedVertex=vertex&&description.stride==16;
+    const bool skinnedVertex=vertex&&description.stride==sizeof(SkinnedVertex);
     const bool narrowIndex=!vertex&&description.stride==2;
     const UINT stride=vertex?description.stride:(narrowIndex?2u:4u);
     if((description.usage!=BufferUsage::Vertex&&description.usage!=BufferUsage::Index)
-        ||(vertex&&!packedVertex&&description.stride!=sizeof(Vertex))
+        ||(vertex&&!packedVertex&&!skinnedVertex&&description.stride!=sizeof(Vertex))
         ||(!vertex&&description.stride!=stride)||bytes%stride)return Fail(Error::Unsupported);
     if(!vertex&&(bytes/stride)%3)return Fail(Error::InvalidArgument);
     auto entry=std::make_shared<BufferEntry>();entry->usage=description.usage;entry->stride=stride;entry->bytes=static_cast<UINT>(bytes);entry->count=entry->bytes/stride;entry->staged=true;
@@ -561,8 +571,12 @@ Result Device::CreatePipeline(const PipelineDescription& description,Pipeline& o
     if(description.kind==PipelineKind::Gui&&(description.colorFormat!=ColorFormat::Rgba8Srgb||description.blend!=BlendMode::Alpha
         ||(description.depth!=DepthMode::Default&&description.depth!=DepthMode::Disabled)))return Fail(Error::Unsupported);
     // G15.09：输出 LUT 布局同时服务编辑器 BasicLit（ShadowOutput）与 Lighting 演示（FinalOutput）。
+    // W03：31 号蒙皮布局只对可蒙皮技术开放，且必须与 v3 顶点布局成对出现。
+    const bool skinnedLayout=description.bindingLayoutVersion==SkinnedLayoutVersion&&SupportsSkinning(description.kind);
     if(!ValidPipelineKind(description.kind)||(description.bindingLayoutVersion!=BindingLayout(description.kind)
-        &&!(IsOutput(description.kind)&&description.bindingLayoutVersion==OutputLutLayoutVersion))
+        &&!(IsOutput(description.kind)&&description.bindingLayoutVersion==OutputLutLayoutVersion)
+        &&!skinnedLayout)
+        ||skinnedLayout!=(description.vertexLayoutVersion==VertexLayoutVersionSkinned)
         ||(description.depth!=DepthMode::Default&&description.depth!=DepthMode::Disabled&&description.depth!=DepthMode::ReadWriteLess&&description.depth!=DepthMode::ReadOnlyLessEqual)
         ||(description.blend!=BlendMode::Opaque&&description.blend!=BlendMode::Alpha)
         ||(description.colorFormat!=ColorFormat::Rgba8Unorm&&description.colorFormat!=ColorFormat::Rgba16Float&&description.colorFormat!=ColorFormat::Rgba8Srgb))return Fail(Error::Unsupported);
@@ -903,20 +917,42 @@ Result CommandContext::DrawOverlay(const OverlayQuad& quad)
     for(const auto value:{quad.color.x,quad.color.y,quad.color.z,quad.color.w})if(value<0||value>1)return Fail(Error::InvalidArgument);
     if(impl_->overlays.size()>=65536)return Fail(Error::CapacityExceeded);impl_->overlays.push_back(quad);return {};
 }
-Result CommandContext::DrawShadow(BufferHandle vertices,BufferHandle indices,const Mat4& world)
+Result CommandContext::DrawShadow(const DrawIndexed& draw)
 {
     auto device=impl_?impl_->device.lock():nullptr;
     if(!device||!device->Usable()||impl_->phase!=11||!impl_->shadow||!impl_->shadowPipeline)return Fail(Error::InvalidState);
-    const auto vertex=device->buffers.Get(vertices,device->id),index=device->buffers.Get(indices,device->id);
+    const auto vertex=device->buffers.Get(draw.vertices,device->id),index=device->buffers.Get(draw.indices,device->id);
     if(!vertex||!index)return Fail(Error::InvalidHandle);
     if(!device->Ready(*vertex)||!device->Ready(*index))return Fail(Error::InvalidState);
+    const auto& world=draw.world;
     if(vertex->usage!=BufferUsage::Vertex||index->usage!=BufferUsage::Index||index->maxIndex>=vertex->count||impl_->shadowGeometry.size()>=D3D12MeshMaxDraws
         ||!IsFinite(world)||!Inverse(world)||!IsFinite(impl_->shadow->clipFromWorld*world)
         ||std::abs(world(3,0))>1e-5f||std::abs(world(3,1))>1e-5f||std::abs(world(3,2))>1e-5f||std::abs(world(3,3)-1)>1e-5f)return Fail(Error::InvalidArgument);
+    // W03：蒙皮投射必须提供与关节数匹配的调色板；静态投射不得携带调色板。
+    // 调用方常把不透明绘制列表整体复用为投射列表，此时 draw.pipeline 可能是受光管线；
+    // 只有 ShadowDepth 变体才是蒙皮投射需要的，其余可取到的句柄按“未指定”处理。
+    std::shared_ptr<PipelineEntry> pipeline;
+    if(draw.pipeline)
+    {
+        auto entry=device->pipelines.Get(draw.pipeline,device->id);
+        if(!entry)return Fail(Error::InvalidHandle);
+        if(entry->kind==PipelineKind::ShadowDepth)pipeline=std::move(entry);
+    }
+    const bool skinned=vertex->stride==sizeof(SkinnedVertex);
+    if(skinned)
+    {
+        if(!pipeline||!draw.skinJointCount||draw.skinPalette.empty()
+            ||draw.skinPalette.size()-draw.skinJointOffset!=static_cast<std::size_t>(draw.skinJointCount)*48
+            ||!pipeline->mesh.prepared->program->source.skinnedVertex)return Fail(Error::InvalidArgument);
+    }
+    else if(!draw.skinPalette.empty()||draw.skinJointCount)return Fail(Error::InvalidArgument);
     D3D12Mesh mesh;mesh.vertices=vertex->resource;mesh.indices=index->resource;
     mesh.vertexView={vertex->resource->GetGPUVirtualAddress(),vertex->bytes,vertex->stride};
     mesh.indexView={index->resource->GetGPUVirtualAddress(),index->bytes,index->stride==2?DXGI_FORMAT_R16_UINT:DXGI_FORMAT_R32_UINT};mesh.indexCount=index->count;
-    impl_->shadowGeometry.push_back(std::move(mesh));impl_->shadowWorlds.push_back(world);impl_->leases.insert(impl_->leases.end(),{vertex,index});return {};
+    impl_->shadowGeometry.push_back(std::move(mesh));impl_->shadowWorlds.push_back(world);
+    impl_->shadowPalettes.push_back(draw.skinPalette);impl_->shadowJointCounts.push_back(draw.skinJointCount);
+    impl_->shadowJointOffsets.push_back(draw.skinJointOffset);impl_->shadowPipelines.push_back(std::move(pipeline));
+    impl_->leases.insert(impl_->leases.end(),{vertex,index});return {};
 }
 Result CommandContext::BeginPass(const PassDescription& pass)
 {
@@ -1002,7 +1038,8 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
         mesh.pbrTextures={normal->native,mr->native};
     }
     const D3D12MeshDraw native{&mesh,draw.world,draw.tint,draw.textureIsData,draw.unlit,draw.pbr,instances,nullptr,draw.impostorView,draw.impostorNext,draw.impostorBlend,
-        draw.hasPreviousWorld,draw.previousWorld,pipeline->mesh.prepared->program->source.compressedVertex};
+        draw.hasPreviousWorld,draw.previousWorld,pipeline->mesh.prepared->program->source.compressedVertex,false,draw.look,
+        draw.skinPalette,draw.skinJointOffset,draw.skinJointCount};
     if(!ValidateD3D12MeshDraws(pipeline->mesh,std::span(&native,1),draw.viewProjection,device->text))return Fail(Error::InvalidArgument);
     auto source=std::to_string(texture->native.views->Cpu(draw.textureIsData?1:0).ptr)+":";
     if(pbr)source+=std::to_string(normal->native.views->Cpu(1).ptr)+":"+std::to_string(mr->native.views->Cpu(1).ptr)+":";
@@ -1074,7 +1111,8 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     std::vector<D3D12MeshDraw> draws;draws.reserve(c.draws.size());
     for(size_t i=0;i<c.draws.size();++i)
     {const auto& draw=c.draws[i];draws.push_back({&c.geometry[i],draw.world,draw.tint,draw.textureIsData,draw.unlit,draw.pbr,c.instances[i],&c.drawPipelines[i]->mesh,draw.impostorView,draw.impostorNext,draw.impostorBlend,
-        draw.hasPreviousWorld,draw.previousWorld,c.drawPipelines[i]->mesh.prepared->program->source.compressedVertex,draw.outline});}
+        draw.hasPreviousWorld,draw.previousWorld,c.drawPipelines[i]->mesh.prepared->program->source.compressedVertex,draw.outline,
+        draw.look,draw.skinPalette,draw.skinJointOffset,draw.skinJointCount});}
     // G06.08：批处理对象必须活到 RenderD3D12Frame 返回；这里只做本地借用。
     D3D12FrameContent content;content.viewProjection=c.viewProjection;content.meshes=draws;content.sourceFrame=c.sourceFrame;content.cacheOpaqueBindings=c.cacheOpaqueBindings;
     content.sceneLines=c.sceneLines;content.sceneOverlayShader=c.sceneOverlayShader;content.sceneLineScale=c.sceneLineScale;content.sceneGrid=c.sceneGrid;
@@ -1201,7 +1239,15 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     content.post=c.post?&*c.post:nullptr;content.overlays=c.overlays;
     for(size_t i=0;i<c.postPipelines.size();++i)if(c.postPipelines[i])content.postPipelines[i]=&c.postPipelines[i]->mesh;
     std::vector<D3D12MeshDraw> shadowDraws;shadowDraws.reserve(c.shadowWorlds.size());
-    for(size_t index=0;index<c.shadowWorlds.size();++index)shadowDraws.push_back({&c.shadowGeometry[index],c.shadowWorlds[index]});
+    for(size_t index=0;index<c.shadowWorlds.size();++index)
+    {
+        D3D12MeshDraw shadow{};
+        shadow.mesh=&c.shadowGeometry[index];shadow.world=c.shadowWorlds[index];
+        shadow.skinPalette=c.shadowPalettes[index];
+        shadow.skinJointCount=c.shadowJointCounts[index];shadow.skinJointOffset=c.shadowJointOffsets[index];
+        shadow.pipeline=c.shadowPipelines[index]?&c.shadowPipelines[index]->mesh:nullptr;
+        shadowDraws.push_back(shadow);
+    }
     content.shadow=c.shadow?&*c.shadow:nullptr;content.shadowPipeline=c.shadowPipeline?&c.shadowPipeline->mesh:nullptr;content.shadowMeshes=shadowDraws;
     if(c.pipeline)
     {if(c.pipeline->kind==PipelineKind::Triangle)content.triangle=&c.pipeline->triangle;else content.meshPipeline=&c.pipeline->mesh;}
@@ -1235,7 +1281,8 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     }
     for(const auto& entry:c.leases)entry->lastUse=std::max(entry->lastUse,fence);
     impl_->inFlight.push_back({fence,std::move(c.leases)});impl_->pending.clear();
-    c.geometry.clear();c.draws.clear();c.drawPipelines.clear();c.instances.clear();c.shadowGeometry.clear();c.shadowWorlds.clear();c.pipeline.reset();c.outputPipeline.reset();c.skyPipeline.reset();c.shadowPipeline.reset();
+    c.geometry.clear();c.draws.clear();c.drawPipelines.clear();c.instances.clear();c.shadowGeometry.clear();c.shadowWorlds.clear();
+    c.shadowPalettes.clear();c.shadowJointCounts.clear();c.shadowJointOffsets.clear();c.shadowPipelines.clear();c.pipeline.reset();c.outputPipeline.reset();c.skyPipeline.reset();c.shadowPipeline.reset();
     c.occlusion={};
     c.guiScene.reset();c.guiComposite.reset();c.guiPipeline.reset();c.guiTextures.clear();c.guiGeometry={};c.phase=6;
     c.composition.reset();c.compositionHdr.reset();c.compositionLdr.reset();

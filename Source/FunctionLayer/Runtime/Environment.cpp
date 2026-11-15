@@ -38,7 +38,7 @@ void Environment::Clear()
     if(!BeginShutdown())return;
     world_.Clear();while(world_.HasPendingCommands())world_.FlushCommands();
     ticks_.Clear();world_.shuttingDown_=false;events_.ResetWorld(world_);scenes_.ResetWorld(world_);
-    spatial_.Clear();tod_.Clear();todScene_={};todRevision_=0;clock_.Reset();
+    spatial_.Clear();tod_.Clear();todScene_={};todRevision_=0;clock_.Reset();skeletal_.Reset();
     frame_=fixedStep_=completedFixedSteps_=0;simulationSeconds_=0;paused_=framePaused_=closing_=forceFixedStep_=false;error_.clear();
 }
 bool Environment::ConfigureClock(double step,std::size_t maxSteps,bool automatic)
@@ -78,6 +78,8 @@ bool Environment::FixedStep(World& world,double seconds,double frameSeconds,cons
     if(fixedStep_==UINT64_MAX){error_="Tick.TokenExhausted";return false;}++fixedStep_;
     events_.SetFixedStep(fixedStep_);
     if(!tod_.Advance(seconds)){error_=tod_.LastError();return false;}
+    // 姿态必须先于 FixedPreTick：项目脚本在同一步内查询指尖并做触地判定。
+    if(!skeletal_.Advance(world,seconds)){error_="Tick.SkeletalFailed";return false;}
     if(!Stage(world,TickStage::FixedPreTick,frameSeconds,seconds,hooks))return false;
     TickContext context{TickStage::FixedPreTick,frame_,fixedStep_,seconds,frameSeconds,simulationSeconds_,SchedulingPaused()};
     if(!Phase(world,EnvironmentPhase::BeforePhysics,context,hooks))return false;

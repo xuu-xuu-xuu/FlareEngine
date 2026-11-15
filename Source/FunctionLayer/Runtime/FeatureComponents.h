@@ -14,6 +14,8 @@ using PhysicsBodyComponent=FeatureComponent<0x464C0001>;
 using CharacterSettingsComponent=FeatureComponent<0x464C0002>;
 using RenderSettingsComponent=FeatureComponent<0x464C0003>;
 using EnvironmentSettingsComponent=FeatureComponent<0x464C0004>;
+// W03：角色的动画资产与播放状态。姿态本身是逐帧派生数据，不写入场景。
+using ActorSettingsComponent=FeatureComponent<0x464C0005>;
 
 void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors);
 bool IsEngineFeature(ComponentTypeId type) noexcept;

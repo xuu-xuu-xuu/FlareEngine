@@ -31,6 +31,7 @@ SE_API int32_t SE_CALL se_logic_operation(SE_Session session,uint32_t operation,
 typedef uint64_t SE_Entity;
 typedef uint64_t SE_Body;
 typedef struct SE_Vector3 { float x,y,z; } SE_Vector3;
+typedef struct SE_Vector2 { float x,y; } SE_Vector2;
 typedef struct SE_BoxBodyDesc {
     SE_Vector3 half_extents;
     float mass, friction, restitution;
@@ -134,6 +135,12 @@ SE_API int32_t SE_CALL se_session_get_pointer(SE_Session session, SE_PointerStat
 SE_API int32_t SE_CALL se_session_run_window(SE_Session session, const char* locale, uint32_t length, int32_t visible, uint64_t maximum_frames) SE_NOEXCEPT;
 // 空路径/零帧清除设置；非空路径必须指定大于零的宿主更新帧号，只能在窗口外配置。
 SE_API int32_t SE_CALL se_session_set_window_capture(SE_Session session,const char* path,uint32_t length,uint64_t frame) SE_NOEXCEPT;
+// 普通 Player 的固定回放尺寸；0x0 清除。只在窗口外配置，交换链与客户区同步。
+SE_API int32_t SE_CALL se_session_set_window_resolution(SE_Session session,uint32_t width,uint32_t height) SE_NOEXCEPT;
+// 固定步长（秒）；0 清除。序列抓帧时缺省为 1/30，保证每个宿主更新恰好推进整数个固定步。
+SE_API int32_t SE_CALL se_session_set_window_fixed_step(SE_Session session,double seconds) SE_NOEXCEPT;
+// 连续固定步抓帧：目录 + 帧数，0 清除。只在窗口外配置，与单帧抓帧互斥。
+SE_API int32_t SE_CALL se_session_set_capture_sequence(SE_Session session,const char* path,uint32_t length,uint64_t count) SE_NOEXCEPT;
 // 可选 Player 诊断；空路径/零尺寸关闭，活动窗口禁止修改，输出目录不覆盖。
 SE_API int32_t SE_CALL se_session_set_window_profile(SE_Session session,const char* path,uint32_t length,uint32_t width,uint32_t height) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_request_stop(SE_Session session) SE_NOEXCEPT;
@@ -163,6 +170,19 @@ SE_API int32_t SE_CALL se_script_component_state(SE_Session session,uint64_t com
 SE_API int32_t SE_CALL se_script_component_count(SE_Session session,uint32_t* count) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_entity_get_transform(SE_Session session, SE_Entity entity, SE_Transform* transform) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_entity_set_transform(SE_Session session, SE_Entity entity, const SE_Transform* transform) SE_NOEXCEPT;
+// W03：按稳定 ID 播放角色 clip；写回 actor 组件的可序列化属性，下一固定步生效。
+SE_API int32_t SE_CALL se_entity_actor_play(SE_Session session,uint64_t entity_stable_id,const char* clip,uint32_t length,float speed,int32_t loop) SE_NOEXCEPT;
+// 世界空间关节位置；关节不存在时 found=0 且 position 不变（不是错误）。
+SE_API int32_t SE_CALL se_entity_joint_position(SE_Session session,uint64_t entity_stable_id,const char* joint,uint32_t length,SE_Vector3* position,int32_t* found) SE_NOEXCEPT;
+// 给实体挂接或替换静态网格（项目在运行时布景/生长时使用）。
+SE_API int32_t SE_CALL se_entity_set_mesh(SE_Session session,SE_Entity entity,const char* asset_id,uint32_t length,int32_t casts_shadow,int32_t receives_shadow) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_entity_set_camera_fov(SE_Session session,uint64_t entity_stable_id,float fov) SE_NOEXCEPT;
+// W06：运行时外观覆盖；mode<0 清除覆盖并回到场景 RenderSettings 的值。
+SE_API int32_t SE_CALL se_session_set_look(SE_Session session,float mode,float blend) SE_NOEXCEPT;
+// W07：世界方向投影到游戏相机的归一化屏幕坐标（左上原点，0..1）；不在前方时 in_front=0。
+SE_API int32_t SE_CALL se_camera_project_direction(SE_Session session,uint64_t camera_stable_id,SE_Vector3 world_direction,SE_Vector2* screen_uv,int32_t* in_front) SE_NOEXCEPT;
+// W07：程序化天空覆盖（JSON）；空长度清除并回到引擎默认天空。
+SE_API int32_t SE_CALL se_session_set_sky(SE_Session session,const char* json,uint32_t length) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_entity_get_stable_id(SE_Session session, SE_Entity entity, uint64_t* stable_id) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_entity_find(SE_Session session, uint64_t stable_id, SE_Entity* entity) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_entity_get_name(SE_Session session, SE_Entity entity, char* buffer, uint32_t capacity, uint32_t* required) SE_NOEXCEPT;

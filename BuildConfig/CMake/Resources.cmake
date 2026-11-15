@@ -89,6 +89,7 @@ add_custom_target(BuildShaders ALL DEPENDS "${shader_artifacts}/Triangle.hlsl.se
     "${shader_artifacts}/ShadowedForward.hlsl.sebin" "${shader_artifacts}/ShadowDepth.hlsl.sebin" "${shader_artifacts}/ShadowOutput.hlsl.sebin"
     "${shader_artifacts}/BasicLit.hlsl.sebin"
     "${shader_artifacts}/EnvironmentForward.hlsl.sebin" "${shader_artifacts}/EnvironmentSky.hlsl.sebin"
+    "${shader_artifacts}/SkinnedForward.hlsl.sebin" "${shader_artifacts}/SkinnedShadowDepth.hlsl.sebin"
     "${shader_artifacts}/BloomExtract.hlsl.sebin" "${shader_artifacts}/BloomBlur.hlsl.sebin" "${shader_artifacts}/ToneMap.hlsl.sebin"
     "${shader_artifacts}/Fxaa.hlsl.sebin" "${shader_artifacts}/UiOverlay.hlsl.sebin")
 add_custom_command(OUTPUT "${shader_artifacts}/ShadowedForward.hlsl.sebin" "${shader_artifacts}/ShadowedForward.hlsl.sebin.json"
@@ -116,6 +117,18 @@ add_custom_command(OUTPUT "${shader_artifacts}/EnvironmentForward.hlsl.sebin" "$
 add_custom_command(OUTPUT "${shader_artifacts}/EnvironmentSky.hlsl.sebin" "${shader_artifacts}/EnvironmentSky.hlsl.sebin.json"
     COMMAND ShaderBuilder environmentsky "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/EnvironmentSky.hlsl" "${shader_artifacts}/EnvironmentSky.hlsl.sebin"
     DEPENDS ShaderBuilder "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/EnvironmentSky.hlsl" VERBATIM)
+# W03：蒙皮变体（31 号绑定布局 + v3 顶点布局 + SE_SKINNED）。pass 名与 ShaderBuilder.cpp 一致。
+add_custom_command(OUTPUT "${shader_artifacts}/SkinnedForward.hlsl.sebin" "${shader_artifacts}/SkinnedForward.hlsl.sebin.json"
+    COMMAND ShaderBuilder skinned-forward "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/SkinnedForward.hlsl" "${shader_artifacts}/SkinnedForward.hlsl.sebin"
+    DEPENDS ShaderBuilder "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/SkinnedForward.hlsl"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/Skinning.hlsli"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/ShadowedForward.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/ShadowBindings.hlsli"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/Forward.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/ForwardBindings.hlsli"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/Pbr.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/PbrBindings.hlsli" VERBATIM)
+add_custom_command(OUTPUT "${shader_artifacts}/SkinnedShadowDepth.hlsl.sebin" "${shader_artifacts}/SkinnedShadowDepth.hlsl.sebin.json"
+    COMMAND ShaderBuilder skinned-shadowdepth "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/SkinnedShadowDepth.hlsl" "${shader_artifacts}/SkinnedShadowDepth.hlsl.sebin"
+    DEPENDS ShaderBuilder "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/SkinnedShadowDepth.hlsl"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/Skinning.hlsli" VERBATIM)
 add_dependencies(CopyRendererResources BuildShaders)
 add_custom_command(OUTPUT "${shader_artifacts}/Gui.hlsl.sebin" "${shader_artifacts}/Gui.hlsl.sebin.json"
     COMMAND ShaderBuilder gui "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/Gui.hlsl" "${shader_artifacts}/Gui.hlsl.sebin"

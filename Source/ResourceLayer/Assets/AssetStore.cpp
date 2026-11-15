@@ -77,13 +77,28 @@ std::string CacheKey(const std::filesystem::path& source, const ImportOptions& o
 Json Encode(const StaticModel& model)
 {
     Json json = { { "meshes", Json::array() }, { "materials", Json::array() },
-        { "nodes", Json::array() }, { "textures", Json::array() }, { "dependencies", model.dependencies } };
+        { "nodes", Json::array() }, { "textures", Json::array() }, { "dependencies", model.dependencies },
+        { "joints", Json::array() }, { "animations", Json::array() } };
     for (const auto& mesh : model.meshes)
     {
         Json vertices = Json::array();
         for (const auto& v : mesh.vertices)
             vertices.push_back({ { "p", v.position }, { "n", v.normal }, { "uv", v.uv }, { "t", v.tangent } });
-        json["meshes"].push_back({ { "name", mesh.name }, { "vertices", vertices }, { "indices", mesh.indices }, { "material", mesh.material } });
+        Json encoded = { { "name", mesh.name }, { "vertices", vertices }, { "indices", mesh.indices },
+            { "material", mesh.material }, { "skinned", mesh.skinned }, { "meshNode", mesh.meshNode } };
+        if (!mesh.skinning.empty())
+        {
+            // 权重用普通数组保存，不量化也不转 base64，这样缓存可人工比对且往返无舍入。
+            Json skinning = Json::array();
+            for (const auto& value : mesh.skinning)
+            {
+                const Json joints = { value.joints[0], value.joints[1], value.joints[2], value.joints[3] };
+                const Json weights = { value.weights[0], value.weights[1], value.weights[2], value.weights[3] };
+                skinning.push_back({ { "j", joints }, { "w", weights } });
+            }
+            encoded["skinning"] = std::move(skinning);
+        }
+        json["meshes"].push_back(std::move(encoded));
     }
     for (const auto& material : model.materials)
         json["materials"].push_back({ { "name", material.name }, { "baseColor", material.baseColor },
@@ -96,12 +111,25 @@ Json Encode(const StaticModel& model)
     for (const auto& texture : model.textures)
         json["textures"].push_back({ { "path", texture.relativePath }, { "mime", texture.mimeType },
             { "embedded", texture.embeddedBytes }, { "missing", texture.missing } });
+    for (const auto& joint : model.joints)
+        json["joints"].push_back({ { "name", joint.name }, { "parent", joint.parent }, { "inverseBind", joint.inverseBind },
+            { "restTranslation", joint.restTranslation }, { "restRotation", joint.restRotation }, { "restScale", joint.restScale } });
+    for (const auto& clip : model.animations)
+    {
+        Json channels = Json::array();
+        for (const auto& channel : clip.channels)
+            channels.push_back({ { "joint", channel.joint },
+                { "path", static_cast<int>(channel.path) }, { "interpolation", static_cast<int>(channel.interpolation) },
+                { "times", channel.times }, { "values", channel.values } });
+        json["animations"].push_back({ { "name", clip.name }, { "duration", clip.duration }, { "channels", std::move(channels) } });
+    }
     return json;
 }
 
 bool Decode(const Json& json, StaticModel& model)
 {
     if (!json.is_object() || json.at("nodes").size() > 100'000 || json.at("meshes").size() > 100'000) return false;
+    if (json.at("joints").size() > 65'536 || json.at("animations").size() > 65'536) return false;
     model.dependencies = json.at("dependencies").get<std::vector<std::string>>();
     for (const auto& value : json.at("meshes"))
     {
@@ -113,6 +141,26 @@ bool Decode(const Json& json, StaticModel& model)
         for (const auto& v : value.at("vertices"))
             mesh.vertices.push_back({ v.at("p").get<std::array<float, 3>>(), v.at("n").get<std::array<float, 3>>(),
                 v.at("uv").get<std::array<float, 2>>(), v.at("t").get<std::array<float, 4>>() });
+        mesh.skinned = value.at("skinned").get<bool>();
+        mesh.meshNode = value.at("meshNode").get<std::uint32_t>();
+        if (value.contains("skinning"))
+        {
+            if (value.at("skinning").size() > 4'000'000 || value.at("skinning").size() > mesh.vertices.size()) return false;
+            mesh.skinning.reserve(value.at("skinning").size());
+            for (const auto& skin : value.at("skinning"))
+            {
+                const auto joints = skin.at("j").get<std::array<std::uint32_t, 4>>();
+                const auto weights = skin.at("w").get<std::array<float, 4>>();
+                MeshSkinVertex vertex;
+                for (std::size_t influence = 0; influence < 4; ++influence)
+                {
+                    if (joints[influence] > 65'535) return false;
+                    vertex.joints[influence] = static_cast<std::uint16_t>(joints[influence]);
+                    vertex.weights[influence] = weights[influence];
+                }
+                mesh.skinning.push_back(vertex);
+            }
+        }
         model.meshes.push_back(std::move(mesh));
     }
     for (const auto& value : json.at("materials"))
@@ -126,6 +174,40 @@ bool Decode(const Json& json, StaticModel& model)
     for (const auto& value : json.at("textures"))
         model.textures.push_back({ value.at("path").get<std::string>(), value.at("mime").get<std::string>(),
             value.at("embedded").get<std::vector<std::uint8_t>>(), value.at("missing").get<bool>() });
+    for (const auto& value : json.at("joints"))
+    {
+        ModelJoint joint;
+        joint.name = value.at("name").get<std::string>();
+        joint.parent = value.at("parent").get<std::int32_t>();
+        joint.inverseBind = value.at("inverseBind").get<std::array<float, 16>>();
+        joint.restTranslation = value.at("restTranslation").get<std::array<float, 3>>();
+        joint.restRotation = value.at("restRotation").get<std::array<float, 4>>();
+        joint.restScale = value.at("restScale").get<std::array<float, 3>>();
+        model.joints.push_back(std::move(joint));
+    }
+    for (const auto& value : json.at("animations"))
+    {
+        ModelAnimationClip clip;
+        clip.name = value.at("name").get<std::string>();
+        clip.duration = value.at("duration").get<float>();
+        if (value.at("channels").size() > 65'536) return false;
+        for (const auto& channelValue : value.at("channels"))
+        {
+            const auto path = channelValue.at("path").get<int>();
+            const auto interpolation = channelValue.at("interpolation").get<int>();
+            if (path < 0 || path > static_cast<int>(ModelAnimationPath::Scale)) return false;
+            if (interpolation < 0 || interpolation > static_cast<int>(ModelAnimationInterpolation::Step)) return false;
+            ModelAnimationChannel channel;
+            channel.joint = channelValue.at("joint").get<std::uint16_t>();
+            channel.path = static_cast<ModelAnimationPath>(path);
+            channel.interpolation = static_cast<ModelAnimationInterpolation>(interpolation);
+            channel.times = channelValue.at("times").get<std::vector<float>>();
+            channel.values = channelValue.at("values").get<std::vector<std::array<float, 4>>>();
+            if (channel.times.size() > (1u << 20) || channel.times.size() != channel.values.size()) return false;
+            clip.channels.push_back(std::move(channel));
+        }
+        model.animations.push_back(std::move(clip));
+    }
     return ValidateStaticModel(model);
 }
 }

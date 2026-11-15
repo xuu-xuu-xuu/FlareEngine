@@ -40,12 +40,50 @@ struct MaterialData
     float normalScale = 1.0f;
 };
 
+// 每顶点蒙皮权重，与 MeshData::vertices 一一对应；静态网格为空。
+struct MeshSkinVertex
+{
+    std::uint16_t joints[4]{};
+    float weights[4]{};
+};
+
 struct MeshData
 {
     std::string name;
     std::vector<MeshVertex> vertices;
     std::vector<std::uint32_t> indices;
     std::int32_t material = -1;
+    std::vector<MeshSkinVertex> skinning; // 空：静态网格；否则大小与 vertices 相同。
+    bool skinned = false;
+    std::uint32_t meshNode = 0; // 引用该网格的节点下标；用于定位导入时烘进的网格节点变换。
+};
+
+// 关节层级按父序排列：parent < 自身下标；矩阵列主序、列向量。
+struct ModelJoint
+{
+    std::string name;
+    std::int32_t parent = -1; // joints 下标；根关节为 -1，父关节下标小于自身。
+    std::array<float, 16> inverseBind{}; // 实体（网格）局部绑定空间，列主序。
+    std::array<float, 3> restTranslation{};
+    std::array<float, 4> restRotation{ 0, 0, 0, 1 }; // x,y,z,w
+    std::array<float, 3> restScale{ 1, 1, 1 };
+};
+
+enum class ModelAnimationPath : std::uint8_t { Translation = 0, Rotation = 1, Scale = 2 };
+enum class ModelAnimationInterpolation : std::uint8_t { Linear = 0, Step = 1 };
+struct ModelAnimationChannel
+{
+    std::uint16_t joint = 0;
+    ModelAnimationPath path = ModelAnimationPath::Rotation;
+    ModelAnimationInterpolation interpolation = ModelAnimationInterpolation::Linear;
+    std::vector<float> times; // 秒，严格递增。
+    std::vector<std::array<float, 4>> values; // rotation 为四元数 xyzw；translation/scale 取 xyz。
+};
+struct ModelAnimationClip
+{
+    std::string name;
+    float duration = 0; // 秒，所有采样输入时间的最大值。
+    std::vector<ModelAnimationChannel> channels;
 };
 
 struct ModelNode
@@ -64,6 +102,8 @@ struct StaticModel
     std::vector<ModelNode> nodes;
     std::vector<TextureReference> textures;
     std::vector<std::string> dependencies; // 相对模型目录的外部缓冲/贴图，包含缺失项。
+    std::vector<ModelJoint> joints; // 每份资产一套骨架；静态模型为空。
+    std::vector<ModelAnimationClip> animations;
 };
 
 struct AssetDiagnostic
@@ -80,8 +120,8 @@ struct ImportOptions
     std::filesystem::path allowedRoot; // 空值表示模型所在目录；外部引用不得越界。
 };
 
-inline constexpr std::uint32_t StaticModelFormatVersion = 1;
-inline constexpr const char* StaticModelImporterVersion = "SelfEngine.StaticModel.2/ufbx-0.17.1/cgltf-1.15";
+inline constexpr std::uint32_t StaticModelFormatVersion = 2;
+inline constexpr const char* StaticModelImporterVersion = "SelfEngine.StaticModel.2/ufbx-0.17.1/cgltf-1.15/skin1";
 
 // 所有数据由引擎独立拥有；失败不改变 output。诊断只携带稳定文本键与细节。
 bool ImportStaticModel(const std::filesystem::path& path, const ImportOptions& options,

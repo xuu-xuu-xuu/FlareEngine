@@ -1,6 +1,5 @@
 #ifndef SELF_ENGINE_PBR_BINDINGS
-#define SELF_ENGINE_PBR_BINDINGS
-// 布局 2：与 MaterialLayout.h 的 PbrDrawConstants 精确对应。
+#define SELF_ENGINE_PBR_BINDINGS// 布局 2：与 MaterialLayout.h 的 PbrDrawConstants 精确对应。
 cbuffer PbrConstants : register(b0)
 {
     column_major float4x4 clipFromLocal;
@@ -12,6 +11,8 @@ cbuffer PbrConstants : register(b0)
     float4 radiance;
     float4 parameters; // metallic、roughness、normalScale、世界线性行列式符号。
     float4 options; // normalMapping、unlit、doubleSided；w 为 receivesShadow，G05.08 起非整数时表示 LOD dither。
+    float4 look; // W06：x 模式（0 基础色/1 白模/2 Toon），y 混合，z Toon 分档，w 边缘强度。
+    float4 skin; // W03：x 调色板字节偏移，y 关节数。空缓冲时静态绘制。
 };
 Texture2D<float4> baseColorMap : register(t0);
 Texture2D<float4> normalMap : register(t1);
@@ -49,5 +50,27 @@ float3 DirectBrdf(float3 color,float metal,float rough,float3 n,float3 v,float3 
     float3 specular=distribution*visibility*fresnel;
     float3 diffuse=(1-fresnel)*(1-metal)*color/pi;
     return (diffuse+specular)*nl;
+}
+// W06：外观覆盖只读合成。mode 0 原样返回，1 为白模（忽略固有色与纹理），2 为三档 Toon。
+// ndl 是方向光几何项，visibility 是阴影可见度；都不回写材质或资产。
+float3 ApplyLook(float3 lit,float3 albedo,float3 n,float3 v,float ndl,float visibility)
+{
+    float mode=look.x;
+    float blend=saturate(look.y);
+    float3 result=lit;
+    if(mode>=0.5&&blend>0.001)
+    {
+        float shaped=saturate(ndl)*saturate(visibility);
+        float3 clay=float3(0.80,0.80,0.80)*(0.20+0.80*shaped);
+        float level=shaped>=0.55?1.0:(shaped>=0.16?0.55:0.0);
+        float3 toonShadow=albedo*float3(0.58,0.56,0.66);
+        float3 toon=lerp(toonShadow,albedo,level);
+        float rim=pow(1.0-saturate(dot(n,v)),3.0)*saturate(look.w)*saturate(visibility);
+        toon+=float3(1.0,0.92,0.84)*rim*0.16;
+        float3 chosen=clay;
+        if(mode>=1.5)chosen=toon;
+        result=lerp(lit,chosen,blend);
+    }
+    return result;
 }
 #endif

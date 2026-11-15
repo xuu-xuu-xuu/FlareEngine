@@ -5,6 +5,7 @@
 #include "SceneManager.h"
 #include "SceneSpatialIndex.h"
 #include "TODSystem.h"
+#include "SkeletalAnimation.h"
 #include "CoreLayer/FixedStepClock.h"
 
 namespace se
@@ -44,6 +45,10 @@ public:
     const SceneSpatialIndex& Spatial()const noexcept{return spatial_;}
     TODSystem& TimeOfDay()noexcept{return tod_;}
     const TODSystem& TimeOfDay()const noexcept{return tod_;}
+    // 蒙皮姿态与 TIMELINE 无关：固定步内推进，渲染与查询读取同一步结果。
+    SkeletalAnimationSystem& Skeletal()noexcept{return skeletal_;}
+    const SkeletalAnimationSystem& Skeletal()const noexcept{return skeletal_;}
+    void SetSkeletalResolver(SkeletalAnimationSystem::Resolver resolver){if(!closing_)skeletal_.SetResolver(std::move(resolver));}
     using TODResolver=std::function<std::shared_ptr<const TODProfile>(const std::string&,std::string&)>;
     void SetTODResolver(TODResolver resolver){if(!closing_)todResolver_=std::move(resolver);}
     bool SynchronizeTOD();
@@ -77,6 +82,7 @@ private:
     SceneManager scenes_;
     SceneSpatialIndex spatial_{world_,scenes_};
     TODSystem tod_{events_};
+    SkeletalAnimationSystem skeletal_;
     TODResolver todResolver_;
     SceneHandle todScene_;std::uint64_t todRevision_=0;
     FixedStepClock clock_;

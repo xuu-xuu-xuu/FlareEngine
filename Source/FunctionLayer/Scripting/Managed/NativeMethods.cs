@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Numerics;
 
 namespace SelfEngine;
 
@@ -39,6 +40,26 @@ internal static unsafe partial class NativeMethods
     internal static partial int RunWindow(ulong handle, string locale, uint length, int visible, ulong maximumFrames);
     [LibraryImport(Library, EntryPoint="se_session_set_window_capture", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SetWindowCapture(ulong handle,string? path,uint length,ulong frame);
+    [LibraryImport(Library, EntryPoint="se_session_set_capture_sequence", StringMarshalling=StringMarshalling.Utf8)]
+    internal static partial int SetCaptureSequence(ulong handle,string? path,uint length,ulong count);
+    [LibraryImport(Library, EntryPoint="se_session_set_window_resolution")]
+    internal static partial int SetWindowResolution(ulong handle,uint width,uint height);
+    [LibraryImport(Library, EntryPoint="se_session_set_window_fixed_step")]
+    internal static partial int SetWindowFixedStep(ulong handle,double seconds);
+    [LibraryImport(Library, EntryPoint="se_entity_actor_play", StringMarshalling=StringMarshalling.Utf8)]
+    internal static partial int ActorPlay(ulong handle,ulong stableId,string clip,uint length,float speed,int loop);
+    [LibraryImport(Library, EntryPoint="se_entity_joint_position", StringMarshalling=StringMarshalling.Utf8)]
+    internal static partial int JointPosition(ulong handle,ulong stableId,string joint,uint length,out Vector3 position,out int found);
+    [LibraryImport(Library, EntryPoint="se_entity_set_camera_fov")]
+    internal static partial int SetCameraFov(ulong handle,ulong stableId,float fov);
+    [LibraryImport(Library, EntryPoint="se_session_set_look")]
+    internal static partial int SetLook(ulong handle,float mode,float blend);
+    [LibraryImport(Library, EntryPoint="se_entity_set_mesh", StringMarshalling=StringMarshalling.Utf8)]
+    internal static partial int SetMesh(ulong handle,ulong entity,string asset,uint length,int castsShadow,int receivesShadow);
+    [LibraryImport(Library, EntryPoint="se_camera_project_direction")]
+    internal static partial int ProjectDirection(ulong handle,ulong cameraStableId,Vector3 direction,out Vector2 screenUv,out int inFront);
+    [LibraryImport(Library, EntryPoint="se_session_set_sky", StringMarshalling=StringMarshalling.Utf8)]
+    internal static partial int SetSky(ulong handle,string? json,uint length);
     [LibraryImport(Library, EntryPoint = "se_session_request_stop")]
     internal static partial int RequestStop(ulong handle);
     [LibraryImport(Library, EntryPoint="se_session_set_locale", StringMarshalling=StringMarshalling.Utf8)]

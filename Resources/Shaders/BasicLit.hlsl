@@ -57,10 +57,12 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     float rough=max(0.045,saturate(parameters.y*mr.x));
     float3 v=UnitVector(cameraPosition.xyz-input.worldPosition,float3(0,0,1));
     float3 color=albedo*frameSkyExposure.rgb*0.35;
+    float lookNdl=0,lookVisibility=1;
     if(frameDirection.w>0.5)
     {
         float3 l=UnitVector(frameDirection.xyz,float3(0,0,1));
         float visibility=options.w>0.5?ShadowVisibility(input.worldPosition,n,l):1;
+        lookNdl=saturate(dot(n,l));lookVisibility=visibility;
         color+=DirectLight(albedo,metal,rough,n,v,l)*frameRadiance.rgb*visibility;
     }
     [loop] for(uint index=0;index<(uint)framePointCount.x;++index)
@@ -72,5 +74,7 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
         float attenuation=window*window/max(squared,0.0025);
         color+=DirectLight(albedo,metal,rough,n,v,UnitVector(delta,n))*pointRadiance[index].rgb*attenuation;
     }
+    // W06：与 PBR 前向路径共享同一外观覆盖实现（白模/Toon）。
+    color=ApplyLook(color,albedo,n,v,lookNdl,lookVisibility);
     return float4(min(max(color,0),65504),1);
 }

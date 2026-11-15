@@ -39,12 +39,43 @@ bool RecordD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12
     if(!CheckGraphicsResult(states.Use(commands,*target.depth.Get(),D3D12_RESOURCE_STATE_DEPTH_WRITE,"Shadow"),text,"D3D12.StateTrackingFailed"))return false;
     const auto dsv=target.dsv->Cpu();commands.ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1,0,0,nullptr);commands.OMSetRenderTargets(0,nullptr,FALSE,&dsv);
     commands.SetPipelineState(pipeline.pipeline.Get());commands.SetGraphicsRootSignature(pipeline.rootSignature.Get());
+    // W03：蒙皮投射使用各自的 ShadowDepth 变体（b0 仍是 16 个 root32 常量，t8 调色板在参数 1）。
+    // 静态投射继续共享默认 Pipeline，PSO/根签名只在切换时重设，未蒙皮路径的绑定次数不变。
+    const D3D12MeshPipeline* activePipeline=&pipeline;
+    const auto bind=[&](const D3D12MeshPipeline& program)
+    {
+        commands.SetPipelineState(program.pipeline.Get());commands.SetGraphicsRootSignature(program.rootSignature.Get());
+        activePipeline=&program;
+    };
     const D3D12_VIEWPORT viewport{0,0,float(target.resolution),float(target.resolution),0,1};const D3D12_RECT scissor{0,0,LONG(target.resolution),LONG(target.resolution)};
     commands.RSSetViewports(1,&viewport);commands.RSSetScissorRects(1,&scissor);commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    if(content.shadow->enabled)for(const auto& draw:content.shadowMeshes)
+    if(content.shadow->enabled)for(size_t index=0;index<content.shadowMeshes.size();++index)
     {
+        const auto& draw=content.shadowMeshes[index];
         if(!draw.mesh||!draw.mesh->vertices||!draw.mesh->indices||!draw.mesh->indexCount||!se::IsFinite(draw.world)
             ||!se::IsFinite(content.shadow->clipFromWorld*draw.world))return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.MeshDrawsInvalid");
+        const auto& program=draw.pipeline?*draw.pipeline:pipeline;
+        if(activePipeline!=&program)bind(program);
+        const bool skinned=program.prepared->program->source.skinnedVertex;
+        if(skinned!=(draw.mesh->vertexView.StrideInBytes==sizeof(se::rhi::SkinnedVertex)))
+        {
+            Log(LogLevel::Error,"阴影蒙皮校验: pipelineSkinned="+std::to_string(skinned)+" stride="+std::to_string(draw.mesh->vertexView.StrideInBytes)
+                +" palette="+std::to_string(draw.skinPalette.size())+" joints="+std::to_string(draw.skinJointCount));
+            return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.MeshDrawsInvalid");
+        }
+        if(skinned)
+        {
+            const auto& skin=index<frame.shadowSkinSlices.size()?frame.shadowSkinSlices[index]:D3D12UploadSlice{};
+            if(!skin.resource||draw.skinPalette.empty()||!draw.skinJointCount
+                ||draw.skinPalette.size()-draw.skinJointOffset!=static_cast<std::size_t>(draw.skinJointCount)*48)
+            {
+                Log(LogLevel::Error,"阴影蒙皮调色板: slices="+std::to_string(frame.shadowSkinSlices.size())+" index="+std::to_string(index)
+                    +" resource="+std::to_string(skin.resource?1:0)+" palette="+std::to_string(draw.skinPalette.size())
+                    +" offset="+std::to_string(draw.skinJointOffset)+" joints="+std::to_string(draw.skinJointCount));
+                return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.MeshDrawsInvalid");
+            }
+            commands.SetGraphicsRootShaderResourceView(1,skin.Gpu());
+        }
         if(!CheckGraphicsResult(states.Use(commands,*draw.mesh->vertices.Get(),D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"ShadowVertices"),text,"D3D12.StateTrackingFailed")
             ||!CheckGraphicsResult(states.Use(commands,*draw.mesh->indices.Get(),D3D12_RESOURCE_STATE_INDEX_BUFFER,"ShadowIndices"),text,"D3D12.StateTrackingFailed"))return false;
         const auto clip=content.shadow->clipFromWorld*draw.world;commands.SetGraphicsRoot32BitConstants(0,16,clip.values.data(),0);

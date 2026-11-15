@@ -23,6 +23,8 @@
 #include "ToolLayer/Editor/ImGuiEditor.h"
 #include "ResourceLayer/Assets/AssetStore.h"
 #include <filesystem>
+#include <fstream>
+#include <cstdio>
 #include <unordered_map>
 #include <imgui/imgui.h>
 #include <algorithm>
@@ -70,6 +72,14 @@ struct Session
     bool windowRunning=false,stopWindow=false;
     std::filesystem::path windowCapture;
     std::uint64_t windowCaptureFrame=0;
+    // 普通 Player 的固定回放尺寸与固定步长；序列抓帧用同一组值保证 updateIndex 与 tick 一一对应。
+    std::uint32_t windowWidth=0,windowHeight=0;
+    double windowFixedStep=0;
+    std::filesystem::path captureSequence;
+    std::uint64_t captureSequenceCount=0;
+    // W06：运行时外观覆盖；<0 表示使用场景 RenderSettings 的值。
+    float lookMode=-1,lookBlend=0;
+    std::optional<se::SkyView> sky;
     std::filesystem::path windowProfile;
     std::uint32_t profileWidth=0,profileHeight=0;
     se::EditorSession* editor=nullptr;
@@ -737,6 +747,30 @@ int32_t SE_CALL se_session_set_window_capture(SE_Session handle,const char* path
         if(!path||!length||length>32768||!frame||!ValidUtf8(path,length)||std::memchr(path,0,length))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
         std::u8string utf8(length,u8'\0');std::memcpy(utf8.data(),path,length);s->windowCapture=std::filesystem::path(utf8);s->windowCaptureFrame=frame;return SE_OK;});
 }
+int32_t SE_CALL se_session_set_window_fixed_step(SE_Session handle,double seconds) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(s->windowRunning||s->stepping)return Error(SE_BUSY,"Bridge.SessionBusy");
+        if(!std::isfinite(seconds)||seconds<0||seconds>0.1)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        s->windowFixedStep=seconds;return SE_OK;});
+}
+int32_t SE_CALL se_session_set_window_resolution(SE_Session handle,uint32_t width,uint32_t height) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(s->windowRunning||s->stepping)return Error(SE_BUSY,"Bridge.SessionBusy");
+        if(width==0&&height==0){s->windowWidth=s->windowHeight=0;return SE_OK;}
+        if(width<64||height<64||width>16384||height>16384)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        s->windowWidth=width;s->windowHeight=height;return SE_OK;});
+}
+int32_t SE_CALL se_session_set_capture_sequence(SE_Session handle,const char* path,uint32_t length,uint64_t count) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(s->windowRunning||s->stepping)return Error(SE_BUSY,"Bridge.SessionBusy");
+        if(length==0||count==0){s->captureSequence.clear();s->captureSequenceCount=0;return SE_OK;}
+        if(!path||length>32768||count>100000||!ValidUtf8(path,length)||std::memchr(path,0,length))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        std::u8string utf8(length,u8'\0');std::memcpy(utf8.data(),path,length);
+        s->captureSequence=std::filesystem::path(utf8);s->captureSequenceCount=count;return SE_OK;});
+}
 int32_t SE_CALL se_session_set_window_profile(SE_Session handle,const char* path,uint32_t length,uint32_t width,uint32_t height) noexcept
 {
     return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
@@ -790,20 +824,61 @@ int32_t SE_CALL se_session_run_window(SE_Session handle, const char* locale, uin
         }
         struct WindowGuard{Session& s;~WindowGuard(){s.windowRunning=false;s.input={};s.pointer={};}} guard{*s};
         s->windowRunning=true;s->stopWindow=false;
+        const bool sequence=!s->captureSequence.empty()&&s->captureSequenceCount>0;
+        if(sequence&&!s->windowCapture.empty())return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
         se::ApplicationServices services;services.ui=&s->UiRef();services.maximumFrames=maximumFrames;services.advanceUi=false;
         se::Profiler profiler(se::WindowProfileRenderer::FrameLimit);
         if(!s->windowProfile.empty()){
             profiler.SetEnabled(true);services.profiler=&profiler;
             services.initialWidth=s->profileWidth;services.initialHeight=s->profileHeight;
         }
+        // 固定回放尺寸优先于窗口默认值；交换链在渲染器初始化前按客户区建立。
+        if(s->windowWidth&&s->windowHeight){services.initialWidth=s->windowWidth;services.initialHeight=s->windowHeight;}
+        // 序列抓帧必须与固定步一一对应：缺省 1/30 秒，即每个宿主更新推进 2 个 60 Hz 固定步。
+        const double fixedStep=s->windowFixedStep>0?s->windowFixedStep:(sequence?1.0/30.0:0);
+        if(fixedStep>0)services.fixedDeltaSeconds=fixedStep;
+        if(sequence)
+        {
+            std::error_code error;std::filesystem::create_directories(s->captureSequence,error);
+            if(error)return Error(SE_INVALID_ARGUMENT,"Bridge.CaptureDirectoryFailed");
+            if(services.maximumFrames==0||services.maximumFrames>s->captureSequenceCount)services.maximumFrames=s->captureSequenceCount;
+        }
         services.resourceDirectory=ResourceDirectory();
         if(services.resourceDirectory.empty())return Error(SE_INTERNAL_ERROR,"Bridge.WindowFailed");
+        // 序列抓帧状态：cursor 是已抽取的输出帧序号；log 记录输出帧 → 固定步，供清单核对。
+        struct CapturedFrame{std::uint64_t index=0,updateIndex=0,fixedStep=0;std::filesystem::path path;};
+        std::uint64_t captureCursor=0;
+        std::vector<CapturedFrame> captureLog;
+        SandboxRenderer* gameRenderer=nullptr;
+        // 动画资产按 AssetId 解析；缺失时该角色保持绑定姿态，不阻断整帧。
+        s->Env().SetSkeletalResolver([s](const std::string& asset)->std::shared_ptr<const se::StaticModel>{
+            if(!s->assets)return nullptr;std::vector<se::AssetDiagnostic> diagnostics;auto model=s->assets->LoadModel(asset,diagnostics);
+            return model;});
         services.input=[s](const InputState& input,bool consumed,bool pointerConsumed){CaptureInput(*s,input,consumed,pointerConsumed);};
-        services.runEnvironmentFrame=[s,handle,p=services.profiler](double dt){se::CpuScope scope(p,"CPU.Environment");return !s->stopWindow&&se_session_step(handle,dt)==SE_OK&&!s->stopWindow;};
-        services.extract=[s](se::FrameData& data){se::BuildFrameData(s->WorldRef(),&s->UiRef(),s->physicsDebugDraw?&s->physics:nullptr,data);data.assets=s->assets.get();
+        services.runEnvironmentFrame=[s,handle,p=services.profiler,sequence,&captureCursor](double dt){
+            se::CpuScope scope(p,"CPU.Environment");
+            // 第 0 个输出帧取初始化后的 tick 0：先渲染初态，不推进模拟时钟。
+            if(sequence&&captureCursor==0)return !s->stopWindow&&se_session_step(handle,0.0)==SE_OK&&!s->stopWindow;
+            return !s->stopWindow&&se_session_step(handle,dt)==SE_OK&&!s->stopWindow;};
+        services.extract=[s,sequence,&captureCursor,&captureLog,&gameRenderer](se::FrameData& data){
+            se::BuildFrameData(s->Env(),&s->UiRef(),s->physicsDebugDraw?&s->physics:nullptr,data);data.assets=s->assets.get();
+            if(s->lookMode>=0){data.lookMode=s->lookMode;data.lookBlend=s->lookBlend;}
+            if(s->sky)data.sky=*s->sky;
             if(s->Env().TimeOfDay().Profile())data.timeOfDay=s->Env().Snapshot();
-            if(s->physicsDebugDraw){for(const auto& item:s->characters){const auto lines=item.second.DebugLines();data.debugLines.insert(data.debugLines.end(),lines.begin(),lines.end());}}};
-        SandboxRenderer renderer(SandboxScene::Scene,services.resourceDirectory);
+            if(s->physicsDebugDraw){for(const auto& item:s->characters){const auto lines=item.second.DebugLines();data.debugLines.insert(data.debugLines.end(),lines.begin(),lines.end());}}
+            if(sequence&&gameRenderer&&captureCursor<s->captureSequenceCount)
+            {
+                char name[32]{};std::snprintf(name,sizeof(name),"frame_%04llu.ppm",static_cast<unsigned long long>(captureCursor));
+                const auto path=s->captureSequence/name;
+                // 宿主的抓帧按更新序号（从 1 起）触发；这里第 i 个输出帧就是第 i+1 次更新。
+                gameRenderer->SetCaptureOutput(path,captureCursor+1);
+                captureLog.push_back({captureCursor,captureCursor+1,s->Env().FixedStepIndex(),path});
+                ++captureCursor;
+            }};
+        // 普通游戏窗口与编辑器 Play 预览共用同一条前向 + 阴影 + 后处理路径；
+        // 场景的 RenderSettings/EnvironmentSettings 组件决定具体开关，不再使用只画 PBR 的演示档。
+        SandboxRenderer renderer(SandboxScene::BasicLit,services.resourceDirectory);
+        gameRenderer=&renderer;
         if(!s->windowCapture.empty())renderer.SetCaptureOutput(s->windowCapture,s->windowCaptureFrame);
         std::unique_ptr<se::WindowProfileRenderer> measured;
         if(!s->windowProfile.empty())measured=std::make_unique<se::WindowProfileRenderer>(renderer,profiler,s->windowProfile);
@@ -815,6 +890,34 @@ int32_t SE_CALL se_session_run_window(SE_Session handle, const char* locale, uin
         }
         if(measured&&!measured->Finish(exitCode==0||s->stopWindow))return Error(SE_INTERNAL_ERROR,"Bridge.ProfileFailed");
         if(exitCode!=0&&!s->stopWindow)return Error(SE_INTERNAL_ERROR,"Bridge.WindowFailed");
+        if(sequence)
+        {
+            // 清单只能描述真实落盘的帧：缺帧、少帧都按失败返回，不允许把不完整序列标成成功。
+            if(captureLog.size()!=s->captureSequenceCount)return Error(SE_INTERNAL_ERROR,"Bridge.CaptureSequenceIncomplete");
+            nlohmann::json manifest;manifest["schema"]=1;manifest["count"]=captureLog.size();
+            manifest["simulationHz"]=60;manifest["fps"]=fixedStep>0?static_cast<std::uint32_t>(std::lround(1.0/fixedStep)):0;
+            manifest["fixedStep"]=fixedStep;
+            std::uint32_t width=0,height=0;
+            for(const auto& frame:captureLog)
+            {
+                std::error_code error;const auto bytes=std::filesystem::file_size(frame.path,error);
+                if(error||bytes==0)return Error(SE_INTERNAL_ERROR,"Bridge.CaptureSequenceIncomplete");
+                if(width==0){std::ifstream stream(frame.path,std::ios::binary);std::string magic;std::uint32_t w=0,h=0,max=0;stream>>magic>>w>>h>>max;width=w;height=h;}
+                manifest["frames"].push_back({{"index",frame.index},{"updateIndex",frame.updateIndex},{"tick",frame.fixedStep},
+                    {"file",frame.path.filename().string()},{"bytes",bytes}});
+            }
+            manifest["width"]=width;manifest["height"]=height;
+            const std::string text=manifest.dump(1);
+            const auto temporary=s->captureSequence/"frames.json.tmp";
+            {
+                std::ofstream stream(temporary,std::ios::binary|std::ios::trunc);
+                stream.write(text.data(),static_cast<std::streamsize>(text.size()));
+                if(!stream)return Error(SE_INTERNAL_ERROR,"Bridge.CaptureManifestFailed");
+            }
+            std::error_code renameError;
+            std::filesystem::rename(temporary,s->captureSequence/"frames.json",renameError);
+            if(renameError)return Error(SE_INTERNAL_ERROR,"Bridge.CaptureManifestFailed");
+        }
         if(!renderer.CaptureSucceeded())return Error(SE_INTERNAL_ERROR,"Sample.CaptureMissing");
         return SE_OK;
     });
@@ -924,6 +1027,11 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
         }
         hooks.playStarted=[&](se::World& world,se::UiTree& ui){
             clearRuntime();s->borrowedWorld=&world;s->borrowedEnvironment=s->editor->PlayEnvironment();s->borrowedUi=&ui;
+            // EditorSession 的 Play 用的是自己的 Environment 实例；不在这里装蒙皮解析器，
+            // 姿态系统会因为没有解析器直接返回，角色停在绑定姿态（E18）。
+            s->Env().SetSkeletalResolver([s](const std::string& asset)->std::shared_ptr<const se::StaticModel>{
+                if(!s->assets||asset.empty())return nullptr;std::vector<se::AssetDiagnostic> diagnostics;
+                return s->assets->LoadModel(asset,diagnostics);});
             CloseEventPublishers(handle);s->eventSubscriptions.clear();SceneServices(*s,handle);
             const bool ok=!s->editorCallback||s->editorCallback(handle,0,s->editorContext)==0;
             callbackFailed|=!ok;return ok;
@@ -956,7 +1064,10 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
             return ok;
         };
         hooks.extract=[s](se::World& world,se::UiTree& ui,se::FrameData& frame){
-            se::BuildFrameData(world,&ui,s->physicsDebugDraw?&s->physics:nullptr,frame);
+            // Play 时必须用播放环境重建帧：蒙皮调色板在 Environment 的姿态系统里，
+            // 只传 World 会覆盖成空调色板，角色停在绑定姿态（E18）。
+            if(s->editor&&s->editor->IsPlaying())se::BuildFrameData(s->Env(),&ui,s->physicsDebugDraw?&s->physics:nullptr,frame);
+            else se::BuildFrameData(world,&ui,s->physicsDebugDraw?&s->physics:nullptr,frame);
             if(s->Env().TimeOfDay().Profile())frame.timeOfDay=s->Env().Snapshot();
             if(s->physicsDebugDraw){const auto authored=s->scenePhysics.CharacterLines();frame.debugLines.insert(frame.debugLines.end(),authored.begin(),authored.end());for(const auto& item:s->characters){const auto lines=item.second.DebugLines();frame.debugLines.insert(frame.debugLines.end(),lines.begin(),lines.end());}}
         };
@@ -976,6 +1087,11 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
             return true;
         };
         hooks.closing=[s](se::EditorSession& editor,se::UiTree& ui){s->environment.Clear();s->world=editor.EditWorld();s->environment.Scenes().SynchronizeIdle();s->ui=ui;s->editor=nullptr;};
+        // 编辑器 Play 也必须解析蒙皮资产：没有解析器时姿态系统直接返回，角色会停在绑定姿态，
+        // 于是“编辑器 Play”与“导出运行”在同一 tick 上对不上。
+        s->Env().SetSkeletalResolver([s](const std::string& asset)->std::shared_ptr<const se::StaticModel>{
+            if(!s->assets||asset.empty())return nullptr;std::vector<se::AssetDiagnostic> diagnostics;
+            return s->assets->LoadModel(asset,diagnostics);});
         se::EditorRenderer renderer(resources);int exitCode=1;
         const auto captureFile=EditorEnvironmentPath(L"SELFENGINE_EDITOR_CAPTURE_FILE");
         if(!captureFile.empty())
@@ -1063,8 +1179,120 @@ int32_t SE_CALL se_entity_set_transform(SE_Session handle, SE_Entity entity, con
             : Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
     });
 }
-int32_t SE_CALL se_entity_get_stable_id(SE_Session handle, SE_Entity entity, uint64_t* stableId) noexcept
+namespace
 {
+se::EntityHandle FindByStableId(const se::World& world,std::uint64_t stable)
+{
+    for(auto candidate:world.Entities())
+    {
+        const auto* record=world.Get(candidate);
+        if(record&&record->stableId==stable)return candidate;
+    }
+    return {};
+}
+}
+int32_t SE_CALL se_entity_actor_play(SE_Session handle,uint64_t entity_stable_id,const char* clip,uint32_t length,float speed,int32_t loop) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(!clip||length==0||length>4096||!ValidUtf8(clip,length)||!std::isfinite(speed))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        // 固定步内不能改组件属性（World 队列未清空），改为给姿态系统一个下一步生效的请求。
+        s->Env().Skeletal().RequestPlay(entity_stable_id,std::string(clip,length),speed,loop!=0);
+        return SE_OK;});
+}
+int32_t SE_CALL se_entity_joint_position(SE_Session handle,uint64_t entity_stable_id,const char* joint,uint32_t length,SE_Vector3* position,int32_t* found) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(!joint||length==0||length>4096||!ValidUtf8(joint,length)||!position||!found)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        se::Vec3 value{};
+        *found=s->Env().Skeletal().QueryJointPosition(s->WorldRef(),entity_stable_id,std::string(joint,length),value)?1:0;
+        if(*found)*position={value.x,value.y,value.z};
+        return SE_OK;});
+}
+int32_t SE_CALL se_entity_set_mesh(SE_Session handle,SE_Entity entity,const char* asset_id,uint32_t length,int32_t casts_shadow,int32_t receives_shadow) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(!asset_id||length!=32||!ValidUtf8(asset_id,length))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        se::MeshComponent mesh;mesh.meshAsset.assign(asset_id,length);
+        mesh.castsShadow=casts_shadow!=0;mesh.receivesShadow=receives_shadow!=0;
+        const auto target=se::EntityHandle::FromPacked(entity);
+        const auto* record=s->WorldRef().Get(target);
+        if(!record&&!s->WorldRef().IsPending(target))return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");
+        return s->WorldRef().SetMesh(target,mesh)?SE_OK:Error(SE_INVALID_ARGUMENT,"Bridge.WorldOperationFailed");});
+}
+int32_t SE_CALL se_entity_set_camera_fov(SE_Session handle,uint64_t entity_stable_id,float fov) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(!std::isfinite(fov)||fov<0.05f||fov>3.0f)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        const auto entity=FindByStableId(s->WorldRef(),entity_stable_id);
+        if(!entity)return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");
+        const auto* existing=s->WorldRef().GetCamera(entity);
+        if(!existing)return Error(SE_INVALID_ARGUMENT,"World.MissingComponent");
+        auto camera=*existing;camera.verticalFovRadians=fov;
+        // SetCamera 通过 World 命令队列，允许脚本在同一固定步内与 Transform 一起写入。
+        return s->WorldRef().SetCamera(entity,camera)?SE_OK:Error(SE_INVALID_ARGUMENT,"World.InvalidComponent");});
+}
+int32_t SE_CALL se_session_set_look(SE_Session handle,float mode,float blend) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(!std::isfinite(mode)||!std::isfinite(blend))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        if(mode<0){s->lookMode=-1;s->lookBlend=0;return SE_OK;}
+        if(mode>2||blend<0||blend>1)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        s->lookMode=mode;s->lookBlend=blend;return SE_OK;});
+}
+int32_t SE_CALL se_camera_project_direction(SE_Session handle,uint64_t camera_stable_id,SE_Vector3 direction,SE_Vector2* screen_uv,int32_t* in_front) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(!screen_uv||!in_front||!std::isfinite(direction.x)||!std::isfinite(direction.y)||!std::isfinite(direction.z))
+            return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        *in_front=0;
+        const auto entity=FindByStableId(s->WorldRef(),camera_stable_id);
+        const auto* camera=entity?s->WorldRef().GetCamera(entity):nullptr;
+        if(!camera)return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");
+        const se::CameraInstance instance{camera_stable_id,s->WorldRef().GetWorldMatrix(entity),*camera,true};
+        // 游戏窗口和编辑器 Play 都按实际游戏视口布局 UI。无窗口时保留已请求的尺寸或单位视口。
+        auto size=s->UiRef().ViewportSize();
+        if(size.x<=0||size.y<=0)
+            size=s->windowWidth?se::UiPoint{float(s->windowWidth),float(s->windowHeight)}:se::UiPoint{1,1};
+        se::CameraSnapshot snapshot;se::CameraError error{};
+        if(!se::BuildCameraSnapshot(instance,{0,0,size.x,size.y},0,snapshot,error))return Error(SE_INVALID_ARGUMENT,"Camera.InvalidTransform");
+        const auto length=std::sqrt(direction.x*direction.x+direction.y*direction.y+direction.z*direction.z);
+        if(!std::isfinite(length)||length<1e-6f)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        const se::Vec3 unit{direction.x/length,direction.y/length,direction.z/length};
+        const auto projected=se::ProjectWorldPoint(snapshot,snapshot.position+unit*1000.0f);
+        if(!projected)return SE_OK;
+        screen_uv->x=projected->x/size.x;screen_uv->y=projected->y/size.y;
+        *in_front=1;
+        return SE_OK;});
+}
+int32_t SE_CALL se_session_set_sky(SE_Session handle,const char* json,uint32_t length) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(length==0){s->sky.reset();return SE_OK;}
+        if(!json||length>4096||!ValidUtf8(json,length))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        try
+        {
+            const auto document=nlohmann::json::parse(std::string(json,length));
+            const auto vector=[&](const char* key,se::Vec3& output)
+            {
+                if(!document.contains(key)||!document[key].is_array()||document[key].size()!=3)return false;
+                const se::Vec3 value{document[key][0].get<float>(),document[key][1].get<float>(),document[key][2].get<float>()};
+                if(!se::IsFinite(value)||value.x<0||value.y<0||value.z<0||value.x>8||value.y>8||value.z>8)return false;
+                output=value;return true;
+            };
+            se::SkyView view;view.enabled=true;
+            if(!vector("zenith",view.zenith)||!vector("horizon",view.horizon)||!vector("ground",view.ground)||!vector("sunColor",view.sunColor))
+                return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+            view.sunIntensity=document.value("sunIntensity",12.0f);
+            view.sunAngularRadius=document.value("sunAngularRadius",0.012f);
+            if(!std::isfinite(view.sunIntensity)||view.sunIntensity<0||view.sunIntensity>1000||
+                !std::isfinite(view.sunAngularRadius)||view.sunAngularRadius<0.001f||view.sunAngularRadius>0.10f)
+                return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+            s->sky=view;return SE_OK;
+        }
+        catch(const std::exception&){return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");}
+    });
+}
+int32_t SE_CALL se_entity_get_stable_id(SE_Session handle, SE_Entity entity, uint64_t* stableId) noexcept{
     return Protect([&]() -> int32_t {
         Session* session = Find(handle); if (!session) return MissingSession();
         if (!stableId) return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidArgument");

@@ -14,10 +14,14 @@ int wmain(int argc,wchar_t** argv)
     {std::cerr<<"ShaderBuilder could not load localization: "<<error<<'\n';return 1;}
     const auto mode=argc>1?std::wstring_view(argv[1]):std::wstring_view{};
     const bool userSurface=mode==L"user-pbr"||mode==L"user-forward"||mode==L"user-shadowed"||mode==L"user-environment";
+    // W03：蒙皮变体使用 31 号绑定布局 + v3 顶点布局；宏与运行时 PipelineDescription 完全一致，
+    // 否则源码键不同会导致产物被拒绝并回退到运行时编译。
+    const bool skinned=mode==L"skinned-forward"||mode==L"skinned-shadowdepth";
     if(argc<4||(!userSurface&&std::wstring_view(argv[1])!=L"mesh"&&std::wstring_view(argv[1])!=L"triangle"&&std::wstring_view(argv[1])!=L"pbr"&&std::wstring_view(argv[1])!=L"forward"&&std::wstring_view(argv[1])!=L"output"&&std::wstring_view(argv[1])!=L"sky"
         &&std::wstring_view(argv[1])!=L"shadowed"&&std::wstring_view(argv[1])!=L"shadowdepth"&&std::wstring_view(argv[1])!=L"shadowoutput"
         &&std::wstring_view(argv[1])!=L"environment"&&std::wstring_view(argv[1])!=L"environmentsky"&&std::wstring_view(argv[1])!=L"pbr-instanced"
         &&std::wstring_view(argv[1])!=L"pbr-forward-instanced"
+        &&std::wstring_view(argv[1])!=L"skinned-forward"&&std::wstring_view(argv[1])!=L"skinned-shadowdepth"
         &&std::wstring_view(argv[1])!=L"bloomextract"&&std::wstring_view(argv[1])!=L"bloomblur"&&std::wstring_view(argv[1])!=L"tonemap"&&std::wstring_view(argv[1])!=L"fxaa"&&std::wstring_view(argv[1])!=L"overlay"&&std::wstring_view(argv[1])!=L"gui"&&std::wstring_view(argv[1])!=L"user-pbr"&&std::wstring_view(argv[1])!=L"basiclit"))
     {Log(LogLevel::Error,text.GetText("ShaderBuilder.Usage"));return 1;}
     se::rhi::PipelineDescription description;
@@ -36,6 +40,8 @@ int wmain(int argc,wchar_t** argv)
     if(std::wstring_view(argv[1])==L"basiclit")description.kind=se::rhi::PipelineKind::BasicLitMesh;
     if(std::wstring_view(argv[1])==L"shadowed")description.kind=se::rhi::PipelineKind::ShadowedMesh;
     if(std::wstring_view(argv[1])==L"shadowdepth")description.kind=se::rhi::PipelineKind::ShadowDepth;
+    if(mode==L"skinned-forward")description.kind=se::rhi::PipelineKind::ShadowedMesh;
+    if(mode==L"skinned-shadowdepth")description.kind=se::rhi::PipelineKind::ShadowDepth;
     if(std::wstring_view(argv[1])==L"shadowoutput")description.kind=se::rhi::PipelineKind::ShadowOutput;
     if(std::wstring_view(argv[1])==L"environment")description.kind=se::rhi::PipelineKind::EnvironmentMesh;
     if(std::wstring_view(argv[1])==L"environmentsky")description.kind=se::rhi::PipelineKind::EnvironmentSky;
@@ -48,6 +54,12 @@ int wmain(int argc,wchar_t** argv)
     if(std::wstring_view(argv[1])==L"pbr-forward-instanced")description.kind=se::rhi::PipelineKind::PbrForwardInstancedMesh;
     if(std::wstring_view(argv[1])==L"gui")description.kind=se::rhi::PipelineKind::Gui;
     description.bindingLayoutVersion=se::rhi::BindingLayout(description.kind);
+    if(skinned)
+    {
+        description.bindingLayoutVersion=se::rhi::SkinnedLayoutVersion;
+        description.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;
+        description.macros.push_back({"SE_SKINNED","1"});
+    }
     description.shader=argv[2];
     for(int index=4;index<argc;++index)
     {

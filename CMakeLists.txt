@@ -20,6 +20,8 @@ include(BuildConfig/CMake/Runtime.cmake)
 include(BuildConfig/CMake/Rendering.cmake)
 include(BuildConfig/CMake/Editor.cmake)
 include(BuildConfig/CMake/Resources.cmake)
+# 独立的 PPM→H.264 MP4 编码工具，默认构建，供短片与其它项目共同使用。
+include(BuildConfig/CMake/VideoEncoder.cmake)
 
 # 正常构建只生成编辑器和必要工具；本地回归/基准按需显式启用。
 option(FLARE_BUILD_DEVELOPMENT_TOOLS "Build local tests, samples and benchmarks" OFF)
