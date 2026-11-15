@@ -2,6 +2,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useData, useRoute, useRouter } from 'vitepress'
 import portrait from './flare-guide.webp'
+import lids from './flare-guide-lids.svg'
+import { useGuideFeedback } from './useGuideFeedback'
 import { useGuidePosition } from './useGuidePosition'
 
 const { theme, localeIndex, site } = useData()
@@ -10,6 +12,22 @@ const copy = computed(() => theme.value.guide)
 const modal = computed(() => theme.value.search.options.translations.modal)
 const root = ref(), button = ref(), input = ref()
 const { geometry, dragging, pressed, down, move, end, ignoreClick } = useGuidePosition(button, 'flare:guide-position:' + site.value.base)
+const { squashed, press, release } = useGuideFeedback()
+function startPress(e) {
+  down(e)
+  if (e.isPrimary && e.button === 0 && pressed.value) press()
+}
+function finishPress(e) {
+  const wasPressed = pressed.value
+  const tap = end(e)
+  if (wasPressed && !pressed.value) release(e.type !== 'pointerup')
+  if (tap) toggle()
+}
+function activate(e) {
+  if (ignoreClick(e)) return
+  if (e.detail === 0) { press(); release() }
+  toggle()
+}
 const open = ref(false), query = ref(''), index = shallowRef(), state = ref('idle')
 const results = computed(() => query.value.trim() && index.value ? index.value.search(query.value.trim()).slice(0, 8) : [])
 
@@ -59,11 +77,14 @@ onUnmounted(() => {
 <template>
   <div ref="root" class="flare-guide" :style="{ left: geometry.x + 'px', top: geometry.y + 'px' }"
     @keydown.esc.stop.prevent="close(true)">
-    <button ref="button" type="button" class="portrait" :class="{ dragging, pressed }" :title="copy.Launch"
+    <button ref="button" type="button" class="portrait" :class="{ dragging, squashed }" :title="copy.Launch"
       :aria-label="open ? modal.backButtonTitle : copy.Badge" :aria-expanded="open" aria-controls="flare-guide-panel"
-      @pointerdown="down" @pointermove="move" @pointerup="end($event) && toggle()"
-      @pointercancel="end" @lostpointercapture="end" @dragstart.prevent @click="!ignoreClick($event) && toggle()">
-      <img :src="portrait" width="456" height="559" alt="" draggable="false">
+      @pointerdown="startPress" @pointermove="move" @pointerup="finishPress"
+      @pointercancel="finishPress" @lostpointercapture="finishPress" @dragstart.prevent @click="activate">
+      <span class="squash"><span class="idle">
+        <img :src="portrait" width="456" height="559" alt="" draggable="false">
+        <img class="lids" :src="lids" width="456" height="559" alt="" draggable="false">
+      </span></span>
     </button>
     <section v-if="open" id="flare-guide-panel" class="bubble" :class="{ above: geometry.above }" :style="geometry.panel"
       :aria-label="copy.Title">
@@ -108,17 +129,27 @@ onUnmounted(() => {
   -webkit-user-select: none;
 }
 .portrait.dragging { cursor: grabbing; }
-.portrait img {
+.portrait { -webkit-tap-highlight-color: transparent; }
+.portrait:focus { outline: none; }
+.portrait:focus-visible .idle { filter: drop-shadow(0 0 3px var(--vp-c-text-2)); }
+.portrait img { display: block; width: 100%; height: auto; pointer-events: none; }
+.squash, .idle {
   display: block;
-  width: 100%;
-  height: auto;
-  pointer-events: none;
   transform-origin: center bottom;
-  transition: transform 220ms cubic-bezier(.34, 1.56, .64, 1);
+  pointer-events: none;
 }
-.portrait.pressed img, .portrait:focus-visible:active img { transform: scale(1.05, .88); }
+.squash { transition: transform 220ms cubic-bezier(.34, 1.56, .64, 1); }
+.squashed .squash { transform: scale(1.05, .88); transition: transform 65ms ease-out; }
+.idle { position: relative; animation: breathe 3.8s ease-in-out infinite; }
+.lids { position: absolute; inset: 0; opacity: 0; animation: blink 6.7s linear infinite; }
+@keyframes breathe { 50% { transform: scale(1.007, 1.018); } }
+@keyframes blink {
+  0%, 64%, 66.7%, 100% { opacity: 0; }
+  64.6%, 66% { opacity: 1; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .portrait img { transition: none; }
+  .portrait .squash { transition: none; }
+  .idle, .lids { animation: none; }
 }
 .bubble { position: absolute; color: var(--vp-c-text-1); --edge: #79624c; --card: #252428; }
 .bubble::before { content: ''; position: absolute; left: var(--tip); top: -5px; width: 10px; height: 10px; background: var(--card); border: solid var(--edge); border-width: 1px 0 0 1px; transform: translateX(-50%) rotate(45deg); }
@@ -139,6 +170,6 @@ header strong span, .field i { color: var(--vp-c-brand-1); }
 .hits { margin-top: 9px; }
 .hits a { display: grid; padding: 6px 8px; border-radius: 7px; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
 .hits small { font-size: 11px; color: var(--vp-c-text-3); }
-.flare-guide button:focus-visible, .hits a:focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 2px; }
+.bubble button:focus-visible, .hits a:focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 2px; }
 @media (max-width: 640px) { .portrait { width: min(112px, 25dvh); } }
 </style>
