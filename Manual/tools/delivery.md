@@ -10,6 +10,8 @@
 
 ## 游戏导出与编辑器包
 
+导出后，可通过包内的 `Start-Game.ps1` [连续抓取玩家画面](frame-capture.md#setcapturesequence)，再用 [VideoEncoder](frame-capture.md#videoencoder) 编码。
+
 [ExportJob](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/ExportJob.h#L29) 管理导出的后台工作和取消，[ExportService](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/ExportService.h#L31) 组织参数并读取分阶段报告。[Export-Game.ps1](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Scripts/Export-Game.ps1) 汇集项目、原生运行库和托管宿主，[Publish-Managed.ps1](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Scripts/Publish-Managed.ps1) 负责托管发布。[Build-EditorPackage.ps1](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Scripts/Build-EditorPackage.ps1) 构建可分发的编辑器包，源码身份由 [SourceIdentity.ps1](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Scripts/SourceIdentity.ps1) 计算，项目构建租约由 [ProjectBuildLease.ps1](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Scripts/ProjectBuildLease.ps1) 管理。
 
 ## 项目回放与发布边界

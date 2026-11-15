@@ -31,6 +31,10 @@ export default defineConfig({
             { text: '导入 FBX', link: '/user/import-fbx' },
             { text: '运行预览', link: '/user/run-preview' }
           ] },
+          { text: '动画与视频', items: [
+            { text: '让模型播放骨骼动画', link: '/user/animate-model' },
+            { text: '连续抓帧并导出 MP4', link: '/user/record-video' }
+          ] },
           { text: '物理、渲染和资源工具', link: '/user/feature-tools' },
           { text: '从源码启动编辑器', link: '/user/build-from-source' }
         ]
@@ -65,7 +69,8 @@ export default defineConfig({
         { text: "场景加载、相机与空间查询", link: "/runtime/scenes" },
         { text: "主循环、任务顺序与事件", link: "/runtime/scheduling" },
         { text: "昼夜、天空与场景环境", link: "/runtime/daylight" },
-        { text: "刚体、碰撞与角色控制", link: "/runtime/physics" }
+        { text: "刚体、碰撞与角色控制", link: "/runtime/physics" },
+        { text: "骨骼动画与 GPU 蒙皮", link: "/runtime/skeletal-animation" }
       ] },
       { text: "资产与资源", collapsed: true, items: [
         { text: "FBX 导入", link: "/assets/import" },
@@ -100,7 +105,8 @@ export default defineConfig({
       ] },
       { text: "构建与分发", collapsed: true, items: [
         { text: "构建工具、预览与导出", link: "/tools/delivery" },
-        { text: "构建环境、资源复制与包内启动", link: "/tools/package" }
+        { text: "构建环境、资源复制与包内启动", link: "/tools/package" },
+        { text: "固定步连续抓帧与 MP4 编码", link: "/tools/frame-capture" }
       ] }
     ],
     outline: { level: [2, 3], label: '本页内容' },

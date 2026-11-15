@@ -1,5 +1,7 @@
 # 模型、纹理与材质资产
 
+带骨骼的 glTF / GLB 还会导入关节、权重和动画片段，运行时用它们[采样姿态并进行 GPU 蒙皮](../runtime/skeletal-animation.md#advance)。
+
 ## AssetStore
 
 [AssetStore](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ResourceLayer/Assets/AssetStore.h#L42) 扫描内容目录与元数据，按资产 ID 查找源文件。[ImportStaticModel()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ResourceLayer/Assets/StaticModel.h#L87) 读取 FBX 或 glTF/GLB，输出节点层级、网格、材质与纹理引用。[BuildStaticModelLayout()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ResourceLayer/Assets/StaticModelPreparation.cpp#L18) 准备节点与渲染网格的对应关系。程序内置的立方体、球体分别由 [MakeUnitCube()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ResourceLayer/Assets/Primitives.cpp#L7) 与 [MakeUnitSphere()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ResourceLayer/Assets/Primitives.cpp#L27) 生成。
