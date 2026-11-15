@@ -26,7 +26,7 @@ function finishPress(e) {
 function activate(e) {
   if (ignoreClick(e)) return
   if (e.detail === 0) { press(); release() }
-  toggle()
+  toggle(e.detail === 0)
 }
 const open = ref(false), query = ref(''), index = shallowRef(), state = ref('idle')
 const results = computed(() => query.value.trim() && index.value ? index.value.search(query.value.trim()).slice(0, 8) : [])
@@ -44,8 +44,8 @@ function close(restoreFocus = false) {
   open.value = false
   if (restoreFocus) button.value?.focus({ preventScroll: true })
 }
-function toggle() {
-  if (open.value) return close(true)
+function toggle(fromKeyboard = false) {
+  if (open.value) return close(fromKeyboard)
   open.value = true
   nextTick(() => input.value?.focus({ preventScroll: true }))
   load()
@@ -90,7 +90,7 @@ onUnmounted(() => {
       :aria-label="copy.Title">
       <div class="card">
         <header><strong><span aria-hidden="true">✦</span> {{ copy.Title }}</strong>
-          <button type="button" class="close" :aria-label="modal.backButtonTitle" @click="close(true)">×</button>
+          <button type="button" class="close" :aria-label="modal.backButtonTitle" @click="close($event.detail === 0)">×</button>
         </header>
         <label class="field"><i class="vpi-search" aria-hidden="true" />
           <input ref="input" v-model="query" type="search" maxlength="64" autocomplete="off" enterkeyhint="search"
@@ -131,7 +131,19 @@ onUnmounted(() => {
 .portrait.dragging { cursor: grabbing; }
 .portrait { -webkit-tap-highlight-color: transparent; }
 .portrait:focus { outline: none; }
-.portrait:focus-visible .idle { filter: drop-shadow(0 0 3px var(--vp-c-text-2)); }
+.portrait:focus-visible::after {
+  content: attr(aria-label);
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-1);
+  font-size: 12px;
+  white-space: nowrap;
+}
 .portrait img { display: block; width: 100%; height: auto; pointer-events: none; }
 .squash, .idle {
   display: block;
