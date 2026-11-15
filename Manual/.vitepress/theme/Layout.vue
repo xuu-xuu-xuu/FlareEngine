@@ -15,7 +15,7 @@ const { theme, localeIndex, page } = useData()
       </a>
     </template>
     <template #layout-bottom>
-      <ClientOnly><Guide v-if="localeIndex === 'root' && !page.isNotFound" /></ClientOnly>
+      <ClientOnly><Guide v-if="!page.isNotFound" :key="localeIndex" /></ClientOnly>
     </template>
   </DefaultTheme.Layout>
 </template>
