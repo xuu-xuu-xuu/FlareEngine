@@ -5,6 +5,7 @@ on:
     paths:
       - 'Manual/**'
       - 'Resources/Branding/FlareMark.png'
+      - 'Resources/Localization/zh-CN.txt'
       - '.github/workflows/developer-docs.yml'
   workflow_dispatch:
 

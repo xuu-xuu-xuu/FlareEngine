@@ -1,3 +1,13 @@
+Manual.Guide.Repository=返回 GitHub
+Manual.Guide.Launch=打开文档搜索（可拖动）
+Manual.Guide.Badge=查文档
+Manual.Guide.Title=Flare 文档助手
+Manual.Guide.Placeholder=搜索功能、类型或接口…
+Manual.Guide.Try=试试
+Manual.Guide.Loading=正在加载文档索引…
+Manual.Guide.Unavailable=文档索引加载失败，请重试。
+Manual.Guide.Retry=重试
+
 Window.MessageLoopStarted=窗口已显示，开始消息循环
 Window.HiddenMessageLoopStarted=隐藏窗口已就绪，开始消息循环
 Window.MessageLoopEnded=消息循环已结束

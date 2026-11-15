@@ -1,4 +1,11 @@
 import { defineConfig } from 'vitepress'
+import { readFileSync } from 'node:fs'
+
+// 只将文档界面的文本键写入站点，避免向浏览器分发整份引擎语言表。
+const guide = Object.fromEntries(
+  [...readFileSync(new URL('../../Resources/Localization/zh-CN.txt', import.meta.url), 'utf8')
+    .matchAll(/^Manual\.Guide\.(\w+)=(.+)$/gm)].map(([, key, value]) => [key, value.trim()])
+)
 
 export default defineConfig({
   base: process.env.FLARE_DOCS_BASE || '/',
@@ -33,7 +40,8 @@ export default defineConfig({
   themeConfig: {
     i18nRouting: false,
     siteTitle: 'Flare 开发者文档',
-    nav: [{ text: '引擎源码', link: 'https://github.com/xuu-xuu-xuu/FlareEngine' }],
+    guide,
+    repository: 'https://github.com/xuu-xuu-xuu/FlareEngine',
     sidebar: [
       { text: "开发者文档", link: '/' },
       { text: "命名规范", link: "/development/命名规范" },

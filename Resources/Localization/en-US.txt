@@ -1,3 +1,13 @@
+Manual.Guide.Repository=Back to GitHub
+Manual.Guide.Launch=Open documentation search (drag to move)
+Manual.Guide.Badge=Search docs
+Manual.Guide.Title=Flare docs guide
+Manual.Guide.Placeholder=Search features, types or APIs…
+Manual.Guide.Try=Try
+Manual.Guide.Loading=Loading the documentation index…
+Manual.Guide.Unavailable=Could not load the documentation index. Please try again.
+Manual.Guide.Retry=Retry
+
 Window.MessageLoopStarted=Window shown; starting message loop
 Window.HiddenMessageLoopStarted=Hidden window ready; starting message loop
 Window.MessageLoopEnded=Message loop ended

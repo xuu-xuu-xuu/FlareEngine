@@ -1,0 +1,127 @@
+<script setup>
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { useData, useRoute, useRouter } from 'vitepress'
+import portrait from './flare-guide.jpg'
+import { useGuidePosition } from './useGuidePosition'
+
+const { theme, localeIndex, site } = useData()
+const route = useRoute(), router = useRouter()
+const copy = computed(() => theme.value.guide)
+const modal = computed(() => theme.value.search.options.translations.modal)
+const root = ref(), button = ref(), input = ref()
+const { geometry, dragging, down, move, end, wasDrag } = useGuidePosition(button, 'flare:guide-position:' + site.value.base)
+const open = ref(false), query = ref(''), index = shallowRef(), state = ref('idle')
+const results = computed(() => query.value.trim() && index.value ? index.value.search(query.value.trim()).slice(0, 8) : [])
+
+async function load() {
+  if (index.value || state.value === 'loading') return
+  state.value = 'loading'
+  try {
+    const { loadGuideSearch } = await import('./guideSearch')
+    index.value = await loadGuideSearch(localeIndex.value, theme.value.search.options.miniSearch)
+    state.value = 'ready'
+  } catch { state.value = 'error' }
+}
+function close(restoreFocus = false) {
+  open.value = false
+  if (restoreFocus) button.value?.focus({ preventScroll: true })
+}
+function toggle(e) {
+  if (wasDrag(e)) return
+  if (open.value) return close(true)
+  open.value = true
+  nextTick(() => input.value?.focus({ preventScroll: true }))
+  load()
+}
+function outside(e) {
+  if (open.value && !root.value?.contains(e.target)) close()
+}
+function enter(e) {
+  if (e.isComposing || !results.value.length) return
+  e.preventDefault()
+  router.go(results.value[0].id)
+  close(true)
+}
+function suggest(term) {
+  query.value = term
+  input.value.focus({ preventScroll: true })
+}
+watch(() => route.path, () => close())
+onMounted(() => {
+  document.addEventListener('pointerdown', outside)
+  document.addEventListener('focusin', outside)
+})
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', outside)
+  document.removeEventListener('focusin', outside)
+})
+</script>
+
+<template>
+  <div ref="root" class="flare-guide" :style="{ left: geometry.x + 'px', top: geometry.y + 'px' }"
+    @keydown.esc.stop.prevent="close(true)">
+    <button ref="button" type="button" class="portrait" :class="{ dragging }" :title="copy.Launch"
+      :aria-label="open ? modal.backButtonTitle : copy.Launch" :aria-expanded="open" aria-controls="flare-guide-panel"
+      @pointerdown="down" @pointermove="move" @pointerup="end" @pointercancel="end" @lostpointercapture="end" @click="toggle">
+      <img :src="portrait" width="80" height="80" alt="" draggable="false">
+      <span class="badge"><i class="vpi-search" aria-hidden="true" />{{ copy.Badge }}</span>
+    </button>
+    <section v-if="open" id="flare-guide-panel" class="bubble" :class="{ above: geometry.above }" :style="geometry.panel"
+      :aria-label="copy.Title">
+      <div class="card">
+        <header><strong><span aria-hidden="true">✦</span> {{ copy.Title }}</strong>
+          <button type="button" class="close" :aria-label="modal.backButtonTitle" @click="close(true)">×</button>
+        </header>
+        <label class="field"><i class="vpi-search" aria-hidden="true" />
+          <input ref="input" v-model="query" type="search" maxlength="64" autocomplete="off" enterkeyhint="search"
+            :aria-label="theme.search.options.translations.button.buttonText" :placeholder="copy.Placeholder"
+            @keydown.enter="enter" @keydown.down.prevent="root.querySelector('.hits a')?.focus()">
+        </label>
+        <div v-if="state === 'error'" class="notice" role="status">{{ copy.Unavailable }}
+          <button type="button" @click="load">{{ copy.Retry }}</button>
+        </div>
+        <div v-else-if="!query.trim()" class="suggestions"><span>{{ copy.Try }}</span>
+          <button v-for="term in ['D3D12', 'FBX', 'C#']" :key="term" type="button" @click="suggest(term)">{{ term }}</button>
+        </div>
+        <p v-else-if="!index || !results.length" class="notice" role="status">{{ !index ? copy.Loading : modal.noResultsText }}</p>
+        <ul v-else class="hits">
+          <li v-for="hit in results" :key="hit.id">
+            <a :href="hit.id" @click="close()">
+              <small v-if="hit.titles.length">{{ hit.titles.join(' › ') }}</small><span>{{ hit.title }}</span>
+            </a>
+          </li>
+        </ul>
+      </div>
+    </section>
+  </div>
+</template>
+
+<style scoped>
+.flare-guide { position: fixed; z-index: calc(var(--vp-z-index-nav) - 1); }
+.portrait { position: relative; display: grid; justify-items: center; width: 80px; padding-bottom: 8px; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.portrait.dragging { cursor: grabbing; }
+.portrait img { width: 100%; height: auto; border: 2px solid #edc580; border-radius: 50%; box-shadow: 0 4px 18px #0006; pointer-events: none; background: white; }
+.badge { display: inline-flex; position: absolute; bottom: 0; align-items: center; gap: 3px; padding: 1px 7px; border: 1px solid #a17b55; border-radius: 20px; background: #382b29; color: #ffe2a9; font-size: 10px; line-height: 17px; font-weight: 600; }
+.portrait:hover .badge { background: #593a34; }
+.bubble { position: absolute; color: var(--vp-c-text-1); --edge: #79624c; --card: #252428; }
+.bubble::before { content: ''; position: absolute; left: var(--tip); top: -5px; width: 10px; height: 10px; background: var(--card); border: solid var(--edge); border-width: 1px 0 0 1px; transform: translateX(-50%) rotate(45deg); }
+.bubble.above::before { top: auto; bottom: -5px; transform: translateX(-50%) rotate(225deg); }
+.card { max-height: var(--panel-height); overflow: auto; overscroll-behavior: contain; padding: 13px; border: 1px solid var(--edge); border-radius: 14px; background: var(--card); box-shadow: 0 10px 32px #0006; }
+header, .field, .suggestions { display: flex; align-items: center; }
+header { justify-content: space-between; margin-bottom: 9px; }
+header strong { font-size: 14px; }
+header strong span, .field i { color: var(--vp-c-brand-1); }
+.close { width: 28px; height: 28px; border-radius: 6px; color: var(--vp-c-text-2); font-size: 21px; line-height: 1; }
+.close:hover, .hits a:hover, .hits a:focus-visible { background: var(--vp-c-brand-soft); }
+.field { gap: 8px; padding: 7px 10px; border: 1px solid var(--vp-c-divider); border-radius: 8px; background: var(--vp-c-bg); }
+.field:focus-within { border-color: var(--vp-c-brand-1); }
+.field input { min-width: 0; flex: 1; outline: none; font: inherit; font-size: 16px; }
+.suggestions, .notice { margin-top: 10px; font-size: 12px; color: var(--vp-c-text-2); }
+.suggestions { flex-wrap: wrap; gap: 7px; }
+.suggestions button, .notice button { padding: 0 7px; border: 1px solid var(--vp-c-divider); border-radius: 6px; color: var(--vp-c-brand-1); }
+.hits { margin-top: 9px; }
+.hits a { display: grid; padding: 6px 8px; border-radius: 7px; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.hits small { font-size: 11px; color: var(--vp-c-text-3); }
+.flare-guide button:focus-visible, .hits a:focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 2px; }
+@media (max-width: 640px) { .portrait { width: 62px; } }
+</style>
