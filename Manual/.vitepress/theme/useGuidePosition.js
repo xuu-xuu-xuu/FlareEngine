@@ -9,6 +9,7 @@ export function useGuidePosition(button, storageKey) {
   const bounds = ref({ left: 0, top: 0, width: 0, height: 0, bw: 0, bh: 0 })
   const fraction = ref([1, 1])
   const dragging = ref(false)
+  const pressed = ref(false)
   let pointer, suppressClick = false
   let snapFrame
 
@@ -46,6 +47,7 @@ export function useGuidePosition(button, storageKey) {
     suppressClick = false
     pointer = { id: e.pointerId, x: e.clientX, y: e.clientY, at: [...fraction.value] }
     button.value.setPointerCapture(e.pointerId)
+    pressed.value = true
   }
   function move(e) {
     if (pointer?.id !== e.pointerId) return
@@ -73,6 +75,7 @@ export function useGuidePosition(button, storageKey) {
   }
   function end(e) {
     if (pointer?.id !== e.pointerId) return
+    pressed.value = false
     const released = e.type === 'pointerup'
     // 触屏在拖动后的下一次轻点可能只派发 pointerup，没有兼容 click。
     const touchTap = released && !dragging.value && e.pointerType === 'touch'
@@ -107,5 +110,5 @@ export function useGuidePosition(button, storageKey) {
     window.visualViewport?.removeEventListener('resize', measure)
     window.visualViewport?.removeEventListener('scroll', measure)
   })
-  return { geometry, dragging, down, move, end, ignoreClick }
+  return { geometry, dragging, pressed, down, move, end, ignoreClick }
 }

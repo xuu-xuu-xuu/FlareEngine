@@ -9,7 +9,7 @@ const route = useRoute(), router = useRouter()
 const copy = computed(() => theme.value.guide)
 const modal = computed(() => theme.value.search.options.translations.modal)
 const root = ref(), button = ref(), input = ref()
-const { geometry, dragging, down, move, end, ignoreClick } = useGuidePosition(button, 'flare:guide-position:' + site.value.base)
+const { geometry, dragging, pressed, down, move, end, ignoreClick } = useGuidePosition(button, 'flare:guide-position:' + site.value.base)
 const open = ref(false), query = ref(''), index = shallowRef(), state = ref('idle')
 const results = computed(() => query.value.trim() && index.value ? index.value.search(query.value.trim()).slice(0, 8) : [])
 
@@ -59,7 +59,7 @@ onUnmounted(() => {
 <template>
   <div ref="root" class="flare-guide" :style="{ left: geometry.x + 'px', top: geometry.y + 'px' }"
     @keydown.esc.stop.prevent="close(true)">
-    <button ref="button" type="button" class="portrait" :class="{ dragging }" :title="copy.Launch"
+    <button ref="button" type="button" class="portrait" :class="{ dragging, pressed }" :title="copy.Launch"
       :aria-label="open ? modal.backButtonTitle : copy.Badge" :aria-expanded="open" aria-controls="flare-guide-panel"
       @pointerdown="down" @pointermove="move" @pointerup="end($event) && toggle()"
       @pointercancel="end" @lostpointercapture="end" @dragstart.prevent @click="!ignoreClick($event) && toggle()">
@@ -108,7 +108,18 @@ onUnmounted(() => {
   -webkit-user-select: none;
 }
 .portrait.dragging { cursor: grabbing; }
-.portrait img { display: block; width: 100%; height: auto; pointer-events: none; }
+.portrait img {
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+  transform-origin: center bottom;
+  transition: transform 220ms cubic-bezier(.34, 1.56, .64, 1);
+}
+.portrait.pressed img, .portrait:focus-visible:active img { transform: scale(1.05, .88); }
+@media (prefers-reduced-motion: reduce) {
+  .portrait img { transition: none; }
+}
 .bubble { position: absolute; color: var(--vp-c-text-1); --edge: #79624c; --card: #252428; }
 .bubble::before { content: ''; position: absolute; left: var(--tip); top: -5px; width: 10px; height: 10px; background: var(--card); border: solid var(--edge); border-width: 1px 0 0 1px; transform: translateX(-50%) rotate(45deg); }
 .bubble.above::before { top: auto; bottom: -5px; transform: translateX(-50%) rotate(225deg); }
