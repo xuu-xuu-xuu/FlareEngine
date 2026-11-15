@@ -8,6 +8,7 @@ const nearestEdge = x => x < 0.5 ? 0 : 1
 export function useGuidePosition(button, storageKey) {
   const bounds = ref({ left: 0, top: 0, width: 0, height: 0, bw: 0, bh: 0 })
   const fraction = ref([1, 1])
+  const dockEdge = ref(1)
   const dragging = ref(false)
   const pressed = ref(false)
   let pointer, suppressClick = false
@@ -59,6 +60,7 @@ export function useGuidePosition(button, storageKey) {
   }
   // 每帧更新同一个坐标，让已经打开的气泡在吸附途中也能保持在视口内。
   function snapTo(edge, height) {
+    dockEdge.value = edge
     cancelAnimationFrame(snapFrame)
     const startX = fraction.value[0]
     if (startX === edge || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -96,7 +98,8 @@ export function useGuidePosition(button, storageKey) {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey))
       if (Array.isArray(saved) && saved.length === 2 && saved.every(n => Number.isFinite(n) && n >= 0 && n <= 1)) {
-        fraction.value = [nearestEdge(saved[0]), saved[1]]
+        dockEdge.value = nearestEdge(saved[0])
+        fraction.value = [dockEdge.value, saved[1]]
       }
     } catch { /* 忽略不可用或损坏的位置。 */ }
     measure()
@@ -110,5 +113,5 @@ export function useGuidePosition(button, storageKey) {
     window.visualViewport?.removeEventListener('resize', measure)
     window.visualViewport?.removeEventListener('scroll', measure)
   })
-  return { geometry, dragging, pressed, down, move, end, ignoreClick }
+  return { geometry, dockEdge, dragging, pressed, down, move, end, ignoreClick }
 }

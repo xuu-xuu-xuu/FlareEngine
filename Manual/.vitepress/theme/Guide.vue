@@ -11,7 +11,7 @@ const route = useRoute(), router = useRouter()
 const copy = computed(() => theme.value.guide)
 const modal = computed(() => theme.value.search.options.translations.modal)
 const root = ref(), button = ref(), input = ref()
-const { geometry, dragging, pressed, down, move, end, ignoreClick } = useGuidePosition(button, 'flare:guide-position:' + site.value.base)
+const { geometry, dockEdge, dragging, pressed, down, move, end, ignoreClick } = useGuidePosition(button, 'flare:guide-position:' + site.value.base)
 const { squashed, press, release } = useGuideFeedback()
 function startPress(e) {
   down(e)
@@ -81,7 +81,7 @@ onUnmounted(() => {
       :aria-label="open ? modal.backButtonTitle : copy.Badge" :aria-expanded="open" aria-controls="flare-guide-panel"
       @pointerdown="startPress" @pointermove="move" @pointerup="finishPress"
       @pointercancel="finishPress" @lostpointercapture="finishPress" @dragstart.prevent @click="activate">
-      <span class="squash"><span class="idle">
+      <span class="squash" :class="{ mirrored: dockEdge === 0 }"><span class="idle">
         <img :src="portrait" width="456" height="559" alt="" draggable="false">
         <img class="lids" :src="lids" width="456" height="559" alt="" draggable="false">
       </span></span>
@@ -151,6 +151,7 @@ onUnmounted(() => {
   pointer-events: none;
 }
 .squash { transition: transform 220ms cubic-bezier(.34, 1.56, .64, 1); }
+.squash.mirrored { scale: -1 1; }
 .squashed .squash { transform: scale(1.05, .88); transition: transform 65ms ease-out; }
 .idle { position: relative; animation: breathe 3.8s ease-in-out infinite; }
 .lids { position: absolute; inset: 0; opacity: 0; animation: blink 6.7s linear infinite; }
