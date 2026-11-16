@@ -43,3 +43,5 @@
 基础章节的源码基线为 [e7ca801](https://github.com/xuu-xuu-xuu/FlareEngine/tree/e7ca801292037b33172d094cc4a434682ac83c9c)；骨骼动画、抓帧与编码章节对应 [542afe8](https://github.com/xuu-xuu-xuu/FlareEngine/tree/542afe82dcdf65eb987477b3862dd3b5d82b43e5)。
 
 维护文档时，在仓库根目录依次运行 `npm.cmd --prefix Manual ci` 和 `npm.cmd --prefix Manual run dev`，打开终端显示的本地地址即可预览侧栏、搜索和源码链接。
+
+本轮光照、材质与 GPU 可见性接口对应[渲染工作室源码基线 34bad2e](https://github.com/xuu-xuu-xuu/FlareEngine/tree/34bad2e)。从[渲染工作室使用步骤](user/rendering-studio.md)可以对照真实项目画面。

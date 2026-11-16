@@ -28,6 +28,7 @@ export default defineConfig({
           { text: '第一次使用 Flare', items: [
             { text: '新建项目', link: '/user/create-project' },
             { text: '编辑器界面', link: '/user/editor-interface' },
+            { text: '用渲染工作室调光', link: '/user/rendering-studio' },
             { text: '导入 FBX', link: '/user/import-fbx' },
             { text: '运行预览', link: '/user/run-preview' }
           ] },
@@ -35,6 +36,7 @@ export default defineConfig({
             { text: '让模型播放骨骼动画', link: '/user/animate-model' },
             { text: '连续抓帧并导出 MP4', link: '/user/record-video' }
           ] },
+          { text: '给玩家提供画质设置', link: '/user/player-quality' },
           { text: '物理、渲染和资源工具', link: '/user/feature-tools' },
           { text: '从源码启动编辑器', link: '/user/build-from-source' }
         ]
