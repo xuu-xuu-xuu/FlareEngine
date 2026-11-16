@@ -1,6 +1,8 @@
 #include "LightClustering.h"
 #include <algorithm>
 #include <cmath>
+#include <numeric>
+#include <set>
 
 namespace se
 {
@@ -112,5 +114,80 @@ void FillLightClustersGlobal(std::uint32_t lightCount,LightClusterData& output)
 {
     output.clusters.assign(LightClusterCount,LightClusterRange{0,lightCount});
     output.indices.clear();output.overflow=false;output.maxPerCluster=lightCount;
+}
+bool BuildBoundedLightClusters(std::span<const rhi::PointLight> lights,std::span<const std::uint64_t> stableIds,
+    const LightClusterProjection& matrices,float nearPlane,float farPlane,BoundedLightClusterData& output,
+    std::uint32_t capacity,std::uint32_t maximumPerCluster)
+{
+    if(lights.size()!=stableIds.size()||lights.size()>256||maximumPerCluster<1||maximumPerCluster>32
+        ||!InverseRigid(matrices.view))return false;
+    std::set<std::uint64_t> ids;
+    for(const auto id:stableIds)if(id==0||!ids.insert(id).second)return false;
+    if(!std::isfinite(nearPlane)||!std::isfinite(farPlane)||nearPlane<=0||farPlane<=nearPlane||!IsFinite(matrices.clipFromView))return false;
+    const auto inverse=Inverse(matrices.clipFromView);if(!inverse)return false;
+    const auto nearPoint=*inverse*Vec4{0,0,0,1},farPoint=*inverse*Vec4{0,0,1,1};
+    if(!IsFinite(nearPoint)||!IsFinite(farPoint)||std::abs(nearPoint.w)<1e-8f||std::abs(farPoint.w)<1e-8f)return false;
+    const float actualNear=-nearPoint.z/nearPoint.w,actualFar=-farPoint.z/farPoint.w;
+    if(std::abs(actualNear-nearPlane)>nearPlane*.002f||std::abs(actualFar-farPlane)>farPlane*.002f)return false;
+    if(capacity==0)capacity=LightClusterCapacity;
+    BoundedLightClusterData candidate;candidate.table.clusters.resize(LightClusterCount);candidate.rawCounts.resize(LightClusterCount);
+    std::vector<std::uint32_t> global(lights.size());std::iota(global.begin(),global.end(),0);
+    std::sort(global.begin(),global.end(),[&](auto a,auto b){return stableIds[a]<stableIds[b];});
+    candidate.fallbackIndices.assign(global.begin(),global.begin()+std::min<size_t>(8,global.size()));
+    std::vector<Vec3> centers(lights.size());
+    for(size_t i=0;i<lights.size();++i)
+    {
+        const auto& light=lights[i];
+        if(!IsFinite(light.position)||!IsFinite(light.radiance)||!IsFinite(light.range)||light.range<0)return false;
+        const auto p=matrices.view*Vec4{light.position.x,light.position.y,light.position.z,1};centers[i]={p.x,p.y,p.z};
+    }
+    const auto point=[&](float x,float y,float depth)
+    {
+        const auto a=*inverse*Vec4{x,y,0,1},b=*inverse*Vec4{x,y,1,1};
+        const Vec3 from{a.x/a.w,a.y/a.w,a.z/a.w},to{b.x/b.w,b.y/b.w,b.z/b.w};
+        return from+(to-from)*((depth+from.z)/(from.z-to.z));
+    };
+    for(std::uint32_t index=0;index<LightClusterCount;++index)
+    {
+        const auto x=index%LightClusterX,y=(index/LightClusterX)%LightClusterY,z=index/(LightClusterX*LightClusterY);
+        const float begin=nearPlane*std::pow(farPlane/nearPlane,float(z)/LightClusterZ),end=nearPlane*std::pow(farPlane/nearPlane,float(z+1)/LightClusterZ);
+        Vec3 minimum{1e30f,1e30f,1e30f},maximum{-1e30f,-1e30f,-1e30f};
+        for(float nx:{-1.f+2.f*float(x)/LightClusterX,-1.f+2.f*float(x+1)/LightClusterX})
+            for(float ny:{1.f-2.f*float(y)/LightClusterY,1.f-2.f*float(y+1)/LightClusterY})
+                for(float depth:{begin,end})
+                {
+                    const auto p=point(nx,ny,depth);if(!IsFinite(p))return false;
+                    minimum={std::min(minimum.x,p.x),std::min(minimum.y,p.y),std::min(minimum.z,p.z)};
+                    maximum={std::max(maximum.x,p.x),std::max(maximum.y,p.y),std::max(maximum.z,p.z)};
+                }
+        const auto center=(minimum+maximum)*.5f;std::vector<std::uint32_t> selected;
+        for(std::uint32_t light=0;light<lights.size();++light)
+        {
+            const auto& p=centers[light];const Vec3 closest{std::clamp(p.x,minimum.x,maximum.x),std::clamp(p.y,minimum.y,maximum.y),std::clamp(p.z,minimum.z,maximum.z)};
+            if(LengthSquared(p-closest)<=lights[light].range*lights[light].range)selected.push_back(light);
+        }
+        const auto rawCount=static_cast<std::uint32_t>(selected.size());candidate.rawCounts[index]=rawCount;
+        if(selected.size()>maximumPerCluster)
+        {
+            ++candidate.truncatedClusters;candidate.droppedReferences+=selected.size()-maximumPerCluster;
+            std::sort(selected.begin(),selected.end(),[&](auto a,auto b)
+            {
+                const float da=LengthSquared(centers[a]-center),db=LengthSquared(centers[b]-center);
+                return da!=db?da<db:stableIds[a]<stableIds[b];
+            });
+            selected.resize(maximumPerCluster);
+        }
+        // 保持着色相加顺序稳定，正常≤8灯可与旧全局灯循环逐像素对照。
+        std::sort(selected.begin(),selected.end(),[&](auto a,auto b){return stableIds[a]<stableIds[b];});
+        candidate.table.clusters[index]={static_cast<std::uint32_t>(candidate.requestedIndices),static_cast<std::uint32_t>(selected.size())};
+        candidate.requestedIndices+=selected.size();candidate.table.maxPerCluster=std::max(candidate.table.maxPerCluster,rawCount);
+        candidate.table.indices.insert(candidate.table.indices.end(),selected.begin(),selected.end());
+    }
+    if(candidate.requestedIndices>capacity)
+    {
+        candidate.table.overflow=true;candidate.table.indices.clear();
+        for(auto& range:candidate.table.clusters)range={};
+    }
+    output=std::move(candidate);return true;
 }
 }

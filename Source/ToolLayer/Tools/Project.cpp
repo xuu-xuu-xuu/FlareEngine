@@ -239,6 +239,8 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             result.entities+=world.Size();
             for(const auto entity:world.Entities())if(world.FindComponent(entity,EnvironmentSettingsComponent::TypeId))
             {const auto id=std::get<std::string>(FeatureValue(world,entity,"environmentmap.asset"));if(!assetReference(id,"environment"))return Fail(diagnostics,"Project.MissingAsset",id);}
+            for(const auto entity:world.Entities())if(world.FindComponent(entity,RenderSettingsComponent::TypeId))
+            {const auto id=std::get<std::string>(FeatureValue(world,entity,"render.diffuseProbe"));if(!assetReference(id,"data"))return Fail(diagnostics,"Project.MissingAsset",id);}
             if(!assetReference(world.EnvironmentSettings().todProfile,"tod"))return Fail(diagnostics,"Project.MissingAsset",world.EnvironmentSettings().todProfile);
             for(const auto entity:world.Entities())if(const auto* mesh=world.GetMesh(entity))
             {
@@ -268,7 +270,9 @@ bool CreateProject(const fs::path& templateDirectory,const fs::path& destination
     {
         const auto source=fs::canonical(templateDirectory),target=fs::weakly_canonical(destination);
         if(!fs::is_directory(source)||fs::exists(target)||asset_io::Within(source,target))return Fail(diagnostics,"Project.DestinationExists",asset_io::Utf8(target));
-        fs::create_directories(target.parent_path());staging=target.parent_path()/(target.filename().wstring()+L".tmp."+asset_io::FromUtf8(asset_io::NewId()).wstring());
+        fs::create_directories(target.parent_path());
+        // 暂存目录与目标同卷；避免把调用者的候选项目名叠加到每个资产路径上。
+        staging=target.parent_path()/(L".project-tmp-"+asset_io::FromUtf8(asset_io::NewId()).wstring());
         if(!fs::create_directory(staging))return Fail(diagnostics,"Project.WriteFailed");
         for(auto iterator=fs::recursive_directory_iterator(source);iterator!=fs::recursive_directory_iterator{};++iterator)
         {

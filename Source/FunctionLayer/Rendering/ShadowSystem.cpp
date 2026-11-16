@@ -1,4 +1,7 @@
 #include "ShadowSystem.h"
+#include <cmath>
+#include "CascadeShadow.h"
+#include <algorithm>
 #include "ResourceLayer/Assets/AssetIO.h"
 
 namespace se
@@ -10,7 +13,7 @@ bool PrepareDirectionalShadow(const DirectionalShadowView& view,const rhi::Forwa
     if(!IsFinite(view.center)||std::abs(view.center.x)>1e6||std::abs(view.center.y)>1e6||std::abs(view.center.z)>1e6
         ||!IsFinite(view.halfExtent)||view.halfExtent<0.1f||view.halfExtent>1000
         ||!IsFinite(view.lightDistance)||view.lightDistance<2*view.halfExtent||view.lightDistance>10000
-        ||(view.resolution!=256&&view.resolution!=512&&view.resolution!=1024&&view.resolution!=2048&&view.resolution!=4096)
+        ||(view.resolution!=256&&view.resolution!=512&&view.resolution!=1024&&view.resolution!=1536&&view.resolution!=2048&&view.resolution!=4096)
         ||!IsFinite(view.depthBias)||view.depthBias<0||view.depthBias>0.02f||!IsFinite(view.slopeBias)||view.slopeBias<0||view.slopeBias>0.05f
         ||!IsFinite(view.normalBias)||view.normalBias<0||view.normalBias>0.25f||!IsFinite(lighting.directionToLight))return invalid();
     const auto z=Normalize(lighting.directionToLight);if(LengthSquared(z)<0.99f)return invalid();
@@ -32,5 +35,33 @@ bool PrepareDirectionalShadow(const DirectionalShadowView& view,const rhi::Forwa
     candidate.depthBias=view.depthBias;candidate.slopeBias=view.slopeBias;candidate.normalBias=view.normalBias;
     candidate.enabled=view.enabled&&lighting.directionalEnabled;candidate.pcf=view.pcf;candidate.preview=view.preview;
     if(!IsFinite(candidate.clipFromWorld))return invalid();output=candidate;return true;
+}
+bool PrepareDirectionalCascadeShadow(const DirectionalShadowView& view,const rhi::ForwardLighting& lighting,
+    const CameraSnapshot& camera,rhi::ShadowSettings& output,std::vector<AssetDiagnostic>& diagnostics)
+{
+    rhi::ShadowSettings candidate;
+    if(!PrepareDirectionalShadow(view,lighting,candidate,diagnostics))return false;
+    CascadeShadowSettings fit;
+    if(!IsFinite(view.cascadeDistance)||view.cascadeDistance<=0)
+    {asset_io::Diagnostic(diagnostics,"Rendering.ShadowInvalid");return false;}
+    const auto distance=std::min(view.cascadeDistance,camera.lens.farPlane);
+    if(!PrepareCascadeShadows(camera.view,camera.projection,camera.lens.nearPlane,camera.lens.farPlane,
+        distance,lighting.directionToLight,view.cascadeCount,view.cascadeResolution,fit,100.f,
+        view.filter.pcss&&view.pcf&&view.filter.angularRadius>0?std::max(3.f,std::ceil(view.filter.maximumRadiusTexels)+1.f):3.f,
+        view.filter.pcss&&view.pcf&&view.filter.angularRadius>0?view.cascadeNormalBias:0.f))
+    {asset_io::Diagnostic(diagnostics,"Rendering.CsmUnavailable");return false;}
+    candidate.resolution=fit.resolution;candidate.cascadeCount=fit.cascadeCount;
+    candidate.cascadeClipFromWorld=fit.clipFromWorld;candidate.cascadeSplits=fit.splitDistances;
+    candidate.cascadeViewDepth={-camera.view(2,0),-camera.view(2,1),-camera.view(2,2),-camera.view(2,3)};
+    candidate.cascadeNear=camera.lens.nearPlane;candidate.cascadeBlend=fit.blendFraction;candidate.cascadeDebug=view.cascadeDebug;
+    candidate.depthBias=view.cascadeDepthBias;candidate.slopeBias=view.cascadeSlopeBias;candidate.normalBias=view.cascadeNormalBias;
+    const auto& filter=view.filter;
+    if(!IsFinite(filter.angularRadius)||filter.angularRadius<0||filter.angularRadius>.2f
+        ||!IsFinite(filter.blockerSearchDistance)||filter.blockerSearchDistance<.01f||filter.blockerSearchDistance>100
+        ||!IsFinite(filter.maximumRadiusTexels)||filter.maximumRadiusTexels<1||filter.maximumRadiusTexels>32
+        ||static_cast<std::uint32_t>(filter.debug)>2)
+    {asset_io::Diagnostic(diagnostics,"Rendering.ShadowInvalid");return false;}
+    candidate.filter=filter;
+    candidate.clipFromWorld=fit.clipFromWorld[0];output=candidate;return true;
 }
 }

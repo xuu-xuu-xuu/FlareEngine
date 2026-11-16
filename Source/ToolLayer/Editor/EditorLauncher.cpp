@@ -52,7 +52,7 @@ struct LauncherStrings
     Localization localization;
     std::wstring title,newProject,openProject,openSample,quit;
     std::wstring newSoon,recentEmpty,sampleMissing,invalidProject,workerFailed,safeMode,openTitle;
-    std::wstring recentTitle,open,remove,relocate,selectHint,newTitle,templateLabel,templateBlank,templateBasic;
+    std::wstring recentTitle,open,remove,relocate,selectHint,newTitle,templateLabel,templateBlank,templateBasic,templateRenderingStudio;
     std::wstring nameLabel,parentLabel,browse,finalPath,create,cancel,leaseBusy,openFailed,createFailed,preferenceFailed;
     std::wstring Get(std::string_view key,const wchar_t* fallback) const
     {
@@ -93,6 +93,7 @@ struct LauncherStrings
         strings.templateLabel=value("Editor.LauncherTemplate",L"Template");
         strings.templateBlank=value("Editor.LauncherTemplateBlank",L"Blank scene");
         strings.templateBasic=value("Editor.LauncherTemplateBasic",L"Basic 3D sample");
+        strings.templateRenderingStudio=value("Editor.LauncherTemplateRenderingStudio",L"Rendering Studio");
         strings.nameLabel=value("Editor.LauncherName",L"Project name");
         strings.parentLabel=value("Editor.LauncherParent",L"Parent folder");
         strings.browse=value("Editor.LauncherBrowse",L"Browse...");
@@ -186,7 +187,9 @@ bool StartWorker(const LauncherState& state,const std::filesystem::path& project
     std::wstring command=L"\""+state.executable.wstring()+L"\" --worker --project \""+projectRoot.wstring()+L"\" --language "+Wide(state.locale);
     if(!extraArguments.empty())command+=L" "+extraArguments;
     STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION information{};
-    if(!CreateProcessW(state.executable.c_str(),command.data(),nullptr,nullptr,FALSE,0,nullptr,state.executable.parent_path().c_str(),&startup,&information))
+    const auto workingDirectory=std::filesystem::is_regular_file(state.resourceDirectory/"editor-package.json")
+        ?projectRoot:state.executable.parent_path();
+    if(!CreateProcessW(state.executable.c_str(),command.data(),nullptr,nullptr,FALSE,0,nullptr,workingDirectory.c_str(),&startup,&information))
     {
         std::wcerr<<L"[Error] cannot start editor worker, code="<<GetLastError()<<L"\n";return false;
     }
@@ -237,12 +240,19 @@ bool OpenSampleFlow(LauncherState& state)
     if(RejectPackageProject(state,parent))return false;
     std::error_code error;std::filesystem::create_directories(parent,error);
     if(error){ShowError(state,state.strings.createFailed+L"\n"+state.strings.Error("Project.ParentMissing"));return false;}
-    const auto token=asset_io::NewId();
-    if(token.empty()){ShowError(state,state.strings.createFailed);return false;}
-    // 每次生成独立副本，不覆盖用户编辑过的旧示例；它们仍保留在最近项目列表。
+    // 原子预留一个短名称，让最近项目易于辨认，也为项目内的运行文件留出路径长度。
+    std::string name="Sample";
+    for(std::uint64_t number=2;!std::filesystem::create_directory(parent/name,error);++number)
+    {
+        if(error&&error!=std::errc::file_exists){ShowError(state,state.strings.createFailed);return false;}
+        name="Sample "+std::to_string(number);
+    }
     ProjectPreflight copied;std::string key,detail;
-    if(!ProjectWorkspaceSession::CreateProject(ProjectTemplate::Basic3D,"Sample-"+token,parent,state.templateRoot,copied,key,detail))
-    {ShowError(state,state.strings.createFailed+L"\n"+state.strings.Error(key)+L"\n"+Wide(detail));return false;}
+    if(!ProjectWorkspaceSession::CreateProject(ProjectTemplate::Basic3D,name,parent,state.templateRoot,copied,key,detail))
+    {
+        std::filesystem::remove(parent/name,error);  // 只移除本次预留的空目录。
+        ShowError(state,state.strings.createFailed+L"\n"+state.strings.Error(key)+L"\n"+Wide(detail));return false;
+    }
     return OpenProjectFlow(state,copied.root);
 }
 
@@ -279,6 +289,7 @@ void CreateNewProjectDialogControls(NewProjectDialogState& dialog,const Launcher
     make(L"COMBOBOX",L"",CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS|WS_VSCROLL|WS_TABSTOP,150,14,340,120,ControlTemplate,dialog.combo);
     SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateBlank.c_str()));
     SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateBasic.c_str()));
+    SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateRenderingStudio.c_str()));
     SendMessageW(dialog.combo,CB_SETCURSEL,0,0);
     make(L"STATIC",launcher.strings.nameLabel,SS_LEFT,16,52,120,22,-1,label);
     make(L"EDIT",L"NewProject",WS_BORDER|WS_TABSTOP|ES_AUTOHSCROLL,150,50,340,24,ControlName,dialog.name);
@@ -334,7 +345,8 @@ LRESULT CALLBACK NewProjectProcedure(HWND window,UINT message,WPARAM wParam,LPAR
             GetWindowTextW(dialog->name,nameBuffer,256);GetWindowTextW(dialog->parent,parentBuffer,1024);
             if(RejectPackageProject(*dialog->launcher,std::filesystem::path(parentBuffer)/nameBuffer))return 0;
             const auto templateIndex=static_cast<int>(SendMessageW(dialog->combo,CB_GETCURSEL,0,0));
-            const auto projectTemplate=templateIndex==1?ProjectTemplate::Basic3D:ProjectTemplate::BlankScene;
+            const auto projectTemplate=templateIndex==2?ProjectTemplate::RenderingStudio:
+                templateIndex==1?ProjectTemplate::Basic3D:ProjectTemplate::BlankScene;
             std::string errorKey,detail;
             if(!ProjectWorkspaceSession::CreateProject(projectTemplate,Utf8(nameBuffer),std::filesystem::path(parentBuffer),
                 dialog->launcher->templateRoot,dialog->created,errorKey,detail))
@@ -406,7 +418,8 @@ bool RunNewProjectDialog(LauncherState& launcher,bool autoCreate)
         Sleep(10);
     }
     EnableWindow(launcher.window,TRUE);SetForegroundWindow(launcher.window);
-    if(!dialog.accepted)return false;
+    // 用户取消属于正常返回；自动创建检查仍必须如实报告未创建。
+    if(!dialog.accepted)return !autoCreate;
     return OpenProjectFlow(launcher,dialog.created.root,autoCreate?L"--hidden --frames 20":L"");
 }
 
@@ -503,7 +516,7 @@ LRESULT CALLBACK LauncherProcedure(HWND window,UINT message,WPARAM wParam,LPARAM
             if(LOWORD(wParam)==ControlRecentList&&HIWORD(wParam)!=LBN_DBLCLK)break;
             const auto index=static_cast<int>(SendMessageW(state->recentList,LB_GETCURSEL,0,0));
             if(index<0||static_cast<size_t>(index)>=state->workspace.Recent().size())return 0;
-            OpenProjectFlow(*state,state->workspace.Recent()[static_cast<size_t>(index)].path);
+            OpenProjectFlow(*state,Wide(state->workspace.Recent()[static_cast<size_t>(index)].path));
             return 0;
         }
         case ControlRecentRemove:

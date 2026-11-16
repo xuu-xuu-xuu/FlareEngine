@@ -26,11 +26,13 @@ rhi::TextureFormat RhiFormat(BakedTextureFormat format)
     if(format==BakedTextureFormat::Bc1UnormSrgb)return rhi::TextureFormat::Bc1UnormSrgb;
     if(format==BakedTextureFormat::Bc5Unorm)return rhi::TextureFormat::Bc5Unorm;
     if(format==BakedTextureFormat::Bc4Unorm)return rhi::TextureFormat::Bc4Unorm;
+    if(format==BakedTextureFormat::Bc7Unorm)return rhi::TextureFormat::Bc7Unorm;
+    if(format==BakedTextureFormat::Bc7UnormSrgb)return rhi::TextureFormat::Bc7UnormSrgb;
     return rhi::TextureFormat::Bc1Unorm;
 }
 std::uint64_t BakedBlockBytes(BakedTextureFormat format)
 {
-    return format==BakedTextureFormat::Bc5Unorm?16:8;
+    return format==BakedTextureFormat::Bc5Unorm||format==BakedTextureFormat::Bc7Unorm||format==BakedTextureFormat::Bc7UnormSrgb?16:8;
 }
 // G05：LOD 级别索引；lodIndices 只存 1..N-1 级（0 级复用 indices）。
 const rhi::Buffer& LevelIndices(const StaticRenderMesh& mesh,std::uint32_t level)
@@ -54,6 +56,22 @@ struct BatchGuard
     ~BatchGuard(){if(!finished){rhi::CompletionToken token;device.EndUploadBatch(token);}}
     rhi::Result Finish(){finished=true;rhi::CompletionToken token;return device.EndUploadBatch(token);}
 };
+void ConfigureLayers(const ClearCoatParameters& coat,const SheenParameters& sheen,const AnisotropyParameters& anisotropy,
+    const SubsurfaceParameters& subsurface,PbrRenderMaterial& output,std::string_view name,std::vector<AssetDiagnostic>& diagnostics)
+{
+    auto& c=output.layers.constants;
+    c.coat={coat.weight,coat.roughness,NormalScale(coat.normalScale,name,diagnostics),0};
+    c.sheen={sheen.color.x,sheen.color.y,sheen.color.z,sheen.roughness};
+    c.anisotropy={anisotropy.strength,std::remainder(anisotropy.rotation,2*Pi),0,0};
+    c.subsurface={subsurface.weight,subsurface.radius,0,0};c.subsurfaceColor={subsurface.color.x,subsurface.color.y,subsurface.color.z,0};
+}
+void BindLayerTextures(PbrRenderMaterial& material)
+{
+    std::uint32_t flags=0;
+    for(std::size_t i=0;i<material.layerTextures.size();++i)if(material.layerTextures[i])
+    {material.layers.textures[i]=*material.layerTextures[i];flags|=1u<<i;}
+    material.layers.constants.textureFlags={float(flags),0,0,0};
+}
 }
 
 void ConfigurePbrMaterial(const MaterialData* material,PbrRenderMaterial& binding,std::string_view name,std::vector<AssetDiagnostic>& diagnostics)
@@ -61,7 +79,9 @@ void ConfigurePbrMaterial(const MaterialData* material,PbrRenderMaterial& bindin
     if(!material)return;
     const auto& color=material->baseColor;binding.color={color[0],color[1],color[2],color[3]};
     binding.metallic=material->metallic;binding.roughness=material->roughness;
+    binding.alphaMode=material->alphaMode;binding.alphaCutoff=material->alphaCutoff;
     binding.normalScale=NormalScale(material->normalScale,name,diagnostics);binding.doubleSided=material->doubleSided;
+    ConfigureLayers(material->clearCoat,material->sheen,material->anisotropy,material->subsurface,binding,name,diagnostics);
 }
 void StaticModelRenderCache::EnableBc1Textures(bool enabled,std::filesystem::path bakeDirectory,bool dataTextures)
 {
@@ -72,8 +92,12 @@ void StaticModelRenderCache::EnableBc1Textures(bool enabled,std::filesystem::pat
 }
 std::optional<BakedTextureFormat> StaticModelRenderCache::BakedFormatFor(TextureRole role) const
 {
+    // 新层数据不套 BC1/BC5；法线保 RGB、sheen roughness 保 A，颜色视图由槽位选择 sRGB。
+    if(role==TextureRole::LayerColor||role==TextureRole::LayerData)return std::nullopt;
+    // 现有BC1编码器只编码RGB。覆盖与混合材质必须保留原始alpha，不能复用Opaque颜色缓存。
+    if(role==TextureRole::CoverageColor)return bc7Colors_?std::optional(BakedTextureFormat::Bc7UnormSrgb):std::nullopt;
     if(role==TextureRole::Color)
-        return bc1Textures_?std::optional(BakedTextureFormat::Bc1UnormSrgb):std::nullopt;
+        return bc7Colors_?std::optional(BakedTextureFormat::Bc7UnormSrgb):bc1Textures_?std::optional(BakedTextureFormat::Bc1UnormSrgb):std::nullopt;
     if(role==TextureRole::Normal)
     {
         if(bc5Normals_)return BakedTextureFormat::Bc5Unorm;
@@ -83,6 +107,9 @@ std::optional<BakedTextureFormat> StaticModelRenderCache::BakedFormatFor(Texture
 }
 std::string StaticModelRenderCache::TextureCacheKey(std::string_view contentKey,TextureRole role) const
 {
+    if(role==TextureRole::LayerColor)return "rgba8-layer-srgb:"+std::string(contentKey);
+    if(role==TextureRole::LayerData)return "rgba8-layer-linear:"+std::string(contentKey);
+    if(role==TextureRole::CoverageColor&&!bc7Colors_)return "rgba8-coverage:"+std::string(contentKey);
     const auto format=BakedFormatFor(role);
     return format?BakedTextureKey(contentKey,*format):std::string(contentKey);
 }
@@ -101,6 +128,16 @@ bool StaticModelRenderCache::UploadTexture(const ImageData& image,std::string_vi
         const auto* baked=*format==BakedTextureFormat::Bc5Unorm
             ?bakeCache_.BakeBc5(image,contentKey,error)
             :bakeCache_.Bake(image,contentKey,*format,error);
+        if(baked)
+        {
+            bool valid=baked->format==*format&&baked->width==image.width&&baked->height==image.height
+                &&baked->mipLevels==Bc1MipLevels(image.width,image.height)&&baked->mipOffsets.size()==baked->mipLevels;
+            std::uint64_t bytes=0;
+            if(valid)for(std::uint32_t mip=0;mip<baked->mipLevels;++mip)
+            {if(baked->mipOffsets[mip]!=bytes){valid=false;break;}bytes+=BakedMipBytes(*format,image.width,image.height,mip);}
+            if(!valid||bytes!=baked->bytes.size())
+            {asset_io::Diagnostic(diagnostics,"Rendering.TextureCacheRejected",std::string(name),true);baked=nullptr;}
+        }
         if(baked)
         {
             rhi::TextureDescription description{image.width,image.height,baked->mipLevels,1,
@@ -154,6 +191,11 @@ bool StaticModelRenderCache::UploadTexture(const ImageData& image,std::string_vi
     const auto result=device.CreateTexture({image.width,image.height,1,1,rhi::TextureFormat::Rgba8,std::string(name)},image.rgba8,texture);
     if(!result){asset_io::Diagnostic(diagnostics,result.Key(),std::string(name));return false;}
     textures_.insert_or_assign(key,TextureEntry{texture,1,0,0});return true;
+}
+void StaticModelRenderCache::EnableBc7Colors(bool enabled,std::filesystem::path bakeDirectory)
+{
+    if(enabled!=bc7Colors_){Clear();bc7Colors_=enabled;}
+    if(!bakeDirectory.empty())bakeCache_.SetDirectory(std::move(bakeDirectory));
 }
 std::uint64_t StaticModelRenderCache::TextureResidencyId(std::string_view key)
 {
@@ -228,7 +270,8 @@ StaticModelRenderCache::ResidencyUpdate StaticModelRenderCache::UpdateTextureRes
                     }
                     if(device.UploadTextureSubresourcesRange(handle,start,missing))
                     {
-                        entry.uploadedMip=start;report.uploadedBytes+=bytes;remaining-=bytes;
+                        // 单个 mip 大于本次预算时允许推进一次，但不能让无符号预算下溢。
+                        entry.uploadedMip=start;report.uploadedBytes+=bytes;remaining=bytes>=remaining?0:remaining-bytes;
                     }
                 }
             }
@@ -269,11 +312,21 @@ bool StaticModelRenderCache::Upload(std::shared_ptr<const StaticModel> model,con
             asset_io::Diagnostic(diagnostics,"Rendering.FallbackMaterial",mesh.name,true);
         }
         rhi::Texture texture;
-        if(!UploadTexture(*selected.images[0],mesh.name,device,texture,diagnostics,selected.keys[0],TextureRole::Color))return false;
+        const auto colorRole=selected.material&&selected.material->alphaMode!=MaterialAlphaMode::Opaque
+            ?TextureRole::CoverageColor:TextureRole::Color;
+        if(!UploadTexture(*selected.images[0],mesh.name,device,texture,diagnostics,selected.keys[0],colorRole))return false;
         std::vector<rhi::Vertex> vertices;
         std::vector<rhi::SkinnedVertex> skinnedVertices;
         std::vector<PackedVertex> packed;
         auto& gpu=candidate->meshes[index];gpu.texture=std::move(texture);
+        {
+            Vec3 minimum{mesh.vertices[0].position[0],mesh.vertices[0].position[1],mesh.vertices[0].position[2]},maximum=minimum;
+            for(const auto& vertex:mesh.vertices)
+            {minimum={std::min(minimum.x,vertex.position[0]),std::min(minimum.y,vertex.position[1]),std::min(minimum.z,vertex.position[2])};
+             maximum={std::max(maximum.x,vertex.position[0]),std::max(maximum.y,vertex.position[1]),std::max(maximum.z,vertex.position[2])};}
+            gpu.localCenter=(minimum+maximum)*.5f;
+            gpu.localBounds.minimum=minimum;gpu.localBounds.maximum=maximum;
+        }
         // W03：蒙皮网格不能走压缩顶点布局（IMPORT 已保证 skinning 与 vertices 等长），
         // 80 字节 v3 顶点缓冲由 rhi::CreateBuffer 直接接受。
         const bool skinnedMesh=mesh.skinned&&mesh.skinning.size()==mesh.vertices.size();
@@ -336,6 +389,21 @@ bool StaticModelRenderCache::Upload(std::shared_ptr<const StaticModel> model,con
                 }
             }
             binding->normalMapping=selected.normalMapping;
+            if(selected.material)
+            {
+                const auto& m=*selected.material;const std::int32_t layerIndices[]{m.clearCoatWeightTexture,m.clearCoatRoughnessTexture,m.clearCoatNormalTexture,m.sheenColorTexture,m.sheenRoughnessTexture,m.anisotropyTexture};
+                for(std::size_t slot=0;slot<6;++slot)if(layerIndices[slot]>=0)
+                {
+                    const auto image=static_cast<std::size_t>(layerIndices[slot]);
+                    if(image>=decoded.images.size()||image>=decoded.unavailable.size()||image>=decoded.keys.size())return Invalid(diagnostics);
+                    const bool bad=decoded.unavailable[image];
+                    const auto& pixels=bad?DefaultTextureImage(slot==2?DefaultTextureKind::FlatNormal:DefaultTextureKind::White):decoded.images[image];
+                    if(!UploadTexture(pixels,mesh.name+".layer"+std::to_string(slot),device,binding->layerTextures[slot],diagnostics,
+                        bad?std::string_view{}:std::string_view(decoded.keys[image]),slot==3?TextureRole::LayerColor:TextureRole::LayerData))return false;
+                    if(bad){candidate->state=ModelRenderState::Fallback;asset_io::Diagnostic(diagnostics,"Rendering.FallbackMaterial",mesh.name,true);}
+                }
+            }
+            BindLayerTextures(*binding);
             binding->featureMask=se::FeatureMaskFor(*binding);
             gpu.material=std::move(binding);
         }
@@ -345,6 +413,18 @@ bool StaticModelRenderCache::Upload(std::shared_ptr<const StaticModel> model,con
             ?device.CreateBuffer({rhi::BufferUsage::Vertex,sizeof(PackedVertex),mesh.name+".vertices"},std::as_bytes(std::span(packed)),gpu.vertices)
             :device.CreateBuffer({rhi::BufferUsage::Vertex,sizeof(rhi::Vertex),mesh.name+".vertices"},std::as_bytes(std::span(vertices)),gpu.vertices);
         const auto reordered=se::OptimizeVertexCache(mesh.indices);
+        if(meshletSubmission_&&!skinnedMesh&&!compress)
+        {
+            MeshData sourceMesh;sourceMesh.name=mesh.name;sourceMesh.vertices=mesh.vertices;sourceMesh.indices=reordered;
+            auto submission=std::make_shared<MeshletSubmission>();
+            if(BakeMeshletSubmission(sourceMesh,*submission,diagnostics)&&submission->indices==reordered)
+            {
+                gpu.geometryClusters.reserve(submission->ranges.size());
+                for(const auto& range:submission->ranges)gpu.geometryClusters.push_back({range.firstIndex,range.indexCount,range.localBounds});
+                gpu.meshlets=std::move(submission);
+            }
+            else asset_io::Diagnostic(diagnostics,"Rendering.MeshletCpuFallback",mesh.name,true);
+        }
         std::vector<std::uint16_t> narrowIndices;
         const bool narrow=mesh.vertices.size()<=65535;
         if(narrow){narrowIndices.reserve(reordered.size());for(const auto value:reordered)narrowIndices.push_back(static_cast<std::uint16_t>(value));}
@@ -419,9 +499,15 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
     }
     else source=assets.LoadMaterial(id,diagnostics);
     if(!source)return old;
+    if(source->alphaMode!=MaterialAlphaMode::Opaque&&!source->shader.empty())
+        asset_io::Diagnostic(diagnostics,"Rendering.MaterialShaderCoverageFallback",source->name,true);
+    const bool layered=source->clearCoat.weight>0||source->sheen.color.x>0||source->sheen.color.y>0||source->sheen.color.z>0
+        ||source->anisotropy.strength>0||source->subsurface.weight>0;
+    if(layered&&!source->shader.empty()&&(previous==materials_.end()||previous->second.source!=source))
+        asset_io::Diagnostic(diagnostics,"Material.ShaderFallback",source->shader,true);
     // 先按内容修订解析用户产物：失败时保留上一有效材质/Pipeline；首次加载失败退回默认 PBR 并记录诊断。
     ShaderArtifactSource artifact;std::string shaderKey;
-    if(!source->shader.empty()&&customMaterialPipelines_)
+    if(!source->shader.empty()&&customMaterialPipelines_&&source->alphaMode==MaterialAlphaMode::Opaque&&!layered)
     {
         if(assets.LoadShaderArtifact(source->shader,artifact,diagnostics))
         {
@@ -440,22 +526,28 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
             asset_io::Diagnostic(diagnostics,"Material.ShaderFallback",source->shader);
         }
     }
-    const AssetId ids[]{source->baseColorTexture,source->normalTexture,source->metallicRoughnessTexture};
-    std::array<std::shared_ptr<const ImageData>,3> images;
-    for(std::size_t index=0;index<3;++index)if(!ids[index].empty())
+    const AssetId ids[]{source->baseColorTexture,source->normalTexture,source->metallicRoughnessTexture,
+        source->clearCoatWeightTexture,source->clearCoatRoughnessTexture,source->clearCoatNormalTexture,source->sheenColorTexture,source->sheenRoughnessTexture,source->anisotropyTexture};
+    std::array<std::shared_ptr<const ImageData>,9> images;
+    for(std::size_t index=0;index<9;++index)if(!ids[index].empty())
     {images[index]=assets.LoadTextureImage(ids[index],diagnostics);if(!images[index])return old;}
     if(previous!=materials_.end()&&previous->second.source==source&&previous->second.images==images
         &&previous->second.previewKey==previewKey&&previous->second.shaderKey==shaderKey)return old;
     auto gpu=std::make_shared<PbrRenderMaterial>();const auto& c=source->baseColor;gpu->color={c[0],c[1],c[2],c[3]};
     gpu->metallic=source->metallic;gpu->roughness=source->roughness;gpu->doubleSided=source->doubleSided;
+    gpu->alphaMode=source->alphaMode;gpu->alphaCutoff=source->alphaCutoff;
     gpu->normalScale=NormalScale(source->normalScale,source->name,diagnostics);gpu->normalMapping=!source->normalTexture.empty();
-    rhi::Texture* targets[]{&gpu->baseColor,&gpu->normal,&gpu->metallicRoughness};
-    std::array<const ImageData*,3> pixels;std::array<std::string,3> keys;bool needsUpload=false;
-    for(std::size_t index=0;index<3;++index)
+    ConfigureLayers(source->clearCoat,source->sheen,source->anisotropy,source->subsurface,*gpu,source->name,diagnostics);
+    rhi::Texture* targets[]{&gpu->baseColor,&gpu->normal,&gpu->metallicRoughness,&gpu->layerTextures[0],&gpu->layerTextures[1],&gpu->layerTextures[2],&gpu->layerTextures[3],&gpu->layerTextures[4],&gpu->layerTextures[5]};
+    const auto roleFor=[&](std::size_t index){return index>=3?(index==6?TextureRole::LayerColor:TextureRole::LayerData)
+        :index==0?(source->alphaMode==MaterialAlphaMode::Opaque?TextureRole::Color:TextureRole::CoverageColor):index==1?TextureRole::Normal:TextureRole::Data;};
+    std::array<const ImageData*,9> pixels{};std::array<std::string,9> keys;bool needsUpload=false;
+    for(std::size_t index=0;index<9;++index)
     {
+        if(index>=3&&!images[index])continue;
         pixels[index]=images[index]?images[index].get():&DefaultTextureImage(index==1?DefaultTextureKind::FlatNormal:DefaultTextureKind::White);
         keys[index]=ImageContentKey(*pixels[index]);if(keys[index].empty()){Invalid(diagnostics);return old;}
-        const auto role=index==0?TextureRole::Color:index==1?TextureRole::Normal:TextureRole::Data;
+        const auto role=roleFor(index);
         const auto cached=textures_.find(TextureCacheKey(keys[index],role));
         *targets[index]=cached==textures_.end()?rhi::Texture{}:cached->second.handle.lock();needsUpload=needsUpload||!*targets[index];
     }
@@ -463,13 +555,14 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
     {
         auto result=device.BeginUploadBatch();if(!result){asset_io::Diagnostic(diagnostics,result.Key(),id);return old;}
         BatchGuard batch{device};
-        for(std::size_t index=0;index<3;++index)
+        for(std::size_t index=0;index<9;++index)
         {
-            const auto role=index==0?TextureRole::Color:index==1?TextureRole::Normal:TextureRole::Data;
+            if(!pixels[index])continue;const auto role=roleFor(index);
             if(!*targets[index]&&!UploadTexture(*pixels[index],source->name,device,*targets[index],diagnostics,keys[index],role))return old;
         }
         result=batch.Finish();if(!result){asset_io::Diagnostic(diagnostics,result.Key(),id);return old;}
     }
+    BindLayerTextures(*gpu);
     if(!shaderKey.empty())
     {
         if(previous!=materials_.end()&&previous->second.shaderKey==shaderKey&&old&&old->pipeline)gpu->pipeline=old->pipeline;
@@ -528,14 +621,26 @@ void AppendStaticModelDraws(const StaticRenderModel& model,const Mat4& entityWor
         output.push_back({*mesh.vertices,*indices,*mesh.texture,pipeline,DrawWorld(model,part,entityWorld),viewProjection,
             fallback?Vec4{1,1,1,1}:part.baseColor,false,unlit||fallback});
         output.back().indexCount=LevelIndexCount(mesh,lodLevel);
+        if(!mesh.skinned&&!model.compressed)
+            if(const auto bounds=TransformBounds(mesh.localBounds,output.back().world))
+            {output.back().worldBounds=*bounds;output.back().hasWorldBounds=true;}
+        if(lodLevel==0)output.back().geometryClusters=mesh.geometryClusters;
     }
 }
 void AppendShadowModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,std::vector<rhi::DrawIndexed>& output,
-    std::uint32_t lodLevel,std::span<const std::byte> skinPalette,std::uint32_t skinJointCount,rhi::PipelineHandle skinPipeline)
+    std::uint32_t lodLevel,std::span<const std::byte> skinPalette,std::uint32_t skinJointCount,rhi::PipelineHandle skinPipeline,
+    std::span<const std::shared_ptr<const PbrRenderMaterial>> overrides)
 {
     for(const auto& part:model.layout.parts)
     {
         const auto& mesh=model.meshes[part.mesh];rhi::DrawIndexed draw;
+        auto material=mesh.material;const auto materialIndex=model.source->meshes[part.mesh].material;
+        if(materialIndex>=0&&static_cast<std::size_t>(materialIndex)<overrides.size()&&overrides[static_cast<std::size_t>(materialIndex)])
+            material=overrides[static_cast<std::size_t>(materialIndex)];
+        if(material&&material->alphaMode==MaterialAlphaMode::Blend)continue;
+        if(material)
+        {draw.texture=*material->baseColor;draw.tint=material->color;draw.alphaMode=material->alphaMode;
+         draw.alphaCutoff=material->alphaCutoff;draw.pbr.doubleSided=material->doubleSided;}
         draw.vertices=*mesh.vertices;draw.indices=*LevelIndices(mesh,lodLevel);draw.world=DrawWorld(model,part,entityWorld);
         // W03：蒙皮部件的顶点缓冲是 80 字节布局，必须配蒙皮深度 PSO 与调色板；
         // 缺其中任何一项时跳过该部件，避免把蒙皮顶点当参考顶点读成错误几何。
@@ -568,11 +673,19 @@ void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
             mesh.skinned?skinPipeline:(material->pipeline?*material->pipeline:pipeline),DrawWorld(model,part,entityWorld),viewProjection,
             material->color,false,model.fallbackMeshes[part.mesh]&&!overridden};
         draw.normalTexture=*material->normal;draw.metallicRoughnessTexture=*material->metallicRoughness;
+        draw.alphaMode=material->alphaMode;draw.alphaCutoff=material->alphaCutoff;
+        draw.layers=material->layers;
+        if(!mesh.skinned&&!model.compressed)
+            if(const auto bounds=TransformBounds(mesh.localBounds,draw.world))
+            {draw.worldBounds=*bounds;draw.hasWorldBounds=true;}
+        if(lodLevel==0)draw.geometryClusters=mesh.geometryClusters;
+        draw.compressedVertices=mesh.vertexLayoutVersion==rhi::VertexLayoutVersionCompressed;
+        draw.sortCenter=TransformPoint(draw.world,mesh.localCenter);draw.hasSortCenter=true;
         draw.indexCount=LevelIndexCount(mesh,lodLevel);
         draw.pbr={camera,directionToLight,radiance,material->metallic,material->roughness,material->normalScale,material->normalMapping,material->doubleSided};
         draw.pbr.lodDither=lodDither;
         draw.hasPreviousWorld=previousWorld!=nullptr;
-        if(previousWorld)draw.previousWorld=*previousWorld;
+        if(previousWorld)draw.previousWorld=DrawWorld(model,part,*previousWorld);
         draw.look=look;
         if(mesh.skinned){draw.skinPalette=skinPalette;draw.skinJointCount=skinJointCount;}
         output.push_back(draw);

@@ -94,18 +94,20 @@ D3D12PipelineCache::~D3D12PipelineCache()
 }
 std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const rhi::PipelineDescription& description,const Localization& text)
 {
-    auto& p=*impl_;if(p.owner!=std::this_thread::get_id())return {};
+    auto& p=*impl_;if(p.owner!=std::this_thread::get_id()||!rhi::ValidMaterialSurfacePipeline(description)||!rhi::ValidShadingExtensionPipeline(description)
+        ||std::any_of(description.macros.begin(),description.macros.end(),[](const auto& macro){return macro.name=="SE_DEPTH_NORMALS";}))return {};
     // W03：31 号蒙皮布局只对可蒙皮技术开放，且必须与 v3 顶点布局成对出现。
-    const bool skinnedLayout=description.bindingLayoutVersion==rhi::SkinnedLayoutVersion
-        &&rhi::SupportsSkinning(description.kind);
+    const bool filterLayout=rhi::ValidShadowFilterBindingLayout(description.kind,description.bindingLayoutVersion,description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned);
+    const bool skinnedLayout=((description.bindingLayoutVersion==(rhi::IsClustered(description.kind)?rhi::SkinnedClusteredLayoutVersion:rhi::IsCascaded(description.kind)?rhi::SkinnedCascadedLayoutVersion:rhi::SkinnedLayoutVersion))
+        ||(filterLayout&&description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned))&&rhi::SupportsSkinning(description.kind);
     const bool skinnedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned;
     if((description.bindingLayoutVersion!=rhi::BindingLayout(description.kind)
             &&!(rhi::IsOutput(description.kind)&&description.bindingLayoutVersion==rhi::OutputLutLayoutVersion)
-            &&!skinnedLayout)
+            &&!skinnedLayout&&!filterLayout)
         ||skinnedLayout!=skinnedVertex
         ||!rhi::ValidPipelineKind(description.kind)
         ||(description.shaderInput!=rhi::ShaderInput::Source&&description.shaderInput!=rhi::ShaderInput::Artifact)
-        ||(description.depth!=rhi::DepthMode::Default&&description.depth!=rhi::DepthMode::Disabled&&description.depth!=rhi::DepthMode::ReadWriteLess&&description.depth!=rhi::DepthMode::ReadOnlyLessEqual)
+        ||(description.depth!=rhi::DepthMode::Default&&description.depth!=rhi::DepthMode::Disabled&&description.depth!=rhi::DepthMode::ReadWriteLess&&description.depth!=rhi::DepthMode::ReadOnlyLessEqual&&description.depth!=rhi::DepthMode::ReadOnlyEqual)
         ||(description.blend!=rhi::BlendMode::Opaque&&description.blend!=rhi::BlendMode::Alpha)
         ||(description.colorFormat!=rhi::ColorFormat::Rgba8Unorm&&description.colorFormat!=rhi::ColorFormat::Rgba16Float&&description.colorFormat!=rhi::ColorFormat::Rgba8Srgb)
         ||(description.vertexLayoutVersion!=rhi::VertexLayoutVersionLegacy&&description.vertexLayoutVersion!=rhi::VertexLayoutVersionCompressed
@@ -134,7 +136,7 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
         }
     }
     const bool pbr=rhi::UsesLitLayout(description.kind),forward=rhi::IsForward(description.kind),output=rhi::IsOutput(description.kind),shadow=rhi::IsShadowed(description.kind),depthOnly=description.kind==rhi::PipelineKind::ShadowDepth;
-    const bool environment=description.kind==rhi::PipelineKind::EnvironmentMesh,environmentSky=description.kind==rhi::PipelineKind::EnvironmentSky;
+    const bool environment=rhi::IsEnvironment(description.kind),environmentSky=description.kind==rhi::PipelineKind::EnvironmentSky;
     const bool post=rhi::IsPostProcess(description.kind),overlay=description.kind==rhi::PipelineKind::UiOverlay;
     const bool instanced=rhi::IsInstanced(description.kind);
     // G06.10：Forward 实例化同时需要 b1 前向常量与 t7 实例 SRV，根签名扩到 4 个参数。
@@ -145,17 +147,19 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     const bool compressed=description.vertexLayoutVersion==rhi::VertexLayoutVersionCompressed;
     // W03：蒙皮管线在受光家族追加参数 4 的 t8 调色板 SRV；阴影深度单独用 b0 常量 + 参数 1 的 t8。
     const bool skinned=skinnedLayout&&skinnedVertex;
+    const bool surface=description.materialLayoutVersion==rhi::MaterialSurfaceLayoutVersion,surfaceDepth=surface&&depthOnly;
     const auto depth=description.depth==rhi::DepthMode::Default?(mesh||depthOnly?rhi::DepthMode::ReadWriteLess:rhi::DepthMode::Disabled):description.depth;
     // G02.04：先构建根签名描述并序列化，再把序列化字节的 SHA-256 纳入 PSO 键。
     // 只靠 kind/layout/格式无法区分根参数/描述符表/静态采样器不同的技术；旧键会让
     // 后创建者覆盖同键条目，下一次创建者加载到根签名不匹配的 PSO。
-    D3D12_DESCRIPTOR_RANGE range{};range.RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_SRV;range.NumDescriptors=environment?7:shadow?4:description.kind==rhi::PipelineKind::ShadowOutput?2:pbr?3:1;range.OffsetInDescriptorsFromTableStart=D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    D3D12_DESCRIPTOR_RANGE range{};range.RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_SRV;range.NumDescriptors=environment?7:shadow?4:(description.kind==rhi::PipelineKind::ShadowOutput||description.kind==rhi::PipelineKind::CascadedShadowOutput)?2:pbr?3:1;range.OffsetInDescriptorsFromTableStart=D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
     // G15：输出 LUT 变体在 t2 追加 strip，根签名表固定扩到 t0..t2 三槽：
     // ShadowOutput 为场景/阴影预览/LUT，FinalOutput 的 t1 不读取但仍占位以保持寄存器连续。
     if(rhi::IsOutput(description.kind)&&description.bindingLayoutVersion==rhi::OutputLutLayoutVersion)
         range.NumDescriptors=3;
     if(post)range.NumDescriptors=description.bindingLayoutVersion==rhi::ToneMapLayoutVersion?4u:2u;
-    D3D12_ROOT_PARAMETER parameters[5]{};
+    D3D12_DESCRIPTOR_RANGE clusterRange{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,4,9,0,D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};
+    D3D12_ROOT_PARAMETER parameters[16]{};
     parameters[0].ParameterType=mesh?D3D12_ROOT_PARAMETER_TYPE_CBV:D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     parameters[0].ShaderVisibility=mesh||environmentSky||overlay?D3D12_SHADER_VISIBILITY_ALL:fullscreen?D3D12_SHADER_VISIBILITY_PIXEL:D3D12_SHADER_VISIBILITY_VERTEX;
     if(!mesh)parameters[0].Constants={0,0,description.kind==rhi::PipelineKind::Sky?40u:post?12u:environmentSky?20u:fullscreen?4u:16u};
@@ -183,6 +187,40 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     if(post){samplers[0]=samplers[2];samplers[0].ShaderRegister=0;}
     D3D12_ROOT_SIGNATURE_DESC root{};root.NumParameters=forwardInstanced?4u:instanced?3u:overlay?1u:post?2u:forward?3u:mesh||output||environmentSky?2u:1u;root.pParameters=parameters;
     if(skinned)root.NumParameters=mesh?5u:2u;
+    if(rhi::IsClustered(description.kind))
+    {
+        const UINT slot=skinned?5u:3u;parameters[slot].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        parameters[slot].DescriptorTable={1,&clusterRange};parameters[slot].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+        root.NumParameters=slot+1;
+    }
+    if(filterLayout)
+    {
+        const UINT slot=skinned?(rhi::IsClustered(description.kind)?6u:5u):(rhi::IsClustered(description.kind)?4u:3u);
+        parameters[slot].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;parameters[slot].Descriptor={3,0};
+        parameters[slot].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;root.NumParameters=slot+1;
+    }
+    UINT materialRootParameter=UINT_MAX;
+    if(surfaceDepth)
+    {
+        const UINT table=skinned?2u:1u;parameters[table].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        parameters[table].DescriptorTable={1,&range};parameters[table].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;root.NumParameters=table+1;
+    }
+    if(surface)
+    {
+        materialRootParameter=root.NumParameters++;parameters[materialRootParameter].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;
+        parameters[materialRootParameter].Descriptor={4,0};parameters[materialRootParameter].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+    }
+    UINT shadingFrameParameter=UINT_MAX,shadingMaterialParameter=UINT_MAX,shadingTexturesParameter=UINT_MAX;
+    D3D12_DESCRIPTOR_RANGE shadingRange{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,12,13,0,D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};
+    if(description.shadingLayoutVersion)
+    {
+        shadingFrameParameter=root.NumParameters++;shadingMaterialParameter=root.NumParameters++;shadingTexturesParameter=root.NumParameters++;
+        parameters[shadingFrameParameter].ParameterType=parameters[shadingMaterialParameter].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;
+        parameters[shadingFrameParameter].Descriptor={5,0};parameters[shadingMaterialParameter].Descriptor={6,0};
+        parameters[shadingFrameParameter].ShaderVisibility=parameters[shadingMaterialParameter].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+        parameters[shadingTexturesParameter].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        parameters[shadingTexturesParameter].DescriptorTable={1,&shadingRange};parameters[shadingTexturesParameter].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+    }
     // 蒙皮材质管线把参数 3 留给实例 SRV，但非实例化时它是空表；补一个不冲突的 t7 单槽表，
     // 避免调试层报“空根描述符表”。该寄存器不在任何着色器里读取。
     // 注意：不能用参数 1 的 range（t0..t2），两段描述符范围重叠会让根签名序列化返回 E_INVALIDARG。
@@ -196,6 +234,7 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
         parameters[3].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
     }
     root.NumStaticSamplers=environment?3u:shadow?2u:mesh||environmentSky?1u:0u;root.pStaticSamplers=environmentSky?&samplers[2]:mesh?samplers:nullptr;root.Flags=D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    if(surfaceDepth){root.NumStaticSamplers=1;root.pStaticSamplers=samplers;}
     if(post){root.NumStaticSamplers=description.kind==rhi::PipelineKind::ToneMap||description.kind==rhi::PipelineKind::Fxaa?1u:0u;root.pStaticSamplers=samplers;}
     if(gui){root.NumParameters=2;root.NumStaticSamplers=1;samplers[0]=samplers[2];samplers[0].ShaderRegister=0;root.pStaticSamplers=samplers;}
     ComPtr<ID3DBlob> serialized,diagnostics;
@@ -207,12 +246,16 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     // 因此蒙皮/非蒙皮、压缩/参考顶点、不同 SE_* 宏组合不会共用同一条目。
     const auto key=se::Sha256(program->source.key+":"+program->bytecodeKey+":"+std::to_string(static_cast<int>(description.kind))
         +":"+std::to_string(description.bindingLayoutVersion)+":"+std::to_string(description.vertexLayoutVersion)+":"+std::to_string(static_cast<int>(depth))+":"+std::to_string(static_cast<int>(description.blend))
-        +":"+std::to_string(static_cast<int>(description.colorFormat))+":root:"+rootHash+":triangle-list:cull-none:one-sample:d32-if-depth:v1");
+        +":"+std::to_string(static_cast<int>(description.colorFormat))+":root:"+rootHash+":triangle-list:cull-none:one-sample:d32-if-depth:v1"
+        +(surface?":material:"+std::to_string(description.materialLayoutVersion)+":alpha:"+std::to_string(static_cast<unsigned>(description.alphaMode)):std::string{})
+        +(description.shadingLayoutVersion?":shading:"+std::to_string(description.shadingLayoutVersion):std::string{}));
     if(key.empty())return {};
     const std::wstring libraryName(key.begin(),key.end());
     if(description.cachePrepared){const auto found=p.pipelines.find(key);if(found!=p.pipelines.end())if(auto cached=found->second.lock()){++p.stats.pipelineHits;return cached;}}
     ++p.stats.pipelineMisses;
     auto prepared=std::make_shared<D3D12PreparedPipeline>();prepared->program=std::move(program);prepared->key=key;
+    prepared->materialRootParameter=materialRootParameter;prepared->alphaMode=description.alphaMode;
+    prepared->shadingFrameParameter=shadingFrameParameter;prepared->shadingMaterialParameter=shadingMaterialParameter;prepared->shadingTexturesParameter=shadingTexturesParameter;
     prepared->depth=depth;prepared->blend=description.blend;prepared->colorFormat=description.colorFormat;
     if(!CheckGraphicsResult(p.device->CreateRootSignature(0,serialized->GetBufferPointer(),serialized->GetBufferSize(),IID_PPV_ARGS(prepared->rootSignature.GetAddressOf())),text,"D3D12.CreateRootSignatureFailed"))return {};
     ++p.stats.rootCreations;
@@ -245,24 +288,32 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
         {"POSITION",0,DXGI_FORMAT_R32G32_FLOAT,0,offsetof(se::GuiVertex,position),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
         {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,offsetof(se::GuiVertex,uv),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
         {"COLOR",0,DXGI_FORMAT_R8G8B8A8_UNORM,0,offsetof(se::GuiVertex,color),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}};
+    const D3D12_INPUT_ELEMENT_DESC surfaceDepthInputs[]{
+        {"POSITION",0,compressed?DXGI_FORMAT_R16G16B16A16_UNORM:DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"TEXCOORD",0,compressed?DXGI_FORMAT_R16G16_FLOAT:DXGI_FORMAT_R32G32_FLOAT,0,compressed?8u:24u,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"JOINTS",0,DXGI_FORMAT_R16G16B16A16_UINT,0,48,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"WEIGHTS",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,64,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}};
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline{};pipeline.pRootSignature=prepared->rootSignature.Get();
     pipeline.VS={prepared->program->vertex->GetBufferPointer(),prepared->program->vertex->GetBufferSize()};
     pipeline.PS={prepared->program->pixel->GetBufferPointer(),prepared->program->pixel->GetBufferSize()};
-    if(depthOnly)pipeline.PS={};
+    if(depthOnly&&!surfaceDepth)pipeline.PS={};
     auto& blend=pipeline.BlendState.RenderTarget[0];blend.BlendEnable=description.blend==rhi::BlendMode::Alpha;
     blend.SrcBlend=blend.BlendEnable?D3D12_BLEND_SRC_ALPHA:D3D12_BLEND_ONE;blend.DestBlend=blend.BlendEnable?D3D12_BLEND_INV_SRC_ALPHA:D3D12_BLEND_ZERO;
     blend.SrcBlendAlpha=D3D12_BLEND_ONE;blend.DestBlendAlpha=blend.BlendEnable?D3D12_BLEND_INV_SRC_ALPHA:D3D12_BLEND_ZERO;
     blend.BlendOp=blend.BlendOpAlpha=D3D12_BLEND_OP_ADD;blend.LogicOp=D3D12_LOGIC_OP_NOOP;blend.RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
     pipeline.SampleMask=UINT_MAX;pipeline.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID;pipeline.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;pipeline.RasterizerState.DepthClipEnable=TRUE;
-    pipeline.RasterizerState.FrontCounterClockwise=pbr?TRUE:FALSE;
+    pipeline.RasterizerState.FrontCounterClockwise=pbr||surfaceDepth?TRUE:FALSE;
     pipeline.DepthStencilState.DepthEnable=depth!=rhi::DepthMode::Disabled;
     pipeline.DepthStencilState.DepthWriteMask=depth==rhi::DepthMode::ReadWriteLess?D3D12_DEPTH_WRITE_MASK_ALL:D3D12_DEPTH_WRITE_MASK_ZERO;
-    pipeline.DepthStencilState.DepthFunc=depth==rhi::DepthMode::ReadOnlyLessEqual?D3D12_COMPARISON_FUNC_LESS_EQUAL:depth==rhi::DepthMode::ReadWriteLess?D3D12_COMPARISON_FUNC_LESS:D3D12_COMPARISON_FUNC_ALWAYS;
+    pipeline.DepthStencilState.DepthFunc=depth==rhi::DepthMode::ReadOnlyEqual?D3D12_COMPARISON_FUNC_EQUAL:depth==rhi::DepthMode::ReadOnlyLessEqual?D3D12_COMPARISON_FUNC_LESS_EQUAL:depth==rhi::DepthMode::ReadWriteLess?D3D12_COMPARISON_FUNC_LESS:D3D12_COMPARISON_FUNC_ALWAYS;
     pipeline.DepthStencilState.FrontFace=pipeline.DepthStencilState.BackFace={D3D12_STENCIL_OP_KEEP,D3D12_STENCIL_OP_KEEP,D3D12_STENCIL_OP_KEEP,D3D12_COMPARISON_FUNC_ALWAYS};
     pipeline.InputLayout=fullscreen?D3D12_INPUT_LAYOUT_DESC{}:depthOnly?(skinned?D3D12_INPUT_LAYOUT_DESC{skinnedDepthInputs,3}:compressed?D3D12_INPUT_LAYOUT_DESC{compressedInputs,1}:D3D12_INPUT_LAYOUT_DESC{meshInputs,1}):mesh?(skinned?D3D12_INPUT_LAYOUT_DESC{skinnedInputs,6}:compressed?D3D12_INPUT_LAYOUT_DESC{compressedInputs,4}:D3D12_INPUT_LAYOUT_DESC{meshInputs,pbr?4u:3u}):D3D12_INPUT_LAYOUT_DESC{triangleInputs,2};pipeline.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    if(surfaceDepth)pipeline.InputLayout={surfaceDepthInputs,skinned?4u:2u};
     if(gui)pipeline.InputLayout={guiInputs,3};
     pipeline.NumRenderTargets=depthOnly?0:1;pipeline.RTVFormats[0]=depthOnly?DXGI_FORMAT_UNKNOWN:description.colorFormat==rhi::ColorFormat::Rgba8Unorm?DXGI_FORMAT_R8G8B8A8_UNORM:description.colorFormat==rhi::ColorFormat::Rgba8Srgb?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R16G16B16A16_FLOAT;
     pipeline.DSVFormat=mesh||pipeline.DepthStencilState.DepthEnable?DXGI_FORMAT_D32_FLOAT:DXGI_FORMAT_UNKNOWN;pipeline.SampleDesc={1,0};
+    if(pipeline.InputLayout.NumElements)prepared->inputElements.assign(pipeline.InputLayout.pInputElementDescs,pipeline.InputLayout.pInputElementDescs+pipeline.InputLayout.NumElements);
+    prepared->description=pipeline;prepared->description.InputLayout={prepared->inputElements.data(),static_cast<UINT>(prepared->inputElements.size())};
     // G02.04：本机 Release 实测受光照/阴影/环境的 HDR 管线库条目经 LoadGraphicsPipeline
     // 加载后，即使 GetCachedBlob 与新建 PSO 完全一致，也会使后续采样错 1 像素。
     // 这些 kind 跳过库加载并新建 PSO；其余 kind 继续命中持久库。
@@ -270,7 +321,7 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     // 79/118/154，重新创建为正确的 20/46/82。保留进程内缓存，GUI 不读写持久库。
     // ToneMap 同样在历史库中复现边缘像素 161/期望 163；独立冷库和新库复用均正确。
     // 不复用这个不可信条目，保留源码/字节码缓存和进程内 PSO 共享。
-    const bool libraryLoadAllowed=description.kind!=rhi::PipelineKind::ShadowedMesh
+    const bool libraryLoadAllowed=!rhi::IsClustered(description.kind)&&!rhi::IsCascaded(description.kind)&&description.kind!=rhi::PipelineKind::ShadowedMesh
         &&description.kind!=rhi::PipelineKind::EnvironmentMesh
         &&description.kind!=rhi::PipelineKind::EnvironmentSky
         &&description.kind!=rhi::PipelineKind::Gui

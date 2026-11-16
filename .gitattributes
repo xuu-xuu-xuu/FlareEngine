@@ -1,0 +1,2 @@
+# Preserve the bytes recorded in the pinned LTC source manifest on every checkout.
+ThirdParty/LtcReference/** -text

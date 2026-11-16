@@ -1,6 +1,7 @@
 #include "SceneInspector.h"
 #include "FeatureInspector.h"
 #include "EditorSession.h"
+#include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
 #include "ResourceLayer/Assets/AssetIO.h"
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <cmath>
 #include <sstream>
 
@@ -139,6 +141,16 @@ void AppendSceneInspector(const EditorSession& session, const AssetStore& assets
             add("mesh.receivesShadow","Property.Mesh.ReceivesShadow",EditorPropertyType::Boolean,mesh->receivesShadow?"true":"false","Component.Mesh");
         }
         AppendFeatureInspector(session,text,id,rows);
+        for(auto& field:rows)
+        {
+            if(field.key=="mesh.asset"||field.key=="actor.asset"){
+                field.type=EditorPropertyType::Combo;
+                if(field.value.empty())field.displayValue=text.GetText("EditorUi.None");
+                else if(field.displayValue.empty()){
+                    auto source=assets.Resolve(field.value);
+                    field.displayValue=source.empty()?field.value:asset_io::Utf8(source.filename());}
+            }else if(field.key=="actor.clip")field.type=EditorPropertyType::Combo;
+        }
         add("stableId", "EditorUi.StableId", EditorPropertyType::String, std::to_string(id),
             "EditorUi.ObjectDetails", true).readOnly = true;
         auto component = [&](const char* key, const char* title) {
@@ -153,6 +165,39 @@ void AppendSceneInspector(const EditorSession& session, const AssetStore& assets
         "EditorUi.SceneEnvironment", id != 0);
     add("environment.preserveTime", "EditorUi.TodPreserveTime", EditorPropertyType::Boolean,
         settings.preserveTime ? "true" : "false", "EditorUi.SceneEnvironment", id != 0);
+}
+
+std::string FillSceneInspectorChoices(const EditorSession& session,AssetStore& assets,const Localization& text,
+                                      std::uint64_t id,ui::editor::EditorProperty& field)
+{
+    if(field.key=="mesh.asset"||field.key=="actor.asset")
+    {
+        const bool mesh=field.key=="mesh.asset";
+        field.options={""};field.optionLabels={text.GetText("EditorUi.None")};
+        if(mesh){field.options.insert(field.options.end(),{BuiltinCubeAssetId,BuiltinSphereAssetId});
+            field.optionLabels.insert(field.optionLabels.end(),{text.GetText("EditorUi.BuiltinCube"),text.GetText("EditorUi.BuiltinSphere")});}
+        std::vector<std::pair<std::string,AssetId>> entries;
+        for(const auto& asset:assets.ListIds()){
+            const auto path=assets.Resolve(asset);auto ext=asset_io::Utf8(path.extension());
+            std::transform(ext.begin(),ext.end(),ext.begin(),[](unsigned char ch){return char(std::tolower(ch));});
+            if(ext==".glb"||ext==".gltf"||(mesh&&ext==".fbx"))
+                entries.emplace_back(asset_io::Utf8(path.lexically_relative(assets.SourceRoot())),asset);}
+        std::sort(entries.begin(),entries.end());
+        for(const auto& [label,asset]:entries){field.options.push_back(asset);field.optionLabels.push_back(label);}
+    }
+    else if(field.key=="actor.clip")
+    {
+        const auto& world=session.EditWorld();const auto entity=world.FindByStableId(id);
+        if(!entity)return text.GetText("EditorUi.AnimationChooseModel");
+        const auto asset=std::get<std::string>(FeatureValue(world,entity,"actor.asset"));
+        if(asset.empty())return text.GetText("EditorUi.AnimationChooseModel");
+        std::vector<AssetDiagnostic> diagnostics;auto model=assets.LoadModel(asset,diagnostics);
+        if(!model)return text.GetText("EditorUi.AnimationModelUnavailable");
+        for(const auto& clip:model->animations)
+            if(!clip.name.empty()&&std::find(field.options.begin(),field.options.end(),clip.name)==field.options.end())field.options.push_back(clip.name);
+        if(field.options.empty())return text.GetText("EditorUi.AnimationNoClips");
+    }
+    return {};
 }
 
 bool ApplySceneInspector(EditorSession& session, std::uint64_t id, const std::string& key, const std::string& value)

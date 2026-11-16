@@ -1128,7 +1128,8 @@ void ImGuiEditor::MaterialEditor(EditorSession& editor,AssetStore& assets,const 
                 {assetDiagnostics_.clear();if(assets.LoadTextureImage(asset,assetDiagnostics_)){if(!material_.SetProperty(property,asset))errorKey_=material_.LastError();}else errorKey_="Assets.ImageDecodeFailed";}
                 ImGui::SameLine();if(ImGui::Button(Label(text,"EditorUi.ClearTexture").c_str()))material_.SetProperty(property,std::string{});ImGui::PopID();
             };
-            textureRow("material.baseColorTexture");textureRow("material.normalTexture");textureRow("material.metallicRoughnessTexture");
+            for(const auto& field:MaterialProperties())if(field.type==PropertyType::AssetId&&field.key!="material.shader")
+            {const std::string key(field.key);textureRow(key.c_str());}
             const auto shaderRow=[&]
             {
                 const auto* field=FindMaterialProperty("material.shader");PropertyValue value;std::string error;

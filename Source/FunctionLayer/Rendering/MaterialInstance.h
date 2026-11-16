@@ -25,6 +25,7 @@ inline std::uint32_t FeatureMaskFor(const PbrRenderMaterial& material) noexcept
     if(material.normal)mask|=MaterialFeatureMask(MaterialFeature::NormalMap);
     if(material.metallicRoughness)mask|=MaterialFeatureMask(MaterialFeature::MetallicRoughnessMap);
     if(material.doubleSided)mask|=MaterialFeatureMask(MaterialFeature::DoubleSided);
+    if(material.alphaMode==MaterialAlphaMode::Mask)mask|=MaterialFeatureMask(MaterialFeature::AlphaTest);
     return mask;
 }
 

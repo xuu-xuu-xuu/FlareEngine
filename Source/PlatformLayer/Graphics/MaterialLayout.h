@@ -5,6 +5,22 @@
 namespace se::rhi
 {
 inline constexpr std::uint32_t MaterialLayoutVersion=1,MaterialConstantAlignment=256;
+// RG104-15：独立几何输入格式；不替换绑定布局或 38 号材质 b4。
+inline constexpr std::uint32_t DepthNormalLayoutVersion=39;
+inline constexpr std::uint32_t ShadingExtensionLayoutVersion=40;
+struct alignas(16) ShadingFrameConstants
+{
+    Vec4 modes{},viewport{},probeOrigin{},probeSpacing{},probeDimensions{};
+    std::array<Vec4,9> globalSh{};
+    std::array<Vec4,4> rectCenter{},rectHalfU{},rectHalfV{},rectRadiance{};
+};
+struct alignas(16) ShadingMaterialConstants
+{
+    Vec4 coat{},sheen{},anisotropy{},subsurface{},subsurfaceColor{},textureFlags{};
+};
+static_assert(sizeof(ShadingFrameConstants)==480&&offsetof(ShadingFrameConstants,globalSh)==80);
+static_assert(offsetof(ShadingFrameConstants,rectCenter)==224&&offsetof(ShadingFrameConstants,rectRadiance)==416);
+static_assert(sizeof(ShadingMaterialConstants)==96&&offsetof(ShadingMaterialConstants,textureFlags)==80);
 inline constexpr std::uint32_t PbrMaterialLayoutVersion=2,PbrConstantStride=512;
 inline constexpr std::uint32_t ForwardLayoutVersion=3,MaximumPointLights=8;
 inline constexpr std::uint32_t ShadowLayoutVersion=4;
@@ -73,7 +89,8 @@ struct alignas(16) PbrDrawConstants
     Vec4 baseColor,cameraPosition,directionToLight,radiance,parameters,options;
     // W06：外观覆盖。x=模式（0 基础色/1 白模/2 Toon），y=混合，z=Toon 分档数，w=轮廓/边缘强度。
     Vec4 look;
-    // W03：蒙皮调色板。x=调色板字节偏移，y=关节数，zw 保留；空 buffer 时静态绘制。
+    // W03：xy 为蒙皮调色板偏移/关节数；RG104：原保留 zw 为 IBL 多散射/法线高光 AA。
+    // 零值兼容旧 shader；不改变布局/偏移，shader 内容摘要使产物缓存失效。
     Vec4 skin;
 };
 static_assert(sizeof(PbrDrawConstants)==320&&alignof(PbrDrawConstants)==16);
@@ -109,6 +126,63 @@ inline constexpr std::uint32_t ToneMapLayoutVersion=ExposureColorLayoutVersion;
 // 之外追加 VS 的 t8 ByteAddressBuffer 调色板；阴影深度只用 b0 + t8。
 // 与 4 号 ShadowLayoutVersion / 3 号 ForwardLayoutVersion 不兼容，因此单独占用 31。
 inline constexpr std::uint32_t SkinnedLayoutVersion=31;
+// G08：22 是静态 CSM；32 保留相同帧常量并附加 t8 蒙皮，旧 31 不变。
+inline constexpr std::uint32_t SkinnedCascadedLayoutVersion=32;
+struct alignas(16) CascadedShadowFrameConstants
+{
+    ForwardFrameConstants lights;
+    std::array<Mat4,3> clipFromWorld;
+    Vec4 splits; // xyz 为级端点，w 为 near。
+    Vec4 viewDepth; // 世界位置到正视深的平面方程。
+    Vec4 parameters; // inverseResolution、depthBias、slopeBias、normalBias。
+    Vec4 options; // cascadeCount、blendFraction、debug、保留。
+    Vec4 environment;
+};
+static_assert(sizeof(CascadedShadowFrameConstants)==592);
+static_assert(offsetof(CascadedShadowFrameConstants,clipFromWorld)==320);
+static_assert(offsetof(CascadedShadowFrameConstants,splits)==512);
+static_assert(offsetof(CascadedShadowFrameConstants,viewDepth)==528);
+static_assert(offsetof(CascadedShadowFrameConstants,parameters)==544);
+static_assert(offsetof(CascadedShadowFrameConstants,options)==560);
+static_assert(offsetof(CascadedShadowFrameConstants,environment)==576);
+
+inline constexpr std::uint32_t SkinnedClusteredLayoutVersion=33;
+// G08.02：独立 b3 阴影过滤常量，不改变既有 CSM/Forward+ 的 b1 或根签名。
+inline constexpr std::uint32_t CascadedShadowFilterLayoutVersion=34;
+inline constexpr std::uint32_t SkinnedCascadedShadowFilterLayoutVersion=35;
+inline constexpr std::uint32_t ClusteredShadowFilterLayoutVersion=36;
+inline constexpr std::uint32_t SkinnedClusteredShadowFilterLayoutVersion=37;
+// 05：独立的材质覆盖 schema，与 base bindingLayoutVersion 正交组合，避免组合号爆炸。
+inline constexpr std::uint32_t MaterialSurfaceLayoutVersion=38;
+struct alignas(16) MaterialSurfaceConstants
+{
+    Vec4 baseColorFactor; // 来自唯一 CPU RGBA 因子 DrawIndexed.tint。
+    Vec4 coverage; // cutoff、MaterialAlphaMode、doubleSided、世界矩阵行列式符号。
+};
+static_assert(sizeof(MaterialSurfaceConstants)==32&&alignof(MaterialSurfaceConstants)==16);
+static_assert(offsetof(MaterialSurfaceConstants,coverage)==16);
+
+struct alignas(16) ShadowFilterConstants
+{
+    Vec4 parameters; // tan(角半径)、搜索世界距离、最大半径 texel、启用。
+    Vec4 options; // debug 模式（0 正常、1 visibility、2 世界半径/距离/命中比）、保留。
+    std::array<Vec4,3> cascadeMetrics; // 世界深度跨度、每 texel 的世界 XY 尺度、保留。
+};
+static_assert(sizeof(ShadowFilterConstants)==80&&alignof(ShadowFilterConstants)==16);
+static_assert(offsetof(ShadowFilterConstants,options)==16&&offsetof(ShadowFilterConstants,cascadeMetrics)==32);
+
+struct alignas(16) ClusteredFrameConstants
+{
+    CascadedShadowFrameConstants shadow;
+    Mat4 view,projection,inverseProjection;
+    Vec4 clusterParameters; // near,far,lightCount,capacity
+    Vec4 clusterViewport; // 实际光栅宽高及倒数，包含空间采样倍数。
+    Vec4 clusterModes; // debug,bruteForce,保留。
+};
+static_assert(sizeof(ClusteredFrameConstants)==832);
+static_assert(offsetof(ClusteredFrameConstants,view)==592&&offsetof(ClusteredFrameConstants,projection)==656);
+static_assert(offsetof(ClusteredFrameConstants,inverseProjection)==720&&offsetof(ClusteredFrameConstants,clusterParameters)==784);
+static_assert(offsetof(ClusteredFrameConstants,clusterViewport)==800&&offsetof(ClusteredFrameConstants,clusterModes)==816);
 
 struct LayoutVersionRecord
 {
@@ -121,8 +195,8 @@ struct LayoutVersionRecord
 inline constexpr LayoutVersionRecord GSeriesLayoutVersions[] =
 {
     {VertexCompressedLayoutVersion,"G03","position/normal/uv/tangent 压缩布局",0},
-    {ClusteredForwardLayoutVersion,"G09","cluster 网格、灯光索引与范围",0},
-    {CascadedShadowLayoutVersion,"G08","级联矩阵、分割与混合参数",0},
+    {ClusteredForwardLayoutVersion,"G09","32B点光/uint32索引/固定集群，b1=832B",832},
+    {CascadedShadowLayoutVersion,"G08","三级矩阵、分割/视深/混合/环境（b1）",592},
     {AtmosphereLayoutVersion,"G11","大气 LUT 与太阳参数",0},
     {AmbientOcclusionLayoutVersion,"G10","AO 半径、深度重建与升采样参数",0},
     {VolumetricFogLayoutVersion,"G11","雾密度、风与光线步进参数",0},
@@ -132,5 +206,14 @@ inline constexpr LayoutVersionRecord GSeriesLayoutVersions[] =
     {OutputLutLayoutVersion,"G15","输出 LUT strip（t0 场景/t1 阴影/t2 33³，Rgba8 或 Rgba16F）",0},
     {ForwardInstancingLayoutVersion,"G06","Forward 实例化（b0/纹理表/b1/实例 SRV）",0},
     {SkinnedLayoutVersion,"W03","蒙皮调色板（受光：b0/纹理表/b1/t8；阴影深度：b0/t8）",0},
+    {SkinnedCascadedLayoutVersion,"G08/W03","CSM 帧常量与 t8 蒙皮调色板",592},
+    {SkinnedClusteredLayoutVersion,"G09/W03","集群帧常量及 t8 蒙皮",832},
+    {CascadedShadowFilterLayoutVersion,"G08.02","CSM b1 保持592B，追加80B过滤b3",80},
+    {SkinnedCascadedShadowFilterLayoutVersion,"G08.02/W03","CSM蒙皮追加80B过滤b3",80},
+    {ClusteredShadowFilterLayoutVersion,"G08.02/G09","集群b1保持832B，追加80B过滤b3",80},
+    {SkinnedClusteredShadowFilterLayoutVersion,"G08.02/G09/W03","集群蒙皮追加80B过滤b3",80},
+    {MaterialSurfaceLayoutVersion,"RG104-05/15","独立材质覆盖b4：RGBA因子/cutoff/mode/doubleSided",32},
+    {DepthNormalLayoutVersion,"RG104-15/G10","独立 D32 + RG16F 世界几何法线 oct（每像素8B，非CB）",8},
+    {ShadingExtensionLayoutVersion,"RG104-08/09/10/11/12","独立光照扩展 b5=480B/b6=96B/t13..24，覆盖38正交",480},
 };
 }

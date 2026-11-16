@@ -65,21 +65,24 @@ bool PrepareD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const
     auto& targets=*p.post;
     if(frame.postDescriptors.Maximum()!=20&&!frame.postDescriptors.Configure(20,20))return false;
     const auto& settings=*content.post;
-    // G14：首次启用 TAA 时创建速度/历史资源；关闭 TAA 不产生任何 GPU 工作。
-    if(settings.taa&&!targets.taaKernel)
+    // 透明帧在真实几何尺寸上先解析纯不透明历史；普通旧帧保留原后处理阶段的历史路径。
+    const bool hasTransparent=content.opaqueDrawCount<content.meshes.size();
+    if(settings.taa)
     {
-        auto kernel=std::make_shared<D3D12Taa>();
-        const auto shaders=content.postPipelines[2]->prepared->program->source.path.parent_path();
-        if(FAILED(kernel->Initialize(*device.Get(),*p.memory,shaders,text))
-            ||FAILED(kernel->CreateOutput(*hdrResource,*depthResource,width,height,targets.taa)))
-        {CheckGraphicsResult(E_FAIL,text,"D3D12.TaaInputsInvalid");return false;}
-        if(!CheckGraphicsResult(p.srvPool->Allocate(2,targets.taaSrvs),text,"D3D12.DescriptorCapacityExceeded"))return false;
-        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
-        view.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
-        view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;view.Texture2D={0,1,0,0};
-        for(UINT index=0;index<2;++index)
-            device->CreateShaderResourceView(targets.taa.historyColor[index].Get(),&view,targets.taaSrvs->Cpu(index));
-        targets.taaKernel=std::move(kernel);
+        if(!targets.taaKernel)
+        {
+            auto kernel=std::make_shared<D3D12Taa>();const auto shaders=content.postPipelines[2]->prepared->program->source.path.parent_path();
+            if(FAILED(kernel->Initialize(*device.Get(),*p.memory,shaders,text)))return CheckGraphicsResult(E_FAIL,text,"D3D12.TaaInputsInvalid");
+            targets.taaKernel=std::move(kernel);
+        }
+        if(!hasTransparent&&!targets.taa.velocity)
+        {
+            if(FAILED(targets.taaKernel->CreateOutput(*hdrResource,*depthResource,width,height,targets.taa)))return CheckGraphicsResult(E_FAIL,text,"D3D12.TaaInputsInvalid");
+            if(!CheckGraphicsResult(p.srvPool->Allocate(2,targets.taaSrvs),text,"D3D12.DescriptorCapacityExceeded"))return false;
+            D3D12_SHADER_RESOURCE_VIEW_DESC view{};view.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
+            view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;view.Texture2D={0,1,0,0};
+            for(UINT index=0;index<2;++index)device->CreateShaderResourceView(targets.taa.historyColor[index].Get(),&view,targets.taaSrvs->Cpu(index));
+        }
     }
     bool lutChanged=false;
     for(size_t index=0;index<3;++index)
@@ -107,7 +110,7 @@ bool PrepareD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const
     const auto a=targets.bloom[0].srv->Cpu(),b=targets.bloom[1].srv->Cpu(),ldr=targets.ldr.srv->Cpu();
     const UINT nextExposure=1-targets.exposure.exposureIndex;
     const auto exposureSrv=targets.exposureSrvs->Cpu(nextExposure),lutSrv=targets.exposureSrvs->Cpu(2);
-    const bool taa=settings.taa&&targets.taaKernel;
+    const bool taa=settings.taa&&targets.taaKernel&&!hasTransparent;
     const auto sceneColor=taa?targets.taaSrvs->Cpu(1-targets.taa.historyIndex):hdr;
     // 每个后处理 Pass 的绑定表固定 4 槽：前两个沿用旧语义，t2/t3 只由 ToneMap 采样。
     const D3D12_CPU_DESCRIPTOR_HANDLE sources[]{
@@ -135,18 +138,19 @@ bool RecordD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const 
     };
     // G14：速度 Pass 复用主场景深度；解析写历史 ping-pong，ToneMap/Bloom 改读解析结果。
     ID3D12Resource* sceneColor=hdrResource;
-    if(settings.taa&&targets.taaKernel)
+    if(settings.taa&&targets.taaKernel&&!frame.opaqueTemporalResolved)
     {
         if(!CheckGraphicsResult(targets.taaKernel->RecordVelocity(commands,states,targets.taa,content.meshes,
-            content.viewProjection,*depthResource),text,"D3D12.TaaRecordFailed"))return false;
+            content.viewProjection,settings.taaCurrentClipFromWorld,settings.taaPreviousClipFromWorld,*depthResource),text,"D3D12.TaaRecordFailed"))return false;
         D3D12TaaParameters parameters;
         parameters.staticBlend=settings.taaStaticBlend;parameters.dynamicBlend=settings.taaDynamicBlend;
         parameters.depthThreshold=settings.taaDepthThreshold;parameters.velocityThreshold=settings.taaVelocityThreshold;
         parameters.sharpen=settings.taaSharpen;
-        parameters.historyValid=(settings.taaHistoryValid&&targets.taa.frames>0)?1.0f:0.0f;
+        parameters.historyValid=(settings.taaHistoryValid&&targets.taa.frames>0&&targets.taaLastSubmission==p.submittedFrames)?1.0f:0.0f;
         if(!CheckGraphicsResult(targets.taaKernel->Resolve(commands,states,targets.taa,*hdrResource,*depthResource,parameters),
             text,"D3D12.TaaRecordFailed"))return false;
         sceneColor=targets.taa.historyColor[targets.taa.historyIndex].Get();
+        targets.taaLastSubmission=p.submittedFrames+1;
     }
     // G15：直方图只读一次 HDR；适应写 1×1 曝光；LUT 只在参数变化时重建。
     // 此处结束时本次写入的曝光纹理已处于 PIXEL_SHADER_RESOURCE，供下面的 ToneMap 采样。
@@ -210,4 +214,36 @@ bool RecordD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const 
         }
     }
     stamp(5,true);return true;
+}
+
+bool PrepareD3D12OpaqueTemporal(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,
+    ID3D12Resource& color,ID3D12Resource& depth,UINT width,UINT height,const Localization& text)
+{
+    if(!content.post||!content.post->taa||content.opaqueDrawCount>=content.meshes.size())return true;
+    if(!frame.post||!frame.post->taaKernel)return false;
+    if(!p.opaqueTemporal||p.opaqueTemporal->color.Get()!=&color||p.opaqueTemporal->depth.Get()!=&depth)
+    {
+        auto next=std::make_shared<D3D12OpaqueTemporal>();next->color=&color;next->depth=&depth;
+        if(!CheckGraphicsResult(frame.post->taaKernel->CreateOutput(color,depth,width,height,next->history),text,"D3D12.TaaInputsInvalid"))return false;
+        p.opaqueTemporal=std::move(next);
+    }
+    frame.opaqueTemporal=p.opaqueTemporal;return true;
+}
+bool RecordD3D12OpaqueTemporal(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,
+    std::span<const D3D12MeshDraw> opaque,ID3D12Resource& color,ID3D12Resource& depth,D3D12StateRecording& states,const Localization& text)
+{
+    if(!content.post||!content.post->taa)return true;
+    if(!frame.opaqueTemporal||!frame.post||!frame.post->taaKernel)return false;
+    auto& temporal=*frame.opaqueTemporal;auto& commands=*p.commandList.Get();const auto& settings=*content.post;
+    if(!CheckGraphicsResult(frame.post->taaKernel->RecordVelocity(commands,states,temporal.history,opaque,
+        content.viewProjection,settings.taaCurrentClipFromWorld,settings.taaPreviousClipFromWorld,depth),text,"D3D12.TaaRecordFailed"))return false;
+    D3D12TaaParameters parameters;parameters.staticBlend=settings.taaStaticBlend;parameters.dynamicBlend=settings.taaDynamicBlend;
+    parameters.depthThreshold=settings.taaDepthThreshold;parameters.velocityThreshold=settings.taaVelocityThreshold;parameters.sharpen=settings.taaSharpen;
+    parameters.historyValid=settings.taaHistoryValid&&temporal.history.frames>0&&temporal.lastSubmission==p.submittedFrames?1.f:0.f;
+    if(!CheckGraphicsResult(frame.post->taaKernel->Resolve(commands,states,temporal.history,color,depth,parameters),text,"D3D12.TaaRecordFailed"))return false;
+    auto& history=*temporal.history.historyColor[temporal.history.historyIndex].Get();
+    if(!CheckGraphicsResult(states.Use(commands,history,D3D12_RESOURCE_STATE_COPY_SOURCE,"OpaqueTemporal.CopySource"),text,"D3D12.StateTrackingFailed")
+        ||!CheckGraphicsResult(states.Use(commands,color,D3D12_RESOURCE_STATE_COPY_DEST,"OpaqueTemporal.CopyTarget"),text,"D3D12.StateTrackingFailed"))return false;
+    // 历史保留纯不透明颜色；只把解析结果复制到当前几何目标，透明不会写回历史。
+    commands.CopyResource(&color,&history);temporal.lastSubmission=p.submittedFrames+1;frame.opaqueTemporalResolved=true;return true;
 }

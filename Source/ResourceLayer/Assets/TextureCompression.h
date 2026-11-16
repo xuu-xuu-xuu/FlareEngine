@@ -45,4 +45,11 @@ bool CompressBc4(std::span<const std::uint8_t> rgba8,std::uint32_t width,std::ui
 void DecodeBc4(const Bc4Image& image,std::vector<std::uint8_t>& rgba8); // 写 R，G/B=0、A=255。
 bool CompressBc4MipChain(std::span<const std::uint8_t> rgba8,std::uint32_t width,std::uint32_t height,
     std::uint32_t levels,std::vector<Bc4Image>& output,std::string& error);
+
+// BC7离线编码器：确定性比较mode5（独立alpha）/mode6（RGBA线段），不是全8模式搜索。
+// 遵循DXGI标准块；解码参考仅接受本编码器使用的mode5/6，其它模式明确失败。
+struct Bc7Image {std::uint32_t width=0,height=0;std::vector<std::uint8_t> blocks;};
+bool CompressBc7(std::span<const std::uint8_t> rgba8,std::uint32_t width,std::uint32_t height,
+    Bc7Image& output,std::string& error);
+bool DecodeBc7Mode56(const Bc7Image& image,std::vector<std::uint8_t>& rgba8,std::string& error);
 }

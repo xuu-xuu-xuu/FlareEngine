@@ -5,6 +5,8 @@ using System.Text;
 
 namespace SelfEngine;
 
+public enum QualityLevel { Project, Performance, Balanced, High }
+
 [StructLayout(LayoutKind.Sequential)]
 public struct Transform
 {
@@ -95,6 +97,19 @@ public sealed unsafe partial class EngineSession : IDisposable
     // 固定回放尺寸；0x0 清除。只在窗口运行前配置。
     public void SetWindowResolution(uint width,uint height)
         => Invoke(value=>{Check(NativeMethods.SetWindowResolution(value,width,height));return 0;});
+    public void ConfigurePlayerQuality(string gameId,bool showMenu=true,string? profilesJson=null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(gameId);
+        var key=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(gameId)));
+        var file=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"FlareEngine","Players",key,"quality.txt");
+        var profiles=profilesJson??"{}";
+        Invoke(value=>{Check(NativeMethods.ConfigureQualityProfiles(value,profiles,checked((uint)Encoding.UTF8.GetByteCount(profiles))));Check(NativeMethods.ConfigureQuality(value,file,checked((uint)Encoding.UTF8.GetByteCount(file)),showMenu?1:0));return 0;});
+    }
+    public QualityLevel PlayerQuality
+    {
+        get=>Invoke(value=>{Check(NativeMethods.PlayerQuality(value,-1,out int current));return (QualityLevel)current;});
+        set=>Invoke(native=>{if(!Enum.IsDefined(value))throw new ArgumentOutOfRangeException(nameof(value));Check(NativeMethods.PlayerQuality(native,(int)value,out _));return 0;});
+    }
     // 固定步长（秒）；0 清除。序列抓帧缺省 1/30 秒。
     public void SetWindowFixedStep(double seconds)
         => Invoke(value=>{Check(NativeMethods.SetWindowFixedStep(value,seconds));return 0;});

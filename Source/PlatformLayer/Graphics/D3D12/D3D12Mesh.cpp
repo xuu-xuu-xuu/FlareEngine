@@ -100,7 +100,7 @@ bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3
     // 同批绘制必须同 pass 类别；Pipeline 可以按材质不同，但类别、颜色格式与实例化模式必须一致。
     const auto defaultKind=pipeline.prepared->program->source.kind;
     const bool defaultShadowed=se::rhi::IsShadowed(defaultKind);
-    const bool defaultEnvironment=defaultKind==se::rhi::PipelineKind::EnvironmentMesh;
+    const bool defaultEnvironment=se::rhi::IsEnvironment(defaultKind);
     size_t instanceCount=0;
     for(const auto& draw:draws)
     {
@@ -108,8 +108,14 @@ bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3
         if(!active.rootSignature||!active.pipeline||!active.prepared
             ||se::rhi::IsForward(active.prepared->program->source.kind)!=defaultForward
             ||se::rhi::IsShadowed(active.prepared->program->source.kind)!=defaultShadowed
-            ||(active.prepared->program->source.kind==se::rhi::PipelineKind::EnvironmentMesh)!=defaultEnvironment
+            ||se::rhi::IsCascaded(active.prepared->program->source.kind)!=se::rhi::IsCascaded(defaultKind)
+            ||se::rhi::IsClustered(active.prepared->program->source.kind)!=se::rhi::IsClustered(defaultKind)
+            ||se::rhi::IsShadowFilterLayout(active.prepared->program->source.layoutVersion)!=se::rhi::IsShadowFilterLayout(pipeline.prepared->program->source.layoutVersion)
+            ||se::rhi::IsEnvironment(active.prepared->program->source.kind)!=defaultEnvironment
             ||active.prepared->colorFormat!=(defaultForward?se::rhi::ColorFormat::Rgba16Float:se::rhi::ColorFormat::Rgba8Unorm))
+        {Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;}
+        if(active.prepared->alphaMode!=draw.alphaMode||!se::IsValidMaterialAlphaMode(draw.alphaMode)||!se::IsFinite(draw.alphaCutoff)||draw.alphaCutoff<0
+            ||(draw.alphaMode!=se::MaterialAlphaMode::Opaque&&active.prepared->program->source.materialLayoutVersion!=se::rhi::MaterialSurfaceLayoutVersion))
         {Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;}
         const bool instanced=se::rhi::IsInstanced(active.prepared->program->source.kind);
         const bool instanceDraw=!draw.instances.empty()||(allowEmptyInstanced&&draws.size()==1&&instanced);
@@ -166,7 +172,7 @@ bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3
             const auto validTexture=[](const D3D12Texture& t){return t.resource&&t.views&&t.views->Count()==2&&!t.cube&&t.arrayLayers==1
                 &&(t.format==se::rhi::TextureFormat::Rgba8||t.format==se::rhi::TextureFormat::Bc1Unorm
                     ||t.format==se::rhi::TextureFormat::Bc1UnormSrgb||t.format==se::rhi::TextureFormat::Bc5Unorm
-                    ||t.format==se::rhi::TextureFormat::Bc4Unorm);};
+                    ||t.format==se::rhi::TextureFormat::Bc4Unorm||t.format==se::rhi::TextureFormat::Bc7Unorm||t.format==se::rhi::TextureFormat::Bc7UnormSrgb);};
             if(draw.textureIsData||!validTexture(mesh->pbrTextures[0])||!validTexture(mesh->pbrTextures[1])
                 ||!se::IsFinite(p.cameraPosition)||!se::IsFinite(p.directionToLight)||!se::IsFinite(length)||length<1e-12f||!se::IsFinite(p.radiance)
                 ||p.radiance.x<0||p.radiance.y<0||p.radiance.z<0||p.radiance.x>10000||p.radiance.y>10000||p.radiance.z>10000
@@ -178,10 +184,38 @@ bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3
     return true;
 }
 
+void PrepareD3D12MeshConstants(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
+    const se::Mat4& viewProjection,D3D12FrameContext& frame)
+{
+    for(size_t index=0;index<draws.size();++index)
+    {
+        const auto& draw=draws[index];const auto& program=draw.pipeline?*draw.pipeline:pipeline;const auto& slice=frame.drawConstants[index];
+        std::memset(slice.cpu,0,static_cast<size_t>(slice.size));
+        if(se::rhi::UsesLitLayout(program.prepared->program->source.kind))
+        {
+            const auto& p=draw.pbr;
+            const se::Vec3 x{draw.world(0,0),draw.world(1,0),draw.world(2,0)},y{draw.world(0,1),draw.world(1,1),draw.world(2,1)},z{draw.world(0,2),draw.world(1,2),draw.world(2,2)};
+            const float sign=se::Dot(se::Cross(x,y),z)<0?-1.0f:1.0f;
+            const se::rhi::PbrDrawConstants constants{viewProjection*draw.world,draw.world,se::Transpose(*se::Inverse(draw.world)),draw.tint,
+                {p.cameraPosition.x,p.cameraPosition.y,p.cameraPosition.z,1},{p.directionToLight.x,p.directionToLight.y,p.directionToLight.z,0},
+                {p.radiance.x,p.radiance.y,p.radiance.z,0},{p.metallic,p.roughness,p.normalScale,sign},
+                {p.normalMapping?1.0f:0.0f,draw.unlit?1.0f:0.0f,p.doubleSided?1.0f:0.0f,p.lodDither!=0.0f?p.lodDither:(p.receivesShadow?1.0f:0.0f)},
+                draw.look,{static_cast<float>(draw.skinJointOffset),static_cast<float>(draw.skinJointCount),p.multiscatter?1.f:0.f,p.specularAA?1.f:0.f}};
+            std::memcpy(slice.cpu,&constants,sizeof(constants));
+        }
+        else
+        {
+            const MeshConstants constants{viewProjection*draw.world,se::Transpose(*se::Inverse(draw.world)),draw.tint,
+                {draw.unlit?1.0f:0.0f,draw.impostorView,draw.impostorNext,draw.impostorBlend}};
+            std::memcpy(slice.cpu,&constants,sizeof(constants));
+        }
+    }
+}
 void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
     const se::Mat4& viewProjection,D3D12FrameContext& frame,ID3D12GraphicsCommandList& commands,UINT width,UINT height,
-    bool cacheBindings,se::rhi::DrawBindingStatistics* statistics,std::span<const D3D12IndirectCommand> indirect)
+    bool cacheBindings,se::rhi::DrawBindingStatistics* statistics,std::span<const D3D12IndirectCommand> indirect,UINT firstDraw)
 {
+    (void)viewProjection; // 已在 Prepare 中打包，所有 Pass 只读同一切片。
     se::rhi::DrawBindingStatistics binds;
     const D3D12_VIEWPORT viewport{0,0,float(width),float(height),0,1};
     const D3D12_RECT scissor{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
@@ -193,6 +227,11 @@ void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12Me
         commands.SetGraphicsRootSignature(program.rootSignature.Get());++binds.rootSignatures;
         if(se::rhi::IsForward(program.prepared->program->source.kind))
         {commands.SetGraphicsRootConstantBufferView(2,frame.forwardConstants.Gpu());++binds.constants;}
+        if(se::rhi::IsShadowFilterLayout(program.prepared->program->source.layoutVersion))
+        {
+            const bool cluster=se::rhi::IsClustered(program.prepared->program->source.kind),skin=program.prepared->program->source.skinnedVertex;
+            commands.SetGraphicsRootConstantBufferView(skin?(cluster?6u:5u):(cluster?4u:3u),frame.shadowFilterConstants.Gpu());++binds.constants;
+        }
         commands.RSSetViewports(1,&viewport);commands.RSSetScissorRects(1,&scissor);
         commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     };
@@ -204,29 +243,29 @@ void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12Me
         // 同帧可混合默认/用户 PBR：只有 Pipeline 变化时重设 PSO 与根签名，并强制重绑根参数。
         const auto& program=draw.pipeline?*draw.pipeline:pipeline;
         if(activePipeline!=&program){bindPipeline(program);firstBinding=true;lastTable={};lastVertex={};lastIndex={};}
-        const auto& slice=frame.drawConstants[index++];
-        std::memset(slice.cpu,0,static_cast<size_t>(slice.size));
-        if(se::rhi::UsesLitLayout(program.prepared->program->source.kind))
+        const auto& slice=frame.drawConstants[firstDraw+index++];
+        if(program.prepared->materialRootParameter!=UINT_MAX)
+        {commands.SetGraphicsRootConstantBufferView(program.prepared->materialRootParameter,frame.materialConstants[firstDraw+index-1].Gpu());++binds.constants;}
+        if(program.prepared->shadingFrameParameter!=UINT_MAX)
         {
-            const auto& p=draw.pbr;
-            const se::Vec3 x{draw.world(0,0),draw.world(1,0),draw.world(2,0)},y{draw.world(0,1),draw.world(1,1),draw.world(2,1)},z{draw.world(0,2),draw.world(1,2),draw.world(2,2)};
-            const float sign=se::Dot(se::Cross(x,y),z)<0?-1.0f:1.0f;
-            const se::rhi::PbrDrawConstants constants{viewProjection*draw.world,draw.world,se::Transpose(*se::Inverse(draw.world)),draw.tint,
-                {p.cameraPosition.x,p.cameraPosition.y,p.cameraPosition.z,1},{p.directionToLight.x,p.directionToLight.y,p.directionToLight.z,0},
-                {p.radiance.x,p.radiance.y,p.radiance.z,0},{p.metallic,p.roughness,p.normalScale,sign},
-                {p.normalMapping?1.0f:0.0f,draw.unlit?1.0f:0.0f,p.doubleSided?1.0f:0.0f,p.lodDither!=0.0f?p.lodDither:(p.receivesShadow?1.0f:0.0f)},
-                draw.look,{static_cast<float>(draw.skinJointOffset),static_cast<float>(draw.skinJointCount),0,0}};
-            std::memcpy(slice.cpu,&constants,sizeof(constants));
+            commands.SetGraphicsRootConstantBufferView(program.prepared->shadingFrameParameter,frame.shadingConstants.Gpu());
+            commands.SetGraphicsRootConstantBufferView(program.prepared->shadingMaterialParameter,frame.shadingMaterials[firstDraw+index-1].Gpu());binds.constants+=2;
+            auto table=frame.descriptors.Draw(firstDraw+static_cast<UINT>(index-1));const auto kind=program.prepared->program->source.kind;
+            const UINT materialCount=se::rhi::IsEnvironment(kind)?7:se::rhi::IsShadowed(kind)?4:3;
+            table.ptr+=UINT64(materialCount+(se::rhi::IsClustered(kind)?4:0))*frame.shadingDescriptorIncrement;
+            commands.SetGraphicsRootDescriptorTable(program.prepared->shadingTexturesParameter,table);++binds.descriptorTables;
         }
-        else
+        if(se::rhi::IsClustered(program.prepared->program->source.kind))
         {
-            const MeshConstants constants{viewProjection*draw.world,se::Transpose(*se::Inverse(draw.world)),draw.tint,
-                {draw.unlit?1.0f:0.0f,draw.impostorView,draw.impostorNext,draw.impostorBlend}};
-            std::memcpy(slice.cpu,&constants,sizeof(constants));
+            auto table=frame.descriptors.Draw(firstDraw+static_cast<UINT>(index-1));
+            const auto kind=program.prepared->program->source.kind;
+            const UINT materialCount=se::rhi::IsEnvironment(kind)?7:se::rhi::IsShadowed(kind)?4:3;
+            table.ptr+=UINT64(materialCount)*frame.clusterDescriptorIncrement;
+            commands.SetGraphicsRootDescriptorTable(program.prepared->program->source.skinnedVertex?5:3,table);
         }
         commands.SetGraphicsRootConstantBufferView(0,slice.Gpu());++binds.constants;
         frame.constantCursor+=static_cast<UINT>(slice.size);
-        const auto table=frame.descriptors.Draw(static_cast<UINT>(index-1));const auto& vertex=draw.mesh->vertexView;const auto& indices=draw.mesh->indexView;
+        const auto table=frame.descriptors.Draw(firstDraw+static_cast<UINT>(index-1));const auto& vertex=draw.mesh->vertexView;const auto& indices=draw.mesh->indexView;
         if(!cacheBindings||firstBinding||table.ptr!=lastTable.ptr){commands.SetGraphicsRootDescriptorTable(1,table);++binds.descriptorTables;lastTable=table;}
         if(!cacheBindings||firstBinding||vertex.BufferLocation!=lastVertex.BufferLocation||vertex.SizeInBytes!=lastVertex.SizeInBytes||vertex.StrideInBytes!=lastVertex.StrideInBytes)
         {commands.IASetVertexBuffers(0,1,&vertex);++binds.vertexBuffers;lastVertex=vertex;}
@@ -238,12 +277,12 @@ void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12Me
             // G06.10：Forward 实例化的实例 SRV 在 b1 之后的参数 3；非 Forward 仍在参数 2。
             const UINT instanceParameter=se::rhi::IsInstanced(program.prepared->program->source.kind)
                 &&se::rhi::IsForward(program.prepared->program->source.kind)?3u:2u;
-            commands.SetGraphicsRootShaderResourceView(instanceParameter,frame.instanceSlices[index-1].Gpu());++binds.instanceBuffers;
+            commands.SetGraphicsRootShaderResourceView(instanceParameter,frame.instanceSlices[firstDraw+index-1].Gpu());++binds.instanceBuffers;
         }
         // W03：蒙皮管线的调色板在参数 4（Visibility ALL）；字节偏移由 b0 的 skin.x 给出。
         if(program.prepared->program->source.skinnedVertex)
         {
-            const auto& skin=frame.skinSlices[index-1];
+            const auto& skin=frame.skinSlices[firstDraw+index-1];
             if(!skin.resource)return;
             commands.SetGraphicsRootShaderResourceView(4,skin.Gpu());++binds.instanceBuffers;
         }

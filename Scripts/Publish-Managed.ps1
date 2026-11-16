@@ -43,5 +43,14 @@ $resourceDestination = Join-Path $publishDirectory 'Resources'
 New-Item -ItemType Directory -Path $resourceDestination -Force | Out-Null
 Copy-Item -LiteralPath $localization -Destination $resourceDestination -Recurse -Force
 Copy-EngineRendererResources -NativeDirectory $nativeDirectory -Destination $resourceDestination
+$ltcNoticeRoot=Join-Path $projectRoot 'ThirdParty/LtcReference'
+if(Test-Path -LiteralPath $ltcNoticeRoot -PathType Container){
+    foreach($notice in Get-ChildItem -LiteralPath $ltcNoticeRoot -Recurse -File | Where-Object {$_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE|UPSTREAM)'}){
+        $noticeRelative=$notice.FullName.Substring($ltcNoticeRoot.TrimEnd('\').Length+1)
+        $noticeOutput=Join-Path $publishDirectory ('ThirdParty/LtcReference/'+$noticeRelative)
+        New-Item -ItemType Directory -Path (Split-Path -Parent $noticeOutput) -Force | Out-Null
+        Copy-Item -LiteralPath $notice.FullName -Destination $noticeOutput -Force
+    }
+}
 Write-Output $publishDirectory
 exit 0

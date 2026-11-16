@@ -29,7 +29,7 @@ class D3D12HiZ
 public:
     static constexpr UINT maximumLevels=16,queryCount=3;
     HRESULT Initialize(D3D12Context& context,const std::filesystem::path& shader,const Localization& text);
-    // 深度描述必须是单层、单 mip 的 R32_FLOAT 或 D32_FLOAT；失败不替换 output。
+    // 深度必须是单层、单 mip 的 R32_FLOAT/D32_FLOAT/R32_TYPELESS（同 D32/R32 视图族）。
     HRESULT CreateOutput(ID3D12Resource& depth,UINT width,UINT height,D3D12HiZOutput& output) const;
     // 记录复制与逐级归约；结束时 HZB 处于 NON_PIXEL_SHADER_RESOURCE 供遮挡读取。
     HRESULT Record(ID3D12GraphicsCommandList& commands,D3D12StateRecording& states,

@@ -18,7 +18,7 @@ bool ValidDepth(const D3D12_RESOURCE_DESC& description,UINT width,UINT height)
 {
     return description.Dimension==D3D12_RESOURCE_DIMENSION_TEXTURE2D&&description.Width==width
         &&description.Height==height&&description.DepthOrArraySize==1&&description.MipLevels==1
-        &&description.SampleDesc.Count==1&&(description.Format==DXGI_FORMAT_R32_FLOAT||description.Format==DXGI_FORMAT_D32_FLOAT);
+        &&description.SampleDesc.Count==1&&(description.Format==DXGI_FORMAT_R32_FLOAT||description.Format==DXGI_FORMAT_D32_FLOAT||description.Format==DXGI_FORMAT_R32_TYPELESS);
 }
 D3D12_CPU_DESCRIPTOR_HANDLE Offset(D3D12_CPU_DESCRIPTOR_HANDLE handle,UINT increment,UINT index)
 {

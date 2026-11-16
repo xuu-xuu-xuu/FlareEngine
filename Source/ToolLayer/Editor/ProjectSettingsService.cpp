@@ -12,6 +12,13 @@ namespace se
 namespace
 {
 using Json=nlohmann::json;
+bool ValidVideo(const BuildSettings& settings)
+{
+    const auto& size=settings.videoResolution;
+    return (size=="640x360"||size=="1280x720"||size=="1920x1080")
+        &&(settings.videoFps==24||settings.videoFps==30||settings.videoFps==60)
+        &&settings.videoSeconds>=1&&settings.videoSeconds<=100000/settings.videoFps;
+}
 bool WriteAtomic(const std::filesystem::path& path,const std::string& text)
 {
     return asset_io::WriteAtomic(path,{reinterpret_cast<const std::uint8_t*>(text.data()),text.size()});
@@ -85,6 +92,9 @@ bool ProjectSettingsService::DecodeProject(std::string_view text,ProjectSettings
     {
         ProjectSettings settings;
         settings.name=json.at("name").get<std::string>();
+        settings.showPlayerQualityMenu=json.value("showPlayerQualityMenu",true);
+        settings.playerSettingsId=json.value("playerSettingsId",std::string{});
+        if(json.contains("qualityProfiles")&&!ReadQualityProfiles(json.at("qualityProfiles"),settings.qualityProfiles)){errorKey="PlayerQuality.InvalidProfiles";return false;}
         settings.contentRoot=json.at("contentRoot").get<std::string>();
         settings.entryScene=json.at("entryScene").get<std::string>();
         if(json.contains("assets")&&json.at("assets").is_array())
@@ -114,6 +124,9 @@ bool ProjectSettingsService::MergeProject(std::string_view original,const Projec
     try
     {
         json["name"]=settings.name;json["contentRoot"]=settings.contentRoot;json["entryScene"]=settings.entryScene;
+        if(!settings.showPlayerQualityMenu||json.contains("showPlayerQualityMenu"))json["showPlayerQualityMenu"]=settings.showPlayerQualityMenu;
+        if(settings.playerSettingsId.empty())json.erase("playerSettingsId");else json["playerSettingsId"]=settings.playerSettingsId;
+        if(settings.qualityProfiles!=DefaultQualityProfiles||json.contains("qualityProfiles"))WriteQualityProfiles(settings.qualityProfiles,json["qualityProfiles"]);
         output=json.dump(2)+"\n";return true;
     }
     catch(...){errorKey="Project.InvalidManifest";return false;}
@@ -184,6 +197,17 @@ bool ProjectSettingsService::DecodeBuild(std::string_view text,BuildSettings& ou
         settings.scriptType=json.value("scriptType",std::string{});
         settings.bindings=json.value("bindings",std::string{});
         settings.entryUi=json.value("entryUi",std::string{});
+        settings.recordVideo=json.value("recordVideo",false);
+        settings.videoResolution=json.value("videoResolution",settings.videoResolution);
+        for(const auto key:{"videoFps","videoSeconds"}){
+            if(!json.contains(key))continue;
+            const auto& value=json.at(key);
+            if(!value.is_number_integer()||value<1||value>100000){
+                errorKey="Project.InvalidBuildSettings";return false;}
+        }
+        settings.videoFps=json.value("videoFps",settings.videoFps);
+        settings.videoSeconds=json.value("videoSeconds",settings.videoSeconds);
+        if(!ValidVideo(settings)){errorKey="Project.InvalidBuildSettings";return false;}
         output=std::move(settings);return true;
     }
     catch(...){errorKey="Project.InvalidBuildSettings";return false;}
@@ -196,6 +220,9 @@ bool ProjectSettingsService::MergeBuild(std::string_view original,const BuildSet
     {
         json["scriptsProject"]=settings.scriptsProject;json["scriptType"]=settings.scriptType;
         json["bindings"]=settings.bindings;json["entryUi"]=settings.entryUi;
+        if(!ValidVideo(settings)){errorKey="Project.InvalidBuildSettings";return false;}
+        json["recordVideo"]=settings.recordVideo;json["videoResolution"]=settings.videoResolution;
+        json["videoFps"]=settings.videoFps;json["videoSeconds"]=settings.videoSeconds;
         output=json.dump(2)+"\n";return true;
     }
     catch(...){errorKey="Project.InvalidBuildSettings";return false;}

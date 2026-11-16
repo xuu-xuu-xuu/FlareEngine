@@ -15,6 +15,15 @@ struct MaterialDocument
     float normalScale=1;
     // 可选用户 PBR Shader 产物（.sebin）；空表示内置默认 PBR，旧材质缺省行为不变。
     AssetId shader;
+    // 沿用 baseColor[3] 为唯一因子 alpha；贴图 alpha 与该因子相乘，不复制 opacity。
+    MaterialAlphaMode alphaMode=MaterialAlphaMode::Opaque;
+    float alphaCutoff=0.5f;
+    ClearCoatParameters clearCoat;
+    AssetId clearCoatWeightTexture,clearCoatRoughnessTexture,clearCoatNormalTexture;
+    SheenParameters sheen;
+    AnisotropyParameters anisotropy;
+    SubsurfaceParameters subsurface;
+    AssetId sheenColorTexture,sheenRoughnessTexture,anisotropyTexture;
 };
 // 编辑器当前帧的自有 CPU 预览，不改变源文件或资源身份。
 struct MaterialPreview { AssetId id;MaterialDocument document; };

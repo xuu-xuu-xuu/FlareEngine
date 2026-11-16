@@ -1,4 +1,5 @@
 #pragma once
+#include "CoreLayer/QualityProfiles.h"
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -12,6 +13,9 @@ struct ProjectSettings
     std::string contentRoot="Content";
     std::string entryScene="Scenes/Main.scene.json";
     std::vector<std::string> assets; // 只读摘要（id/type），用于设置面板显示。
+    bool showPlayerQualityMenu=true;
+    std::string playerSettingsId; // 可选；为空时，游戏偏好按项目名隔离。
+    QualityProfiles qualityProfiles=DefaultQualityProfiles;
 };
 struct BuildSettings
 {
@@ -19,6 +23,10 @@ struct BuildSettings
     std::string scriptType;
     std::string bindings;
     std::string entryUi;
+    bool recordVideo=false;
+    std::string videoResolution="1280x720";
+    int videoFps=30;
+    int videoSeconds=2;
 };
 // project.json / build.json 的字段级读写与校验；复用既有格式，不新增第二套设置。
 class ProjectSettingsService

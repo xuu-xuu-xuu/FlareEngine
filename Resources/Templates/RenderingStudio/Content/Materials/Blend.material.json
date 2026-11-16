@@ -1,0 +1,12 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "06 半透明混合",
+  "baseColor": [0.12, 0.5, 0.72, 0.35],
+  "metallic": 0,
+  "roughness": 0.22,
+  "doubleSided": false,
+  "textures": {"baseColor": "", "normal": "", "metallicRoughness": ""},
+  "alphaMode": "BLEND",
+  "alphaCutoff": 0.5
+}

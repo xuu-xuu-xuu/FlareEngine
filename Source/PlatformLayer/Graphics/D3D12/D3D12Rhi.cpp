@@ -4,6 +4,9 @@
 #include "D3D12Mesh.h"
 #include "D3D12Triangle.h"
 #include "D3D12Presentation.h"
+#include "D3D12DepthNormals.h"
+#include "D3D12AmbientOcclusion.h"
+#include "D3D12ShadingExtensions.h"
 #include "D3D12Context.h"
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
@@ -14,6 +17,7 @@
 #include "D3D12Memory.h"
 #include "D3D12PipelineCache.h"
 #include "D3D12Shadow.h"
+#include "D3D12LightClustering.h"
 #include "D3D12PostProcess.h"
 #include "D3D12Gui.h"
 #include "D3D12Indirect.h"
@@ -37,6 +41,54 @@ namespace se::rhi
 namespace
 {
 using Microsoft::WRL::ComPtr;
+bool ValidShadingFrame(const ShadingFrameConstants& c)
+{
+    for(const auto value:{c.modes,c.viewport,c.probeOrigin,c.probeSpacing,c.probeDimensions})if(!IsFinite(value))return false;
+    for(const auto value:c.globalSh)if(!IsFinite(value))return false;
+    for(UINT i=0;i<4;++i)if(!IsFinite(c.rectCenter[i])||!IsFinite(c.rectHalfU[i])||!IsFinite(c.rectHalfV[i])||!IsFinite(c.rectRadiance[i]))return false;
+    const auto flag=[](float value){return value==0||value==1;};
+    if(!flag(c.modes.x)||!flag(c.modes.y)||!flag(c.modes.z)||c.modes.z>c.modes.y||c.modes.w<0||c.modes.w>4||std::floor(c.modes.w)!=c.modes.w
+        ||!flag(c.probeOrigin.w)||!flag(c.probeDimensions.w))return false;
+    if(c.modes.z>.5f)
+        for(UINT axis=0;axis<3;++axis)
+        {
+            const float spacing=axis==0?c.probeSpacing.x:axis==1?c.probeSpacing.y:c.probeSpacing.z;
+            const float dimension=axis==0?c.probeDimensions.x:axis==1?c.probeDimensions.y:c.probeDimensions.z;
+            if(spacing<=1e-6f||dimension<2||dimension>256||std::floor(dimension)!=dimension)return false;
+        }
+    if(c.modes.w>0&&c.probeOrigin.w<.5f)return false;
+    for(UINT i=0;i<static_cast<UINT>(c.modes.w);++i)
+    {
+        const Vec3 u{c.rectHalfU[i].x,c.rectHalfU[i].y,c.rectHalfU[i].z},v{c.rectHalfV[i].x,c.rectHalfV[i].y,c.rectHalfV[i].z};
+        const auto radiance=c.rectRadiance[i];
+        if(LengthSquared(Cross(u,v))<1e-12f||radiance.x<0||radiance.y<0||radiance.z<0||radiance.x>10000||radiance.y>10000||radiance.z>10000)return false;
+    }
+    return true;
+}
+bool ValidShadingMaterial(const ShadingMaterialConstants& c)
+{
+    for(const auto value:{c.coat,c.sheen,c.anisotropy,c.subsurface,c.subsurfaceColor,c.textureFlags})if(!IsFinite(value))return false;
+    const auto unit=[](float value){return value>=0&&value<=1;};
+    return unit(c.coat.x)&&unit(c.coat.y)&&c.coat.z>=-8&&c.coat.z<=8&&unit(c.sheen.x)&&unit(c.sheen.y)&&unit(c.sheen.z)&&unit(c.sheen.w)
+        &&unit(c.anisotropy.x)&&unit(c.subsurface.x)&&c.subsurface.y>=0&&c.subsurface.y<100
+        &&unit(c.subsurfaceColor.x)&&unit(c.subsurfaceColor.y)&&unit(c.subsurfaceColor.z)
+        &&c.textureFlags.x>=0&&c.textureFlags.x<=63&&std::floor(c.textureFlags.x)==c.textureFlags.x;
+}
+bool ValidShadingTexture(const D3D12Texture& texture,bool frame,UINT slot)
+{
+    if(!texture.resource||!texture.views||texture.cube||texture.arrayLayers!=1)return false;
+    const auto f=texture.format;const bool floating=f==TextureFormat::Rgba16Float||f==TextureFormat::Rgba32Float;
+    if(frame)
+    {
+        if(texture.mipLevels!=1||texture.mostDetailedMip)return false;
+        if(slot<2)return f==TextureFormat::Rgba32Float&&(slot!=1||texture.width==10);
+        return floating;
+    }
+    // 新层数据保留完整通道；BC1会丢sheen roughness的A，压缩方向数据也无质量合同。
+    // 只有sheenColor的RGB颜色槽允许现有颜色压缩；与生产LayerData无损缓存一致。
+    if(slot!=3)return f==TextureFormat::Rgba8||floating;
+    return floating||f==TextureFormat::Rgba8||f==TextureFormat::Bc1Unorm||f==TextureFormat::Bc1UnormSrgb||f==TextureFormat::Bc7Unorm||f==TextureFormat::Bc7UnormSrgb;
+}
 std::atomic<std::uint64_t> nextDevice{1};
 struct Entry {virtual ~Entry()=default;std::uint64_t lastUse=0;};
 struct BufferEntry : Entry
@@ -303,6 +355,7 @@ struct Device::Impl
         const auto completed=Completed();if(completed==UINT64_MAX)return;
         PollOcclusionCounters();
         PollOcclusionTelemetry();
+        PollD3D12ClusterCounters(presentation);
         CollectD3D12UploadReferences(presentation);
         std::erase_if(inFlight,[&](const auto& b){return b.fence<=completed;});
         std::erase_if(retiring,[&](const auto& value){return value.use_count()==1&&value->lastUse<=completed;});
@@ -315,8 +368,15 @@ struct CommandContext::Impl
     bool cacheOpaqueBindings=false;
     std::weak_ptr<Device::Impl> device;
     int phase=0;PassKind kind=PassKind::Clear;
+    bool transparentPass=false;std::size_t opaqueDrawCount=0;
+    std::optional<DepthNormalSettings> depthNormals;
+    std::optional<ScreenSpaceOcclusionSettings> screenSpaceOcclusion;
+    bool depthNormalsRecorded=false,screenSpaceRecorded=false;
+    std::array<std::shared_ptr<TextureEntry>,5> shadingTextures;
+    std::vector<std::array<std::shared_ptr<TextureEntry>,6>> layerTextures;
     std::vector<D3D12Mesh> geometry;
     std::vector<DrawIndexed> draws;
+    std::vector<std::vector<GeometryCluster>> geometryClusters;
     std::vector<std::shared_ptr<PipelineEntry>> drawPipelines; // 与 draws 一一对应的实际 Pipeline。
     std::vector<std::vector<InstanceParameters>> instances;
     size_t instanceCount=0;
@@ -341,6 +401,7 @@ struct CommandContext::Impl
     std::shared_ptr<PipelineEntry> shadowPipeline;
     std::vector<D3D12Mesh> shadowGeometry;
     std::vector<Mat4> shadowWorlds;
+    std::vector<DrawIndexed> shadowMaterials;
     // W03：阴影投射的蒙皮信息。调色板字节只借用调用方存储（须覆盖到 Submit 结束）；
     // shadowPipelines 为空表示该投射使用配置时的默认深度 Pipeline。
     std::vector<std::span<const std::byte>> shadowPalettes;
@@ -461,7 +522,8 @@ Result Device::SetTextureMipRange(const Texture& texture,std::uint32_t mostDetai
     if(!entry||entry->target)return Fail(Error::Unsupported);
     auto& native=entry->native;
     if(native.format!=TextureFormat::Bc1Unorm&&native.format!=TextureFormat::Bc1UnormSrgb
-        &&native.format!=TextureFormat::Bc5Unorm&&native.format!=TextureFormat::Bc4Unorm)return Fail(Error::Unsupported);
+        &&native.format!=TextureFormat::Bc5Unorm&&native.format!=TextureFormat::Bc4Unorm
+        &&native.format!=TextureFormat::Bc7Unorm&&native.format!=TextureFormat::Bc7UnormSrgb)return Fail(Error::Unsupported);
     if(mostDetailedMip>=native.mipLevels)return Fail(Error::InvalidArgument);
     if(native.mostDetailedMip==mostDetailedMip)return {};
     if(!impl_->context.srvDescriptors->CanAllocate(2)){++impl_->descriptorRejections;return Fail(Error::CapacityExceeded);}
@@ -568,16 +630,19 @@ Result Device::CreatePipeline(const PipelineDescription& description,Pipeline& o
 {
     if(!impl_||!impl_->Usable())return Fail(Error::InvalidState);
     if(output||description.shader.empty())return Fail(Error::InvalidArgument);
+    if(!ValidMaterialSurfacePipeline(description)||!ValidShadingExtensionPipeline(description))return Fail(Error::Unsupported);
     if(description.kind==PipelineKind::Gui&&(description.colorFormat!=ColorFormat::Rgba8Srgb||description.blend!=BlendMode::Alpha
         ||(description.depth!=DepthMode::Default&&description.depth!=DepthMode::Disabled)))return Fail(Error::Unsupported);
     // G15.09：输出 LUT 布局同时服务编辑器 BasicLit（ShadowOutput）与 Lighting 演示（FinalOutput）。
     // W03：31 号蒙皮布局只对可蒙皮技术开放，且必须与 v3 顶点布局成对出现。
-    const bool skinnedLayout=description.bindingLayoutVersion==SkinnedLayoutVersion&&SupportsSkinning(description.kind);
+    const bool filterLayout=ValidShadowFilterBindingLayout(description.kind,description.bindingLayoutVersion,description.vertexLayoutVersion==VertexLayoutVersionSkinned);
+    const bool skinnedLayout=((description.bindingLayoutVersion==(IsClustered(description.kind)?SkinnedClusteredLayoutVersion:IsCascaded(description.kind)?SkinnedCascadedLayoutVersion:SkinnedLayoutVersion))
+        ||(filterLayout&&description.vertexLayoutVersion==VertexLayoutVersionSkinned))&&SupportsSkinning(description.kind);
     if(!ValidPipelineKind(description.kind)||(description.bindingLayoutVersion!=BindingLayout(description.kind)
         &&!(IsOutput(description.kind)&&description.bindingLayoutVersion==OutputLutLayoutVersion)
-        &&!skinnedLayout)
+        &&!skinnedLayout&&!filterLayout)
         ||skinnedLayout!=(description.vertexLayoutVersion==VertexLayoutVersionSkinned)
-        ||(description.depth!=DepthMode::Default&&description.depth!=DepthMode::Disabled&&description.depth!=DepthMode::ReadWriteLess&&description.depth!=DepthMode::ReadOnlyLessEqual)
+        ||(description.depth!=DepthMode::Default&&description.depth!=DepthMode::Disabled&&description.depth!=DepthMode::ReadWriteLess&&description.depth!=DepthMode::ReadOnlyLessEqual&&description.depth!=DepthMode::ReadOnlyEqual)
         ||(description.blend!=BlendMode::Opaque&&description.blend!=BlendMode::Alpha)
         ||(description.colorFormat!=ColorFormat::Rgba8Unorm&&description.colorFormat!=ColorFormat::Rgba16Float&&description.colorFormat!=ColorFormat::Rgba8Srgb))return Fail(Error::Unsupported);
     if(IsPostProcess(description.kind))
@@ -586,7 +651,7 @@ Result Device::CreatePipeline(const PipelineDescription& description,Pipeline& o
         if(description.colorFormat!=format||(description.depth!=DepthMode::Default&&description.depth!=DepthMode::Disabled)
             ||description.blend!=(description.kind==PipelineKind::UiOverlay?BlendMode::Alpha:BlendMode::Opaque))return Fail(Error::Unsupported);
     }
-    if((UsesLitLayout(description.kind)||IsOutput(description.kind)||IsSky(description.kind)||description.kind==PipelineKind::ShadowDepth)&&description.blend!=BlendMode::Opaque)return Fail(Error::Unsupported);
+    if((UsesLitLayout(description.kind)||IsOutput(description.kind)||IsSky(description.kind)||description.kind==PipelineKind::ShadowDepth)&&description.blend!=BlendMode::Opaque&&description.alphaMode!=MaterialAlphaMode::Blend)return Fail(Error::Unsupported);
     if(IsForward(description.kind)&&description.colorFormat!=ColorFormat::Rgba16Float)return Fail(Error::Unsupported);
     if(IsOutput(description.kind)&&(description.colorFormat!=ColorFormat::Rgba8Unorm
         ||(description.depth!=DepthMode::Default&&description.depth!=DepthMode::Disabled)))return Fail(Error::Unsupported);
@@ -658,7 +723,7 @@ Result Device::ConfigureDescriptors(DescriptorLimits limits)
     if(!WaitIdle())return Fail(Error::BackendFailure);
     if(impl_->context.srvDescriptors->Stats().used)return Fail(Error::InvalidState);
     if(!impl_->context.srvDescriptors->Configure(limits.persistentPage,limits.persistentMaximum))return Fail(Error::InvalidState);
-    for(auto& frame:impl_->presentation.frames){frame.descriptors.Configure(limits.frameInitial,limits.frameMaximum);frame.guiDescriptors.Configure(limits.frameInitial,limits.frameMaximum);frame.gameUiDescriptors.Configure(limits.frameInitial,limits.frameMaximum);}
+    for(auto& frame:impl_->presentation.frames){frame.descriptors.Configure(limits.frameInitial,limits.frameMaximum);frame.shadowMaterialDescriptors.Configure(limits.frameInitial,limits.frameMaximum);frame.guiDescriptors.Configure(limits.frameInitial,limits.frameMaximum);frame.gameUiDescriptors.Configure(limits.frameInitial,limits.frameMaximum);}
     return {};
 }
 Result Device::TrimMemory()
@@ -800,7 +865,49 @@ Result CommandContext::ConfigureForward(const ForwardLighting& lighting,Pipeline
         if(!IsFinite(point.position)||std::abs(point.position.x)>1e6||std::abs(point.position.y)>1e6||std::abs(point.position.z)>1e6
             ||!radiance(point.radiance)||!IsFinite(point.range)||point.range<0.05f||point.range>10000)return Fail(Error::InvalidArgument);
     }
-    impl_->forward=lighting;impl_->outputPipeline=pipeline;impl_->skyPipeline=sky;impl_->leases.insert(impl_->leases.end(),{pipeline,sky});return {};
+    ForwardLighting prepared=lighting;
+    std::array<std::shared_ptr<TextureEntry>,5> shadingTextures;
+    if(lighting.shading.enabled)
+    {
+        if(!ValidShadingFrame(lighting.shading.constants))return Fail(Error::InvalidArgument);
+        for(UINT slot=0;slot<5;++slot)if(lighting.shading.textures[slot])
+        {
+            auto texture=device->textures.Get(lighting.shading.textures[slot],device->id);if(!texture)return Fail(Error::InvalidHandle);
+            if(!device->Ready(*texture))return Fail(Error::InvalidState);if(!ValidShadingTexture(texture->native,true,slot))return Fail(Error::Unsupported);shadingTextures[slot]=std::move(texture);
+        }
+        const auto& c=lighting.shading.constants;
+        if((c.modes.x>.5f&&!shadingTextures[0])||(c.modes.z>.5f&&!shadingTextures[1])
+            ||(c.probeOrigin.w>.5f&&(!shadingTextures[2]||!shadingTextures[3]))||(c.probeDimensions.w>.5f&&!shadingTextures[4]))return Fail(Error::InvalidHandle);
+        if(c.modes.z>.5f&&double(c.probeDimensions.x)*c.probeDimensions.y*c.probeDimensions.z>shadingTextures[1]->native.height)return Fail(Error::InvalidArgument);
+    }
+    if(prepared.cluster.enabled)
+    {
+        auto& cluster=prepared.cluster;
+        if(cluster.lights.size()>256||cluster.ids.size()!=cluster.lights.size()||cluster.capacity==0||cluster.capacity>65536
+            ||!IsFinite(cluster.view)||!IsFinite(cluster.clipFromView)||!Inverse(cluster.clipFromView)
+            ||!IsFinite(cluster.nearPlane)||!IsFinite(cluster.farPlane)||cluster.nearPlane<=0||cluster.farPlane<=cluster.nearPlane)return Fail(Error::InvalidArgument);
+        if(std::abs(cluster.view(3,0))>1e-5f||std::abs(cluster.view(3,1))>1e-5f||std::abs(cluster.view(3,2))>1e-5f||std::abs(cluster.view(3,3)-1)>1e-5f)return Fail(Error::InvalidArgument);
+        const Vec3 x{cluster.view(0,0),cluster.view(0,1),cluster.view(0,2)},y{cluster.view(1,0),cluster.view(1,1),cluster.view(1,2)},z{cluster.view(2,0),cluster.view(2,1),cluster.view(2,2)};
+        if(std::abs(LengthSquared(x)-1)>.001f||std::abs(LengthSquared(y)-1)>.001f||std::abs(LengthSquared(z)-1)>.001f
+            ||std::abs(Dot(x,y))>.001f||std::abs(Dot(x,z))>.001f||std::abs(Dot(y,z))>.001f||Dot(Cross(x,y),z)<.999f)return Fail(Error::InvalidArgument);
+        if(!ValidD3D12ClusterProjection(cluster.clipFromView,cluster.nearPlane,cluster.farPlane))return Fail(Error::InvalidArgument);
+        std::vector<size_t> order(cluster.lights.size());for(size_t i=0;i<order.size();++i)order[i]=i;
+        std::sort(order.begin(),order.end(),[&](size_t a,size_t b){return cluster.ids[a]<cluster.ids[b];});
+        auto lights=cluster.lights;auto ids=cluster.ids;
+        for(size_t i=0;i<order.size();++i)
+        {
+            cluster.lights[i]=lights[order[i]];cluster.ids[i]=ids[order[i]];
+            const auto& point=cluster.lights[i];
+            if(!cluster.ids[i]||(i&&cluster.ids[i]==cluster.ids[i-1])||!IsFinite(point.position)
+                ||std::abs(point.position.x)>1e6f||std::abs(point.position.y)>1e6f||std::abs(point.position.z)>1e6f
+                ||!radiance(point.radiance)||!IsFinite(point.range)||point.range<.05f||point.range>10000)return Fail(Error::InvalidArgument);
+        }
+        prepared.pointCount=static_cast<UINT>(std::min(size_t(MaximumPointLights),cluster.lights.size()));
+        for(UINT i=0;i<prepared.pointCount;++i)prepared.points[i]=cluster.lights[i];
+    }
+    impl_->forward=std::move(prepared);impl_->shadingTextures=std::move(shadingTextures);
+    for(const auto& texture:impl_->shadingTextures)if(texture)impl_->leases.push_back(texture);
+    impl_->outputPipeline=pipeline;impl_->skyPipeline=sky;impl_->leases.insert(impl_->leases.end(),{pipeline,sky});return {};
 }
 Result CommandContext::ConfigureOcclusion(std::span<const se::VisibilityItem> bounds,const se::VisibilityFrustum& frustum,
     const OcclusionSettings& settings)
@@ -840,13 +947,41 @@ Result CommandContext::ConfigureShadows(const ShadowSettings& shadows,PipelineHa
 {
     auto device=impl_?impl_->device.lock():nullptr;
     if(!device||!device->Usable()||impl_->phase||!impl_->forward||impl_->shadow)return Fail(Error::InvalidState);
-    if(!impl_->outputPipeline||impl_->outputPipeline->kind!=PipelineKind::ShadowOutput)return Fail(Error::Unsupported);
+    if(!impl_->outputPipeline||impl_->outputPipeline->kind!=(shadows.cascadeCount?PipelineKind::CascadedShadowOutput:PipelineKind::ShadowOutput))return Fail(Error::Unsupported);
     const auto pipeline=device->pipelines.Get(depthPipeline,device->id);if(!pipeline)return Fail(Error::InvalidHandle);
     if(pipeline->kind!=PipelineKind::ShadowDepth)return Fail(Error::Unsupported);
     if(!IsFinite(shadows.clipFromWorld)||!Inverse(shadows.clipFromWorld)
-        ||(shadows.resolution!=256&&shadows.resolution!=512&&shadows.resolution!=1024&&shadows.resolution!=2048&&shadows.resolution!=4096)
+        ||(shadows.resolution!=256&&shadows.resolution!=512&&shadows.resolution!=1024&&shadows.resolution!=2048&&shadows.resolution!=4096
+            &&!(shadows.cascadeCount&&shadows.resolution==1536))
         ||!IsFinite(shadows.depthBias)||shadows.depthBias<0||shadows.depthBias>0.02f||!IsFinite(shadows.slopeBias)||shadows.slopeBias<0||shadows.slopeBias>0.05f
         ||!IsFinite(shadows.normalBias)||shadows.normalBias<0||shadows.normalBias>0.25f)return Fail(Error::InvalidArgument);
+    if(shadows.cascadeCount)
+    {
+        if(shadows.cascadeCount>3||!IsFinite(shadows.cascadeNear)||shadows.cascadeNear<=0
+            ||!IsFinite(shadows.cascadeBlend)||shadows.cascadeBlend<0||shadows.cascadeBlend>.5f
+            ||!IsFinite(shadows.cascadeViewDepth.x)||!IsFinite(shadows.cascadeViewDepth.y)
+            ||!IsFinite(shadows.cascadeViewDepth.z)||!IsFinite(shadows.cascadeViewDepth.w))return Fail(Error::InvalidArgument);
+        float previous=shadows.cascadeNear;
+        const float depthLength=shadows.cascadeViewDepth.x*shadows.cascadeViewDepth.x
+            +shadows.cascadeViewDepth.y*shadows.cascadeViewDepth.y+shadows.cascadeViewDepth.z*shadows.cascadeViewDepth.z;
+        if(!IsFinite(depthLength)||std::abs(depthLength-1.f)>.01f)return Fail(Error::InvalidArgument);
+        for(UINT i=0;i<shadows.cascadeCount;++i)
+        {
+            if(!IsFinite(shadows.cascadeClipFromWorld[i])||!Inverse(shadows.cascadeClipFromWorld[i])
+                ||!IsFinite(shadows.cascadeSplits[i])||shadows.cascadeSplits[i]<=previous)return Fail(Error::InvalidArgument);
+            previous=shadows.cascadeSplits[i];
+        }
+    }
+    const auto& filter=shadows.filter;
+    if(!IsFinite(filter.angularRadius)||filter.angularRadius<0||filter.angularRadius>.2f
+        ||!IsFinite(filter.blockerSearchDistance)||filter.blockerSearchDistance<.01f||filter.blockerSearchDistance>100
+        ||!IsFinite(filter.maximumRadiusTexels)||filter.maximumRadiusTexels<1||filter.maximumRadiusTexels>32
+        ||static_cast<UINT>(filter.debug)>2)return Fail(Error::InvalidArgument);
+    if(filter.pcss)
+    {
+        ShadowFilterConstants derived;
+        if(!PrepareD3D12ShadowFilterConstants(shadows,derived))return Fail(Error::InvalidArgument);
+    }
     impl_->shadow=shadows;impl_->shadowPipeline=pipeline;impl_->leases.push_back(pipeline);return {};
 }
 Result CommandContext::ConfigureEnvironment(const EnvironmentBindings& environment)
@@ -866,6 +1001,24 @@ Result CommandContext::ConfigureEnvironment(const EnvironmentBindings& environme
     }
     impl_->environment=environment;impl_->environmentTextures=textures;
     for(const auto& texture:textures)impl_->leases.push_back(texture);return {};
+}
+Result CommandContext::ConfigureDepthNormals(const DepthNormalSettings& settings)
+{
+    auto device=impl_?impl_->device.lock():nullptr;
+    if(!device||!device->Usable()||impl_->phase||!impl_->forward||impl_->depthNormals)return Fail(Error::InvalidState);
+    impl_->depthNormals=settings;return {};
+}
+Result CommandContext::ConfigureScreenSpaceOcclusion(const ScreenSpaceOcclusionSettings& settings)
+{
+    auto device=impl_?impl_->device.lock():nullptr;
+    if(!device||!device->Usable()||impl_->phase||!impl_->forward||impl_->screenSpaceOcclusion)return Fail(Error::InvalidState);
+    if(!ValidD3D12ScreenSpaceSettings(settings))return Fail(Error::InvalidArgument);
+    if(settings.gtao||settings.contactShadows)
+    {
+        if(!impl_->depthNormals)impl_->depthNormals=DepthNormalSettings{true};
+        else impl_->depthNormals->enabled=true;
+    }
+    impl_->screenSpaceOcclusion=settings;return {};
 }
 Result CommandContext::ConfigurePostProcess(const PostProcessSettings& settings,const PostProcessPipelines& pipelines)
 {
@@ -924,6 +1077,8 @@ Result CommandContext::DrawShadow(const DrawIndexed& draw)
     const auto vertex=device->buffers.Get(draw.vertices,device->id),index=device->buffers.Get(draw.indices,device->id);
     if(!vertex||!index)return Fail(Error::InvalidHandle);
     if(!device->Ready(*vertex)||!device->Ready(*index))return Fail(Error::InvalidState);
+    if(!IsValidMaterialAlphaMode(draw.alphaMode)||!IsFinite(draw.alphaCutoff)||draw.alphaCutoff<0)return Fail(Error::InvalidArgument);
+    if(draw.alphaMode==MaterialAlphaMode::Blend)return Fail(Error::Unsupported);
     const auto& world=draw.world;
     if(vertex->usage!=BufferUsage::Vertex||index->usage!=BufferUsage::Index||index->maxIndex>=vertex->count||impl_->shadowGeometry.size()>=D3D12MeshMaxDraws
         ||!IsFinite(world)||!Inverse(world)||!IsFinite(impl_->shadow->clipFromWorld*world)
@@ -946,9 +1101,21 @@ Result CommandContext::DrawShadow(const DrawIndexed& draw)
             ||!pipeline->mesh.prepared->program->source.skinnedVertex)return Fail(Error::InvalidArgument);
     }
     else if(!draw.skinPalette.empty()||draw.skinJointCount)return Fail(Error::InvalidArgument);
+    std::shared_ptr<TextureEntry> coverage;
+    if(draw.alphaMode==MaterialAlphaMode::Mask)
+    {
+        if(!pipeline||pipeline->mesh.prepared->program->source.materialLayoutVersion!=MaterialSurfaceLayoutVersion||pipeline->mesh.prepared->alphaMode!=MaterialAlphaMode::Mask)return Fail(Error::Unsupported);
+        coverage=device->textures.Get(draw.texture,device->id);if(!coverage)return Fail(Error::InvalidHandle);
+        if(!device->Ready(*coverage))return Fail(Error::InvalidState);
+        if(coverage->target||coverage->native.cube||coverage->native.arrayLayers!=1||(coverage->native.format!=TextureFormat::Rgba8&&coverage->native.format!=TextureFormat::Bc7Unorm&&coverage->native.format!=TextureFormat::Bc7UnormSrgb))return Fail(Error::Unsupported);
+        if(!IsFinite(draw.tint)||draw.tint.w<0||draw.tint.w>1)return Fail(Error::InvalidArgument);
+    }
+    else if(pipeline&&pipeline->mesh.prepared->program->source.materialLayoutVersion)return Fail(Error::Unsupported);
     D3D12Mesh mesh;mesh.vertices=vertex->resource;mesh.indices=index->resource;
     mesh.vertexView={vertex->resource->GetGPUVirtualAddress(),vertex->bytes,vertex->stride};
     mesh.indexView={index->resource->GetGPUVirtualAddress(),index->bytes,index->stride==2?DXGI_FORMAT_R16_UINT:DXGI_FORMAT_R32_UINT};mesh.indexCount=index->count;
+    if(coverage){mesh.texture=coverage->native.resource;mesh.textureViews=coverage->native.views;impl_->leases.push_back(coverage);}
+    impl_->shadowMaterials.push_back(draw);
     impl_->shadowGeometry.push_back(std::move(mesh));impl_->shadowWorlds.push_back(world);
     impl_->shadowPalettes.push_back(draw.skinPalette);impl_->shadowJointCounts.push_back(draw.skinJointCount);
     impl_->shadowJointOffsets.push_back(draw.skinJointOffset);impl_->shadowPipelines.push_back(std::move(pipeline));
@@ -958,13 +1125,32 @@ Result CommandContext::BeginPass(const PassDescription& pass)
 {
     auto device=impl_?impl_->device.lock():nullptr;if(!device||!device->Usable())return Fail(Error::InvalidState);
     if(pass.cacheBindings&&pass.kind!=PassKind::Opaque)return Fail(Error::Unsupported);
+    if(pass.kind==PassKind::DepthNormals)
+    {
+        if(!impl_->forward||!impl_->depthNormals||!impl_->depthNormals->enabled||impl_->phase!=8||impl_->depthNormalsRecorded)return Fail(Error::InvalidState);
+        if(pass.color!=ResourceUse::ColorWrite||pass.depth!=ResourceUse::DepthWrite||pass.input!=ResourceUse::None)return Fail(Error::Unsupported);
+        impl_->phase=27;impl_->kind=pass.kind;return {};
+    }
+    if(pass.kind==PassKind::AmbientOcclusion)
+    {
+        if(!impl_->screenSpaceOcclusion||(!impl_->screenSpaceOcclusion->gtao&&!impl_->screenSpaceOcclusion->contactShadows)
+            ||!impl_->depthNormalsRecorded||impl_->screenSpaceRecorded||impl_->phase!=28)return Fail(Error::InvalidState);
+        if(pass.color!=ResourceUse::ColorWrite||pass.depth!=ResourceUse::None||pass.input!=ResourceUse::DepthRead)return Fail(Error::Unsupported);
+        impl_->phase=31;impl_->kind=pass.kind;return {};
+    }
+    if(pass.kind==PassKind::Transparent)
+    {
+        if(!impl_->forward||impl_->phase!=4||impl_->transparentPass||impl_->occlusion.active)return Fail(Error::InvalidState);
+        if(pass.color!=ResourceUse::ColorWrite||pass.depth!=ResourceUse::DepthRead||pass.input!=ResourceUse::ColorRead)return Fail(Error::Unsupported);
+        impl_->transparentPass=true;impl_->opaqueDrawCount=impl_->draws.size();impl_->phase=25;impl_->kind=pass.kind;return {};
+    }
     if(pass.kind>=PassKind::BloomExtract&&pass.kind<=PassKind::Ui)
     {
         if(!impl_->post)return Fail(Error::InvalidState);
         if(pass.color!=ResourceUse::ColorWrite||pass.depth!=ResourceUse::None||pass.input!=(pass.kind==PassKind::Ui?ResourceUse::None:ResourceUse::ColorRead))return Fail(Error::Unsupported);
         const int expected=pass.kind==PassKind::BloomExtract?4:pass.kind==PassKind::BloomHorizontal?14:pass.kind==PassKind::BloomVertical?16:
             pass.kind==PassKind::ToneMap?(impl_->post->bloom?18:4):pass.kind==PassKind::Fxaa?20:22;
-        if(impl_->phase!=expected||(pass.kind<=PassKind::BloomVertical&&!impl_->post->bloom))return Fail(Error::InvalidState);
+        if((impl_->phase!=expected&&!(expected==4&&impl_->phase==26))||(pass.kind<=PassKind::BloomVertical&&!impl_->post->bloom))return Fail(Error::InvalidState);
         impl_->phase=13+2*(int(pass.kind)-int(PassKind::BloomExtract));impl_->kind=pass.kind;return {};
     }
     if(pass.kind==PassKind::Shadow)
@@ -981,8 +1167,13 @@ Result CommandContext::BeginPass(const PassDescription& pass)
         if(pass.depth!=(overlay?ResourceUse::None:ResourceUse::DepthWrite)||pass.input!=input)return Fail(Error::Unsupported);
         if(pass.kind==PassKind::Clear&&impl_->phase==0)impl_->phase=1;
         else if(pass.kind==PassKind::Sky&&impl_->phase==(impl_->shadow?12:2))impl_->phase=7;
-        else if(pass.kind==PassKind::Opaque&&impl_->phase==8)impl_->phase=3;
-        else if(pass.kind==PassKind::Output&&impl_->phase==(impl_->post?24:4))impl_->phase=9;
+        else if(pass.kind==PassKind::Opaque)
+        {
+            const bool ao=impl_->screenSpaceOcclusion&&(impl_->screenSpaceOcclusion->gtao||impl_->screenSpaceOcclusion->contactShadows);
+            const int expected=ao?8:(impl_->depthNormals&&impl_->depthNormals->enabled)?28:8;
+            if(impl_->phase!=expected||(ao&&!impl_->screenSpaceRecorded))return Fail(Error::InvalidState);impl_->phase=3;
+        }
+        else if(pass.kind==PassKind::Output&&(impl_->phase==(impl_->post?24:4)||(!impl_->post&&impl_->phase==26)))impl_->phase=9;
         else return Fail(Error::InvalidState);
         if(pass.kind==PassKind::Opaque)impl_->cacheOpaqueBindings=pass.cacheBindings;
         impl_->kind=pass.kind;return {};
@@ -999,7 +1190,7 @@ Result CommandContext::Draw(const DrawIndexed& draw)
 Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const InstanceParameters> instances)
 {
     auto device=impl_?impl_->device.lock():nullptr;
-    if(!device||!device->Usable()||impl_->phase!=3||impl_->kind!=PassKind::Opaque)return Fail(Error::InvalidState);
+    if(!device||!device->Usable()||!((impl_->phase==3&&impl_->kind==PassKind::Opaque)||(impl_->phase==25&&impl_->kind==PassKind::Transparent)))return Fail(Error::InvalidState);
     const auto vertex=device->buffers.Get(draw.vertices,device->id),index=device->buffers.Get(draw.indices,device->id);
     const auto texture=device->textures.Get(draw.texture,device->id);const auto pipeline=device->pipelines.Get(draw.pipeline,device->id);
     if(!vertex||!index||!texture||!pipeline)return Fail(Error::InvalidHandle);
@@ -1007,21 +1198,51 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
     if(IsInstanced(pipeline->kind)!=!instances.empty())return Fail(Error::Unsupported);
     if(instances.size()>MaximumFrameInstances||impl_->instanceCount>MaximumFrameInstances-instances.size())return Fail(Error::CapacityExceeded);
     const auto colorTexture=[](const D3D12Texture& value){return !value.cube&&value.arrayLayers==1
-        &&(value.format==TextureFormat::Rgba8||value.format==TextureFormat::Bc1Unorm||value.format==TextureFormat::Bc1UnormSrgb);};
+        &&(value.format==TextureFormat::Rgba8||value.format==TextureFormat::Bc1Unorm||value.format==TextureFormat::Bc1UnormSrgb
+            ||value.format==TextureFormat::Bc7Unorm||value.format==TextureFormat::Bc7UnormSrgb);};
     // BC5 只有两个通道，只用于法线/单通道数据，不能作为 baseColor。
     const auto dataTexture=[](const D3D12Texture& value){return !value.cube&&value.arrayLayers==1
         &&(value.format==TextureFormat::Rgba8||value.format==TextureFormat::Bc1Unorm||value.format==TextureFormat::Bc1UnormSrgb
             ||value.format==TextureFormat::Bc5Unorm||value.format==TextureFormat::Bc4Unorm);};
     if(!colorTexture(texture->native)||texture->target)return Fail(Error::Unsupported);
-    const bool forward=IsForward(pipeline->kind),shadow=IsShadowed(pipeline->kind),environment=pipeline->kind==PipelineKind::EnvironmentMesh;
+    const bool transparent=impl_->kind==PassKind::Transparent;
+    // 仅追加模式枚举；首版独立预绘没有 primitive ownership 证明，不允许普通 Draw 宣称 Equal。
+    if(pipeline->mesh.prepared->depth==DepthMode::ReadOnlyEqual)return Fail(Error::Unsupported);
+    if(!IsValidMaterialAlphaMode(draw.alphaMode)||!IsFinite(draw.alphaCutoff)||draw.alphaCutoff<0)return Fail(Error::InvalidArgument);
+    if((draw.alphaMode==MaterialAlphaMode::Blend)!=transparent||pipeline->mesh.prepared->alphaMode!=draw.alphaMode)return Fail(Error::Unsupported);
+    if(draw.alphaMode!=MaterialAlphaMode::Opaque)
+    {
+        if(!instances.empty()||impl_->occlusion.active||pipeline->mesh.prepared->program->source.materialLayoutVersion!=MaterialSurfaceLayoutVersion
+            ||(texture->native.format!=TextureFormat::Rgba8&&texture->native.format!=TextureFormat::Bc7Unorm&&texture->native.format!=TextureFormat::Bc7UnormSrgb))return Fail(Error::Unsupported);
+        if(!IsFinite(draw.tint.w)||draw.tint.w<0||draw.tint.w>1)return Fail(Error::InvalidArgument);
+    }
+    const bool forward=IsForward(pipeline->kind),shadow=IsShadowed(pipeline->kind),environment=IsEnvironment(pipeline->kind);
     if(forward!=impl_->forward.has_value()||shadow!=impl_->shadow.has_value()||environment!=impl_->environment.has_value()||IsOutput(pipeline->kind)||pipeline->kind==PipelineKind::Triangle||pipeline->kind==PipelineKind::ShadowDepth||IsSky(pipeline->kind))return Fail(Error::Unsupported);
+    if(shadow&&IsCascaded(pipeline->kind)!=(impl_->shadow->cascadeCount>0))return Fail(Error::Unsupported);
+    if(forward&&IsClustered(pipeline->kind)!=impl_->forward->cluster.enabled)return Fail(Error::Unsupported);
+    if(forward&&(pipeline->mesh.prepared->program->source.shadingLayoutVersion!=0)!=impl_->forward->shading.enabled)return Fail(Error::Unsupported);
+    std::array<std::shared_ptr<TextureEntry>,6> layerTextures;
+    if(forward&&impl_->forward->shading.enabled)
+    {
+        if(!ValidShadingMaterial(draw.layers.constants))return Fail(Error::InvalidArgument);
+        const UINT mask=static_cast<UINT>(draw.layers.constants.textureFlags.x);
+        for(UINT slot=0;slot<6;++slot)
+        {
+            if((mask&(1u<<slot))&&!draw.layers.textures[slot])return Fail(Error::InvalidHandle);
+            if(!draw.layers.textures[slot])continue;
+            auto textureEntry=device->textures.Get(draw.layers.textures[slot],device->id);if(!textureEntry)return Fail(Error::InvalidHandle);
+            if(!device->Ready(*textureEntry))return Fail(Error::InvalidState);
+            if(!ValidShadingTexture(textureEntry->native,false,slot))return Fail(Error::Unsupported);layerTextures[slot]=std::move(textureEntry);
+        }
+    }
+    if(shadow&&impl_->shadow->filter.pcss&&!IsShadowFilterLayout(pipeline->mesh.prepared->program->source.layoutVersion))return Fail(Error::Unsupported);
     if(pipeline->mesh.prepared->colorFormat!=(forward?ColorFormat::Rgba16Float:ColorFormat::Rgba8Unorm))return Fail(Error::Unsupported);
     const bool pbr=UsesLitLayout(pipeline->kind);
     if(vertex->usage!=BufferUsage::Vertex||index->usage!=BufferUsage::Index||(pipeline->kind!=PipelineKind::TexturedMesh&&!pbr)
         ||index->maxIndex>=vertex->count||impl_->draws.size()>=D3D12MeshMaxDraws)return Fail(Error::InvalidArgument);
     if(impl_->pipeline&&(impl_->viewProjection.values!=draw.viewProjection.values
         ||se::rhi::IsForward(impl_->pipeline->kind)!=forward||se::rhi::IsShadowed(impl_->pipeline->kind)!=shadow
-        ||(impl_->pipeline->kind==PipelineKind::EnvironmentMesh)!=environment||se::rhi::IsInstanced(impl_->pipeline->kind)!=IsInstanced(pipeline->kind)))
+        ||IsEnvironment(impl_->pipeline->kind)!=environment||se::rhi::IsInstanced(impl_->pipeline->kind)!=IsInstanced(pipeline->kind)))
         return Fail(Error::Unsupported);
     D3D12Mesh mesh;mesh.vertices=vertex->resource;mesh.indices=index->resource;
     mesh.vertexView={vertex->resource->GetGPUVirtualAddress(),vertex->bytes,vertex->stride};
@@ -1039,19 +1260,32 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
     }
     const D3D12MeshDraw native{&mesh,draw.world,draw.tint,draw.textureIsData,draw.unlit,draw.pbr,instances,nullptr,draw.impostorView,draw.impostorNext,draw.impostorBlend,
         draw.hasPreviousWorld,draw.previousWorld,pipeline->mesh.prepared->program->source.compressedVertex,false,draw.look,
-        draw.skinPalette,draw.skinJointOffset,draw.skinJointCount};
+        draw.skinPalette,draw.skinJointOffset,draw.skinJointCount,draw.alphaMode,draw.alphaCutoff};
     if(!ValidateD3D12MeshDraws(pipeline->mesh,std::span(&native,1),draw.viewProjection,device->text))return Fail(Error::InvalidArgument);
     auto source=std::to_string(texture->native.views->Cpu(draw.textureIsData?1:0).ptr)+":";
     if(pbr)source+=std::to_string(normal->native.views->Cpu(1).ptr)+":"+std::to_string(mr->native.views->Cpu(1).ptr)+":";
     if(shadow)source+="Shadow:";
     if(environment)source+="Environment:";
-    if(!impl_->descriptors.contains(source)&&(impl_->descriptors.size()+1)*(environment?7:shadow?4:pbr?3:1)>device->presentation.frames[0].descriptors.Maximum())
+    if(forward&&impl_->forward->shading.enabled)
+    {
+        source+="Shading:";
+        for(const auto& textureEntry:layerTextures)source+=textureEntry?std::to_string(textureEntry->native.views->Cpu().ptr)+":":"white:";
+    }
+    if(!impl_->descriptors.contains(source)&&(impl_->descriptors.size()+1)*((environment?7:shadow?4:pbr?3:1)+(IsClustered(pipeline->kind)?4:0)+(forward&&impl_->forward->shading.enabled?12:0))>device->presentation.frames[0].descriptors.Maximum())
     {++device->descriptorRejections;return Fail(Error::CapacityExceeded);}
     impl_->descriptors.insert(source);
     impl_->geometry.push_back(std::move(mesh));impl_->draws.push_back(draw);
+    // CommandContext 持有快照，调用方临时 ranges 无需活到 Submit。
+    auto& ranges=impl_->geometryClusters.emplace_back();
+    if(draw.geometryClusters.size()<=se::MaximumVisibilityItems)ranges.assign(draw.geometryClusters.begin(),draw.geometryClusters.end());
+    impl_->draws.back().geometryClusters=ranges;
     impl_->instances.emplace_back(instances.begin(),instances.end());impl_->instanceCount+=instances.size();
     impl_->leases.insert(impl_->leases.end(),{vertex,index,texture,pipeline});
     if(pbr)impl_->leases.insert(impl_->leases.end(),{normal,mr});
+    if(forward&&impl_->forward->shading.enabled)
+    {
+        for(const auto& entry:layerTextures)if(entry)impl_->leases.push_back(entry);impl_->layerTextures.push_back(std::move(layerTextures));
+    }
     impl_->drawPipelines.push_back(pipeline);
     if(!impl_->pipeline){impl_->pipeline=pipeline;impl_->pipelineHandle=draw.pipeline;impl_->viewProjection=draw.viewProjection;}
     return {};
@@ -1069,6 +1303,9 @@ Result CommandContext::EndPass()
 {
     auto device=impl_?impl_->device.lock():nullptr;if(!device||!device->Usable())return Fail(Error::InvalidState);
     if(impl_->phase==1)impl_->phase=2;else if(impl_->phase==3)impl_->phase=4;
+    else if(impl_->phase==25)impl_->phase=26;
+    else if(impl_->phase==27){impl_->phase=28;impl_->depthNormalsRecorded=true;}
+    else if(impl_->phase==31){impl_->phase=8;impl_->screenSpaceRecorded=true;}
     else if(impl_->forward&&impl_->phase==7)impl_->phase=8;else if(impl_->forward&&impl_->phase==9)impl_->phase=10;
     else if(impl_->shadow&&impl_->phase==11)impl_->phase=12;
     else if(impl_->post&&impl_->phase>=13&&impl_->phase<=23&&impl_->phase%2)++impl_->phase;
@@ -1079,7 +1316,7 @@ Result CommandContext::Close()
     auto device=impl_?impl_->device.lock():nullptr;
     if(!device||!device->Usable()||(impl_->forward?impl_->phase!=10:impl_->phase!=2&&impl_->phase!=4)
         ||(impl_->skyPipeline&&impl_->environment.has_value()!=(impl_->skyPipeline->kind==PipelineKind::EnvironmentSky))
-        ||(impl_->outputPipeline&&impl_->shadow.has_value()!=(impl_->outputPipeline->kind==PipelineKind::ShadowOutput)))return Fail(Error::InvalidState);
+        ||(impl_->outputPipeline&&impl_->shadow.has_value()!=(impl_->outputPipeline->kind==PipelineKind::ShadowOutput||impl_->outputPipeline->kind==PipelineKind::CascadedShadowOutput)))return Fail(Error::InvalidState);
     impl_->phase=5;return {};
 }
 Result Device::Resize(std::uint32_t width,std::uint32_t height)
@@ -1091,7 +1328,7 @@ Result Device::Resize(std::uint32_t width,std::uint32_t height)
     impl_->occlusion.telemetryFences.fill(0);
     impl_->Collect();return {};
 }
-Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* capture,HdrImage* hdrCapture,DepthImage* shadowCapture)
+Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* capture,HdrImage* hdrCapture,DepthImage* shadowCapture,ClusterReadback* clusterCapture,DepthImage* sceneDepthCapture,DepthNormalReadback* depthNormalCapture,ScreenSpaceOcclusionReadback* occlusionCapture)
 {
     if(!impl_||!impl_->Usable()||impl_->presentation.uploadStates||!commands.impl_||commands.impl_->phase!=5||commands.impl_->device.lock()!=impl_)return Fail(Error::InvalidState);
     auto& c=*commands.impl_;auto& p=impl_->presentation;
@@ -1108,13 +1345,29 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     }
     if(hdrCapture&&!c.forward)return Fail(Error::InvalidArgument);
     if(shadowCapture&&!c.shadow)return Fail(Error::InvalidArgument);
+    if(clusterCapture&&(!c.forward||!c.forward->cluster.enabled))return Fail(Error::InvalidArgument);
+    if(depthNormalCapture&&(!c.depthNormals||!c.depthNormals->enabled))return Fail(Error::InvalidArgument);
+    if(occlusionCapture&&(!c.screenSpaceOcclusion||(!c.screenSpaceOcclusion->gtao&&!c.screenSpaceOcclusion->contactShadows)))return Fail(Error::InvalidArgument);
+    if(c.screenSpaceOcclusion&&(c.screenSpaceOcclusion->gtao||c.screenSpaceOcclusion->contactShadows))
+    {
+        const auto expected=c.screenSpaceOcclusion->clipFromView*c.screenSpaceOcclusion->view;
+        for(size_t index=0;index<16;++index)if(std::abs(expected.values[index]-c.viewProjection.values[index])>2e-4f*std::max(1.f,std::abs(c.viewProjection.values[index])))return Fail(Error::InvalidArgument);
+    }
     std::vector<D3D12MeshDraw> draws;draws.reserve(c.draws.size());
     for(size_t i=0;i<c.draws.size();++i)
     {const auto& draw=c.draws[i];draws.push_back({&c.geometry[i],draw.world,draw.tint,draw.textureIsData,draw.unlit,draw.pbr,c.instances[i],&c.drawPipelines[i]->mesh,draw.impostorView,draw.impostorNext,draw.impostorBlend,
         draw.hasPreviousWorld,draw.previousWorld,c.drawPipelines[i]->mesh.prepared->program->source.compressedVertex,draw.outline,
-        draw.look,draw.skinPalette,draw.skinJointOffset,draw.skinJointCount});}
+        draw.look,draw.skinPalette,draw.skinJointOffset,draw.skinJointCount,draw.alphaMode,draw.alphaCutoff});
+        draws.back().layers=draw.layers.constants;
+        draws.back().worldBounds=draw.worldBounds;draws.back().hasWorldBounds=draw.hasWorldBounds;draws.back().geometryClusters=draw.geometryClusters;
+        if(c.forward&&c.forward->shading.enabled)
+            for(UINT slot=0;slot<6;++slot)if(c.layerTextures[i][slot])draws.back().layerTextures[slot]=&c.layerTextures[i][slot]->native;
+    }
     // G06.08：批处理对象必须活到 RenderD3D12Frame 返回；这里只做本地借用。
-    D3D12FrameContent content;content.viewProjection=c.viewProjection;content.meshes=draws;content.sourceFrame=c.sourceFrame;content.cacheOpaqueBindings=c.cacheOpaqueBindings;
+    D3D12FrameContent content;content.viewProjection=c.viewProjection;content.meshes=draws;content.opaqueDrawCount=c.transparentPass?c.opaqueDrawCount:draws.size();content.sourceFrame=c.sourceFrame;content.cacheOpaqueBindings=c.cacheOpaqueBindings;
+    content.depthNormals=c.depthNormals?&*c.depthNormals:nullptr;
+    content.screenSpaceOcclusion=c.screenSpaceOcclusion?&*c.screenSpaceOcclusion:nullptr;
+    for(UINT slot=0;slot<5;++slot)if(c.shadingTextures[slot])content.shadingTextures[slot]=&c.shadingTextures[slot]->native;
     content.sceneLines=c.sceneLines;content.sceneOverlayShader=c.sceneOverlayShader;content.sceneLineScale=c.sceneLineScale;content.sceneGrid=c.sceneGrid;
     std::vector<const D3D12Texture*> guiTextures;for(const auto& texture:c.guiTextures)guiTextures.push_back(&texture->native);
     D3D12GuiContent gui{c.guiScene?c.guiScene->target.get():nullptr,c.guiComposite?c.guiComposite->target.get():nullptr,
@@ -1243,6 +1496,8 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     {
         D3D12MeshDraw shadow{};
         shadow.mesh=&c.shadowGeometry[index];shadow.world=c.shadowWorlds[index];
+        shadow.textureIsData=c.shadowMaterials[index].textureIsData;shadow.tint=c.shadowMaterials[index].tint;shadow.pbr.doubleSided=c.shadowMaterials[index].pbr.doubleSided;
+        shadow.alphaMode=c.shadowMaterials[index].alphaMode;shadow.alphaCutoff=c.shadowMaterials[index].alphaCutoff;
         shadow.skinPalette=c.shadowPalettes[index];
         shadow.skinJointCount=c.shadowJointCounts[index];shadow.skinJointOffset=c.shadowJointOffsets[index];
         shadow.pipeline=c.shadowPipelines[index]?&c.shadowPipelines[index]->mesh:nullptr;
@@ -1251,11 +1506,13 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     content.shadow=c.shadow?&*c.shadow:nullptr;content.shadowPipeline=c.shadowPipeline?&c.shadowPipeline->mesh:nullptr;content.shadowMeshes=shadowDraws;
     if(c.pipeline)
     {if(c.pipeline->kind==PipelineKind::Triangle)content.triangle=&c.pipeline->triangle;else content.meshPipeline=&c.pipeline->mesh;}
-    ComPtr<ID3D12Resource> readback,hdrReadback,shadowReadback;D3D12FrameCapture copying,hdrCopying,shadowCopying;UINT64 bytes=0,hdrBytes=0,shadowBytes=0;
-    const auto prepareCapture=[&](DXGI_FORMAT format,UINT width,UINT height,ComPtr<ID3D12Resource>& captureBuffer,D3D12FrameCapture& request,UINT64& sizeBytes){
+    ComPtr<ID3D12Resource> readback,hdrReadback,shadowReadback,sceneDepthReadback;D3D12FrameCapture copying,hdrCopying,shadowCopying,sceneDepthCopying;UINT64 bytes=0,hdrBytes=0,shadowBytes=0,sceneDepthBytes=0;
+    const auto prepareCapture=[&](DXGI_FORMAT format,UINT width,UINT height,ComPtr<ID3D12Resource>& captureBuffer,D3D12FrameCapture& request,UINT64& sizeBytes,UINT layers=1){
         auto desc=p.backBuffers[p.swapChain->GetCurrentBackBufferIndex()]->GetDesc();desc.Format=format;desc.Width=width;desc.Height=height;
         desc.Flags=format==DXGI_FORMAT_R32_TYPELESS?D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL:D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-        impl_->context.device->GetCopyableFootprints(&desc,0,1,0,&request.footprint,nullptr,nullptr,&sizeBytes);
+        desc.DepthOrArraySize=static_cast<UINT16>(layers);request.layerFootprints.resize(layers);
+        impl_->context.device->GetCopyableFootprints(&desc,0,layers,0,request.layerFootprints.data(),nullptr,nullptr,&sizeBytes);
+        request.footprint=request.layerFootprints.front();
         D3D12_RESOURCE_DESC buffer{};buffer.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;buffer.Width=sizeBytes;
         buffer.Height=buffer.DepthOrArraySize=buffer.MipLevels=1;buffer.SampleDesc={1,0};buffer.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_READBACK;heap.CreationNodeMask=heap.VisibleNodeMask=1;
@@ -1265,13 +1522,60 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     };
     if(capture&&!prepareCapture(DXGI_FORMAT_R8G8B8A8_UNORM,p.width,p.height,readback,copying,bytes))return Fail(Error::BackendFailure);
     if(hdrCapture&&!prepareCapture(DXGI_FORMAT_R16G16B16A16_FLOAT,p.width,p.height,hdrReadback,hdrCopying,hdrBytes))return Fail(Error::BackendFailure);
-    if(shadowCapture&&!prepareCapture(DXGI_FORMAT_R32_TYPELESS,c.shadow->resolution,c.shadow->resolution,shadowReadback,shadowCopying,shadowBytes))return Fail(Error::BackendFailure);
+    if(shadowCapture&&!prepareCapture(DXGI_FORMAT_R32_TYPELESS,c.shadow->resolution,c.shadow->resolution,shadowReadback,shadowCopying,shadowBytes,c.shadow->cascadeCount?c.shadow->cascadeCount:1))return Fail(Error::BackendFailure);
+    const UINT sceneScale=c.post&&c.post->supersample4x?2u:1u;
+    const UINT sceneWidth=(c.composition?c.composition->scene.width:c.guiScene?c.guiScene->native.width:p.width)*sceneScale;
+    const UINT sceneHeight=(c.composition?c.composition->scene.height:c.guiScene?c.guiScene->native.height:p.height)*sceneScale;
+    if(sceneDepthCapture)
+    {
+        if(!c.forward||!prepareCapture(DXGI_FORMAT_R32_TYPELESS,sceneWidth,sceneHeight,sceneDepthReadback,sceneDepthCopying,sceneDepthBytes))return Fail(Error::InvalidArgument);
+        if(FAILED(impl_->context.states->Register(*sceneDepthReadback.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12TrackedHeap::Readback,"SceneDepth.Capture")))return Fail(Error::BackendFailure);
+        content.sceneDepthCapture=&sceneDepthCopying;
+    }
+    ComPtr<ID3D12Resource> prepassDepthReadback,normalReadback;D3D12FrameCapture prepassDepthCopying,normalCopying;UINT64 prepassDepthBytes=0,normalBytes=0;
+    if(depthNormalCapture)
+    {
+        if(!prepareCapture(DXGI_FORMAT_R32_TYPELESS,sceneWidth,sceneHeight,prepassDepthReadback,prepassDepthCopying,prepassDepthBytes)
+            ||!prepareCapture(DXGI_FORMAT_R16G16_FLOAT,sceneWidth,sceneHeight,normalReadback,normalCopying,normalBytes))return Fail(Error::BackendFailure);
+        for(auto* resource:{prepassDepthReadback.Get(),normalReadback.Get()})
+            if(FAILED(impl_->context.states->Register(*resource,D3D12_RESOURCE_STATE_COPY_DEST,D3D12TrackedHeap::Readback,"DepthNormals.Capture")))return Fail(Error::BackendFailure);
+        content.depthNormalDepthCapture=&prepassDepthCopying;content.depthNormalCapture=&normalCopying;
+    }
+    ComPtr<ID3D12Resource> occlusionReadback,halfAoReadback;D3D12FrameCapture occlusionCopying,halfAoCopying;UINT64 occlusionBytes=0,halfAoBytes=0;
+    if(occlusionCapture)
+    {
+        if(!prepareCapture(DXGI_FORMAT_R16G16_FLOAT,sceneWidth,sceneHeight,occlusionReadback,occlusionCopying,occlusionBytes))return Fail(Error::BackendFailure);
+        if(FAILED(impl_->context.states->Register(*occlusionReadback.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12TrackedHeap::Readback,"ScreenSpace.Capture")))return Fail(Error::BackendFailure);
+        content.screenSpaceCapture=&occlusionCopying;
+        if(c.screenSpaceOcclusion->gtao)
+        {
+            if(!prepareCapture(DXGI_FORMAT_R16G16_FLOAT,(sceneWidth+1)/2,(sceneHeight+1)/2,halfAoReadback,halfAoCopying,halfAoBytes))return Fail(Error::BackendFailure);
+            if(FAILED(impl_->context.states->Register(*halfAoReadback.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12TrackedHeap::Readback,"ScreenSpace.HalfCapture")))return Fail(Error::BackendFailure);
+            content.halfAoCapture=&halfAoCopying;
+        }
+    }
+
+    ComPtr<ID3D12Resource> clusterReadback;D3D12ClusterCapture clusterCopying;
+    if(clusterCapture)
+    {
+        D3D12_RESOURCE_DESC buffer{};buffer.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;buffer.Width=ClusterCaptureBytes;
+        buffer.Height=buffer.DepthOrArraySize=buffer.MipLevels=1;buffer.SampleDesc={1,0};buffer.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_READBACK;heap.CreationNodeMask=heap.VisibleNodeMask=1;
+        if(FAILED(impl_->context.device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&buffer,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(clusterReadback.GetAddressOf())))
+            ||FAILED(impl_->context.states->Register(*clusterReadback.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12TrackedHeap::Readback,"Cluster.Capture")))return Fail(Error::BackendFailure);
+        clusterCopying.readback=clusterReadback.Get();content.clusterCapture=&clusterCopying;
+    }
     content.hdrCapture=hdrCapture?&hdrCopying:nullptr;
     content.shadowCapture=shadowCapture?&shadowCopying:nullptr;
     impl_->pending.insert(impl_->pending.end(),c.leases.begin(),c.leases.end());
     if(!RenderD3D12Frame(p,impl_->text,content,capture?&copying:nullptr))
     {ReleaseD3D12Presentation(p);impl_->ready=false;return Fail(Error::BackendFailure);}
     const auto fence=p.frames[frame].fenceValue;token={impl_->id,1,fence};
+    if(c.forward&&c.forward->cluster.enabled&&p.frames[frame].clusters)
+    {
+        auto& cluster=*p.frames[frame].clusters;
+        cluster.pendingFence=fence;cluster.countersPending=cluster.configuration.counterReadback;
+    }
     // 复制已与 ExecuteIndirect 同帧提交；该 Fence 完成后 CPU 才能安全映射。
     if(occlusionCountReadback)impl_->occlusion.counterFences[frame]=fence;
     if(occlusionTelemetry)
@@ -1282,12 +1586,13 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     for(const auto& entry:c.leases)entry->lastUse=std::max(entry->lastUse,fence);
     impl_->inFlight.push_back({fence,std::move(c.leases)});impl_->pending.clear();
     c.geometry.clear();c.draws.clear();c.drawPipelines.clear();c.instances.clear();c.shadowGeometry.clear();c.shadowWorlds.clear();
-    c.shadowPalettes.clear();c.shadowJointCounts.clear();c.shadowJointOffsets.clear();c.shadowPipelines.clear();c.pipeline.reset();c.outputPipeline.reset();c.skyPipeline.reset();c.shadowPipeline.reset();
+    c.layerTextures.clear();c.shadingTextures={};c.geometryClusters.clear();
+    c.shadowMaterials.clear();c.shadowPalettes.clear();c.shadowJointCounts.clear();c.shadowJointOffsets.clear();c.shadowPipelines.clear();c.pipeline.reset();c.outputPipeline.reset();c.skyPipeline.reset();c.shadowPipeline.reset();
     c.occlusion={};
     c.guiScene.reset();c.guiComposite.reset();c.guiPipeline.reset();c.guiTextures.clear();c.guiGeometry={};c.phase=6;
     c.composition.reset();c.compositionHdr.reset();c.compositionLdr.reset();
     c.gameUiPipeline.reset();c.gameUiTextures.clear();c.gameUiGeometry={};
-    if(capture||hdrCapture||shadowCapture)
+    if(capture||hdrCapture||shadowCapture||clusterCapture||sceneDepthCapture||depthNormalCapture||occlusionCapture)
     {
         if(!WaitIdle()){ReleaseD3D12Presentation(p);impl_->ready=false;return Fail(Error::BackendFailure);}
     }
@@ -1314,12 +1619,91 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     }
     if(shadowCapture)
     {
-        const UINT resolution=c.shadow->resolution;DepthImage image{resolution,resolution,std::vector<float>(size_t(resolution)*resolution)};
+        const UINT resolution=c.shadow->resolution,layers=c.shadow->cascadeCount?c.shadow->cascadeCount:1;
+        DepthImage image{resolution,resolution,std::vector<float>(size_t(resolution)*resolution*layers),layers};
         void* mapped=nullptr;const D3D12_RANGE range{0,static_cast<SIZE_T>(shadowBytes)};
         if(FAILED(shadowReadback->Map(0,&range,&mapped)))return Fail(Error::BackendFailure);
-        for(UINT row=0;row<resolution;++row)std::memcpy(image.depth.data()+size_t(row)*resolution,
-            static_cast<const std::byte*>(mapped)+shadowCopying.footprint.Offset+size_t(row)*shadowCopying.footprint.Footprint.RowPitch,size_t(resolution)*sizeof(float));
+        for(UINT layer=0;layer<layers;++layer)for(UINT row=0;row<resolution;++row)
+        {
+            const auto& footprint=shadowCopying.layerFootprints[layer];
+            std::memcpy(image.depth.data()+(size_t(layer)*resolution+row)*resolution,
+                static_cast<const std::byte*>(mapped)+footprint.Offset+size_t(row)*footprint.Footprint.RowPitch,size_t(resolution)*sizeof(float));
+        }
         const D3D12_RANGE noWrites{0,0};shadowReadback->Unmap(0,&noWrites);*shadowCapture=std::move(image);
+    }
+    if(sceneDepthCapture)
+    {
+        DepthImage image{sceneWidth,sceneHeight,std::vector<float>(size_t(sceneWidth)*sceneHeight),1};void* mapped=nullptr;
+        const D3D12_RANGE range{0,static_cast<SIZE_T>(sceneDepthBytes)};if(FAILED(sceneDepthReadback->Map(0,&range,&mapped)))return Fail(Error::BackendFailure);
+        for(UINT row=0;row<sceneHeight;++row)std::memcpy(image.depth.data()+size_t(row)*sceneWidth,
+            static_cast<const std::byte*>(mapped)+sceneDepthCopying.footprint.Offset+size_t(row)*sceneDepthCopying.footprint.Footprint.RowPitch,size_t(sceneWidth)*sizeof(float));
+        const D3D12_RANGE noWrites{0,0};sceneDepthReadback->Unmap(0,&noWrites);*sceneDepthCapture=std::move(image);
+    }
+    if(depthNormalCapture)
+    {
+        DepthNormalReadback result;result.width=sceneWidth;result.height=sceneHeight;
+        result.valid=p.depthNormalStatistics.valid;
+        result.complete=p.depthNormalStatistics.complete;result.draws=p.depthNormalStatistics.draws;result.unsupportedDraws=p.depthNormalStatistics.unsupportedDraws;
+        if(result.valid)
+        {
+        result.depth.resize(size_t(sceneWidth)*sceneHeight);result.octNormals.resize(size_t(sceneWidth)*sceneHeight*2);
+        void* mapped=nullptr;const D3D12_RANGE depthRange{0,static_cast<SIZE_T>(prepassDepthBytes)},normalRange{0,static_cast<SIZE_T>(normalBytes)},none{0,0};
+        if(FAILED(prepassDepthReadback->Map(0,&depthRange,&mapped)))return Fail(Error::BackendFailure);
+        for(UINT row=0;row<sceneHeight;++row)std::memcpy(result.depth.data()+size_t(row)*sceneWidth,
+            static_cast<const std::byte*>(mapped)+prepassDepthCopying.footprint.Offset+size_t(row)*prepassDepthCopying.footprint.Footprint.RowPitch,size_t(sceneWidth)*sizeof(float));
+        prepassDepthReadback->Unmap(0,&none);
+        if(FAILED(normalReadback->Map(0,&normalRange,&mapped)))return Fail(Error::BackendFailure);
+        for(UINT row=0;row<sceneHeight;++row)for(size_t column=0;column<size_t(sceneWidth)*2;++column)
+        {
+            std::uint16_t half=0;std::memcpy(&half,static_cast<const std::byte*>(mapped)+normalCopying.footprint.Offset+size_t(row)*normalCopying.footprint.Footprint.RowPitch+column*2,2);
+            result.octNormals[size_t(row)*sceneWidth*2+column]=HalfToFloat(half);
+        }
+        normalReadback->Unmap(0,&none);
+        }
+        *depthNormalCapture=std::move(result);
+    }
+    if(occlusionCapture)
+    {
+        ScreenSpaceOcclusionReadback result;result.statistics=p.screenSpaceStatistics;
+        const auto read=[&](ID3D12Resource& resource,const D3D12FrameCapture& request,UINT width,UINT height,UINT64 bytes,std::vector<float>& values)
+        {
+            void* mapped=nullptr;const D3D12_RANGE range{0,static_cast<SIZE_T>(bytes)},none{0,0};if(FAILED(resource.Map(0,&range,&mapped)))return false;
+            values.resize(size_t(width)*height*2);
+            for(UINT row=0;row<height;++row)for(size_t column=0;column<size_t(width)*2;++column)
+            {
+                std::uint16_t half=0;std::memcpy(&half,static_cast<const std::byte*>(mapped)+request.footprint.Offset+size_t(row)*request.footprint.Footprint.RowPitch+column*2,2);
+                values[size_t(row)*width*2+column]=HalfToFloat(half);
+            }
+            resource.Unmap(0,&none);return true;
+        };
+        if(result.statistics.valid)
+        {
+            if(!read(*occlusionReadback.Get(),occlusionCopying,sceneWidth,sceneHeight,occlusionBytes,result.visibility))return Fail(Error::BackendFailure);
+            if(result.statistics.aoValid&&!read(*halfAoReadback.Get(),halfAoCopying,(sceneWidth+1)/2,(sceneHeight+1)/2,halfAoBytes,result.halfAo))return Fail(Error::BackendFailure);
+        }
+        *occlusionCapture=std::move(result);
+    }
+    if(clusterCapture)
+    {
+        void* mapped=nullptr;const D3D12_RANGE read{0,ClusterCaptureBytes};
+        if(FAILED(clusterReadback->Map(0,&read,&mapped)))return Fail(Error::BackendFailure);
+        const auto* capturedBytes=static_cast<const std::byte*>(mapped);ClusterReadback result;
+        std::memcpy(result.counters.data(),capturedBytes+ClusterCountersOffset,ClusterCountersBytes);
+        const UINT inputCount=result.counters[0],validIndices=result.counters[6]?0:result.counters[4];
+        if(inputCount>256||validIndices>65536){const D3D12_RANGE noWrites{0,0};clusterReadback->Unmap(0,&noWrites);return Fail(Error::BackendFailure);}
+        result.ranges.resize(ClusterCount);result.rawCounts.resize(ClusterCount);result.indices.resize(validIndices);
+        std::memcpy(result.ranges.data(),capturedBytes+ClusterRangesOffset,ClusterRangesBytes);
+        std::memcpy(result.rawCounts.data(),capturedBytes+ClusterCountsOffset,ClusterCountsBytes);
+        if(validIndices)std::memcpy(result.indices.data(),capturedBytes+ClusterIndicesOffset,size_t(validIndices)*sizeof(UINT));
+        result.lights.resize(inputCount);
+        for(UINT i=0;i<inputCount;++i)
+        {
+            ClusterGpuLight light;std::memcpy(&light,capturedBytes+ClusterInputOffset+size_t(i)*sizeof(light),sizeof(light));
+            result.lights[i]={{light.positionRange.x,light.positionRange.y,light.positionRange.z},{light.radiancePad.x,light.radiancePad.y,light.radiancePad.z},light.positionRange.w};
+        }
+        const auto& config=p.frames[frame].clusters->configuration;result.inputIds=config.ids;
+        result.view=config.view;result.clipFromView=config.clipFromView;result.nearPlane=config.nearPlane;result.farPlane=config.farPlane;
+        const D3D12_RANGE noWrites{0,0};clusterReadback->Unmap(0,&noWrites);*clusterCapture=std::move(result);
     }
     impl_->Collect();return {};
 }
@@ -1339,6 +1723,18 @@ Statistics Device::Stats() const
     impl_->PollOcclusionCounters();
     impl_->PollOcclusionTelemetry();
     const auto& p=*impl_;stats.opaqueBindings=p.presentation.opaqueBindings;
+    stats.depthNormals=p.presentation.depthNormalStatistics;stats.gpuDriven=p.presentation.gpuDrivenStatistics;
+    stats.screenSpaceOcclusion=p.presentation.screenSpaceStatistics;
+    if(p.presentation.ambientOcclusionBuilder)
+    {
+        const auto loads=p.presentation.ambientOcclusionBuilder->ShaderStatistics();stats.screenSpaceOcclusion.kernelCreations=2;
+        stats.screenSpaceOcclusion.programCompilations=loads.compilations;stats.screenSpaceOcclusion.artifactLoads=loads.artifactLoads;stats.screenSpaceOcclusion.artifactRejections=loads.artifactRejections;
+    }
+    if(p.presentation.depthNormalBuilder)
+    {
+        const auto loads=p.presentation.depthNormalBuilder->ShaderStatistics();stats.depthNormals.pipelineCreations=p.presentation.depthNormalBuilder->PipelineCreations();
+        stats.depthNormals.programCompilations=loads.compilations;stats.depthNormals.artifactLoads=loads.artifactLoads;stats.depthNormals.artifactRejections=loads.artifactRejections;
+    }
     stats.frameInstances=p.presentation.frameInstances;stats.frameInstanceBytes=p.presentation.frameInstanceBytes;stats.frameDrawConstantBytes=p.presentation.frameDrawConstantBytes;
     stats.hdrCreations=p.presentation.hdrCreations;if(p.presentation.hdr){stats.hdrWidth=p.presentation.width;stats.hdrHeight=p.presentation.height;}
     stats.shadowCreations=p.presentation.shadowCreations;if(p.presentation.shadow)stats.shadowResolution=p.presentation.shadow->resolution;
@@ -1406,6 +1802,7 @@ Statistics Device::Stats() const
             {if(message->Severity==D3D12_MESSAGE_SEVERITY_WARNING)++stats.debugWarnings;else if(message->Severity<=D3D12_MESSAGE_SEVERITY_ERROR)++stats.debugErrors;}
         }
     }
+    stats.clustered=p.presentation.clustered;
     return stats;
 }
 bool Device::Occluded() const{return impl_&&impl_->presentation.occluded;}
@@ -1460,10 +1857,40 @@ Result Device::ExportGpuPassTimingsCsv(const std::filesystem::path& path)
     {
         const auto first=sample.passTicks[pass*2],last=sample.passTicks[pass*2+1];
         csv<<sample.sourceFrame<<','<<sample.submission<<",1,"<<(sample.post&&pass==3?"PostProcess":names[pass])<<','<<sample.frequency<<','<<first<<','<<last<<','<<double(last-first)*1000/double(sample.frequency)<<'\n';
+        if(pass==0&&sample.clustered)
+        {
+            const auto begin=sample.clusterTicks[0],end=sample.clusterTicks[1];
+            csv<<sample.sourceFrame<<','<<sample.submission<<",1,ClusterCull,"<<sample.frequency<<','<<begin<<','<<end<<','<<double(end-begin)*1000/double(sample.frequency)<<'\n';
+        }
         if(pass==0&&sample.shadow)
         {
             const auto begin=sample.shadowTicks[0],end=sample.shadowTicks[1];
             csv<<sample.sourceFrame<<','<<sample.submission<<",1,Shadow,"<<sample.frequency<<','<<begin<<','<<end<<','<<double(end-begin)*1000/double(sample.frequency)<<'\n';
+        }
+        if(pass==1&&sample.depthNormals)
+        {
+            const auto begin=sample.depthNormalTicks[0],end=sample.depthNormalTicks[1];
+            csv<<sample.sourceFrame<<','<<sample.submission<<",1,DepthNormals,"<<sample.frequency<<','<<begin<<','<<end<<','<<double(end-begin)*1000/double(sample.frequency)<<'\n';
+        }
+        if(pass==1&&sample.ambientOcclusionHalf)
+        {
+            const auto begin=sample.aoTicks[0],end=sample.aoTicks[1];
+            csv<<sample.sourceFrame<<','<<sample.submission<<",1,GtaoHalf,"<<sample.frequency<<','<<begin<<','<<end<<','<<double(end-begin)*1000/double(sample.frequency)<<'\n';
+        }
+        if(pass==1&&sample.ambientOcclusion)
+        {
+            const auto begin=sample.aoResolveTicks[0],end=sample.aoResolveTicks[1];
+            csv<<sample.sourceFrame<<','<<sample.submission<<",1,ScreenSpaceResolve,"<<sample.frequency<<','<<begin<<','<<end<<','<<double(end-begin)*1000/double(sample.frequency)<<'\n';
+        }
+        if(pass==1&&sample.heterogeneousHiZ)
+        {
+            const auto begin=sample.heterogeneousHiZTicks[0],end=sample.heterogeneousHiZTicks[2];
+            csv<<sample.sourceFrame<<','<<sample.submission<<",1,HeterogeneousHiZ,"<<sample.frequency<<','<<begin<<','<<end<<','<<double(end-begin)*1000/double(sample.frequency)<<'\n';
+        }
+        if(pass==1&&sample.heterogeneous)
+        {
+            const auto begin=sample.heterogeneousTicks[0],end=sample.heterogeneousTicks[1];
+            csv<<sample.sourceFrame<<','<<sample.submission<<",1,HeterogeneousCull,"<<sample.frequency<<','<<begin<<','<<end<<','<<double(end-begin)*1000/double(sample.frequency)<<'\n';
         }
         if(sample.post&&pass==3)
         {

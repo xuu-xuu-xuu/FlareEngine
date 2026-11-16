@@ -19,7 +19,6 @@
 #include <nlohmann/json.hpp>
 #include <Windows.h>
 #include <Psapi.h>
-#include <objbase.h>
 #include <algorithm>
 #include <atomic>
 #include <fstream>
@@ -110,9 +109,18 @@ fs::path NewOperation(const fs::path& operations)
         if(attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_REPARSE_POINT)!=0)return {};
         if(directory==directory.root_path())break;
     }
-    GUID id{};if(FAILED(CoCreateGuid(&id)))return {};
-    wchar_t text[40]{};StringFromGUID2(id,text,40);
-    const auto path=operations/fs::path(text);std::error_code error;fs::create_directories(path,error);return error?fs::path{}:path;
+    std::error_code error;
+    fs::create_directories(operations,error);
+    if(error)return {};
+    // 候选运行时还会嵌套在此目录中。短标识避免深工程路径超出 Windows 限制。
+    for(;;)
+    {
+        const auto id=asset_io::NewId();
+        if(id.empty())return {};
+        const auto path=operations/id.substr(0,12);
+        if(fs::create_directory(path,error))return path;
+        if(error&&error!=std::errc::file_exists)return {};
+    }
 }
 void SetPathEnvironment(const wchar_t* name,const fs::path& value)
 {SetEnvironmentVariableW(name,value.empty()?nullptr:value.c_str());}
@@ -246,7 +254,8 @@ int RunManagedEditorWorker(const EditorWorkerOptions& options,const fs::path& en
             std::atomic<bool> workflowTimeout=false,hostCancelled=false;const auto hostStarted=GetTickCount64();
             const auto workflowMode=workflow?ReadJson(options.smokeWorkflow).at("stages")[workflowStage].value("mode",std::string("playback")):std::string{};
             const auto timeoutMs=workflowMode=="export"?std::uint64_t{905000}:std::uint64_t{120000};
-            RunEditorProcess((candidate/TextPath(candidateManifest.at("runtimeExecutable").get<std::string>())).wstring(),run,engineRoot,operation/"editor.log",
+            // 着色器管线缓存写入当前项目；安装目录中的文件受编辑器包清单保护。
+            RunEditorProcess((candidate/TextPath(candidateManifest.at("runtimeExecutable").get<std::string>())).wstring(),run,packaged?project:engineRoot,operation/"editor.log",
                 &hostCancelled,child,[&]{
                     if(workflow&&GetTickCount64()-hostStarted>timeoutMs)workflowTimeout=true;
                     if(workflowTimeout||loading.Cancelled())hostCancelled=true;

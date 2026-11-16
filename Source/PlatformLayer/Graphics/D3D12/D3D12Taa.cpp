@@ -39,13 +39,16 @@ bool ValidDepth(const D3D12_RESOURCE_DESC& description,UINT width,UINT height)
     return description.Dimension==D3D12_RESOURCE_DIMENSION_TEXTURE2D&&description.Width==width
         &&description.Height==height&&description.DepthOrArraySize==1&&description.MipLevels==1
         &&description.SampleDesc.Count==1
-        &&(description.Format==DXGI_FORMAT_D32_FLOAT||description.Format==DXGI_FORMAT_R32_FLOAT);
+        // GUI/4x 几何目标使用 typeless 存储，分别建立 D32 DSV 与 R32 SRV；
+        // 它与普通场景 D32 深度具有同一采样/比较契约。
+        &&(description.Format==DXGI_FORMAT_D32_FLOAT||description.Format==DXGI_FORMAT_R32_FLOAT
+            ||description.Format==DXGI_FORMAT_R32_TYPELESS);
 }
 struct VelocityConstants
 {
-    se::Mat4 currentClipFromLocal,previousClipFromLocal;
+    se::Mat4 rasterClipFromLocal,currentClipFromLocal,previousClipFromLocal;
 };
-static_assert(sizeof(VelocityConstants)==128);
+static_assert(sizeof(VelocityConstants)==48*sizeof(UINT));
 }
 HRESULT D3D12Taa::Initialize(ID3D12Device& device,D3D12MemoryAllocator& memory,
     const std::filesystem::path& shaders,const Localization& text)
@@ -58,7 +61,7 @@ HRESULT D3D12Taa::Initialize(ID3D12Device& device,D3D12MemoryAllocator& memory,
     {CheckGraphicsResult(E_FAIL,text,"D3D12.TaaShaderFailed");return E_FAIL;}
     D3D12_ROOT_PARAMETER velocityParameter{};
     velocityParameter.ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    velocityParameter.Constants={0,0,32};velocityParameter.ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
+    velocityParameter.Constants={0,0,sizeof(VelocityConstants)/sizeof(UINT)};velocityParameter.ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
     D3D12_ROOT_SIGNATURE_DESC velocityDescription{};
     velocityDescription.NumParameters=1;velocityDescription.pParameters=&velocityParameter;
     velocityDescription.Flags=D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
@@ -139,7 +142,7 @@ HRESULT D3D12Taa::CreateOutput(ID3D12Resource& hdr,ID3D12Resource& depth,UINT wi
     velocity.DepthOrArraySize=velocity.MipLevels=1;velocity.Format=DXGI_FORMAT_R16G16_FLOAT;velocity.SampleDesc={1,0};
     velocity.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     D3D12_CLEAR_VALUE velocityClear{};velocityClear.Format=DXGI_FORMAT_R16G16_FLOAT;
-    velocityClear.Color[0]=velocityClear.Color[1]=velocityClear.Color[2]=velocityClear.Color[3]=0;
+    velocityClear.Color[0]=velocityClear.Color[1]=2.0f; // 超出屏幕，表示该像素没有可用的运动历史。
     auto result=memory_->Create(velocity,D3D12_RESOURCE_STATE_COMMON,&velocityClear,candidate.velocity,"Taa.Velocity");
     if(FAILED(result))return result;
     D3D12_RESOURCE_DESC color{};
@@ -170,7 +173,9 @@ HRESULT D3D12Taa::CreateOutput(ID3D12Resource& hdr,ID3D12Resource& depth,UINT wi
     result=device_->CreateDescriptorHeap(&dsvHeap,IID_PPV_ARGS(candidate.dsvs.GetAddressOf()));
     if(FAILED(result))return result;
     candidate.depthDsv=candidate.dsvs->GetCPUDescriptorHandleForHeapStart();
-    device_->CreateDepthStencilView(&depth,nullptr,candidate.depthDsv);
+    D3D12_DEPTH_STENCIL_VIEW_DESC readOnlyDepth{};readOnlyDepth.Format=DXGI_FORMAT_D32_FLOAT;
+    readOnlyDepth.ViewDimension=D3D12_DSV_DIMENSION_TEXTURE2D;readOnlyDepth.Flags=D3D12_DSV_FLAG_READ_ONLY_DEPTH;
+    device_->CreateDepthStencilView(&depth,&readOnlyDepth,candidate.depthDsv);
     D3D12_DESCRIPTOR_HEAP_DESC heap{};
     heap.NumDescriptors=descriptorCount;heap.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     heap.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;heap.NodeMask=1;
@@ -224,17 +229,18 @@ HRESULT D3D12Taa::CreateOutput(ID3D12Resource& hdr,ID3D12Resource& depth,UINT wi
     output=std::move(candidate);return S_OK;
 }
 HRESULT D3D12Taa::RecordVelocity(ID3D12GraphicsCommandList& commands,D3D12StateRecording& states,D3D12TaaOutput& output,
-    std::span<const D3D12MeshDraw> draws,const se::Mat4& clipFromWorld,ID3D12Resource& depth) const
+    std::span<const D3D12MeshDraw> draws,const se::Mat4& rasterClip,const se::Mat4& currentClip,
+    const se::Mat4& previousClip,ID3D12Resource& depth) const
 {
     if(!Ready())return E_UNEXPECTED;
     if(!output.velocity||!output.rtvs||!output.dsvs||!output.width||!output.height
         ||!ValidDepth(depth.GetDesc(),output.width,output.height)
-        ||!se::IsFinite(clipFromWorld))return E_INVALIDARG;
+        ||!se::IsFinite(rasterClip)||!se::IsFinite(currentClip)||!se::IsFinite(previousClip))return E_INVALIDARG;
     HRESULT result=states.Use(commands,depth,D3D12_RESOURCE_STATE_DEPTH_READ,"Taa.DepthRead");
     if(SUCCEEDED(result))result=states.Use(commands,*output.velocity.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"Taa.Velocity");
     if(FAILED(result))return result;
-    const float zero[4]{0,0,0,0};
-    commands.ClearRenderTargetView(output.velocityRtv,zero,0,nullptr);
+    const float invalidMotion[4]{2,2,0,0};
+    commands.ClearRenderTargetView(output.velocityRtv,invalidMotion,0,nullptr);
     commands.OMSetRenderTargets(1,&output.velocityRtv,FALSE,&output.depthDsv);
     const D3D12_VIEWPORT viewport{0,0,float(output.width),float(output.height),0,1};
     const D3D12_RECT scissor{0,0,LONG(output.width),LONG(output.height)};
@@ -243,13 +249,13 @@ HRESULT D3D12Taa::RecordVelocity(ID3D12GraphicsCommandList& commands,D3D12StateR
     commands.SetGraphicsRootSignature(velocityRoot_.Get());
     for(const auto& draw:draws)
     {
-        if(!draw.mesh||!draw.mesh->indexCount||!draw.instances.empty())continue;
-        const auto& previous=draw.hasPreviousWorld?draw.previousWorld:draw.world;
-        if(!se::IsFinite(draw.world)||!se::IsFinite(previous)||!se::IsFinite(clipFromWorld*draw.world)
-            ||!se::IsFinite(clipFromWorld*previous))continue;
-        const VelocityConstants constants{clipFromWorld*draw.world,clipFromWorld*previous};
+        // 首次出现、批实例或骨骼动作没有逐实例/逐顶点历史；不可用绑定姿态或零速度冒充。
+        if(draw.alphaMode!=se::MaterialAlphaMode::Opaque||!draw.mesh||!draw.mesh->indexCount||!draw.hasPreviousWorld||!draw.instances.empty()||draw.skinJointCount||draw.outline)continue;
+        const VelocityConstants constants{rasterClip*draw.world,currentClip*draw.world,previousClip*draw.previousWorld};
+        if(!se::IsFinite(constants.rasterClipFromLocal)||!se::IsFinite(constants.currentClipFromLocal)
+            ||!se::IsFinite(constants.previousClipFromLocal))continue;
         commands.SetPipelineState((draw.compressedVertices?velocityCompressed_:velocityLegacy_).Get());
-        commands.SetGraphicsRoot32BitConstants(0,32,&constants,0);
+        commands.SetGraphicsRoot32BitConstants(0,sizeof(constants)/sizeof(UINT),&constants,0);
         commands.IASetVertexBuffers(0,1,&draw.mesh->vertexView);
         commands.IASetIndexBuffer(&draw.mesh->indexView);
         commands.DrawIndexedInstanced(draw.mesh->indexCount,1,0,0,0);

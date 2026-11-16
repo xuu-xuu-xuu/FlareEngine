@@ -11,6 +11,7 @@ $settings=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'launch.json') -Raw 
 if($Headless -and $Editor){throw 'Bridge.InvalidArgument'}
 $arguments=@('--project-root',(PackageFile 'Project'),'--scene',(PackageFile $settings.scene),'--asset-root',(PackageFile $settings.assetRoot),'--asset-cache',(PackageFile $settings.assetCache),'--project',(PackageFile $settings.scriptAssembly),'--script',$settings.scriptType,'--locale',$Locale)
 if($settings.menu){$arguments+='--menu'}
+if($settings.manifest){$arguments+=@('--player-manifest',(PackageFile $settings.manifest))}
 if($settings.bindings){$arguments+=@('--bindings',(PackageFile $settings.bindings))}
 if($settings.ui){$arguments+=@('--ui',(PackageFile $settings.ui))}
 if($Editor){$arguments+='--editor';if($Play){$arguments+='--play'}}elseif(!$Headless){$arguments+='--window'}

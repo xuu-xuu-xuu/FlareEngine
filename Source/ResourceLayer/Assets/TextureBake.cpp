@@ -1,6 +1,7 @@
 #include "TextureBake.h"
 #include "AssetIO.h"
 #include "TextureCompression.h"
+#include "TextureMip.h"
 #include "CoreLayer/Hash.h"
 #include <algorithm>
 #include <bit>
@@ -39,7 +40,8 @@ std::uint64_t BakedMipBytes(BakedTextureFormat format,std::uint32_t width,std::u
     if(!width||!height)return 0;
     mip=(std::min)(mip,31u);
     const std::uint64_t levelWidth=(std::max)(1u,width>>mip),levelHeight=(std::max)(1u,height>>mip);
-    const std::uint64_t blockBytes=format==BakedTextureFormat::Bc5Unorm?16:8;    return ((levelWidth+3)/4)*((levelHeight+3)/4)*blockBytes;
+    const std::uint64_t blockBytes=format==BakedTextureFormat::Bc5Unorm||format==BakedTextureFormat::Bc7Unorm||format==BakedTextureFormat::Bc7UnormSrgb?16:8;
+    return ((levelWidth+3)/4)*((levelHeight+3)/4)*blockBytes;
 }
 std::uint64_t Bc1MipBytes(std::uint32_t width,std::uint32_t height,std::uint32_t mip) noexcept
 {
@@ -48,13 +50,16 @@ std::uint64_t Bc1MipBytes(std::uint32_t width,std::uint32_t height,std::uint32_t
 std::string BakedTextureKey(std::string_view sourceKey,BakedTextureFormat format)
 {
     const char* prefix=format==BakedTextureFormat::Bc1UnormSrgb?"bc1s:"
+        :format==BakedTextureFormat::Bc7Unorm?"bc7u:":format==BakedTextureFormat::Bc7UnormSrgb?"bc7s:"
         :format==BakedTextureFormat::Bc5Unorm?"bc5:"
         :format==BakedTextureFormat::Bc4Unorm?"bc4:":"bc1u:";
     std::string key=prefix;
-    key+=TextureBakeEncoderVersion;key+=':';key+=sourceKey;return key;
+    key+=(format==BakedTextureFormat::Bc7Unorm||format==BakedTextureFormat::Bc7UnormSrgb)?Bc7BakeEncoderVersion:TextureBakeEncoderVersion;
+    key+=':';key+=sourceKey;return key;
 }
 bool BakeBc1Texture(const ImageData& image,BakedTextureFormat format,BakedTexture& output,std::string& error)
 {
+    if(format!=BakedTextureFormat::Bc1Unorm&&format!=BakedTextureFormat::Bc1UnormSrgb){error="Rendering.TextureEncodeFailed";return false;}
     const auto levels=Bc1MipLevels(image.width,image.height);
     if(!levels||image.rgba8.size()!=std::size_t(image.width)*image.height*4)
     {
@@ -171,6 +176,25 @@ bool WriteBakedTexture(const std::filesystem::path& path,const BakedTexture& tex
     bytes.insert(bytes.end(),texture.bytes.begin(),texture.bytes.end());
     return asset_io::WriteAtomic(path,bytes,true);
 }
+bool BakeBc7Texture(const ImageData& image,BakedTextureFormat format,BakedTexture& output,std::string& error)
+{
+    const auto levels=Bc1MipLevels(image.width,image.height);
+    if((format!=BakedTextureFormat::Bc7Unorm&&format!=BakedTextureFormat::Bc7UnormSrgb)||!levels
+        ||image.width>8192||image.height>8192||image.rgba8.size()!=std::size_t(image.width)*image.height*4)
+    {error="Rendering.TextureEncodeFailed";return false;}
+    BakedTexture candidate;candidate.width=image.width;candidate.height=image.height;candidate.mipLevels=levels;candidate.format=format;
+    auto source=image.rgba8;auto width=image.width,height=image.height;
+    for(std::uint32_t mip=0;mip<levels;++mip)
+    {
+        Bc7Image compressed;if(!CompressBc7(source,width,height,compressed,error))return false;
+        candidate.mipOffsets.push_back(static_cast<std::uint32_t>(candidate.bytes.size()));
+        candidate.bytes.insert(candidate.bytes.end(),compressed.blocks.begin(),compressed.blocks.end());
+        if(mip+1<levels)
+        {std::vector<std::uint8_t> next;std::uint32_t nextWidth=0,nextHeight=0;
+         asset_mip::DownsampleHalf(source,width,height,next,nextWidth,nextHeight);source=std::move(next);width=nextWidth;height=nextHeight;}
+    }
+    output=std::move(candidate);error.clear();return true;
+}
 bool ReadBakedTexture(const std::filesystem::path& path,BakedTexture& output)
 {
     std::vector<std::uint8_t> bytes;
@@ -179,7 +203,7 @@ bool ReadBakedTexture(const std::filesystem::path& path,BakedTexture& output)
     const auto version=ReadUint32(bytes.data()+4),format=ReadUint32(bytes.data()+8);
     const auto width=ReadUint32(bytes.data()+12),height=ReadUint32(bytes.data()+16);
     const auto mipLevels=ReadUint32(bytes.data()+20);
-    if(version!=TextureBakeFileVersion||format>3||!width||!height
+    if(version!=TextureBakeFileVersion||format>static_cast<std::uint32_t>(BakedTextureFormat::Bc7UnormSrgb)||!width||!height
         ||width>TextureBakeMaximumDimension||height>TextureBakeMaximumDimension)return false;
     if(mipLevels!=Bc1MipLevels(width,height))return false;
     const auto bakedFormat=static_cast<BakedTextureFormat>(format);
@@ -212,7 +236,12 @@ const BakedTexture* TextureBakeCache::Bake(const ImageData& image,std::string_vi
     BakedTexture baked;
     if(!Load(key,baked))
     {
-        if(!BakeBc1Texture(image,format,baked,error))return nullptr;
+        bool encoded=false;
+        if(format==BakedTextureFormat::Bc7Unorm||format==BakedTextureFormat::Bc7UnormSrgb)encoded=BakeBc7Texture(image,format,baked,error);
+        else if(format==BakedTextureFormat::Bc5Unorm)encoded=BakeBc5Texture(image,baked,error);
+        else if(format==BakedTextureFormat::Bc4Unorm)encoded=BakeBc4Texture(image,baked,error);
+        else encoded=BakeBc1Texture(image,format,baked,error);
+        if(!encoded)return nullptr;
         Store(key,baked); // 磁盘缓存是尽力而为：写失败仍返回内存结果。
     }
     return &entries_.emplace(key,std::move(baked)).first->second;

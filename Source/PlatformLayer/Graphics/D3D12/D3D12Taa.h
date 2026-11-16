@@ -44,7 +44,8 @@ public:
     HRESULT CreateOutput(ID3D12Resource& hdr,ID3D12Resource& depth,UINT width,UINT height,D3D12TaaOutput& output) const;
     // 记录速度 Pass；结束时深度为 DEPTH_READ、速度为 RENDER_TARGET，由 Resolve 继续。
     HRESULT RecordVelocity(ID3D12GraphicsCommandList& commands,D3D12StateRecording& states,D3D12TaaOutput& output,
-        std::span<const D3D12MeshDraw> draws,const se::Mat4& clipFromWorld,ID3D12Resource& depth) const;
+        std::span<const D3D12MeshDraw> draws,const se::Mat4& rasterClip,const se::Mat4& currentClip,
+        const se::Mat4& previousClip,ID3D12Resource& depth) const;
     // 记录解析；结束时本次写入的历史颜色为 PIXEL_SHADER_RESOURCE，历史深度为 NON_PIXEL_SHADER_RESOURCE。
     HRESULT Resolve(ID3D12GraphicsCommandList& commands,D3D12StateRecording& states,D3D12TaaOutput& output,
         ID3D12Resource& currentColor,ID3D12Resource& depth,const D3D12TaaParameters& parameters) const;

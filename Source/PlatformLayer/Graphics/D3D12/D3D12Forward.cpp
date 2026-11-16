@@ -5,6 +5,8 @@
 #include "D3D12PipelineCache.h"
 #include "D3D12Result.h"
 #include "D3D12Shadow.h"
+#include "D3D12LightClustering.h"
+#include "PlatformLayer/Windows/ExecutablePath.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -44,9 +46,22 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
         const auto& point=lighting.points[index];constants.pointPositionRadius[index]={point.position.x,point.position.y,point.position.z,point.range};
         constants.pointRadiance[index]={point.radiance.x,point.radiance.y,point.radiance.z,0};
     }
-    if(!CheckGraphicsResult(frame.uploads.Allocate(512,256,frame.forwardConstants),text,"D3D12.UploadCapacityExceeded"))return false;
-    std::memset(frame.forwardConstants.cpu,0,512);
-    if(content.shadow)
+    const bool cascaded=content.shadow&&content.shadow->cascadeCount>0;
+    const bool clustered=lighting.cluster.enabled;
+    const UINT frameBytes=clustered?1024:cascaded?768:512;
+    if(!CheckGraphicsResult(frame.uploads.Allocate(frameBytes,256,frame.forwardConstants),text,"D3D12.UploadCapacityExceeded"))return false;
+    std::memset(frame.forwardConstants.cpu,0,frameBytes);
+    if(cascaded)
+    {
+        const auto& shadow=*content.shadow;
+        constants.pointCount.y=shadow.enabled?1.f:0.f;constants.pointCount.z=shadow.pcf?1.f:0.f;
+        const se::rhi::CascadedShadowFrameConstants csm{constants,shadow.cascadeClipFromWorld,
+            {shadow.cascadeSplits[0],shadow.cascadeSplits[1],shadow.cascadeSplits[2],shadow.cascadeNear},
+            shadow.cascadeViewDepth,{1.f/float(frame.shadow->resolution),shadow.depthBias,shadow.slopeBias,shadow.normalBias},
+            {float(shadow.cascadeCount),shadow.cascadeBlend,shadow.cascadeDebug?1.f:0.f,0},{}};
+        std::memcpy(frame.forwardConstants.cpu,&csm,sizeof(csm));
+    }
+    else if(content.shadow)
     {
         constants.pointCount.y=content.shadow->enabled?1.0f:0.0f;constants.pointCount.z=content.shadow->pcf?1.0f:0.0f;
         const se::rhi::ShadowFrameConstants shadow{constants,content.shadow->clipFromWorld,
@@ -54,11 +69,55 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
         std::memcpy(frame.forwardConstants.cpu,&shadow,sizeof(shadow));
     }
     else std::memcpy(frame.forwardConstants.cpu,&constants,sizeof(constants));
+    if(clustered)
+    {
+        se::rhi::ClusteredFrameConstants clusteredFrame{};
+        auto& base=clusteredFrame.shadow;base.lights=constants;
+        if(cascaded)std::memcpy(&base,frame.forwardConstants.cpu,sizeof(base));
+        else if(content.shadow)
+        {
+            base.clipFromWorld[0]=content.shadow->clipFromWorld;
+            base.parameters={1.f/float(frame.shadow->resolution),content.shadow->depthBias,content.shadow->slopeBias,content.shadow->normalBias};
+        }
+        const auto& config=lighting.cluster;
+        base.viewDepth={-config.view(2,0),-config.view(2,1),-config.view(2,2),-config.view(2,3)};
+        clusteredFrame.view=config.view;
+        const auto inverseView=se::Inverse(config.view);if(!inverseView)return false;
+        clusteredFrame.projection=content.viewProjection * *inverseView;
+        if(!ValidD3D12ClusterProjection(clusteredFrame.projection,config.nearPlane,config.farPlane))return CheckGraphicsResult(E_INVALIDARG,text,"Rhi.BackendFailure");
+        const auto inverseProjection=se::Inverse(clusteredFrame.projection);if(!inverseProjection)return false;
+        clusteredFrame.inverseProjection=*inverseProjection;
+        clusteredFrame.clusterParameters={config.nearPlane,config.farPlane,float(config.lights.size()),float(config.capacity)};
+        const UINT scale=content.post&&content.post->supersample4x?2:1;
+        const UINT width=(content.sceneHdr?content.sceneHdr->color.width:content.gui?content.gui->scene->color.width:p.width)*scale;
+        const UINT height=(content.sceneHdr?content.sceneHdr->color.height:content.gui?content.gui->scene->color.height:p.height)*scale;
+        clusteredFrame.clusterViewport={float(width),float(height),1.f/width,1.f/height};
+        clusteredFrame.clusterModes={config.debug?1.f:0.f,config.bruteForce?1.f:0.f,0,0};
+        std::memcpy(frame.forwardConstants.cpu,&clusteredFrame,sizeof(clusteredFrame));
+        if(!p.clusterBuilder)
+        {
+            auto builder=std::make_shared<D3D12LightClustering>();
+            if(!CheckGraphicsResult(builder->Initialize(*device.Get(),p.memory,GetExecutableDirectory()/"Resources/Shaders",text),text,"Rhi.BackendFailure"))return false;
+            p.clusterBuilder=std::move(builder);
+        }
+        if(!frame.clusters&&!CheckGraphicsResult(p.clusterBuilder->CreateOutput(frame.clusters),text,"Rhi.BackendFailure"))return false;
+        auto actual=config;actual.clipFromView=clusteredFrame.projection;
+        if(!CheckGraphicsResult(p.clusterBuilder->Prepare(*frame.clusters,actual),text,"Rhi.BackendFailure"))return false;
+        frame.clusterDescriptorIncrement=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    }
+    if(content.meshPipeline&&se::rhi::IsShadowFilterLayout(content.meshPipeline->prepared->program->source.layoutVersion))
+    {
+        se::rhi::ShadowFilterConstants filter;
+        if(!content.shadow||!PrepareD3D12ShadowFilterConstants(*content.shadow,filter))return CheckGraphicsResult(E_INVALIDARG,text,"Rhi.BackendFailure");
+        if(!CheckGraphicsResult(frame.uploads.Allocate(256,256,frame.shadowFilterConstants),text,"D3D12.UploadCapacityExceeded"))return false;
+        std::memset(frame.shadowFilterConstants.cpu,0,256);std::memcpy(frame.shadowFilterConstants.cpu,&filter,sizeof(filter));
+    }
     if(content.environment)
     {
         const auto& environment=*content.environment;
         const se::Vec4 parameters{environment.intensity,std::cos(environment.yaw),std::sin(environment.yaw),float(content.environmentTextures[1]->mipLevels-1)};
-        std::memcpy(frame.forwardConstants.cpu+offsetof(se::rhi::EnvironmentFrameConstants,environment),&parameters,sizeof(parameters));
+        const auto environmentOffset=(clustered||cascaded)?offsetof(se::rhi::CascadedShadowFrameConstants,environment):offsetof(se::rhi::EnvironmentFrameConstants,environment);
+        std::memcpy(frame.forwardConstants.cpu+environmentOffset,&parameters,sizeof(parameters));
         if(frame.environmentDescriptors.Maximum()!=1&&!frame.environmentDescriptors.Configure(1,1))return false;
         const auto source=content.environmentTextures[1]->views->Cpu(1);
         if(!CheckGraphicsResult(frame.environmentDescriptors.Prepare(*device.Get(),std::span(&source,1)),text,"D3D12.DescriptorCapacityExceeded"))return false;

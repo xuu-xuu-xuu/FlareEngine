@@ -1,6 +1,7 @@
 #pragma once
 #include "D3D12ShaderProgram.h"
 #include <d3d12.h>
+#include <climits>
 
 struct D3D12PreparedPipeline
 {
@@ -10,6 +11,12 @@ struct D3D12PreparedPipeline
     se::rhi::DepthMode depth=se::rhi::DepthMode::Disabled;
     se::rhi::BlendMode blend=se::rhi::BlendMode::Opaque;
     se::rhi::ColorFormat colorFormat=se::rhi::ColorFormat::Rgba8Unorm;
+    UINT materialRootParameter=UINT_MAX;
+    UINT shadingFrameParameter=UINT_MAX,shadingMaterialParameter=UINT_MAX,shadingTexturesParameter=UINT_MAX;
+    se::MaterialAlphaMode alphaMode=se::MaterialAlphaMode::Opaque;
+    // 派生预绘/Equal PSO 复用实际 VS、root、光栅及输入布局；拥有 InputLayout 指针的存储。
+    std::vector<D3D12_INPUT_ELEMENT_DESC> inputElements;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC description{};
     std::string key;
 };
 struct D3D12PipelineCacheStatistics

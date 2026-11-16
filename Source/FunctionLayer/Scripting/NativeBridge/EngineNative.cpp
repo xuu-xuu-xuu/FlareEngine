@@ -12,6 +12,7 @@
 #include "FunctionLayer/Application/SandboxApp.h"
 #include "FunctionLayer/Rendering/SandboxRenderer.h"
 #include "WindowProfile.h"
+#include "PlayerQualityMenu.h"
 #include "NativeLogicObjects.h"
 #include "PlatformLayer/InputState.h"
 #include "CoreLayer/Localization.h"
@@ -70,6 +71,9 @@ struct Session
     Localization localization;
     std::unique_ptr<se::AssetStore> assets;
     bool windowRunning=false,stopWindow=false;
+    std::unique_ptr<se::PlayerQualityPreference> playerQuality;
+    bool showPlayerQualityMenu=true;
+    se::QualityProfiles qualityProfiles=se::DefaultQualityProfiles;
     std::filesystem::path windowCapture;
     std::uint64_t windowCaptureFrame=0;
     // 普通 Player 的固定回放尺寸与固定步长；序列抓帧用同一组值保证 updateIndex 与 tick 一一对应。
@@ -739,6 +743,31 @@ int32_t SE_CALL se_session_text(SE_Session handle, const char* key, uint32_t len
         if(!key||length>4096||!ValidUtf8(key,length))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidUtf8");
         return CopyText(s->localization.GetText(std::string_view(key,length)),buffer,capacity,required);});
 }
+int32_t SE_CALL se_session_configure_quality(SE_Session handle,const char* path,uint32_t length,int32_t showMenu) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(s->windowRunning||s->stepping)return Error(SE_BUSY,"Bridge.SessionBusy");
+        if(!path||!length||length>32768||!ValidUtf8(path,length)||std::memchr(path,0,length))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        const auto file=std::filesystem::path(std::u8string(path,path+length));if(!file.is_absolute())return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        s->playerQuality=std::make_unique<se::PlayerQualityPreference>(file);s->showPlayerQualityMenu=showMenu!=0;return SE_OK;});
+}
+int32_t SE_CALL se_session_player_quality(SE_Session handle,int32_t requested,int32_t* current) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(!current||requested< -1||requested>3)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        if(!s->playerQuality)return Error(SE_INVALID_ARGUMENT,"PlayerQuality.NotConfigured");
+        if(requested>=0&&!s->playerQuality->Select(static_cast<se::PlayerQuality>(requested)))return Error(SE_INTERNAL_ERROR,"PlayerQuality.SaveFailed");
+        *current=static_cast<int32_t>(s->playerQuality->Level());return SE_OK;});
+}
+int32_t SE_CALL se_session_set_quality_profiles(SE_Session handle,const char* json,uint32_t length) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(s->windowRunning||s->stepping)return Error(SE_BUSY,"Bridge.SessionBusy");
+        if(!json||!length||length>16384||!ValidUtf8(json,length))return Error(SE_INVALID_ARGUMENT,"PlayerQuality.InvalidProfiles");
+        const auto value=nlohmann::json::parse(json,json+length,nullptr,false);
+        if(!se::ReadQualityProfiles(value,s->qualityProfiles))return Error(SE_INVALID_ARGUMENT,"PlayerQuality.InvalidProfiles");
+        return SE_OK;});
+}
 int32_t SE_CALL se_session_set_window_capture(SE_Session handle,const char* path,uint32_t length,uint64_t frame) noexcept
 {
     return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
@@ -854,14 +883,27 @@ int32_t SE_CALL se_session_run_window(SE_Session handle, const char* locale, uin
         s->Env().SetSkeletalResolver([s](const std::string& asset)->std::shared_ptr<const se::StaticModel>{
             if(!s->assets)return nullptr;std::vector<se::AssetDiagnostic> diagnostics;auto model=s->assets->LoadModel(asset,diagnostics);
             return model;});
-        services.input=[s](const InputState& input,bool consumed,bool pointerConsumed){CaptureInput(*s,input,consumed,pointerConsumed);};
-        services.runEnvironmentFrame=[s,handle,p=services.profiler,sequence,&captureCursor](double dt){
+        const bool interactive=visible&&!sequence&&s->windowCapture.empty()&&s->windowProfile.empty();
+        std::unique_ptr<se::PlayerQualityMenu> qualityMenu;
+        HWND playerWindow=nullptr;
+        if(interactive&&s->playerQuality&&s->showPlayerQualityMenu){
+            qualityMenu=std::make_unique<se::PlayerQualityMenu>(*s->playerQuality,s->localization,s->qualityProfiles);
+            services.windowOpened=[&](HWND hwnd){playerWindow=hwnd;return true;};
+            services.messageHandler=[&](HWND hwnd,UINT msg,WPARAM w,LPARAM l){return qualityMenu->Message(hwnd,msg,w,l);};
+        }
+        services.input=[s,&qualityMenu](const InputState& input,bool consumed,bool pointerConsumed){
+            CaptureInput(*s,input,consumed||(qualityMenu&&qualityMenu->ConsumeKeys()),pointerConsumed||(qualityMenu&&qualityMenu->ConsumePointer()));
+            if(qualityMenu)qualityMenu->EndInput();};
+        services.runEnvironmentFrame=[s,handle,p=services.profiler,sequence,&captureCursor,&qualityMenu](double dt){
+            if(qualityMenu&&qualityMenu->Open())return !s->stopWindow;
             se::CpuScope scope(p,"CPU.Environment");
             // 第 0 个输出帧取初始化后的 tick 0：先渲染初态，不推进模拟时钟。
             if(sequence&&captureCursor==0)return !s->stopWindow&&se_session_step(handle,0.0)==SE_OK&&!s->stopWindow;
             return !s->stopWindow&&se_session_step(handle,dt)==SE_OK&&!s->stopWindow;};
-        services.extract=[s,sequence,&captureCursor,&captureLog,&gameRenderer](se::FrameData& data){
+        services.extract=[s,sequence,interactive,&qualityMenu,&playerWindow,&captureCursor,&captureLog,&gameRenderer](se::FrameData& data){
             se::BuildFrameData(s->Env(),&s->UiRef(),s->physicsDebugDraw?&s->physics:nullptr,data);data.assets=s->assets.get();
+            if(interactive&&s->playerQuality)se::ApplyPlayerQuality(s->playerQuality->Level(),data,s->qualityProfiles);
+            if(qualityMenu)qualityMenu->Append(playerWindow,data);
             if(s->lookMode>=0){data.lookMode=s->lookMode;data.lookBlend=s->lookBlend;}
             if(s->sky)data.sky=*s->sky;
             if(s->Env().TimeOfDay().Profile())data.timeOfDay=s->Env().Snapshot();

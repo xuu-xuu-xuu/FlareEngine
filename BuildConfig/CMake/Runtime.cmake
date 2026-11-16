@@ -5,6 +5,7 @@ add_library(EngineCore STATIC
     Source/CoreLayer/TaskQueue.cpp
     Source/CoreLayer/Profiler.cpp
     Source/CoreLayer/Hash.cpp
+    Source/CoreLayer/Math/SphericalHarmonics.cpp
     Source/CoreLayer/Spatial/BoundsIndex.cpp)
 se_target(EngineCore)
 target_link_libraries(EngineCore PRIVATE bcrypt)
@@ -83,10 +84,17 @@ add_library(EngineAssets STATIC
     Source/ResourceLayer/Assets/Primitives.cpp
     Source/ResourceLayer/Assets/HdrImage.cpp
     Source/ResourceLayer/Assets/EnvironmentBake.cpp
+    Source/ResourceLayer/Assets/DiffuseProbeBake.cpp
+    Source/ResourceLayer/Assets/DiffuseProbeAsset.cpp
+    Source/ResourceLayer/Assets/BrdfEnergyBake.cpp
+    Source/ResourceLayer/Assets/LtcBake.cpp
+    Source/ResourceLayer/Assets/SheenEnergyBake.cpp
+    Source/ResourceLayer/Assets/SkinDiffuseBake.cpp
     Source/ResourceLayer/Assets/EnvironmentIO.cpp
     Source/ResourceLayer/Assets/ImageWriter.cpp
     Source/ResourceLayer/Assets/VertexCompression.cpp
     Source/ResourceLayer/Assets/TextureCompression.cpp
+    Source/ResourceLayer/Assets/Bc7Compression.cpp
     Source/ResourceLayer/Assets/Cgltf.c
     Source/ResourceLayer/Assets/AsyncAssetLoader.cpp
     Source/ResourceLayer/Assets/StaticModelPreparation.cpp
@@ -97,7 +105,13 @@ add_library(EngineAssets STATIC
     Source/ResourceLayer/Assets/MeshletBake.cpp
     Source/ResourceLayer/Assets/ImpostorBake.cpp)
 se_target(EngineAssets)
+target_include_directories(EngineAssets SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/LtcReference/glm/headers")
 target_link_libraries(EngineAssets PUBLIC EngineCore EngineEnvironmentAssets PRIVATE ufbx bcrypt ole32 windowscodecs)
+
+# 离线场景辐照准备只依赖CPU世界和资产，不拉入RHI。
+add_library(EngineDiffuseProbes STATIC Source/FunctionLayer/Rendering/DiffuseProbePreparation.cpp)
+se_target(EngineDiffuseProbes)
+target_link_libraries(EngineDiffuseProbes PUBLIC EngineRuntime EngineAssets)
 
 add_library(EngineGameUI STATIC
     Source/FunctionLayer/GameUI/UiTree.cpp
@@ -110,11 +124,13 @@ add_library(EngineGameUI STATIC
 se_target(EngineGameUI)
 target_link_libraries(EngineGameUI PUBLIC EngineCore PRIVATE dwrite)
 
-add_library(EngineNative SHARED Source/FunctionLayer/Scripting/NativeBridge/EngineNative.cpp Source/FunctionLayer/Scripting/NativeBridge/WindowProfile.cpp)
+add_library(EngineNative SHARED Source/FunctionLayer/Scripting/NativeBridge/EngineNative.cpp Source/FunctionLayer/Scripting/NativeBridge/WindowProfile.cpp
+    Source/FunctionLayer/Scripting/NativeBridge/PlayerQualityMenu.cpp)
 se_target(EngineNative)
 target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineGameUI EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
 
-add_library(EngineApplication STATIC Source/FunctionLayer/Application/FrameData.cpp Source/FunctionLayer/Application/FeatureFrameData.cpp Source/FunctionLayer/Application/FreeCameraInput.cpp)
+add_library(EngineApplication STATIC Source/FunctionLayer/Application/FrameData.cpp Source/FunctionLayer/Application/FeatureFrameData.cpp Source/FunctionLayer/Application/FreeCameraInput.cpp
+    Source/FunctionLayer/Application/PlayerQuality.cpp)
 se_target(EngineApplication)
 target_link_libraries(EngineApplication PUBLIC EngineRuntime EnginePhysics EngineGameUI EngineAssets)
 

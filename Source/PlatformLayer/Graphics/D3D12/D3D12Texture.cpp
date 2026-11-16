@@ -3,46 +3,70 @@
 #include "D3D12Memory.h"
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
+#include "CoreLayer/Math/Half.h"
 #include <cstddef>
 #include <cstring>
 #include <utility>
 #include <bit>
 #include <algorithm>
 #include <vector>
+#include <cmath>
 
 namespace
 {
+bool ValidFloatingTexels(se::rhi::TextureFormat format,const se::rhi::TextureSubresource& source,UINT64 width,UINT64 height,UINT64 pitch)
+{
+    if(format!=se::rhi::TextureFormat::Rgba32Float&&format!=se::rhi::TextureFormat::Rgba16Float&&format!=se::rhi::TextureFormat::Rg16Float)return true;
+    const UINT channels=format==se::rhi::TextureFormat::Rg16Float?2u:4u,componentBytes=format==se::rhi::TextureFormat::Rgba32Float?4u:2u;
+    for(UINT64 row=0;row<height;++row)for(UINT64 component=0;component<width*channels;++component)
+    {
+        float value=0;const auto* data=source.bytes.data()+row*pitch+component*componentBytes;
+        if(componentBytes==4)std::memcpy(&value,data,4);else {std::uint16_t half=0;std::memcpy(&half,data,2);value=se::HalfToFloat(half);}
+        if(!std::isfinite(value))return false;
+    }
+    return true;
+}
 bool BcFormat(se::rhi::TextureFormat format)
 {
     return format==se::rhi::TextureFormat::Bc1Unorm||format==se::rhi::TextureFormat::Bc1UnormSrgb
-        ||format==se::rhi::TextureFormat::Bc5Unorm||format==se::rhi::TextureFormat::Bc4Unorm;
+        ||format==se::rhi::TextureFormat::Bc5Unorm||format==se::rhi::TextureFormat::Bc4Unorm
+        ||format==se::rhi::TextureFormat::Bc7Unorm||format==se::rhi::TextureFormat::Bc7UnormSrgb;
 }
 UINT BcBlockBytes(se::rhi::TextureFormat format)
 {
-    return format==se::rhi::TextureFormat::Bc5Unorm?16:8;
+    return format==se::rhi::TextureFormat::Bc5Unorm||format==se::rhi::TextureFormat::Bc7Unorm||format==se::rhi::TextureFormat::Bc7UnormSrgb?16:8;
 }
 DXGI_FORMAT StorageFormat(se::rhi::TextureFormat format)
 {
     if(format==se::rhi::TextureFormat::Rgba8)return DXGI_FORMAT_R8G8B8A8_TYPELESS;
     if(format==se::rhi::TextureFormat::Rgba16Float)return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if(format==se::rhi::TextureFormat::Rg16Float)return DXGI_FORMAT_R16G16_FLOAT;
+    if(format==se::rhi::TextureFormat::Rgba32Float)return DXGI_FORMAT_R32G32B32A32_FLOAT;
     if(format==se::rhi::TextureFormat::Bc5Unorm)return DXGI_FORMAT_BC5_TYPELESS;
     if(format==se::rhi::TextureFormat::Bc4Unorm)return DXGI_FORMAT_BC4_TYPELESS;
+    if(format==se::rhi::TextureFormat::Bc7Unorm||format==se::rhi::TextureFormat::Bc7UnormSrgb)return DXGI_FORMAT_BC7_TYPELESS;
     return DXGI_FORMAT_BC1_TYPELESS;
 }
 DXGI_FORMAT SrgbViewFormat(se::rhi::TextureFormat format)
 {
     if(format==se::rhi::TextureFormat::Rgba8)return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     if(format==se::rhi::TextureFormat::Rgba16Float)return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if(format==se::rhi::TextureFormat::Rg16Float)return DXGI_FORMAT_R16G16_FLOAT;
+    if(format==se::rhi::TextureFormat::Rgba32Float)return DXGI_FORMAT_R32G32B32A32_FLOAT;
     if(format==se::rhi::TextureFormat::Bc5Unorm)return DXGI_FORMAT_BC5_UNORM; // BC5 没有 sRGB 变体。
     if(format==se::rhi::TextureFormat::Bc4Unorm)return DXGI_FORMAT_BC4_UNORM; // BC4 没有 sRGB 变体。
+    if(format==se::rhi::TextureFormat::Bc7Unorm||format==se::rhi::TextureFormat::Bc7UnormSrgb)return DXGI_FORMAT_BC7_UNORM_SRGB;
     return DXGI_FORMAT_BC1_UNORM_SRGB;
 }
 DXGI_FORMAT LinearViewFormat(se::rhi::TextureFormat format)
 {
     if(format==se::rhi::TextureFormat::Rgba8)return DXGI_FORMAT_R8G8B8A8_UNORM;
     if(format==se::rhi::TextureFormat::Rgba16Float)return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if(format==se::rhi::TextureFormat::Rg16Float)return DXGI_FORMAT_R16G16_FLOAT;
+    if(format==se::rhi::TextureFormat::Rgba32Float)return DXGI_FORMAT_R32G32B32A32_FLOAT;
     if(format==se::rhi::TextureFormat::Bc5Unorm)return DXGI_FORMAT_BC5_UNORM;
     if(format==se::rhi::TextureFormat::Bc4Unorm)return DXGI_FORMAT_BC4_UNORM;
+    if(format==se::rhi::TextureFormat::Bc7Unorm||format==se::rhi::TextureFormat::Bc7UnormSrgb)return DXGI_FORMAT_BC7_UNORM;
     return DXGI_FORMAT_BC1_UNORM;
 }
 D3D12_RESOURCE_DESC ResourceDescription(const se::rhi::TextureDescription& description)
@@ -73,7 +97,8 @@ bool ValidD3D12TextureDescription(const se::rhi::TextureDescription& description
         ||!description.mipLevels||description.mipLevels>static_cast<std::uint32_t>(std::bit_width(std::max(description.width,description.height)))
         ||!description.arrayLayers||description.arrayLayers>6
         ||(description.cube&&(description.arrayLayers!=6||description.width!=description.height))
-        ||(description.format!=se::rhi::TextureFormat::Rgba8&&description.format!=se::rhi::TextureFormat::Rgba16Float&&!BcFormat(description.format)))return false;
+        ||(description.format!=se::rhi::TextureFormat::Rgba8&&description.format!=se::rhi::TextureFormat::Rgba16Float
+            &&description.format!=se::rhi::TextureFormat::Rg16Float&&description.format!=se::rhi::TextureFormat::Rgba32Float&&!BcFormat(description.format)))return false;
     return true;
 }
 bool ValidD3D12TextureSubrange(const se::rhi::TextureDescription& description,std::uint32_t firstMip,
@@ -82,7 +107,7 @@ bool ValidD3D12TextureSubrange(const se::rhi::TextureDescription& description,st
     if(!ValidD3D12TextureDescription(description)||description.arrayLayers!=1||description.cube
         ||!subresources.size()||firstMip>=description.mipLevels
         ||subresources.size()>description.mipLevels-firstMip)return false;
-    const bool bc=BcFormat(description.format);const UINT bpp=description.format==se::rhi::TextureFormat::Rgba8?4:8;
+    const bool bc=BcFormat(description.format);const UINT bpp=description.format==se::rhi::TextureFormat::Rgba8||description.format==se::rhi::TextureFormat::Rg16Float?4:description.format==se::rhi::TextureFormat::Rgba32Float?16:8;
     const UINT blockBytes=bc?BcBlockBytes(description.format):0;UINT64 total=0;
     for(size_t index=0;index<subresources.size();++index)
     {
@@ -91,7 +116,8 @@ bool ValidD3D12TextureSubrange(const se::rhi::TextureDescription& description,st
         if(bc){width=(width+3)/4;height=(height+3)/4;}
         const UINT64 row=width*(bc?blockBytes:bpp);
         const auto pitch=subresources[index].rowPitch?subresources[index].rowPitch:row;
-        if(pitch<row||subresources[index].bytes.size()<(height-1)*pitch+row||subresources[index].bytes.size()>256ull*1024*1024)return false;
+        if(pitch<row||pitch>256ull*1024*1024||subresources[index].bytes.size()<(height-1)*pitch+row||subresources[index].bytes.size()>256ull*1024*1024)return false;
+        if(!ValidFloatingTexels(description.format,subresources[index],width,height,pitch))return false;
         total+=row*height;
     }
     return total<=256ull*1024*1024;
@@ -99,7 +125,7 @@ bool ValidD3D12TextureSubrange(const se::rhi::TextureDescription& description,st
 bool ValidD3D12TextureData(const se::rhi::TextureDescription& description,std::span<const se::rhi::TextureSubresource> subresources)
 {
     if(!ValidD3D12TextureDescription(description)||subresources.size()!=size_t(description.arrayLayers)*description.mipLevels)return false;
-    const bool bc=BcFormat(description.format);const UINT bpp=description.format==se::rhi::TextureFormat::Rgba8?4:8;
+    const bool bc=BcFormat(description.format);const UINT bpp=description.format==se::rhi::TextureFormat::Rgba8||description.format==se::rhi::TextureFormat::Rg16Float?4:description.format==se::rhi::TextureFormat::Rgba32Float?16:8;
     const UINT blockBytes=bc?BcBlockBytes(description.format):0;UINT64 total=0;
     for(size_t index=0;index<subresources.size();++index)
     {
@@ -108,7 +134,8 @@ bool ValidD3D12TextureData(const se::rhi::TextureDescription& description,std::s
         if(bc){width=(width+3)/4;height=(height+3)/4;}
         const UINT64 row=width*(bc?blockBytes:bpp);
         const auto pitch=subresources[index].rowPitch?subresources[index].rowPitch:row;
-        if(pitch<row||subresources[index].bytes.size()<(height-1)*pitch+row||subresources[index].bytes.size()>256ull*1024*1024)return false;
+        if(pitch<row||pitch>256ull*1024*1024||subresources[index].bytes.size()<(height-1)*pitch+row||subresources[index].bytes.size()>256ull*1024*1024)return false;
+        if(!ValidFloatingTexels(description.format,subresources[index],width,height,pitch))return false;
         total+=row*height;
     }
     return total<=256ull*1024*1024;

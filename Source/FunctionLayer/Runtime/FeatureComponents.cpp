@@ -1,6 +1,7 @@
 #include "FeatureComponents.h"
 #include <array>
 #include <algorithm>
+#include <cmath>
 
 namespace se
 {
@@ -22,6 +23,9 @@ const std::array character{
     P{"character.maximumPushImpulse","Feature.Character.Push",PropertyType::Number,.5f,0.f,100.f}};
 const std::array rendering{
     P{"render.fullPbr","Feature.Render.FullPbr",PropertyType::Boolean,true},
+    P{"render.multiscatter","Feature.Render.Multiscatter",PropertyType::Boolean,false},
+    P{"render.specularAA","Feature.Render.SpecularAA",PropertyType::Boolean,false},
+    P{"render.bc7Color","Feature.Render.Bc7Color",PropertyType::Boolean,false},
     P{"render.exposure","Feature.Render.Exposure",PropertyType::Number,1.f,.001f,64.f},
     P{"render.post","Feature.Render.Post",PropertyType::Boolean,true},
     P{"render.bloom","Feature.Render.Bloom",PropertyType::Boolean,true},
@@ -36,6 +40,14 @@ const std::array rendering{
     P{"render.cacheBindings","Feature.Render.Bindings",PropertyType::Boolean,true},
     P{"render.shadowEnabled","Feature.Render.Shadow",PropertyType::Boolean,true},
     P{"render.shadowPcf","Feature.Render.Pcf",PropertyType::Boolean,true},
+    P{"render.cascades","Feature.Render.Cascades",PropertyType::Boolean,false},
+    P{"render.cascadeCount","Feature.Render.CascadeCount",PropertyType::Number,3.f,1.f,3.f},
+    P{"render.cascadeResolution","Feature.Render.CascadeResolution",PropertyType::Number,2048.f,256.f,4096.f},
+    P{"render.cascadeDistance","Feature.Render.CascadeDistance",PropertyType::Number,100.f,1.f,1000.f},
+    P{"render.cascadeDebug","Feature.Render.CascadeDebug",PropertyType::Boolean,false},
+    P{"render.cascadeBias","Feature.Render.CascadeBias",PropertyType::Number,.00003f,0.f,.02f},
+    P{"render.cascadeSlopeBias","Feature.Render.CascadeSlopeBias",PropertyType::Number,.0002f,0.f,.05f},
+    P{"render.cascadeNormalBias","Feature.Render.CascadeNormalBias",PropertyType::Number,.01f,0.f,.25f},
     P{"render.shadowExtent","Feature.Render.ShadowExtent",PropertyType::Number,8.f,.1f,1000.f},
     P{"render.shadowDistance","Feature.Render.ShadowDistance",PropertyType::Number,16.f,1.f,10000.f},
     P{"render.shadowBias","Feature.Render.ShadowBias",PropertyType::Number,.0008f,0.f,.1f},
@@ -54,7 +66,32 @@ const std::array rendering{
     P{"render.frameGraph","Feature.Render.FrameGraph",PropertyType::Boolean,false},
     // W06：运行时外观覆盖。0=基础色、1=白模、2=Toon；blend 只读取覆盖结果，不回写资产材质。
     P{"render.lookMode","Feature.Render.LookMode",PropertyType::Number,0.f,0.f,2.f},
-    P{"render.lookBlend","Feature.Render.LookBlend",PropertyType::Number,0.f,0.f,1.f}};
+    P{"render.lookBlend","Feature.Render.LookBlend",PropertyType::Number,0.f,0.f,1.f},
+    P{"render.supersample4x","Feature.Render.Supersample4x",PropertyType::Boolean,false},
+    P{"render.clusteredLighting","Feature.Render.ClusteredLighting",PropertyType::Boolean,false},
+    P{"render.clusterDebug","Feature.Render.ClusterDebug",PropertyType::Boolean,false},
+    P{"render.shadowPcss","Feature.Render.ShadowPcss",PropertyType::Boolean,false},
+    P{"render.shadowAngularRadius","Feature.Render.ShadowAngularRadius",PropertyType::Number,.00465f,0.f,.2f},
+    P{"render.shadowSearchDistance","Feature.Render.ShadowSearchDistance",PropertyType::Number,20.f,.01f,100.f},
+    P{"render.shadowFilterRadius","Feature.Render.ShadowFilterRadius",PropertyType::Number,16.f,1.f,32.f},
+    P{"render.shadowFilterDebug","Feature.Render.ShadowFilterDebug",PropertyType::Number,0.f,0.f,2.f},
+    P{"render.depthNormals","Feature.Render.DepthNormals",PropertyType::Boolean,false},
+    P{"render.gtao","Feature.Render.Gtao",PropertyType::Boolean,false},
+    P{"render.aoRadius","Feature.Render.AoRadius",PropertyType::Number,.6f,.001f,100.f},
+    P{"render.aoIntensity","Feature.Render.AoIntensity",PropertyType::Number,.8f,0.f,1.f},
+    P{"render.contactShadows","Feature.Render.ContactShadows",PropertyType::Boolean,false},
+    P{"render.contactLength","Feature.Render.ContactLength",PropertyType::Number,.5f,0.f,10.f},
+    P{"render.diffuseSh","Feature.Render.DiffuseSh",PropertyType::Boolean,false},
+    P{"render.localDiffuseSh","Feature.Render.LocalDiffuseSh",PropertyType::Boolean,false},
+    P{"render.diffuseProbe","Feature.Render.DiffuseProbe",PropertyType::AssetId,std::string{}},
+    P{"render.gpuDriven","Feature.Render.GpuDriven",PropertyType::Boolean,false},
+    P{"render.meshletCulling","Feature.Render.MeshletCulling",PropertyType::Boolean,false},
+    P{"render.gpuDrivenHiZ","Feature.Render.GpuDrivenHiZ",PropertyType::Boolean,false}};
+const std::array rectangleLight{
+    P{"rectangle.color","Feature.Rectangle.Color",PropertyType::Vector3,Vec3{1,1,1},0.f,65504.f},
+    P{"rectangle.radiance","Feature.Rectangle.Radiance",PropertyType::Number,10.f,0.f,65504.f},
+    P{"rectangle.width","Feature.Rectangle.Width",PropertyType::Number,1.f,.001f,1000.f},
+    P{"rectangle.height","Feature.Rectangle.Height",PropertyType::Number,1.f,.001f,1000.f}};
 const std::array actor{
     P{"actor.asset","Feature.Actor.Asset",PropertyType::AssetId,std::string{}},
     P{"actor.clip","Feature.Actor.Clip",PropertyType::Text,std::string{"Idle"}},
@@ -66,6 +103,17 @@ const std::array environment{
     P{"environmentmap.intensity","Feature.Environment.Intensity",PropertyType::Number,1.f,0.f,100.f},
     P{"environmentmap.yaw","Feature.Environment.Yaw",PropertyType::Number,0.f,-360.f,360.f}};
 
+bool ValidCascadeProperty(std::size_t index,const PropertyValue& value,std::string& error)
+{
+    if(index>=rendering.size())return false;
+    const auto key=rendering[index].key;
+    if(key!="render.cascadeCount"&&key!="render.cascadeResolution"&&key!="render.shadowFilterDebug")return true;
+    const auto* number=std::get_if<float>(&value);
+    if(!number||!std::isfinite(*number)||std::floor(*number)!=*number)
+    {error="Metadata.InvalidValue";return false;}
+    if(key=="render.cascadeResolution"&&*number!=256&&*number!=512&&*number!=1024&&*number!=1536&&*number!=2048&&*number!=4096)
+    {error="Metadata.InvalidValue";return false;}return true;
+}
 template<class T> bool Read(const World& world,ComponentHandle handle,std::size_t index,PropertyValue& value,std::string& error)
 {
     const auto* component=world.GetRegisteredComponent<T>(handle);
@@ -76,12 +124,15 @@ template<class T> bool Write(World& world,ComponentHandle handle,std::size_t ind
 {
     const auto* component=world.GetRegisteredComponent<T>(handle);
     if(!component||index>=component->values.size()){error="Metadata.InvalidValue";return false;}
+    if constexpr(T::TypeId==RenderSettingsComponent::TypeId)if(!ValidCascadeProperty(index,value,error))return false;
     auto next=*component;next.values[index]=value;
     if(world.UpdateRegisteredComponent(handle,next))return true;
     error=world.LastError();return false;
 }
 template<class T> ComponentHandle Create(World& world,EntityHandle entity,std::span<const PropertyValue> values,bool enabled,std::string& error)
 {
+    if constexpr(T::TypeId==RenderSettingsComponent::TypeId)
+        for(std::size_t index=0;index<values.size();++index)if(!ValidCascadeProperty(index,values[index],error))return {};
     if constexpr(T::TypeId==PhysicsBodyComponent::TypeId||T::TypeId==CharacterSettingsComponent::TypeId)
     {
         const auto other=T::TypeId==PhysicsBodyComponent::TypeId?CharacterSettingsComponent::TypeId:PhysicsBodyComponent::TypeId;
@@ -106,8 +157,9 @@ void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors)
     descriptors.push_back(Descriptor<RenderSettingsComponent>("render","Feature.Render",rendering));
     descriptors.push_back(Descriptor<EnvironmentSettingsComponent>("environmentmap","Feature.Environment",environment));
     descriptors.push_back(Descriptor<ActorSettingsComponent>("actor","Feature.Actor",actor));
+    descriptors.push_back(Descriptor<RectangleLightComponent>("rectangle","Feature.Rectangle",rectangleLight));
 }
-bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=ActorSettingsComponent::TypeId;}
+bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=RectangleLightComponent::TypeId;}
 ComponentHandle SceneFeature(const World& world,ComponentTypeId type)
 {
     ComponentHandle result;StableEntityId best=UINT64_MAX;

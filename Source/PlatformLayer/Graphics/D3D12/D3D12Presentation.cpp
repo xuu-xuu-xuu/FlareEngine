@@ -11,12 +11,18 @@
 #include "D3D12PipelineCache.h"
 #include "D3D12Forward.h"
 #include "D3D12Shadow.h"
+#include "D3D12LightClustering.h"
 #include "D3D12PostProcess.h"
 #include "D3D12Gui.h"
 #include "D3D12SceneOverlay.h"
+#include "D3D12SceneCoverage.h"
 #include "D3D12Indirect.h"
 #include "D3D12HiZ.h"
 #include "D3D12DepthPrepass.h"
+#include "D3D12DepthNormals.h"
+#include "D3D12AmbientOcclusion.h"
+#include "D3D12ShadingExtensions.h"
+#include "D3D12Heterogeneous.h"
 #include "D3D12Dred.h"
 
 #include <algorithm>
@@ -30,6 +36,7 @@
 #include <iomanip>
 #include <sstream>
 #include <utility>
+#include <tuple>
 
 using Microsoft::WRL::ComPtr;
 
@@ -179,6 +186,18 @@ bool ValidCapture(D3D12Presentation& presentation, UINT index, const D3D12FrameC
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT expected{};
     UINT64 required = 0;
     device->GetCopyableFootprints(&source, 0, 1, 0, &expected, nullptr, nullptr, &required);
+    if(source.DepthOrArraySize>1)
+    {
+        if(capture.layerFootprints.size()!=source.DepthOrArraySize)return false;
+        std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> layers(source.DepthOrArraySize);
+        device->GetCopyableFootprints(&source,0,source.DepthOrArraySize,0,layers.data(),nullptr,nullptr,&required);
+        for(size_t layer=0;layer<layers.size();++layer)
+        {
+            const auto& a=capture.layerFootprints[layer];const auto& b=layers[layer];
+            if(a.Offset!=b.Offset||a.Footprint.Format!=b.Footprint.Format||a.Footprint.Width!=b.Footprint.Width
+                ||a.Footprint.Height!=b.Footprint.Height||a.Footprint.Depth!=b.Footprint.Depth||a.Footprint.RowPitch!=b.Footprint.RowPitch)return false;
+        }
+    }
     const auto& actual = capture.footprint.Footprint;
     return destination.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && destination.Width >= required
         && capture.footprint.Offset == expected.Offset && actual.Format == expected.Footprint.Format
@@ -336,6 +355,135 @@ bool InitializeD3D12Presentation(D3D12Presentation& presentation,
     return true;
 }
 
+namespace
+{
+void PrepareHeterogeneous(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,bool oldIndirect,const Localization& text)
+{
+    frame.heterogeneous.reset();frame.heterogeneousSources.clear();p.gpuDrivenStatistics={};auto& statistics=p.gpuDrivenStatistics;
+    if(!content.forward||(!content.forward->gpuDriven&&!content.forward->meshletCulling)){frame.heterogeneousHiZ.reset();return;}
+    statistics.requested=true;statistics.meshlets=content.forward->meshletCulling;
+    statistics.hzbRequested=content.forward->gpuDrivenHiZ;
+    if(!statistics.hzbRequested)frame.heterogeneousHiZ.reset();
+    const auto count=std::min(content.opaqueDrawCount,content.meshes.size());statistics.sourceDraws=static_cast<UINT>(count);statistics.cpuDraws=static_cast<UINT>(count);
+    if(oldIndirect||!content.meshPipeline||!count)return;
+    const auto frustum=se::BuildFrustum(content.viewProjection);se::VisibilityFrustum quantized{};
+    if(!frustum||!se::QuantizeVisibilityFrustum(*frustum,quantized))return;
+    std::vector<D3D12HeterogeneousInput> inputs;std::vector<UINT> sources;
+    const se::Aabb invalidBounds{{1,1,1},{-1,-1,-1}};
+    for(UINT index=0;index<count;++index)
+    {
+        const auto& draw=content.meshes[index];std::vector<se::Aabb> clusterBounds;UINT covered=0;
+        bool clusters=statistics.meshlets&&!draw.geometryClusters.empty()&&draw.geometryClusters.size()<=se::MaximumVisibilityItems;
+        if(clusters)for(const auto& cluster:draw.geometryClusters)
+        {
+            const auto transformed=se::TransformBounds(cluster.localBounds,draw.world);
+            if(!transformed||!cluster.indexCount||cluster.indexCount%3||cluster.firstIndex!=covered
+                ||covered>draw.mesh->indexCount||cluster.indexCount>draw.mesh->indexCount-covered){clusters=false;break;}
+            covered+=cluster.indexCount;clusterBounds.push_back(*transformed);
+        }
+        clusters=clusters&&covered==draw.mesh->indexCount;
+        if(clusters)
+        {
+            if(draw.geometryClusters.size()>se::MaximumVisibilityItems-inputs.size())return;
+            for(UINT part=0;part<draw.geometryClusters.size();++part)
+            {
+                const auto& cluster=draw.geometryClusters[part];inputs.push_back({&draw,frame.drawConstants[index],clusterBounds[part],frame.descriptors.Draw(index),cluster.firstIndex,cluster.indexCount,0});sources.push_back(index);
+            }
+        }
+        else
+        {
+            if(inputs.size()==se::MaximumVisibilityItems)return;
+            // 请求 meshlet 而没有完整覆盖证明时，整 draw 保留 CPU，不能冒称 GPU meshlet。
+            const auto bounds=!statistics.meshlets&&draw.hasWorldBounds&&se::IsValid(draw.worldBounds)?draw.worldBounds:invalidBounds;
+            inputs.push_back({&draw,frame.drawConstants[index],bounds,frame.descriptors.Draw(index)});sources.push_back(index);
+        }
+    }
+    if(!p.heterogeneousBuilder)
+    {
+        D3D12Context context;context.memory=p.memory;context.states=p.states;
+        if(FAILED(p.queue->GetDevice(IID_PPV_ARGS(context.device.GetAddressOf()))))return;
+        auto builder=std::make_shared<D3D12Heterogeneous>();
+        if(FAILED(builder->Initialize(context,content.meshPipeline->prepared->program->source.path.parent_path()/"HeterogeneousCull.hlsl",text)))return;
+        p.heterogeneousBuilder=std::move(builder);
+    }
+    auto prepared=std::make_shared<D3D12HeterogeneousPrepared>();
+    D3D12HeterogeneousOcclusion occlusion;bool reliableHiZ=false;
+    if(statistics.hzbRequested&&frame.depthNormals&&frame.depthNormals->statistics.valid&&frame.depthNormals->statistics.complete)
+    {
+        const auto& target=*frame.depthNormals->target;
+        if(D3D12HiZ::Levels(target.width,target.height))
+        {
+            if(!p.heterogeneousHiZBuilder)
+            {
+                D3D12Context context;context.memory=p.memory;context.states=p.states;
+                if(SUCCEEDED(p.queue->GetDevice(IID_PPV_ARGS(context.device.GetAddressOf()))))
+                {
+                    auto builder=std::make_shared<D3D12HiZ>();
+                    if(SUCCEEDED(builder->Initialize(context,content.meshPipeline->prepared->program->source.path.parent_path()/"HiZ.hlsl",text)))p.heterogeneousHiZBuilder=std::move(builder);
+                }
+            }
+            if(p.heterogeneousHiZBuilder)
+            {
+                if(!frame.heterogeneousHiZ||frame.heterogeneousHiZ->depth.Get()!=target.depth.Get()
+                    ||frame.heterogeneousHiZ->width!=target.width||frame.heterogeneousHiZ->height!=target.height)
+                {
+                    frame.heterogeneousHiZ.reset();auto next=std::make_shared<D3D12HiZOutput>();
+                    if(SUCCEEDED(p.heterogeneousHiZBuilder->CreateOutput(*target.depth.Get(),target.width,target.height,*next)))frame.heterogeneousHiZ=std::move(next);
+                }
+                if(frame.heterogeneousHiZ){occlusion.output=frame.heterogeneousHiZ;occlusion.clipFromWorld=content.viewProjection;reliableHiZ=true;}
+            }
+        }
+    }
+    if(FAILED(p.heterogeneousBuilder->Prepare(frame.uploads,*content.meshPipeline,inputs,quantized,static_cast<UINT>(inputs.size()),*prepared,reliableHiZ?&occlusion:nullptr)))return;
+    const auto& actual=prepared->Stats();static_assert(std::tuple_size_v<decltype(statistics.fallbackReasons)> == static_cast<size_t>(D3D12HeterogeneousFallback::Count));
+    statistics.candidateCommands=actual.candidateCommands;statistics.gpuBuckets=actual.gpuBuckets;statistics.cpuBuckets=actual.cpuBuckets;statistics.fallbackReasons=actual.reasons;
+    if(!actual.candidateCommands)return;
+    if(!frame.heterogeneousOutput||frame.heterogeneousOutput->capacity<inputs.size())
+    {
+        auto output=std::make_shared<D3D12HeterogeneousOutput>();if(FAILED(p.heterogeneousBuilder->CreateOutput(static_cast<UINT>(inputs.size()),*output)))return;
+        frame.heterogeneousOutput=std::move(output);
+    }
+    UINT cpuDraws=0,previous=UINT_MAX;
+    for(const auto& segment:prepared->Segments())for(UINT entry=segment.sourceFirst;entry<segment.sourceFirst+segment.sourceCount;++entry)
+    {
+        if(segment.cpuFallback){if(previous!=sources[entry]){++cpuDraws;previous=sources[entry];}}
+        else if(inputs[entry].indexCount)++statistics.meshletCommands;
+    }
+    statistics.cpuDraws=cpuDraws;statistics.valid=true;statistics.hzbValid=prepared->OcclusionEnabled();frame.heterogeneous=std::move(prepared);frame.heterogeneousSources=std::move(sources);
+}
+bool RecordHeterogeneous(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,UINT width,UINT height,const Localization& text)
+{
+    auto& commands=*p.commandList.Get();UINT previousCpu=UINT_MAX,segmentIndex=0;
+    const auto add=[&](const se::rhi::DrawBindingStatistics& value)
+    {auto& total=p.opaqueBindings;total.pipelines+=value.pipelines;total.rootSignatures+=value.rootSignatures;total.descriptorTables+=value.descriptorTables;
+        total.vertexBuffers+=value.vertexBuffers;total.indexBuffers+=value.indexBuffers;total.constants+=value.constants;total.instanceBuffers+=value.instanceBuffers;};
+    for(const auto& segment:frame.heterogeneous->Segments())
+    {
+        if(segment.cpuFallback)
+        {
+            for(UINT entry=segment.sourceFirst;entry<segment.sourceFirst+segment.sourceCount;++entry)
+            {
+                const UINT source=frame.heterogeneousSources[entry];if(source==previousCpu)continue;previousCpu=source;
+                se::rhi::DrawBindingStatistics bindings;
+                RecordD3D12Meshes(*content.meshPipeline,content.meshes.subspan(source,1),content.viewProjection,frame,commands,width,height,false,&bindings,{},source);add(bindings);
+            }
+        }
+        else
+        {
+            // Compute 和 ExecuteIndirect 都可修改绑定；每段完整恢复，不复用跨段缓存。
+            const auto& pipeline=*segment.pipeline;commands.SetPipelineState(pipeline.pipeline.Get());commands.SetGraphicsRootSignature(pipeline.rootSignature.Get());
+            ID3D12DescriptorHeap* heaps[]{frame.descriptors.Heap()};commands.SetDescriptorHeaps(1,heaps);
+            if(se::rhi::IsForward(pipeline.prepared->program->source.kind)){commands.SetGraphicsRootConstantBufferView(2,frame.forwardConstants.Gpu());++p.opaqueBindings.constants;}
+            const D3D12_VIEWPORT viewport{0,0,float(width),float(height),0,1};const D3D12_RECT scissor{0,0,LONG(width),LONG(height)};
+            commands.RSSetViewports(1,&viewport);commands.RSSetScissorRects(1,&scissor);commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            if(!CheckGraphicsResult(p.heterogeneousBuilder->RecordBucket(commands,*frame.heterogeneous,*frame.heterogeneousOutput,segmentIndex),text,"D3D12.IndirectRecordFailed"))return false;
+            ++p.opaqueBindings.pipelines;++p.opaqueBindings.rootSignatures;++p.opaqueBindings.descriptorTables;
+        }
+        ++segmentIndex;
+    }
+    return true;
+}
+}
 bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& localization,
     const D3D12FrameContent& content, const D3D12FrameCapture* capture)
 {
@@ -444,13 +592,14 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         ||!se::rhi::IsOutput(content.outputPipeline->prepared->program->source.kind)))return false;
     if(forward&&(!content.skyPipeline||!content.skyPipeline->prepared||!se::rhi::IsSky(content.skyPipeline->prepared->program->source.kind)))return false;
     if(content.meshPipeline&&(!content.meshPipeline->prepared||se::rhi::IsForward(content.meshPipeline->prepared->program->source.kind)!=forward
+        ||se::rhi::IsClustered(content.meshPipeline->prepared->program->source.kind)!=(forward&&content.forward->cluster.enabled)
         ||se::rhi::IsShadowed(content.meshPipeline->prepared->program->source.kind)!=shadow
-        ||(content.meshPipeline->prepared->program->source.kind==se::rhi::PipelineKind::EnvironmentMesh)!=(content.environment!=nullptr)))return false;
+        ||se::rhi::IsEnvironment(content.meshPipeline->prepared->program->source.kind)!=(content.environment!=nullptr)))return false;
     if(content.environment&&(!shadow||content.skyPipeline->prepared->program->source.kind!=se::rhi::PipelineKind::EnvironmentSky
         ||std::any_of(content.environmentTextures.begin(),content.environmentTextures.end(),[](const auto* texture){return !texture||!texture->resource||!texture->views;})))return false;
     if(shadow&&(!forward||!content.shadowPipeline||!content.shadowPipeline->prepared
         ||content.shadowPipeline->prepared->program->source.kind!=se::rhi::PipelineKind::ShadowDepth
-        ||content.outputPipeline->prepared->program->source.kind!=se::rhi::PipelineKind::ShadowOutput))return false;
+        ||content.outputPipeline->prepared->program->source.kind!=(content.shadow->cascadeCount?se::rhi::PipelineKind::CascadedShadowOutput:se::rhi::PipelineKind::ShadowOutput)))return false;
     if(content.shadowCapture&&!shadow)return false;
     if(content.hdrCapture&&!forward)return false;
     if (!presentation.queue || !presentation.states || !presentation.swapChain || !presentation.rtvs
@@ -508,9 +657,47 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     if(!BeginD3D12FrameCommands(presentation,localization))return false;
     std::optional<se::CpuScope> recording;recording.emplace(presentation.cpuProfiler,"CPU.CommandRecord");
     const bool pbr=content.meshPipeline&&se::rhi::UsesLitLayout(content.meshPipeline->prepared->program->source.kind);
+    const auto opaqueCount=std::min(content.opaqueDrawCount,content.meshes.size());
+    const auto opaqueMeshes=content.meshes.first(opaqueCount),transparentMeshes=content.meshes.subspan(opaqueCount);
     if(shadow&&!PrepareD3D12Shadow(presentation,frame,content,localization)){presentation.commandList->Close();return false;}
     if(forward&&!PrepareD3D12Forward(presentation,frame,content,localization)){presentation.commandList->Close();return false;}
     if(post&&!PrepareD3D12PostProcess(presentation,frame,content,localization)){presentation.commandList->Close();return false;}
+    // 为几何单独提高采样密度。后处理、UI、编辑器深度及截图仍使用原尺寸。
+    if(post&&content.post->supersample4x&&!indirect)
+    {
+        if(!presentation.coverage||presentation.coverage->samples.color.width/2!=sceneWidth
+            ||presentation.coverage->samples.color.height/2!=sceneHeight)
+        {
+            auto next=std::make_shared<D3D12SceneCoverage>();
+            const auto shader=content.postPipelines[2]->prepared->program->source.path.parent_path()/"SceneCoverageResolve.hlsl";
+            if(!next->Initialize(presentation,sceneWidth,sceneHeight,shader,localization)){presentation.commandList->Close();return false;}
+            presentation.coverage=std::move(next);
+        }
+        frame.coverage=presentation.coverage;
+    }
+    else presentation.coverage.reset();
+    const auto* samples=frame.coverage?&frame.coverage->samples:nullptr;
+    const UINT rasterWidth=samples?samples->color.width:sceneWidth,rasterHeight=samples?samples->color.height:sceneHeight;
+    auto* rasterDepth=samples?samples->depth.Get():sceneDepth;
+    const auto rasterDsv=samples?samples->dsv:sceneDsv;
+    auto* rasterColor=samples?samples->color.resource.Get():content.sceneHdr?content.sceneHdr->color.resource.Get():presentation.hdr.Get();
+    if(forward&&!PrepareD3D12OpaqueTemporal(presentation,frame,content,*rasterColor,*rasterDepth,rasterWidth,rasterHeight,localization))return false;
+    const bool normalsRequested=forward&&content.depthNormals&&content.depthNormals->enabled;
+    if(normalsRequested)
+    {
+        if(!presentation.depthNormalBuilder)presentation.depthNormalBuilder=std::make_shared<D3D12DepthNormals>();
+        if(!presentation.depthNormalBuilder->Prepare(presentation,frame,content,rasterWidth,rasterHeight,localization))
+        {
+            // 可选输入准备失败时保主颜色/主深度路径，08随后明确白色回退。
+            frame.depthNormals.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.depthNormalStatistics.requested=true;
+        }
+    }
+    else {frame.depthNormals.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};}
+    const bool depthNormals=frame.depthNormals&&frame.depthNormals->statistics.valid;
+    if(!PrepareD3D12AmbientOcclusion(presentation,frame,content,rasterWidth,rasterHeight,localization)
+        ||!PrepareD3D12ShadingExtensions(presentation,frame,content,localization))return false;
+    const bool beforeOpaqueWork=depthNormals||(frame.ambientOcclusion&&frame.ambientOcclusion->statistics.valid)||frame.shading
+        ||(forward&&!indirect&&(content.forward->gpuDriven||content.forward->meshletCulling));
     D3D12GuiUpload guiUpload,gameUiUpload;
     if(gui&&!PrepareD3D12Gui(presentation,frame,gui->layer,frame.guiDescriptors,guiUpload,localization)){presentation.commandList->Close();return false;}
     if(content.gameUi)
@@ -532,17 +719,38 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         ||!CheckGraphicsResult(presentation.states->Register(*content.shadowCapture->readback,D3D12_RESOURCE_STATE_COPY_DEST,D3D12TrackedHeap::Readback,"ShadowCapture"),localization,"D3D12.StateTrackingFailed")))
     {presentation.commandList->Close();return false;}
     std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> textureViews;textureViews.reserve(content.meshes.size());
-    for(const auto& draw:content.meshes)
+    for(size_t drawIndex=0;drawIndex<content.meshes.size();++drawIndex)
     {
+        const auto& draw=content.meshes[drawIndex];
         textureViews.push_back(draw.mesh->textureViews->Cpu(draw.textureIsData?1:0));
         if(pbr)for(const auto& texture:draw.mesh->pbrTextures)textureViews.push_back(texture.views->Cpu(1));
         if(shadow)textureViews.push_back(frame.shadow->srv->Cpu());
         if(content.environment)for(const auto* texture:content.environmentTextures)textureViews.push_back(texture->views->Cpu(1));
+        if(forward&&content.forward->cluster.enabled)
+            for(const auto handle:frame.clusters->GraphicsViews())textureViews.push_back(handle);
+        if(frame.shading)for(const auto handle:frame.shading->views[drawIndex])textureViews.push_back(handle);
     }
     ComPtr<ID3D12Device> device;
     if(!CheckGraphicsResult(presentation.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf())),localization,"D3D12.DescriptorCapacityExceeded")
-        ||!CheckGraphicsResult(frame.descriptors.Prepare(*device.Get(),textureViews,content.environment?7:shadow?4:pbr?3:1),localization,"D3D12.DescriptorCapacityExceeded"))
+        ||!CheckGraphicsResult(frame.descriptors.Prepare(*device.Get(),textureViews,(content.environment?7:shadow?4:pbr?3:1)+(forward&&content.forward->cluster.enabled?4:0)+(frame.shading?12:0)),localization,"D3D12.DescriptorCapacityExceeded"))
     {presentation.commandList->Close();return false;}
+    if(!transparentMeshes.empty()&&frame.transparentDepth.Get()!=rasterDepth)
+    {
+        std::shared_ptr<D3D12DescriptorRange> descriptor;
+        if(!CheckGraphicsResult(presentation.dsvPool->Allocate(1,descriptor),localization,"D3D12.DescriptorCapacityExceeded"))return false;
+        D3D12_DEPTH_STENCIL_VIEW_DESC view{};view.Format=DXGI_FORMAT_D32_FLOAT;view.ViewDimension=D3D12_DSV_DIMENSION_TEXTURE2D;view.Flags=D3D12_DSV_FLAG_READ_ONLY_DEPTH;
+        device->CreateDepthStencilView(rasterDepth,&view,descriptor->Cpu());frame.transparentDepth=rasterDepth;frame.transparentDsv=std::move(descriptor);
+    }
+    const auto uploadMaterial=[&](const D3D12MeshDraw& draw,D3D12UploadSlice& slice)
+    {
+        if(!CheckGraphicsResult(frame.uploads.Allocate(256,256,slice),localization,"D3D12.UploadCapacityExceeded"))return false;
+        const se::Vec3 x{draw.world(0,0),draw.world(1,0),draw.world(2,0)},y{draw.world(0,1),draw.world(1,1),draw.world(2,1)},z{draw.world(0,2),draw.world(1,2),draw.world(2,2)};
+        const se::rhi::MaterialSurfaceConstants material{draw.tint,{draw.alphaCutoff,float(draw.alphaMode),draw.pbr.doubleSided?1.f:0.f,se::Dot(se::Cross(x,y),z)<0?-1.f:1.f}};
+        std::memset(slice.cpu,0,256);std::memcpy(slice.cpu,&material,sizeof(material));return true;
+    };
+    const bool hasSurfaceMaterials=std::any_of(content.meshes.begin(),content.meshes.end(),[&](const auto& draw)
+    {const auto* program=draw.pipeline?draw.pipeline:content.meshPipeline;return program&&program->prepared->materialRootParameter!=UINT_MAX;});
+    if(hasSurfaceMaterials)frame.materialConstants.assign(content.meshes.size(),{});else frame.materialConstants.clear();
     frame.drawConstants.reserve(content.meshes.size());
     frame.instanceSlices.reserve(content.meshes.size());
     presentation.frameInstances=presentation.frameInstanceBytes=presentation.frameDrawConstantBytes=0;
@@ -553,6 +761,8 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         if(!CheckGraphicsResult(constants.Allocate(pbr?se::rhi::PbrConstantStride:D3D12MeshConstantStride,256,slice),localization,"D3D12.UploadCapacityExceeded"))
         {presentation.commandList->Close();return false;}
         frame.drawConstants.push_back(slice);
+        const auto& item=content.meshes[draw];const auto* program=item.pipeline?item.pipeline:content.meshPipeline;
+        if(program&&program->prepared->materialRootParameter!=UINT_MAX&&!uploadMaterial(item,frame.materialConstants[draw]))return false;
     }
     presentation.frameDrawConstantBytes=UINT64(content.meshes.size())*(pbr?se::rhi::PbrConstantStride:D3D12MeshConstantStride);
     // 此子区段已包含在CommandRecord内；成本报告不可重复相加。
@@ -606,6 +816,19 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         if(!pack(content.meshes,frame.skinSlices)){presentation.commandList->Close();return false;}
         if(!pack(content.shadowMeshes,frame.shadowSkinSlices)){presentation.commandList->Close();return false;}
     }
+    const bool hasMaskCasters=std::any_of(content.shadowMeshes.begin(),content.shadowMeshes.end(),[](const auto& draw){return draw.alphaMode==se::MaterialAlphaMode::Mask;});
+    if(hasMaskCasters){frame.shadowMaterialConstants.assign(content.shadowMeshes.size(),{});frame.shadowMaterialTables.assign(content.shadowMeshes.size(),{});}
+    else{frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();}
+    std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> maskViews;std::vector<size_t> maskIndices;
+    for(size_t caster=0;caster<content.shadowMeshes.size();++caster)
+    {
+        const auto& draw=content.shadowMeshes[caster];
+        if(draw.alphaMode!=se::MaterialAlphaMode::Mask)continue;
+        if(!draw.mesh->textureViews||!uploadMaterial(draw,frame.shadowMaterialConstants[caster]))return false;
+        maskViews.push_back(draw.mesh->textureViews->Cpu(draw.textureIsData?1:0));maskIndices.push_back(caster);
+    }
+    if(!CheckGraphicsResult(frame.shadowMaterialDescriptors.Prepare(*device.Get(),maskViews,1),localization,"D3D12.DescriptorCapacityExceeded"))return false;
+    for(size_t mask=0;mask<maskIndices.size();++mask)frame.shadowMaterialTables[maskIndices[mask]]=frame.shadowMaterialDescriptors.Draw(static_cast<UINT>(mask));
     std::vector<D3D12IndirectPrepared> indirectPrepared(indirects.size());
     std::vector<D3D12IndirectOcclusion> indirectOcclusion(indirects.size());
     if(indirect)
@@ -626,6 +849,8 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
             {presentation.commandList->Close();return false;}
         }
     }
+    if(content.meshPipeline)PrepareD3D12MeshConstants(*content.meshPipeline,content.meshes,clipFromWorld,frame);
+    PrepareHeterogeneous(presentation,frame,content,indirect,localization);
     if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0);
 
     D3D12StateRecording states(*presentation.states);
@@ -635,12 +860,19 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         return true;
     };
     if(!use(presentation.backBuffers[index].Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"Clear"))return false;
-    if(forward&&content.sceneHdr){if(!use(content.sceneHdr->color.resource.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"ClearSceneHDR"))return false;}
+    if(samples){if(!use(samples->color.resource.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"SceneCoverageColor"))return false;}
+    else if(forward&&content.sceneHdr){if(!use(content.sceneHdr->color.resource.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"ClearSceneHDR"))return false;}
     else if(forward&&!use(presentation.hdr.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"ClearHDR"))return false;
     if(gui&&!content.sceneHdr&&!use(gui->scene->color.resource.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"ClearScene"))return false;
-    if(sceneDepth&&!use(sceneDepth,D3D12_RESOURCE_STATE_DEPTH_WRITE,"ClearDepth"))return false;
+    if(rasterDepth&&!use(rasterDepth,D3D12_RESOURCE_STATE_DEPTH_WRITE,"ClearDepth"))return false;
     if(triangle&&!use(triangle->vertices.Get(),D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"Triangle"))return false;
     if(forward&&!use(frame.forwardConstants.resource,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"ForwardConstants"))return false;
+    if(frame.shadowFilterConstants.resource&&!use(frame.shadowFilterConstants.resource,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"ShadowFilterConstants"))return false;
+    for(const auto& material:frame.materialConstants)if(material.resource)
+        if(!use(material.resource,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"MaterialSurfaceConstants"))return false;
+    for(const auto& material:frame.shadowMaterialConstants)if(material.resource)
+        if(!use(material.resource,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"ShadowSurfaceConstants"))return false;
+
     if(content.environment)for(const auto* texture:content.environmentTextures)
         if(!use(texture->resource.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Environment"))return false;
     if(content.colorLut&&!use(content.colorLut->resource.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"OutputLut"))return false;
@@ -666,13 +898,23 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     for(const auto& slice:frame.shadowSkinSlices)if(slice.resource)
         if(!use(slice.resource,D3D12_RESOURCE_STATE_GENERIC_READ,"ShadowSkinData"))return false;
 
-    const auto rtv=forward?(content.sceneHdr?content.sceneHdr->rtv->Cpu():presentation.hdrRtv->Cpu()):gui?gui->scene->rtv->Cpu():presentation.rtvs->Cpu(index);
+    const auto rtv=samples?samples->rtv->Cpu():forward?(content.sceneHdr?content.sceneHdr->rtv->Cpu():presentation.hdrRtv->Cpu()):gui?gui->scene->rtv->Cpu():presentation.rtvs->Cpu(index);
     constexpr float clearColor[] = { 0.08f, 0.18f, 0.32f, 1.0f }; // 深蓝色 RGBA。
     constexpr float zeroColor[]{0,0,0,1};
     presentation.commandList->ClearRenderTargetView(rtv, forward?zeroColor:clearColor, 0, nullptr);
-    if(sceneDepth&&sceneDsv)
-        presentation.commandList->ClearDepthStencilView(sceneDsv->Cpu(),D3D12_CLEAR_FLAG_DEPTH,1,0,0,nullptr);
+    if(rasterDepth&&rasterDsv)
+        presentation.commandList->ClearDepthStencilView(rasterDsv->Cpu(),D3D12_CLEAR_FLAG_DEPTH,1,0,0,nullptr);
     if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,1);
+    if(forward&&content.forward->cluster.enabled)
+    {
+        if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,21);
+        if(!presentation.clusterBuilder||!frame.clusters
+            ||!CheckGraphicsResult(presentation.clusterBuilder->Record(*presentation.commandList.Get(),states,*frame.clusters,
+                frame.forwardConstants.Gpu(),content.clusterCapture),localization,"Rhi.BackendFailure"))
+        {presentation.commandList->Close();return false;}
+        frame.clusters->sourceFrame=content.sourceFrame?content.sourceFrame:presentation.submittedFrames+1;
+        if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,22);
+    }
     if(shadow)
     {
         if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,2);
@@ -684,7 +926,12 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
                 ||!use(content.shadowCapture->readback,D3D12_RESOURCE_STATE_COPY_DEST,"ShadowCapture"))return false;
             D3D12_TEXTURE_COPY_LOCATION destination{};destination.pResource=content.shadowCapture->readback;destination.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;destination.PlacedFootprint=content.shadowCapture->footprint;
             D3D12_TEXTURE_COPY_LOCATION source{};source.pResource=frame.shadow->depth.Get();source.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-            presentation.commandList->CopyTextureRegion(&destination,0,0,0,&source,nullptr);
+            if(content.shadowCapture->layerFootprints.empty())presentation.commandList->CopyTextureRegion(&destination,0,0,0,&source,nullptr);
+            else for(UINT layer=0;layer<content.shadowCapture->layerFootprints.size();++layer)
+            {
+                destination.PlacedFootprint=content.shadowCapture->layerFootprints[layer];source.SubresourceIndex=layer;
+                presentation.commandList->CopyTextureRegion(&destination,0,0,0,&source,nullptr);
+            }
         }
         if(!use(frame.shadow->depth.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"ShadowSample"))return false;
     }
@@ -709,13 +956,46 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     if(forward)
     {
         if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,shadow?4:2);
-        presentation.commandList->OMSetRenderTargets(1,&rtv,FALSE,nullptr);RecordD3D12ForwardSky(presentation,frame,content,sceneWidth,sceneHeight);
+        presentation.commandList->OMSetRenderTargets(1,&rtv,FALSE,nullptr);RecordD3D12ForwardSky(presentation,frame,content,rasterWidth,rasterHeight);
         if(presentation.timingEnabled)
         {
             presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,shadow?5:3);
-            presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,shadow?6:4);
+            if(!beforeOpaqueWork)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,shadow?6:4);
         }
     }
+    if(depthNormals)
+    {
+        if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,23);
+        if(!presentation.depthNormalBuilder->Record(presentation,frame,content,states,localization))return false;
+        if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,24);
+        const auto copy=[&](ID3D12Resource& resource,const D3D12FrameCapture* capture)
+        {
+            if(!capture)return true;
+            if(!ValidCapture(presentation,index,*capture,false,&resource)
+                ||!use(&resource,D3D12_RESOURCE_STATE_COPY_SOURCE,"DepthNormals.Capture")
+                ||!use(capture->readback,D3D12_RESOURCE_STATE_COPY_DEST,"DepthNormals.Capture"))return false;
+            D3D12_TEXTURE_COPY_LOCATION destination{};destination.pResource=capture->readback;destination.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;destination.PlacedFootprint=capture->footprint;
+            D3D12_TEXTURE_COPY_LOCATION source{};source.pResource=&resource;source.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            presentation.commandList->CopyTextureRegion(&destination,0,0,0,&source,nullptr);return true;
+        };
+        if(!copy(*frame.depthNormals->target->depth.Get(),content.depthNormalDepthCapture)||!copy(*frame.depthNormals->target->normal.Get(),content.depthNormalCapture))return false;
+    }
+    if(!RecordD3D12AmbientOcclusion(presentation,frame,states,localization))return false;
+    if(frame.ambientOcclusion&&frame.ambientOcclusion->statistics.valid)
+    {
+        const auto copy=[&](ID3D12Resource& resource,const D3D12FrameCapture* capture)
+        {
+            if(!capture)return true;if(!ValidCapture(presentation,index,*capture,false,&resource)
+                ||!use(&resource,D3D12_RESOURCE_STATE_COPY_SOURCE,"ScreenSpace.Capture")||!use(capture->readback,D3D12_RESOURCE_STATE_COPY_DEST,"ScreenSpace.Capture"))return false;
+            D3D12_TEXTURE_COPY_LOCATION destination{};destination.pResource=capture->readback;destination.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;destination.PlacedFootprint=capture->footprint;
+            D3D12_TEXTURE_COPY_LOCATION source{};source.pResource=&resource;source.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            presentation.commandList->CopyTextureRegion(&destination,0,0,0,&source,nullptr);return true;
+        };
+        auto& output=*frame.ambientOcclusion->output;
+        if(!copy(*output.visibility.Get(),content.screenSpaceCapture)||(output.half&&!copy(*output.half.Get(),content.halfAoCapture)))return false;
+    }
+    if(!RecordD3D12ShadingExtensions(presentation,frame,states,localization))return false;
+    if(beforeOpaqueWork&&!frame.heterogeneous&&presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,shadow?6:4);
     std::vector<D3D12IndirectCommand> indirectCommands;
     if(indirect)
     {
@@ -734,16 +1014,56 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         }
     }
     presentation.opaqueBindings={};
+    if(frame.heterogeneous)
+    {
+        if(frame.heterogeneous->OcclusionEnabled())
+        {
+            const D3D12HiZTimestamps timestamps{presentation.timingEnabled?frame.timestampQueries.Get():nullptr,D3D12FrameTimestampCount};
+            if(!CheckGraphicsResult(presentation.heterogeneousHiZBuilder->Record(*presentation.commandList.Get(),states,*frame.heterogeneousHiZ,timestamps,31),localization,"D3D12.HiZShaderFailed"))return false;
+        }
+        if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,29);
+        if(!CheckGraphicsResult(presentation.heterogeneousBuilder->RecordCull(*presentation.commandList.Get(),states,*frame.heterogeneous,*frame.heterogeneousOutput),localization,"D3D12.IndirectRecordFailed"))return false;
+        if(presentation.timingEnabled)
+        {
+            presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,30);
+            presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,shadow?6:4);
+        }
+    }
     if(content.meshPipeline)
     {
-        const auto dsv=sceneDsv->Cpu();
+        const auto dsv=rasterDsv->Cpu();
         presentation.commandList->OMSetRenderTargets(1,&rtv,FALSE,&dsv);
-        RecordD3D12Meshes(*content.meshPipeline,content.meshes,clipFromWorld,frame,*presentation.commandList.Get(),
-            sceneWidth,sceneHeight,content.cacheOpaqueBindings,&presentation.opaqueBindings,indirectCommands);
+        if(frame.heterogeneous)
+        {if(!RecordHeterogeneous(presentation,frame,content,rasterWidth,rasterHeight,localization))return false;}
+        else RecordD3D12Meshes(*content.meshPipeline,opaqueMeshes,clipFromWorld,frame,*presentation.commandList.Get(),
+            rasterWidth,rasterHeight,content.cacheOpaqueBindings,&presentation.opaqueBindings,indirectCommands);
     }
     else presentation.commandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     if (triangle) RecordD3D12Triangle(*triangle, *presentation.commandList.Get(),
         sceneWidth, sceneHeight, clipFromWorld);
+    if(!transparentMeshes.empty())
+    {
+        if(!RecordD3D12OpaqueTemporal(presentation,frame,content,opaqueMeshes,*rasterColor,*rasterDepth,states,localization))return false;
+        if(!use(rasterDepth,D3D12_RESOURCE_STATE_DEPTH_READ,"Transparent.Depth")
+            ||!use(samples?samples->color.resource.Get():content.sceneHdr?content.sceneHdr->color.resource.Get():presentation.hdr.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"Transparent.HDR"))return false;
+        const auto readOnlyDsv=frame.transparentDsv->Cpu();presentation.commandList->OMSetRenderTargets(1,&rtv,FALSE,&readOnlyDsv);
+        RecordD3D12Meshes(*content.meshPipeline,transparentMeshes,clipFromWorld,frame,*presentation.commandList.Get(),rasterWidth,rasterHeight,false,nullptr,{},static_cast<UINT>(opaqueCount));
+    }
+    if(content.sceneDepthCapture)
+    {
+        if(!use(rasterDepth,D3D12_RESOURCE_STATE_COPY_SOURCE,"SceneDepth.Capture")
+            ||!use(content.sceneDepthCapture->readback,D3D12_RESOURCE_STATE_COPY_DEST,"SceneDepth.Capture"))return false;
+        D3D12_TEXTURE_COPY_LOCATION destination{};destination.pResource=content.sceneDepthCapture->readback;destination.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;destination.PlacedFootprint=content.sceneDepthCapture->footprint;
+        D3D12_TEXTURE_COPY_LOCATION source{};source.pResource=rasterDepth;source.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        presentation.commandList->CopyTextureRegion(&destination,0,0,0,&source,nullptr);
+    }
+    if(samples)
+    {
+        auto* color=content.sceneHdr?content.sceneHdr->color.resource.Get():presentation.hdr.Get();
+        const auto destination=content.sceneHdr?content.sceneHdr->rtv:presentation.hdrRtv;
+        if(!frame.coverage->Resolve(presentation,states,*color,*sceneDepth,destination->Cpu(),sceneDsv->Cpu(),localization))
+        {presentation.commandList->Close();return false;}
+    }
     // G06.09/G06.10：ExecuteIndirect 之后复制参数，供 RHI 在 Fence 完成后异步读取可见数；
     // 多批次共享一块 READBACK 并按 offset 分区，不恢复 INDIRECT_ARGUMENT（下一帧 Record 会显式转 UAV）。
     if(indirect)
@@ -825,6 +1145,18 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,post?(shadow?20:18):shadow?10:forward?8:3);
         if(!use(frame.timestampReadback.Get(),D3D12_RESOURCE_STATE_COPY_DEST,"TimestampResolve"))return false;
         presentation.commandList->ResolveQueryData(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,0,post?(shadow?21:19):shadow?11:forward?9:4,frame.timestampReadback.Get(),0);
+        if(forward&&content.forward->cluster.enabled)presentation.commandList->ResolveQueryData(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,21,2,frame.timestampReadback.Get(),21*sizeof(UINT64));
+        if(depthNormals)presentation.commandList->ResolveQueryData(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,23,2,frame.timestampReadback.Get(),23*sizeof(UINT64));
+        if(frame.ambientOcclusion&&frame.ambientOcclusion->statistics.valid)
+        {
+            if(frame.ambientOcclusion->output->hasHalf)presentation.commandList->ResolveQueryData(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,25,2,frame.timestampReadback.Get(),25*sizeof(UINT64));
+            presentation.commandList->ResolveQueryData(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,27,2,frame.timestampReadback.Get(),27*sizeof(UINT64));
+        }
+        if(frame.heterogeneous)
+        {
+            presentation.commandList->ResolveQueryData(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,29,2,frame.timestampReadback.Get(),29*sizeof(UINT64));
+            if(frame.heterogeneous->OcclusionEnabled())presentation.commandList->ResolveQueryData(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,31,3,frame.timestampReadback.Get(),31*sizeof(UINT64));
+        }
     }
     if(indirect&&indirects.front().timestamps.heap)
     {
@@ -862,6 +1194,11 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         frame.timestampFrame=content.sourceFrame?content.sourceFrame:frame.timestampSubmission;
         frame.timestampDraws=triangle?1:static_cast<UINT>(content.meshes.size());
         frame.timestampForward=forward;
+        frame.timestampCluster=forward&&content.forward->cluster.enabled;
+        frame.timestampDepthNormals=depthNormals;
+        frame.timestampAoResolve=frame.ambientOcclusion&&frame.ambientOcclusion->statistics.valid;
+        frame.timestampAoHalf=frame.timestampAoResolve&&frame.ambientOcclusion->output->hasHalf;
+        frame.timestampHeterogeneous=bool(frame.heterogeneous);frame.timestampHeterogeneousHiZ=frame.heterogeneous&&frame.heterogeneous->OcclusionEnabled();
         frame.timestampShadow=shadow;
         frame.timestampPost=post;frame.timestampBloom=post&&content.post->bloom;frame.timestampToneMapping=post&&content.post->toneMapping;
         frame.timestampFxaa=post&&content.post->fxaa;frame.timestampUi=post&&!content.overlays.empty();
@@ -928,7 +1265,7 @@ bool ResizeD3D12Presentation(D3D12Presentation& presentation, UINT width, UINT h
         || !CheckGraphicsResult(presentation.commandList->Close(), localization, "D3D12.CloseCommandListFailed"))
     { presentation.failed = true; return false; }
     for (auto& buffer : presentation.backBuffers) buffer.Reset();
-    presentation.depth.Reset();presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.gameUiRtvs.reset();
+    presentation.coverage.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.depth.Reset();presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.gameUiRtvs.reset();
     presentation.width = presentation.height = 0;
     if (!CheckGraphicsResult(presentation.swapChain->ResizeBuffers(D3D12Presentation::bufferCount,
         width, height, D3D12Presentation::bufferFormat, 0), localization, "D3D12.ResizeBuffersFailed"))
@@ -974,20 +1311,20 @@ void ReleaseD3D12Presentation(D3D12Presentation& presentation) noexcept
     presentation.commandList.Reset();
     for (auto& frame : presentation.frames)
     {
-        frame.sceneOverlay.reset();
+        frame.sceneOverlay.reset();frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.heterogeneousOutput.reset();frame.heterogeneousHiZ.reset();frame.heterogeneousSources.clear();frame.clusters.reset();frame.clusterDescriptorIncrement=0;
         frame.allocator.Reset();frame.fenceValue=0;
         frame.timestampQueries.Reset();frame.timestampReadback.Reset();frame.timestampsPending=false;
-        frame.drawConstants.clear();frame.instanceSlices.clear();frame.uploadDestinations.clear();frame.uploads.Release();frame.baselineConstants.Release();frame.descriptors.Release();frame.outputDescriptors.Release();frame.environmentDescriptors.Release();frame.postDescriptors.Release();frame.guiDescriptors.Release();frame.gameUiDescriptors.Release();frame.forwardConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
+        frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploadDestinations.clear();frame.uploads.Release();frame.baselineConstants.Release();frame.descriptors.Release();frame.outputDescriptors.Release();frame.environmentDescriptors.Release();frame.postDescriptors.Release();frame.guiDescriptors.Release();frame.gameUiDescriptors.Release();frame.shadowMaterialDescriptors.Release();frame.transparentDsv.reset();frame.transparentDepth.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
     }
     presentation.fenceEvent.Close();
-    presentation.sceneOverlay.reset();
+    presentation.sceneOverlay.reset();presentation.coverage.reset();
     presentation.fence.Reset();
     for (auto& buffer : presentation.backBuffers) buffer.Reset();
     presentation.rtvs.reset();presentation.gameUiRtvs.reset();
     presentation.depth.Reset();
     presentation.dsv.reset();
     presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.srvPool.reset();presentation.rtvPool.reset();
-    presentation.shadow.reset();presentation.shadowTargets.clear();presentation.dsvPool.reset();
+    presentation.shadow.reset();presentation.shadowTargets.clear();presentation.clusterBuilder.reset();presentation.opaqueTemporal.reset();presentation.depthNormalBuilder.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionBuilder.reset();presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.shadingDefaults.reset();presentation.heterogeneousBuilder.reset();presentation.heterogeneousHiZBuilder.reset();presentation.gpuDrivenStatistics={};presentation.clustered={};presentation.dsvPool.reset();
     presentation.swapChain.Reset();
     if(presentation.states&&presentation.stateQueueBound)presentation.states->UnbindQueue(presentation.queue.Get());
     presentation.stateQueueBound=false;
@@ -1030,7 +1367,8 @@ bool BeginD3D12FrameCommands(D3D12Presentation& p,const Localization& text)
         ||!CheckGraphicsResult(frame.allocator->Reset(),text,"D3D12.ResetCommandAllocatorFailed")
         ||!CheckGraphicsResult(p.commandList->Reset(frame.allocator.Get(),nullptr),text,"D3D12.ResetCommandListFailed"))
     {p.failed=true;if(DeviceWasRemoved(p))ReportDeviceRemoval(p,text);return false;}
-    frame.uploadDestinations.clear();frame.drawConstants.clear();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.forwardConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
+    PollD3D12ClusterCounters(p);
+    frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.heterogeneousSources.clear();frame.uploadDestinations.clear();frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.shadowMaterialDescriptors.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
     CollectD3D12UploadReferences(p);return true;
 }
 bool BeginD3D12UploadBatch(D3D12Presentation& p,const Localization& text)

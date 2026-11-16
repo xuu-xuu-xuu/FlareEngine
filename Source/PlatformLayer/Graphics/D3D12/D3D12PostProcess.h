@@ -15,6 +15,12 @@ struct D3D12PostTexture
     std::shared_ptr<D3D12DescriptorRange> srv,rtv;
 };
 // 窗口 resize 先 drain，再替换整组；开关不会重建目标。
+struct D3D12OpaqueTemporal
+{
+    Microsoft::WRL::ComPtr<ID3D12Resource> color,depth;
+    D3D12TaaOutput history;
+    UINT64 lastSubmission=0;
+};
 struct D3D12PostTargets
 {
     Microsoft::WRL::ComPtr<ID3D12Resource> hdrSource,depthSource;
@@ -36,7 +42,13 @@ struct D3D12PostTargets
     std::shared_ptr<D3D12DescriptorRange> taaSrvs;
     float lutLift[3]{0,0,0},lutGamma[3]{1,1,1},lutGain[3]{1,1,1};
     UINT width=0,height=0,bloomWidth=0,bloomHeight=0;
-    UINT64 allocatedBytes=0;
+    UINT64 allocatedBytes=0,taaLastSubmission=0;
 };
 bool PrepareD3D12PostProcess(D3D12Presentation& presentation,D3D12FrameContext& frame,const D3D12FrameContent& content,const Localization& text);
 bool RecordD3D12PostProcess(D3D12Presentation& presentation,D3D12FrameContext& frame,const D3D12FrameContent& content,D3D12StateRecording& states,UINT backBufferIndex,const Localization& text);
+
+bool PrepareD3D12OpaqueTemporal(D3D12Presentation& presentation,D3D12FrameContext& frame,
+    const D3D12FrameContent& content,ID3D12Resource& color,ID3D12Resource& depth,UINT width,UINT height,const Localization& text);
+bool RecordD3D12OpaqueTemporal(D3D12Presentation& presentation,D3D12FrameContext& frame,
+    const D3D12FrameContent& content,std::span<const D3D12MeshDraw> opaque,ID3D12Resource& color,ID3D12Resource& depth,
+    D3D12StateRecording& states,const Localization& text);

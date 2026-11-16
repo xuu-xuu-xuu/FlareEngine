@@ -29,7 +29,7 @@ struct ProjectPreflight
     std::string errorKey,detail;
     bool writable=true;
 };
-enum class ProjectTemplate { BlankScene,Basic3D };
+enum class ProjectTemplate { BlankScene,Basic3D,RenderingStudio };
 const char* ProjectTemplateId(ProjectTemplate value);
 const char* ProjectTemplateNameKey(ProjectTemplate value);
 

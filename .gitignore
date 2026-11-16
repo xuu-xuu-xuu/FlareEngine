@@ -46,6 +46,9 @@ CMakeUserPresets.json
 
 # GitHub 首页与公开手册
 !/README.md
+!/Resources/Templates/**/README.md
+!/ThirdParty/LtcReference/**/*.md
+!/ThirdParty/LtcReference/README.md
 
 # 开发者文档站的正文公开，编写约定与本机预览产物仅在本地保存。
 /开发者说明文档.md
@@ -69,6 +72,8 @@ CMakeUserPresets.json
 !/Source/ToolLayer/Tools/ProjectTool.cpp
 !/Source/ToolLayer/Tools/SelfEngineEditor.cpp
 !/Source/ToolLayer/Tools/ShaderBuilder.cpp
+!/Source/ToolLayer/Tools/RenderingCooker.cpp
+!/Source/ToolLayer/Tools/DiffuseProbeCooker.cpp
 /Scripts/*
 !/Scripts/Build-EditorPackage.ps1
 !/Scripts/Build-EditorScriptCandidate.ps1

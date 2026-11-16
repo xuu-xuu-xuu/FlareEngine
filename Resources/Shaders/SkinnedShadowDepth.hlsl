@@ -1,3 +1,6 @@
+#ifdef SE_MATERIAL_SURFACE
+#include "ShadowDepthSurface.hlsli"
+#else
 // W03：蒙皮阴影深度。b0 仍是 16 个 root32 常量（clipFromWorld），
 // t8 调色板绑定在根参数 1；带 SE_SKINNED 时使用 v3 顶点布局的 JOINTS0/WEIGHTS0。
 // 注意：本布局没有 PbrConstants.skin，因此调色板偏移固定为 0（每次绘制一份调色板）。
@@ -23,3 +26,5 @@ float4 VSMain(VertexInput input):SV_POSITION
 #endif
 }
 void PSMain(){}
+
+#endif

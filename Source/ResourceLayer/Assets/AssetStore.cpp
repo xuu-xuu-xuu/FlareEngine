@@ -105,7 +105,14 @@ Json Encode(const StaticModel& model)
             { "metallic", material.metallic }, { "roughness", material.roughness },
             { "baseColorTexture", material.baseColorTexture }, { "normalTexture", material.normalTexture },
             { "metallicRoughnessTexture", material.metallicRoughnessTexture },
-            { "doubleSided", material.doubleSided }, { "needsFallbackTexture", material.needsFallbackTexture }, {"normalScale",material.normalScale} });
+            { "doubleSided", material.doubleSided }, { "needsFallbackTexture", material.needsFallbackTexture }, {"normalScale",material.normalScale},
+            { "alphaMode", MaterialAlphaModeName(material.alphaMode) }, { "alphaCutoff", material.alphaCutoff },
+            { "clearCoat",{{"weight",material.clearCoat.weight},{"roughness",material.clearCoat.roughness},{"normalScale",material.clearCoat.normalScale}}},
+            { "clearCoatWeightTexture",material.clearCoatWeightTexture},{"clearCoatRoughnessTexture",material.clearCoatRoughnessTexture},{"clearCoatNormalTexture",material.clearCoatNormalTexture},
+            { "sheen",{{"color",{material.sheen.color.x,material.sheen.color.y,material.sheen.color.z}},{"roughness",material.sheen.roughness}}},
+            { "anisotropy",{{"strength",material.anisotropy.strength},{"rotation",material.anisotropy.rotation}}},
+            { "subsurface",{{"weight",material.subsurface.weight},{"radius",material.subsurface.radius},{"color",{material.subsurface.color.x,material.subsurface.color.y,material.subsurface.color.z}}}},
+            { "sheenColorTexture",material.sheenColorTexture},{"sheenRoughnessTexture",material.sheenRoughnessTexture},{"anisotropyTexture",material.anisotropyTexture} });
     for (const auto& node : model.nodes)
         json["nodes"].push_back({ { "name", node.name }, { "parent", node.parent }, { "matrix", node.localMatrix }, { "meshes", node.meshes } });
     for (const auto& texture : model.textures)
@@ -164,10 +171,38 @@ bool Decode(const Json& json, StaticModel& model)
         model.meshes.push_back(std::move(mesh));
     }
     for (const auto& value : json.at("materials"))
-        model.materials.push_back({ value.at("name").get<std::string>(), value.at("baseColor").get<std::array<float, 4>>(),
+    {
+        MaterialData material{ value.at("name").get<std::string>(), value.at("baseColor").get<std::array<float, 4>>(),
             value.at("metallic").get<float>(), value.at("roughness").get<float>(), value.at("baseColorTexture").get<std::int32_t>(),
             value.at("normalTexture").get<std::int32_t>(), value.at("metallicRoughnessTexture").get<std::int32_t>(),
-            value.at("doubleSided").get<bool>(), value.at("needsFallbackTexture").get<bool>(), value.value("normalScale",1.0f) });
+            value.at("doubleSided").get<bool>(), value.at("needsFallbackTexture").get<bool>(), value.value("normalScale",1.0f) };
+        if (value.contains("alphaMode") && (!value.at("alphaMode").is_string()
+            || !ParseMaterialAlphaMode(value.at("alphaMode").get_ref<const std::string&>(), material.alphaMode))) return false;
+        if (value.contains("alphaCutoff"))
+        {
+            if (!value.at("alphaCutoff").is_number()) return false;
+            material.alphaCutoff = value.at("alphaCutoff").get<float>();
+        }
+        if(value.contains("clearCoat"))
+        {
+            const auto& coat=value.at("clearCoat");if(!coat.is_object())return false;
+            const auto number=[&](const char* key,float& field){if(!coat.contains(key))return true;if(!coat.at(key).is_number())return false;field=coat.at(key).get<float>();return true;};
+            if(!number("weight",material.clearCoat.weight)||!number("roughness",material.clearCoat.roughness)||!number("normalScale",material.clearCoat.normalScale))return false;
+        }
+        const auto texture=[&](const char* key,std::int32_t& field){if(!value.contains(key))return true;const auto& v=value.at(key);
+            if(v.is_number_unsigned()){const auto n=v.get<std::uint64_t>();if(n>INT32_MAX)return false;field=static_cast<std::int32_t>(n);return true;}
+            if(!v.is_number_integer())return false;const auto n=v.get<std::int64_t>();if(n<-1||n>INT32_MAX)return false;field=static_cast<std::int32_t>(n);return true;};
+        if(!texture("clearCoatWeightTexture",material.clearCoatWeightTexture)||!texture("clearCoatRoughnessTexture",material.clearCoatRoughnessTexture)
+            ||!texture("clearCoatNormalTexture",material.clearCoatNormalTexture)||!texture("sheenColorTexture",material.sheenColorTexture)
+            ||!texture("sheenRoughnessTexture",material.sheenRoughnessTexture)||!texture("anisotropyTexture",material.anisotropyTexture))return false;
+        const auto number=[](const Json& object,const char* key,float& target){if(!object.contains(key))return true;if(!object.at(key).is_number())return false;target=object.at(key).get<float>();return true;};
+        const auto color=[](const Json& object,const char* key,Vec3& target){if(!object.contains(key))return true;const auto& c=object.at(key);if(!c.is_array()||c.size()!=3)return false;
+            for(const auto& v:c)if(!v.is_number())return false;target={c[0].get<float>(),c[1].get<float>(),c[2].get<float>()};return true;};
+        if(value.contains("sheen")){const auto& p=value.at("sheen");if(!p.is_object()||!color(p,"color",material.sheen.color)||!number(p,"roughness",material.sheen.roughness))return false;}
+        if(value.contains("anisotropy")){const auto& p=value.at("anisotropy");if(!p.is_object()||!number(p,"strength",material.anisotropy.strength)||!number(p,"rotation",material.anisotropy.rotation))return false;}
+        if(value.contains("subsurface")){const auto& p=value.at("subsurface");if(!p.is_object()||!number(p,"weight",material.subsurface.weight)||!number(p,"radius",material.subsurface.radius)||!color(p,"color",material.subsurface.color))return false;}
+        model.materials.push_back(std::move(material));
+    }
     for (const auto& value : json.at("nodes"))
         model.nodes.push_back({ value.at("name").get<std::string>(), value.at("parent").get<std::int32_t>(),
             value.at("matrix").get<std::array<float, 16>>(), value.at("meshes").get<std::vector<std::uint32_t>>() });

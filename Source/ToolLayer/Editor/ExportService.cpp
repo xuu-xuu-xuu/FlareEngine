@@ -27,8 +27,8 @@ std::string ReadText(const std::filesystem::path& path)
 }
 std::vector<std::string> ExportService::Arguments(const ExportRequest& request)
 {
-    std::vector<std::string> arguments={"-Project",request.projectManifest.string(),"-Name",request.name};
-    if(!request.evidenceDirectory.empty()){arguments.push_back("-EvidenceDirectory");arguments.push_back(request.evidenceDirectory.string());}
+    std::vector<std::string> arguments={"-Project",asset_io::Utf8(request.projectManifest),"-Name",request.name};
+    if(!request.evidenceDirectory.empty()){arguments.push_back("-EvidenceDirectory");arguments.push_back(asset_io::Utf8(request.evidenceDirectory));}
     return arguments;
 }
 ExportResult ExportService::Run(const ExportRequest& request,const Runner& runner,const Progress& progress)
@@ -38,13 +38,13 @@ ExportResult ExportService::Run(const ExportRequest& request,const Runner& runne
     std::error_code error;
     if(!std::filesystem::is_regular_file(request.projectManifest,error))
     {
-        result.errorKey="Project.ManifestNotFound";result.detail=request.projectManifest.string();return result;
+        result.errorKey="Project.ManifestNotFound";result.detail=asset_io::Utf8(request.projectManifest);return result;
     }
     if(!ValidName(request.name)){result.errorKey="Project.InvalidName";result.detail=request.name;return result;}
     if(!request.evidenceDirectory.empty())
     {
         std::filesystem::create_directories(request.evidenceDirectory,error);
-        if(error){result.errorKey="Export.EvidenceWriteFailed";result.detail=request.evidenceDirectory.string();return result;}
+        if(error){result.errorKey="Export.EvidenceWriteFailed";result.detail=asset_io::Utf8(request.evidenceDirectory);return result;}
     }
     if(!runner)
     {
@@ -63,7 +63,7 @@ ExportResult ExportService::Run(const ExportRequest& request,const Runner& runne
         result.errorKey="Export.StepFailed";result.detail=failure.what();return result;
     }
     result.report=ReadReport(request.evidenceDirectory);
-    if(result.report.valid&&!result.report.output.empty())result.outputPackage=result.report.output;
+    if(result.report.valid&&!result.report.output.empty())result.outputPackage=asset_io::FromUtf8(result.report.output);
     if(result.exitCode!=0||!result.report.valid||!result.report.success||result.report.phase!="complete"||result.outputPackage.empty()
         ||!std::filesystem::is_regular_file(result.outputPackage/"package-manifest.json",error))
     {
@@ -137,6 +137,8 @@ const char* ExportService::StageKey(const std::string& phase)
     if(phase=="field_preflight"||phase=="packaged_content"||phase=="headless_smoke"||phase=="window_smoke")
         return "Editor.ExportStage.Verify";
     if(phase=="validated"||phase=="manifest")return "Editor.ExportStage.Package";
+    if(phase=="video_capture")return "Editor.ExportStage.VideoCapture";
+    if(phase=="video_encode")return "Editor.ExportStage.VideoEncode";
     if(phase=="complete")return "Editor.ExportStage.Done";
     if(phase=="failed")return "Editor.ExportStage.Failed";
     return "Editor.ExportStage.Work";

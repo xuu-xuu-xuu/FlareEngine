@@ -66,7 +66,7 @@ bool D3D12FrameDescriptors::Configure(UINT initial,UINT maximum)
 void D3D12FrameDescriptors::Release(){draws_.clear();heap_.Reset();stats_.used=stats_.capacity=0;}
 HRESULT D3D12FrameDescriptors::Prepare(ID3D12Device& device,std::span<const D3D12_CPU_DESCRIPTOR_HANDLE> sources,UINT tableWidth)
 {
-    if(!tableWidth||tableWidth>7||sources.size()%tableWidth){++stats_.failures;return E_INVALIDARG;}
+    if(!tableWidth||tableWidth>D3D12MaximumMaterialTableWidth||sources.size()%tableWidth){++stats_.failures;return E_INVALIDARG;}
     std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> unique;std::vector<UINT> offsets;offsets.reserve(sources.size()/tableWidth);
     std::unordered_map<std::string,UINT> lookup;
     for(size_t first=0;first<sources.size();first+=tableWidth)

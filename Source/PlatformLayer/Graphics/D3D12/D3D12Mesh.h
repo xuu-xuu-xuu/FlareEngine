@@ -57,6 +57,13 @@ struct D3D12MeshDraw
     // 呈现层在本帧复制作业里写入上传环，再由 RecordD3D12Meshes 绑定到参数 4 的 t8。
     std::span<const std::byte> skinPalette;
     std::uint32_t skinJointOffset=0,skinJointCount=0;
+    se::MaterialAlphaMode alphaMode=se::MaterialAlphaMode::Opaque;
+    float alphaCutoff=.5f;
+    se::rhi::ShadingMaterialConstants layers;
+    std::array<const D3D12Texture*,6> layerTextures{};
+    se::Aabb worldBounds;
+    bool hasWorldBounds=false;
+    std::span<const se::rhi::GeometryCluster> geometryClusters;
 };
 
 bool InitializeD3D12MeshPipeline(D3D12MeshPipeline& pipeline,const D3D12Context& context,
@@ -72,8 +79,11 @@ bool InitializeD3D12Mesh(D3D12Mesh& mesh,const D3D12Context& context,D3D12Presen
 bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
     const se::Mat4& viewProjection,const Localization& localization,bool allowEmptyInstanced=false);
 // 仅在关联 FrameContext 已完成复用等待且分配 Draw 常量后记录。
+// 在任何 GPU Pass 录制前只打包一次；主颜色/通用预绘共享同一 b0 切片。
+void PrepareD3D12MeshConstants(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
+    const se::Mat4& viewProjection,D3D12FrameContext& frame);
 // indirect 为空表示普通绘制；非空时与 draws 一一对应（G06.10 多批次）。
 void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
     const se::Mat4& viewProjection,D3D12FrameContext& frame,ID3D12GraphicsCommandList& commands,UINT width,UINT height,
     bool cacheBindings=false,se::rhi::DrawBindingStatistics* statistics=nullptr,
-    std::span<const D3D12IndirectCommand> indirect={});
+    std::span<const D3D12IndirectCommand> indirect={},UINT firstDraw=0);

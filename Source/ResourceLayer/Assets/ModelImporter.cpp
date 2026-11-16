@@ -4,6 +4,7 @@
 #include "CoreLayer/Math/TransformDecomposition.h"
 #include <ufbx/ufbx.h>
 #include <cgltf/cgltf.h>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -153,7 +154,16 @@ bool ValidateModel(const StaticModel& model)
     {
         for (const auto value : material.baseColor) if (!std::isfinite(value)) return false;
         if (!std::isfinite(material.metallic) || !std::isfinite(material.roughness) || !std::isfinite(material.normalScale)) return false;
-        for (const auto texture : { material.baseColorTexture, material.normalTexture, material.metallicRoughnessTexture })
+        if (material.baseColor[3] < 0.0f || material.baseColor[3] > 1.0f
+            || !IsValidMaterialAlphaMode(material.alphaMode) || !std::isfinite(material.alphaCutoff)
+            || material.alphaCutoff < 0.0f) return false;
+        if (!std::isfinite(material.clearCoat.weight) || material.clearCoat.weight < 0 || material.clearCoat.weight > 1
+            || !std::isfinite(material.clearCoat.roughness) || material.clearCoat.roughness < 0 || material.clearCoat.roughness > 1
+            || !std::isfinite(material.clearCoat.normalScale)) return false;
+        if(!IsValidMaterialLayer(material.sheen)||!IsValidMaterialLayer(material.anisotropy)||!IsValidMaterialLayer(material.subsurface))return false;
+        for (const auto texture : { material.baseColorTexture, material.normalTexture, material.metallicRoughnessTexture,
+            material.clearCoatWeightTexture, material.clearCoatRoughnessTexture, material.clearCoatNormalTexture,
+            material.sheenColorTexture,material.sheenRoughnessTexture,material.anisotropyTexture })
             if (texture < -1 || texture >= static_cast<std::int32_t>(model.textures.size())) return false;
     }
     return true;
@@ -193,6 +203,149 @@ cgltf_result ReadGltfFile(const cgltf_memory_options*, const cgltf_file_options*
     catch (...) { return cgltf_result_io_error; }
 }
 void ReleaseGltfFile(const cgltf_memory_options*, const cgltf_file_options*, void* data) { std::free(data); }
+
+// cgltf 对未知 alphaMode 会保留 Opaque 默认值；必须检查原 JSON，不能把坏遮罩静默变成实心。
+// data.json 同时指向 glTF 文本或 GLB JSON chunk，避免两个入口使用不同的校验规则。
+bool ValidateGltfAlpha(const cgltf_data& data, std::vector<AssetDiagnostic>& diagnostics)
+{
+    const auto document = nlohmann::json::parse(data.json, data.json + data.json_size, nullptr, false);
+    if (!document.is_object()) return false;
+    const auto materials = document.find("materials");
+    if (materials == document.end()) return true;
+    if (!materials->is_array()) return false;
+    for (std::size_t index = 0; index < materials->size(); ++index)
+    {
+        const auto& material = (*materials)[index];
+        const auto reject = [&](const char* field) {
+            Diagnostic(diagnostics, "Assets.InvalidMaterial", "materials[" + std::to_string(index) + "]." + field);
+            return false;
+        };
+        if (!material.is_object()) return reject("object");
+        if (const auto mode = material.find("alphaMode"); mode != material.end())
+        {
+            MaterialAlphaMode parsed;
+            if (!mode->is_string() || !ParseMaterialAlphaMode(mode->get_ref<const std::string&>(), parsed))
+                return reject("alphaMode");
+        }
+        if (const auto cutoff = material.find("alphaCutoff"); cutoff != material.end())
+        {
+            if (!cutoff->is_number()) return reject("alphaCutoff");
+            const auto value = cutoff->get<double>();
+            if (!std::isfinite(value) || value < 0.0) return reject("alphaCutoff");
+            if (value > std::numeric_limits<float>::max())
+            { Diagnostic(diagnostics, "Assets.UnsupportedFeature", "alphaCutoff exceeds finite float"); return false; }
+        }
+        const auto pbr = material.find("pbrMetallicRoughness");
+        if (pbr == material.end()) continue;
+        if (!pbr->is_object()) return reject("pbrMetallicRoughness");
+        const auto factor = pbr->find("baseColorFactor");
+        if (factor == pbr->end()) continue;
+        if (!factor->is_array() || factor->size() != 4) return reject("baseColorFactor");
+        for (std::size_t component = 0; component < 4; ++component)
+        {
+            if (!(*factor)[component].is_number()) return reject("baseColorFactor");
+            const auto value = (*factor)[component].get<double>();
+            if (!std::isfinite(value) || (component == 3 && (value < 0.0 || value > 1.0)))
+                return reject("baseColorFactor");
+        }
+    }
+    return true;
+}
+
+// cgltf 的数值转换不替代 glTF schema 校验。保留原 JSON 规则，glTF/GLB 同入口，坏输入不取默认蒙混过去。
+bool ValidateGltfClearCoat(const cgltf_data& data, std::vector<AssetDiagnostic>& diagnostics)
+{
+    const auto document=nlohmann::json::parse(data.json,data.json+data.json_size,nullptr,false);
+    if(!document.is_object())return false;
+    const auto materials=document.find("materials");if(materials==document.end())return true;
+    if(!materials->is_array())return false;
+    for(std::size_t index=0;index<materials->size();++index)
+    {
+        const auto& material=(*materials)[index];
+        const auto reject=[&](const std::string& field){Diagnostic(diagnostics,"Assets.InvalidMaterial","materials["+std::to_string(index)+"].extensions.KHR_materials_clearcoat."+field);return false;};
+        if(!material.is_object())return reject("material");
+        const auto extensions=material.find("extensions");if(extensions==material.end())continue;
+        if(!extensions->is_object())return reject("extensions");
+        const auto coat=extensions->find("KHR_materials_clearcoat");if(coat==extensions->end())continue;
+        if(!coat->is_object())return reject("object");
+        // 该扩展在规范中明确不能与这两种材质同时使用。
+        if(extensions->contains("KHR_materials_unlit")||extensions->contains("KHR_materials_pbrSpecularGlossiness"))return reject("incompatible extension");
+        for(const char* key:{"clearcoatFactor","clearcoatRoughnessFactor"})if(const auto value=coat->find(key);value!=coat->end())
+        {
+            if(!value->is_number())return reject(key);const auto number=value->get<double>();
+            if(!std::isfinite(number)||number<0||number>1)return reject(key);
+        }
+        for(const char* key:{"clearcoatTexture","clearcoatRoughnessTexture","clearcoatNormalTexture"})if(const auto texture=coat->find(key);texture!=coat->end())
+        {
+            if(!texture->is_object()||!texture->contains("index")||!texture->at("index").is_number_unsigned()
+                ||texture->at("index").get<std::uint64_t>()>=data.textures_count)return reject(key);
+            if(const auto uv=texture->find("texCoord");uv!=texture->end())
+                if(!uv->is_number_unsigned()||uv->get<std::uint64_t>()>std::numeric_limits<int>::max())return reject(std::string(key)+".texCoord");
+            if(std::string_view(key)=="clearcoatNormalTexture")if(const auto scale=texture->find("scale");scale!=texture->end())
+            {
+                if(!scale->is_number())return reject("clearcoatNormalTexture.scale");const auto number=scale->get<double>();
+                if(!std::isfinite(number))return reject("clearcoatNormalTexture.scale");
+                if(std::abs(number)>std::numeric_limits<float>::max())
+                {Diagnostic(diagnostics,"Assets.UnsupportedFeature","KHR_materials_clearcoat normal scale exceeds finite float");return false;}
+            }
+        }
+    }
+    return true;
+}
+
+bool ValidateGltfLayers(const cgltf_data& data,std::vector<SubsurfaceParameters>& subsurface,std::vector<AssetDiagnostic>& diagnostics)
+{
+    const auto json=nlohmann::json::parse(data.json,data.json+data.json_size,nullptr,false);
+    if(!json.is_object())return false;
+    subsurface.resize(data.materials_count);
+    const auto materials=json.find("materials");if(materials==json.end())return data.materials_count==0;
+    if(!materials->is_array()||materials->size()!=data.materials_count)return false;
+    for(std::size_t index=0;index<materials->size();++index)
+    {
+        const auto& material=(*materials)[index];
+        const auto reject=[&](const std::string& field){Diagnostic(diagnostics,"Assets.InvalidMaterial","materials["+std::to_string(index)+"]."+field);return false;};
+        const auto number=[&](const nlohmann::json& object,const char* key,double minimum,double maximum,float* target=nullptr){
+            const auto value=object.find(key);if(value==object.end())return true;
+            if(!value->is_number())return reject(key);const auto n=value->get<double>();
+            if(!std::isfinite(n)||n<minimum||n>maximum)return reject(key);
+            if(std::abs(n)>std::numeric_limits<float>::max()){Diagnostic(diagnostics,"Assets.UnsupportedFeature",std::string(key)+" exceeds finite float");return false;}
+            if(target)*target=static_cast<float>(n);return true;};
+        const auto color=[&](const nlohmann::json& object,const char* key,Vec3* target=nullptr){
+            const auto value=object.find(key);if(value==object.end())return true;
+            if(!value->is_array()||value->size()!=3)return reject(key);Vec3 parsed;float* channels[]{&parsed.x,&parsed.y,&parsed.z};
+            for(unsigned c=0;c<3;++c){if(!(*value)[c].is_number())return reject(key);const auto n=(*value)[c].get<double>();if(!std::isfinite(n)||n<0||n>1)return reject(key);*channels[c]=static_cast<float>(n);}
+            if(target)*target=parsed;return true;};
+        const auto texture=[&](const nlohmann::json& object,const char* key){
+            const auto value=object.find(key);if(value==object.end())return true;
+            if(!value->is_object()||!value->contains("index")||!value->at("index").is_number_unsigned()
+                ||value->at("index").get<std::uint64_t>()>=data.textures_count)return reject(key);
+            if(const auto uv=value->find("texCoord");uv!=value->end())if(!uv->is_number_unsigned()||uv->get<std::uint64_t>()>std::numeric_limits<int>::max())return reject(std::string(key)+".texCoord");
+            return true;};
+        if(const auto extensions=material.find("extensions");extensions!=material.end())
+        {
+            if(!extensions->is_object())return reject("extensions");
+            for(const char* key:{"KHR_materials_sheen","KHR_materials_anisotropy"})if(const auto layer=extensions->find(key);layer!=extensions->end())
+            {
+                if(!layer->is_object())return reject(key);
+                if(extensions->contains("KHR_materials_unlit")||extensions->contains("KHR_materials_pbrSpecularGlossiness"))return reject(std::string(key)+" incompatible extension");
+                if(std::string_view(key)=="KHR_materials_sheen")
+                {if(!color(*layer,"sheenColorFactor")||!number(*layer,"sheenRoughnessFactor",0,1)||!texture(*layer,"sheenColorTexture")||!texture(*layer,"sheenRoughnessTexture"))return false;}
+                else if(!number(*layer,"anisotropyStrength",0,1)||!number(*layer,"anisotropyRotation",-std::numeric_limits<double>::max(),std::numeric_limits<double>::max())||!texture(*layer,"anisotropyTexture"))return false;
+            }
+        }
+        // 应用专属 extras，只在显式声明时启用；不能把 KHR volume/transmission 自动当作皮肤。
+        if(const auto extras=material.find("extras");extras!=material.end()&&extras->is_object())if(const auto engine=extras->find("SelfEngine");engine!=extras->end())
+        {
+            if(!engine->is_object())return reject("extras.SelfEngine");
+            if(const auto skin=engine->find("subsurface");skin!=engine->end())
+            {
+                if(!skin->is_object())return reject("extras.SelfEngine.subsurface");auto& p=subsurface[index];
+                if(!number(*skin,"weight",0,1,&p.weight)||!number(*skin,"radius",0,1,&p.radius)||!color(*skin,"color",&p.color)||!IsValidMaterialLayer(p))return reject("extras.SelfEngine.subsurface");
+            }
+        }
+    }
+    return true;
+}
 
 // ---- glTF 蒙皮/动画：节点变换、骨骼拓扑与动画采样 ----
 
@@ -614,6 +767,8 @@ bool ImportGltf(const std::filesystem::path& path, const std::vector<std::uint8_
     if (cgltf_parse(&settings, bytes.data(), bytes.size(), &raw) != cgltf_result_success)
     { Diagnostic(diagnostics, "Assets.InvalidModel", asset_io::Utf8(path)); return false; }
     std::unique_ptr<cgltf_data, decltype(&cgltf_free)> data(raw, cgltf_free);
+    std::vector<SubsurfaceParameters> subsurface;
+    if (!ValidateGltfAlpha(*data, diagnostics)||!ValidateGltfClearCoat(*data, diagnostics)||!ValidateGltfLayers(*data,subsurface,diagnostics)) return false;
     if (data->nodes_count > MaxNodes || data->extensions_required_count != 0)
     { Diagnostic(diagnostics, "Assets.UnsupportedFeature", "required extension or node limit"); return false; }
     for (cgltf_size index = 0; index < data->buffer_views_count; ++index)
@@ -750,15 +905,18 @@ bool ImportGltf(const std::filesystem::path& path, const std::vector<std::uint8_
         const auto& source = data->materials[index];
         MaterialData material;
         material.name = source.name ? source.name : "Material";
-        if (source.alpha_mode != cgltf_alpha_mode_opaque || source.has_pbr_specular_glossiness
+        material.subsurface=subsurface[index];
+        if (source.has_pbr_specular_glossiness
             || source.has_clearcoat || source.has_transmission || source.has_volume || source.has_sheen
-            || source.has_iridescence || source.has_anisotropy || source.has_dispersion)
+            || source.has_iridescence || source.has_anisotropy || source.has_dispersion || material.subsurface.weight>0)
             Diagnostic(diagnostics, "Assets.MaterialApproximation", material.name, true);
         const auto& pbr = source.pbr_metallic_roughness;
         std::copy_n(pbr.base_color_factor, 4, material.baseColor.begin());
         material.metallic = pbr.metallic_factor;
         material.roughness = pbr.roughness_factor;
-        for (const auto* view : { &pbr.base_color_texture, &pbr.metallic_roughness_texture, &source.normal_texture })
+        for (const auto* view : { &pbr.base_color_texture, &pbr.metallic_roughness_texture, &source.normal_texture,
+            &source.clearcoat.clearcoat_texture,&source.clearcoat.clearcoat_roughness_texture,&source.clearcoat.clearcoat_normal_texture,
+            &source.sheen.sheen_color_texture,&source.sheen.sheen_roughness_texture,&source.anisotropy.anisotropy_texture })
             if (view->texture && (view->texcoord != 0 || view->has_transform))
             { Diagnostic(diagnostics, "Assets.UnsupportedFeature", "texture coordinate set/transform"); return false; }
         material.baseColorTexture = textureIndex(pbr.base_color_texture);
@@ -766,6 +924,30 @@ bool ImportGltf(const std::filesystem::path& path, const std::vector<std::uint8_
         material.normalScale = source.normal_texture.scale;
         material.metallicRoughnessTexture = textureIndex(pbr.metallic_roughness_texture);
         material.doubleSided = source.double_sided != 0;
+        material.alphaMode = source.alpha_mode == cgltf_alpha_mode_mask ? MaterialAlphaMode::Mask
+            : source.alpha_mode == cgltf_alpha_mode_blend ? MaterialAlphaMode::Blend : MaterialAlphaMode::Opaque;
+        material.alphaCutoff = source.alpha_cutoff;
+        if(source.has_clearcoat)
+        {
+            material.clearCoat.weight=source.clearcoat.clearcoat_factor;
+            material.clearCoat.roughness=source.clearcoat.clearcoat_roughness_factor;
+            material.clearCoatWeightTexture=textureIndex(source.clearcoat.clearcoat_texture);
+            material.clearCoatRoughnessTexture=textureIndex(source.clearcoat.clearcoat_roughness_texture);
+            material.clearCoatNormalTexture=textureIndex(source.clearcoat.clearcoat_normal_texture);
+            if(material.clearCoatNormalTexture>=0)material.clearCoat.normalScale=source.clearcoat.clearcoat_normal_texture.scale;
+        }
+        if(source.has_sheen)
+        {
+            material.sheen.color={source.sheen.sheen_color_factor[0],source.sheen.sheen_color_factor[1],source.sheen.sheen_color_factor[2]};
+            material.sheen.roughness=source.sheen.sheen_roughness_factor;
+            material.sheenColorTexture=textureIndex(source.sheen.sheen_color_texture);
+            material.sheenRoughnessTexture=textureIndex(source.sheen.sheen_roughness_texture);
+        }
+        if(source.has_anisotropy)
+        {
+            material.anisotropy={source.anisotropy.anisotropy_strength,source.anisotropy.anisotropy_rotation};
+            material.anisotropyTexture=textureIndex(source.anisotropy.anisotropy_texture);
+        }
         output.materials.push_back(std::move(material));
     }
 
@@ -859,6 +1041,44 @@ bool ImportGltf(const std::filesystem::path& path, const std::vector<std::uint8_
 }
 
 std::string String(ufbx_string value) { return { value.data, value.length }; }
+bool ImportFbxAlpha(const ufbx_material& source, MaterialData& material, std::vector<AssetDiagnostic>& diagnostics)
+{
+    const auto& opacity = source.pbr.opacity;
+    const auto& transparency = source.fbx.transparency_color;
+    const auto& factor = source.fbx.transparency_factor;
+    // 单独的 opacity 图和有色透射不能冒充 baseColor 图的 alpha；禁止静默丢掉洞口。
+    for (const auto* map : { &opacity, &transparency, &factor })
+        if (map->texture && map->texture_enabled && !map->feature_disabled)
+        { Diagnostic(diagnostics, "Assets.UnsupportedFeature", material.name + ": separate opacity texture"); return false; }
+    const auto scalar = [&](const ufbx_material_map& map, double& value) {
+        value = map.value_real;
+        if (!std::isfinite(value) || value < 0.0 || value > 1.0)
+        { Diagnostic(diagnostics, "Assets.InvalidMaterial", material.name + ": opacity"); return false; }
+        if (map.value_components >= 3 && (!std::isfinite(map.value_vec3.y) || !std::isfinite(map.value_vec3.z)
+            || std::abs(value - map.value_vec3.y) > 1e-6 || std::abs(value - map.value_vec3.z) > 1e-6))
+        { Diagnostic(diagnostics, "Assets.UnsupportedFeature", material.name + ": colored transmission/opacity"); return false; }
+        return true;
+    };
+    double alpha = 1.0;
+    if (opacity.has_value && !opacity.feature_disabled)
+    {
+        if (!scalar(opacity, alpha)) return false;
+    }
+    else if (factor.has_value || transparency.has_value)
+    {
+        double amount = factor.value_real, color = 1.0;
+        if (!std::isfinite(amount) || amount < 0.0 || amount > 1.0)
+        { Diagnostic(diagnostics, "Assets.InvalidMaterial", material.name + ": transparency factor"); return false; }
+        if (transparency.has_value && !scalar(transparency, color)) return false;
+        alpha = 1.0 - amount * color;
+        if (alpha < 1.0) Diagnostic(diagnostics, "Assets.MaterialApproximation", material.name + ": scalar transmission to alpha", true);
+    }
+    material.baseColor[3] = static_cast<float>(alpha);
+    if (alpha < 1.0) material.alphaMode = MaterialAlphaMode::Blend;
+    material.doubleSided = source.features.double_sided.enabled;
+    return true;
+}
+
 bool ImportFbx(const std::filesystem::path& path, const std::vector<std::uint8_t>& bytes,
     const ImportOptions& options, StaticModel& output, std::vector<AssetDiagnostic>& diagnostics)
 {
@@ -912,6 +1132,7 @@ bool ImportFbx(const std::filesystem::path& path, const std::vector<std::uint8_t
         const auto& color = source->pbr.base_color.has_value ? source->pbr.base_color : source->fbx.diffuse_color;
         if (color.has_value)
             material.baseColor = { static_cast<float>(color.value_vec3.x), static_cast<float>(color.value_vec3.y), static_cast<float>(color.value_vec3.z), 1.0f };
+        if (!ImportFbxAlpha(*source, material, diagnostics)) return false;
         if (source->pbr.metalness.has_value) material.metallic = static_cast<float>(source->pbr.metalness.value_real);
         if (source->pbr.roughness.has_value) material.roughness = static_cast<float>(source->pbr.roughness.value_real);
         material.baseColorTexture = textureIndex(source->pbr.base_color.texture ? source->pbr.base_color : source->fbx.diffuse_color);
@@ -1005,7 +1226,9 @@ bool ImportStaticModel(const std::filesystem::path& source, const ImportOptions&
         std::sort(model.dependencies.begin(), model.dependencies.end());
         model.dependencies.erase(std::unique(model.dependencies.begin(), model.dependencies.end()), model.dependencies.end());
         for (auto& material : model.materials)
-            for (const auto index : { material.baseColorTexture, material.normalTexture, material.metallicRoughnessTexture })
+            for (const auto index : { material.baseColorTexture, material.normalTexture, material.metallicRoughnessTexture,
+                material.clearCoatWeightTexture, material.clearCoatRoughnessTexture, material.clearCoatNormalTexture,
+                material.sheenColorTexture,material.sheenRoughnessTexture,material.anisotropyTexture })
                 if (index >= 0 && model.textures[static_cast<std::size_t>(index)].missing) material.needsFallbackTexture = true;
         output = std::move(model);
         return true;

@@ -188,11 +188,11 @@ bool ReservedName(const std::wstring& name)
 
 const char* ProjectTemplateId(ProjectTemplate value)
 {
-    return value==ProjectTemplate::BlankScene?"blank-scene":"basic-3d";
+    return value==ProjectTemplate::RenderingStudio?"rendering-studio":value==ProjectTemplate::BlankScene?"blank-scene":"basic-3d";
 }
 const char* ProjectTemplateNameKey(ProjectTemplate value)
 {
-    return value==ProjectTemplate::BlankScene?"Editor.TemplateBlank":"Editor.TemplateBasic3D";
+    return value==ProjectTemplate::RenderingStudio?"Editor.TemplateRenderingStudio":value==ProjectTemplate::BlankScene?"Editor.TemplateBlank":"Editor.TemplateBasic3D";
 }
 
 ProjectLease::~ProjectLease(){Release();}
@@ -364,7 +364,8 @@ bool ProjectWorkspaceSession::CreateProject(ProjectTemplate projectTemplate,cons
         if(!std::filesystem::is_directory(target,error)||!std::filesystem::is_empty(target,error))
         {errorKey="Project.TargetNotEmpty";detail=Utf8(target);return false;}
     }
-    const auto templateDirectory=templateRoot/(projectTemplate==ProjectTemplate::BlankScene?L"BlankScene":L"EmptyGame");
+    const auto templateDirectory=templateRoot/(projectTemplate==ProjectTemplate::RenderingStudio?L"RenderingStudio":
+        projectTemplate==ProjectTemplate::BlankScene?L"BlankScene":L"EmptyGame");
     if(!std::filesystem::is_regular_file(templateDirectory/L"project.json",error))
     {errorKey="Project.TemplateMissing";detail=Utf8(templateDirectory);return false;}
     const auto candidate=base/(std::wstring(L".")+Wide(name)+L".candidate-"+Wide(std::to_string(GetTickCount64())));

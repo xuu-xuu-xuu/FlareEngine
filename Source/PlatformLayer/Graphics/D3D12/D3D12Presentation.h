@@ -13,7 +13,25 @@
 #include <deque>
 #include <unordered_map>
 struct D3D12ShadowTarget;
+class D3D12LightClustering;
+struct D3D12ClusterOutput;
+struct D3D12ClusterCapture;
+struct D3D12OpaqueTemporal;
+class D3D12DepthNormals;
+struct D3D12DepthNormalTarget;
+struct D3D12DepthNormalFrame;
+class D3D12AmbientOcclusion;
+struct D3D12AmbientOcclusionOutput;
+struct D3D12AmbientOcclusionFrame;
+struct D3D12ShadingDefaults;
+struct D3D12ShadingFrame;
+class D3D12Heterogeneous;
+class D3D12HeterogeneousPrepared;
+struct D3D12HeterogeneousOutput;
+class D3D12HiZ;
+struct D3D12HiZOutput;
 struct D3D12PostTargets;
+struct D3D12SceneCoverage;
 struct D3D12GuiContent;
 struct D3D12GuiTarget;
 struct D3D12GuiLayer;
@@ -40,17 +58,37 @@ struct D3D12FrameCapture
 {
     ID3D12Resource* readback = nullptr;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> layerFootprints;
 };
 
 enum class D3D12WaitReason : size_t { FrameReuse, Resize, Shutdown, Readback, Upload, Count };
 
 struct D3D12FrameContext
 {
+    std::shared_ptr<D3D12ClusterOutput> clusters;
+    UINT clusterDescriptorIncrement=0;
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocator;
     UINT64 fenceValue = 0;
     D3D12UploadArena uploads;
     D3D12UploadArena baselineConstants; // 保留 T19 的每帧 4KB 常量缓冲作为实测基线。
     std::vector<D3D12UploadSlice> drawConstants;
+    std::vector<D3D12UploadSlice> materialConstants,shadowMaterialConstants;
+    D3D12FrameDescriptors shadowMaterialDescriptors;
+    std::vector<D3D12_GPU_DESCRIPTOR_HANDLE> shadowMaterialTables;
+    Microsoft::WRL::ComPtr<ID3D12Resource> transparentDepth;
+    std::shared_ptr<D3D12DescriptorRange> transparentDsv;
+    bool opaqueTemporalResolved=false;
+    std::shared_ptr<D3D12OpaqueTemporal> opaqueTemporal;
+    std::shared_ptr<D3D12DepthNormalFrame> depthNormals;
+    std::shared_ptr<D3D12AmbientOcclusionFrame> ambientOcclusion;
+    std::shared_ptr<D3D12ShadingFrame> shading;
+    D3D12UploadSlice shadingConstants;
+    std::vector<D3D12UploadSlice> shadingMaterials;
+    UINT shadingDescriptorIncrement=0;
+    std::shared_ptr<D3D12HeterogeneousPrepared> heterogeneous;
+    std::shared_ptr<D3D12HeterogeneousOutput> heterogeneousOutput;
+    std::vector<UINT> heterogeneousSources;
+    std::shared_ptr<D3D12HiZOutput> heterogeneousHiZ;
     std::vector<D3D12UploadSlice> instanceSlices;
     // W03：蒙皮调色板。skinSlices 与 content.meshes 一一对应，shadowSkinSlices 与
     // content.shadowMeshes 一一对应；每帧从调用方字节复制进同一上传环，缺省为空。
@@ -65,7 +103,12 @@ struct D3D12FrameContext
     UINT64 timestampFrame=0,timestampSubmission=0;
     UINT timestampDraws=0;
     bool timestampForward=false;
+    bool timestampCluster=false;
+    bool timestampDepthNormals=false;
+    bool timestampAoHalf=false,timestampAoResolve=false;
+    bool timestampHeterogeneous=false,timestampHeterogeneousHiZ=false;
     D3D12UploadSlice forwardConstants;
+    D3D12UploadSlice shadowFilterConstants;
     D3D12FrameDescriptors outputDescriptors;
     D3D12FrameDescriptors environmentDescriptors;
     D3D12FrameDescriptors postDescriptors;
@@ -73,6 +116,7 @@ struct D3D12FrameContext
     D3D12FrameDescriptors gameUiDescriptors;
     std::shared_ptr<D3D12SceneOverlayFrame> sceneOverlay;
     std::shared_ptr<D3D12ShadowTarget> shadow;
+    std::shared_ptr<D3D12SceneCoverage> coverage;
     std::shared_ptr<D3D12PostTargets> post; // 保持该帧后处理资源至 Fence 完成，视口可独立调整尺寸。
     bool timestampShadow=false;
     bool timestampPost=false,timestampBloom=false,timestampToneMapping=false,timestampFxaa=false,timestampUi=false;
@@ -80,15 +124,25 @@ struct D3D12FrameContext
 
 struct D3D12FrameContent
 {
+    const D3D12ClusterCapture* clusterCapture=nullptr;
     const D3D12Triangle* triangle = nullptr;
     const D3D12MeshPipeline* meshPipeline = nullptr;
     std::span<const D3D12MeshDraw> meshes;
+    std::size_t opaqueDrawCount=SIZE_MAX; // 未声明透明时保持旧整批语义。
     se::Mat4 viewProjection;
     UINT64 sourceFrame=0;
     const se::rhi::ForwardLighting* forward=nullptr;
     const D3D12MeshPipeline* outputPipeline=nullptr;
     const D3D12MeshPipeline* skyPipeline=nullptr;
     const D3D12FrameCapture* hdrCapture=nullptr;
+    const D3D12FrameCapture* sceneDepthCapture=nullptr;
+    const se::rhi::DepthNormalSettings* depthNormals=nullptr;
+    const D3D12FrameCapture* depthNormalDepthCapture=nullptr;
+    const D3D12FrameCapture* depthNormalCapture=nullptr;
+    const se::rhi::ScreenSpaceOcclusionSettings* screenSpaceOcclusion=nullptr;
+    const D3D12FrameCapture* screenSpaceCapture=nullptr;
+    const D3D12FrameCapture* halfAoCapture=nullptr;
+    std::array<const D3D12Texture*,5> shadingTextures{};
     const se::rhi::ShadowSettings* shadow=nullptr;
     const D3D12MeshPipeline* shadowPipeline=nullptr;
     std::span<const D3D12MeshDraw> shadowMeshes;
@@ -133,9 +187,23 @@ struct D3D12Presentation
     std::shared_ptr<D3D12DescriptorPool> srvPool,rtvPool,dsvPool;
     std::shared_ptr<D3D12ShadowTarget> shadow;
     std::unordered_map<UINT,std::weak_ptr<D3D12ShadowTarget>> shadowTargets;
+    std::shared_ptr<D3D12LightClustering> clusterBuilder;
+    std::shared_ptr<D3D12OpaqueTemporal> opaqueTemporal;
+    std::shared_ptr<D3D12DepthNormals> depthNormalBuilder;
+    std::shared_ptr<D3D12DepthNormalTarget> depthNormalTarget;
+    se::rhi::DepthNormalStatistics depthNormalStatistics;
+    std::shared_ptr<D3D12AmbientOcclusion> ambientOcclusionBuilder;
+    std::shared_ptr<D3D12AmbientOcclusionOutput> ambientOcclusionOutput;
+    se::rhi::ScreenSpaceOcclusionStatistics screenSpaceStatistics;
+    std::shared_ptr<D3D12ShadingDefaults> shadingDefaults;
+    std::shared_ptr<D3D12Heterogeneous> heterogeneousBuilder;
+    std::shared_ptr<D3D12HiZ> heterogeneousHiZBuilder;
+    se::rhi::GpuDrivenStatistics gpuDrivenStatistics;
+    se::rhi::ClusteredStatistics clustered;
     UINT64 shadowCreations=0;
     Microsoft::WRL::ComPtr<ID3D12Resource> hdr;
     UINT64 hdrCreations=0;
+    std::shared_ptr<D3D12SceneCoverage> coverage;
     std::shared_ptr<D3D12PostTargets> post;
     UINT64 postCreations=0;
     Microsoft::WRL::ComPtr<ID3D12Resource> depth;

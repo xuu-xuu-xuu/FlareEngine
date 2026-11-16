@@ -1,0 +1,11 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "03 拉丝金属",
+  "baseColor": [0.78, 0.52, 0.23, 1],
+  "metallic": 1,
+  "roughness": 0.28,
+  "doubleSided": false,
+  "textures": {"baseColor": "", "normal": "", "metallicRoughness": ""},
+  "anisotropy": {"strength": 0.8, "rotation": 0.6}
+}

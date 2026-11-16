@@ -1,16 +1,15 @@
-// G14：RG16F 屏幕空间速度。顶点着色器用当前/上一帧 clip-from-local 分别投影，
-// 像素阶段输出 previousUV-currentUV（左上原点）；没有上一帧矩阵的绘制 previous=current，
-// 速度为 0。只用于不透明网格；透明/UI 不写入速度缓冲。
+// 光栅覆盖匹配当前深度；真实运动来自不带采样抖动的两帧投影。
 cbuffer VelocityConstants : register(b0)
 {
+    float4x4 rasterClipFromLocal;
     float4x4 currentClipFromLocal;
     float4x4 previousClipFromLocal;
 };
 struct VelocityPixel
 {
     float4 position : SV_POSITION;
-    float2 currentUv : TEXCOORD0;
-    float2 previousUv : TEXCOORD1;
+    float4 currentClip : TEXCOORD0;
+    float4 previousClip : TEXCOORD1;
 };
 float2 ProjectUv(float4 clip)
 {
@@ -22,14 +21,15 @@ float2 ProjectUv(float4 clip)
 VelocityPixel VSMain(float4 position : POSITION)
 {
     const float4 local = float4(position.xyz, 1.0f);
-    const float4 current = mul(currentClipFromLocal, local);
     VelocityPixel output;
-    output.position = current;
-    output.currentUv = ProjectUv(current);
-    output.previousUv = ProjectUv(mul(previousClipFromLocal, local));
+    output.position = mul(rasterClipFromLocal, local);
+    output.currentClip = mul(currentClipFromLocal, local);
+    output.previousClip = mul(previousClipFromLocal, local);
     return output;
 }
 float2 PSMain(VelocityPixel input) : SV_TARGET
 {
-    return input.previousUv - input.currentUv;
+    // 在像素处做透视除法；先除再用透视插值会给倾斜的地面和细长三角形错误的速度。
+    if (input.previousClip.w <= 1e-6f || input.currentClip.w <= 1e-6f) return float2(2, 2);
+    return ProjectUv(input.previousClip) - ProjectUv(input.currentClip);
 }

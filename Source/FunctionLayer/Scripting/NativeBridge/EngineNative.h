@@ -133,6 +133,9 @@ SE_API int32_t SE_CALL se_session_get_step_count(SE_Session session, uint64_t* c
 SE_API int32_t SE_CALL se_session_get_input(SE_Session session, SE_InputState* input) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_get_pointer(SE_Session session, SE_PointerState* input) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_run_window(SE_Session session, const char* locale, uint32_t length, int32_t visible, uint64_t maximum_frames) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_session_configure_quality(SE_Session session,const char* path,uint32_t length,int32_t show_menu) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_session_set_quality_profiles(SE_Session session,const char* json,uint32_t length) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_session_player_quality(SE_Session session,int32_t requested,int32_t* current) SE_NOEXCEPT;
 // 空路径/零帧清除设置；非空路径必须指定大于零的宿主更新帧号，只能在窗口外配置。
 SE_API int32_t SE_CALL se_session_set_window_capture(SE_Session session,const char* path,uint32_t length,uint64_t frame) SE_NOEXCEPT;
 // 普通 Player 的固定回放尺寸；0x0 清除。只在窗口外配置，交换链与客户区同步。

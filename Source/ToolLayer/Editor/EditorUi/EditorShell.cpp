@@ -991,6 +991,7 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
         std::string display=property.displayValue.empty()?property.value:property.displayValue;
         for(std::size_t i=0;i<property.options.size()&&i<property.optionLabels.size();++i)
             if(property.options[i]==property.value)display=property.optionLabels[i];
+        if(property.type==EditorPropertyType::Action)return property.label;
         return property.label + ": " + display + suffix;
     });
     dispatcher_.AddHandler(form.listContent, UiEventType::PointerWheel, [this, &form](UiInputEvent& event) {
@@ -1013,6 +1014,12 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
             return;
         }
         EditorProperty& property = form.properties[static_cast<std::size_t>(row)];
+        if(property.type==EditorPropertyType::Action)
+        {
+            if(form.commit)form.commit(property.key,{});
+            event.handled=true;
+            return;
+        }
         if (property.type == EditorPropertyType::Combo && !property.options.empty())
         {
             ShowFormCombo(panelId, form, row);
@@ -2808,6 +2815,7 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
         add("EditorUi.CreateSphere", "Create sphere", EditorCommandId::CreateEntity, "sphere");
         add("EditorUi.CreateCamera", "Create camera", EditorCommandId::CreateEntity, "camera");
         add("EditorUi.CreateLight", "Create light", EditorCommandId::CreateEntity, "light");
+        add("Feature.Rectangle", "Rectangle area light", EditorCommandId::CreateEntity, "rectangle-light");
         add("Feature.Render", "Scene rendering settings", EditorCommandId::CreateEntity, "render-settings");
         add("Feature.Environment", "Environment lighting", EditorCommandId::CreateEntity, "environment-settings");
         add("Feature.Body", "Physics box", EditorCommandId::CreateEntity, "physics-cube");

@@ -7,11 +7,12 @@ $nugetConfig=if($packageMode){Join-Path $workspace 'NuGet.Config'}else{Join-Path
 if($packageMode -and $PSBoundParameters.ContainsKey('Project')){$Project=[IO.Path]::GetFullPath($Project)}
 Set-Location -LiteralPath $workspace
 # 用户 TEMP 可能被 ACL/安全软件拒绝；导出子进程统一使用工作区可写临时目录。
-$exportTemp=Join-Path $workspace '.cache/tmp/export'
+$cacheOwner=if($packageMode -and $PSBoundParameters.ContainsKey('Project')){Split-Path -Parent $Project}else{$workspace}
+$exportTemp=Join-Path $cacheOwner '.cache/tmp/export'
 New-Item -ItemType Directory -Path $exportTemp -Force | Out-Null
 $env:TEMP=$exportTemp;$env:TMP=$exportTemp
 # 用户 NuGet 缓存可能被 ACL 拒绝；导出使用工作区缓存。
-$nugetRoot=Join-Path $workspace '.cache/nuget'
+$nugetRoot=Join-Path $cacheOwner '.cache/nuget'
 New-Item -ItemType Directory -Path $nugetRoot -Force | Out-Null
 $env:NUGET_PACKAGES=Join-Path $nugetRoot 'packages'
 $env:NUGET_HTTP_CACHE_PATH=Join-Path $nugetRoot 'http-cache'
@@ -64,10 +65,26 @@ try {
     $scriptOverrides=$PSBoundParameters.ContainsKey('ScriptProject') -or $PSBoundParameters.ContainsKey('ScriptType') -or $PSBoundParameters.ContainsKey('Bindings')
     if(!$BuildSettings -and !$scriptOverrides -and (Test-Path -LiteralPath (Join-Path $projectRoot 'build.json'))){$BuildSettings=Join-Path $projectRoot 'build.json'}
     $build=$null
+    $recordVideo=$false
+    $videoResolution='1280x720'
+    $videoFps=30
+    $videoSeconds=2
     if($BuildSettings){
         $BuildSettings=(Resolve-Path -LiteralPath $BuildSettings).Path;$build=Get-Content -LiteralPath $BuildSettings -Raw -Encoding UTF8 | ConvertFrom-Json
         if($build.format -ne 'SelfEngine.Build' -or $build.version -ne 1){Fail 'Export.InvalidSettings' $BuildSettings}
-        foreach($property in $build.PSObject.Properties.Name){if($property -notin @('format','version','scriptsProject','scriptType','bindings','entryUi')){Fail 'Export.InvalidSettings' $property}}
+        foreach($property in $build.PSObject.Properties.Name){if($property -notin @('format','version','scriptsProject','scriptType','bindings','entryUi','recordVideo','videoResolution','videoFps','videoSeconds')){Fail 'Export.InvalidSettings' $property}}
+        if($build.PSObject.Properties['recordVideo']){
+            if($build.recordVideo -isnot [bool]){Fail 'Export.InvalidSettings' 'recordVideo'}
+            $recordVideo=$build.recordVideo
+        }
+        if($build.PSObject.Properties['videoResolution']){$videoResolution=$build.videoResolution}
+        if($build.PSObject.Properties['videoFps']){$videoFps=$build.videoFps}
+        if($build.PSObject.Properties['videoSeconds']){$videoSeconds=$build.videoSeconds}
+        if($videoResolution -notin @('640x360','1280x720','1920x1080') -or
+            ($videoFps -isnot [int] -and $videoFps -isnot [long]) -or $videoFps -notin @(24,30,60) -or
+            ($videoSeconds -isnot [int] -and $videoSeconds -isnot [long]) -or $videoSeconds -lt 1 -or $videoSeconds -gt [math]::Floor(100000/$videoFps)){
+            Fail 'Export.InvalidSettings' 'video'
+        }
         if(!$ScriptProject -and $build.scriptsProject){$ScriptProject=SafeProjectFile $build.scriptsProject}
         if(!$ScriptType){$ScriptType=[string]$build.scriptType}
         if(!$Bindings -and $build.bindings){$Bindings=SafeProjectFile $build.bindings}
@@ -111,11 +128,12 @@ try {
     $source=if($packageMode){Read-EngineEditorPackage $workspace}else{Get-EngineSourceIdentity $workspace};Write-EngineJson (Join-Path $case 'source-inputs.json') $source
     $native=if($packageMode){Join-Path $workspace 'Tools'}else{Join-Path $workspace 'out/build/windows-x64-release'}
     $nativeFiles=if($packageMode){@('ProjectTool.exe')}else{@('ProjectTool.exe','EngineNative.dll')}
+    if($recordVideo){$nativeFiles+='VideoEncoder.exe'}
     foreach($file in $nativeFiles){if(!(Test-Path -LiteralPath (Join-Path $native $file))){Fail 'Export.NativeMissing' $file}}
     $dependencyFile=Join-Path $case 'dependencies.json';Step 'content_validation' (Join-Path $native 'ProjectTool.exe') @('dependencies',$manifest,$dependencyFile)
     $powershell=Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
     $runtimeOutput=if($packageMode){Join-Path $workspace 'Player'}else{Join-Path $case 'Runtime'}
-    if(!$packageMode){Step 'publish_runtime' $powershell @('-NoProfile','-File',(Join-Path $PSScriptRoot 'Publish-Managed.ps1'),'-Configuration','Release','-OutputDirectory',$runtimeOutput,'-ManagedOutputRoot',(Join-Path $case 'managed'))}
+    if(!$packageMode){Step 'publish_runtime' $powershell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'Publish-Managed.ps1'),'-Configuration','Release','-OutputDirectory',$runtimeOutput,'-ManagedOutputRoot',(Join-Path $case 'managed'))}
     else{$report.phase='publish_runtime';$report.steps+=@([ordered]@{phase='publish_runtime';exit_code=0;input='Player';mode='prebuilt'});Report}
     New-Item -ItemType Directory -Path $stage | Out-Null
     Get-ChildItem -LiteralPath $runtimeOutput | Copy-Item -Destination $stage -Recurse -Force
@@ -171,22 +189,52 @@ try {
     if(!$crt){Fail 'Export.NativeMissing' 'MSVC redist'}
     }
     $crtFiles=@(Get-ChildItem -LiteralPath $crt -Filter '*.dll' | ForEach-Object {Copy-Item -LiteralPath $_.FullName -Destination $stage;[ordered]@{path=$_.Name;version=$_.VersionInfo.FileVersion;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})
+    $ltcNotices=Join-Path $workspace 'ThirdParty/LtcReference'
+    if(Test-Path -LiteralPath $ltcNotices -PathType Container){
+        foreach($notice in Get-ChildItem -LiteralPath $ltcNotices -Recurse -File | Where-Object {$_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE|UPSTREAM)'}){
+            $relativeNotice=$notice.FullName.Substring($ltcNotices.TrimEnd('\').Length+1)
+            $noticeTarget=Join-Path $stage ('ThirdParty/LtcReference/'+$relativeNotice)
+            New-Item -ItemType Directory -Path (Split-Path -Parent $noticeTarget) -Force | Out-Null
+            Copy-Item -LiteralPath $notice.FullName -Destination $noticeTarget -Force
+        }
+    }
     foreach($license in @(@('ufbx','LICENSE'),@('cgltf','LICENSE'),@('nlohmann','LICENSE.MIT'),@('imgui','LICENSE.txt'))){$directory=Join-Path $stage ('ThirdParty/'+$license[0]);New-Item -ItemType Directory -Path $directory -Force | Out-Null;Copy-Item -LiteralPath (Join-Path $workspace ('ThirdParty/'+$license[0]+'/'+$license[1])) -Destination $directory}
     if(Test-Path -LiteralPath (Join-Path $workspace 'ThirdParty/README.md') -PathType Leaf){
         Copy-Item -LiteralPath (Join-Path $workspace 'ThirdParty/README.md') -Destination (Join-Path $stage 'ThirdParty/README.md')
     }
     Write-EngineJson (Join-Path $stage 'runtime-dependencies.json') ([ordered]@{schema=1;architecture='win-x64';dotnet='self-contained multi-file publish; see SelfEngine.Bootstrap.runtimeconfig.json';sdk_required=$false;crt=$crtFiles;system='Windows 10/11 x64, installed D3D12-capable GPU driver, Windows WIC/DirectWrite/system fonts';clean_machine_tested=$false})
     Write-EngineJson (Join-Path $stage 'script-dependencies.json') ([ordered]@{schema=1;assembly=$scriptAssembly;scriptType=$ScriptType;files=@(Get-ChildItem -LiteralPath (Join-Path $stage 'ProjectScripts') -File -Recurse | Sort-Object FullName | ForEach-Object {[ordered]@{path=$_.FullName.Substring($stage.Length+1).Replace('\','/');bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})})
-    Write-EngineJson (Join-Path $stage 'launch.json') ([ordered]@{schema=1;scene='Project/'+$settings.entryScene;ui=$(if($EntryUi){'Project/'+$EntryUi}else{''});manifest='Project/'+[IO.Path]::GetFileName($manifest);assetRoot='Project/'+$settings.contentRoot;assetCache='Project/.cache/assets';scriptAssembly=$scriptAssembly;scriptType=$ScriptType;bindings=$scriptBindings;menu=!$customScripts})
+    Write-EngineJson (Join-Path $stage 'launch.json') ([ordered]@{schema=1;locale=$Locale;scene='Project/'+$settings.entryScene;ui=$(if($EntryUi){'Project/'+$EntryUi}else{''});manifest='Project/'+[IO.Path]::GetFileName($manifest);assetRoot='Project/'+$settings.contentRoot;assetCache='Project/.cache/assets';scriptAssembly=$scriptAssembly;scriptType=$ScriptType;bindings=$scriptBindings;menu=!$customScripts})
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Start-ExportedGame.ps1') -Destination (Join-Path $stage 'Start-Game.ps1')
-    $preflight=@('--project-root',$copiedProject,'--scene',(Join-Path $copiedProject $settings.entryScene),'--asset-root',(Join-Path $copiedProject $settings.contentRoot),'--asset-cache',$cache,'--project',(Join-Path $stage $scriptAssembly),'--script',$ScriptType,'--locale',$Locale,'--validate-bindings')
+    # .NET apphost 内含 Bootstrap 程序集名，独立入口可直接双击，不经过 PowerShell。
+    Copy-Item -LiteralPath (Join-Path $stage 'SelfEngine.Bootstrap.exe') -Destination (Join-Path $stage 'Play.exe')
+    $preflight=@('--project-root',$copiedProject,'--player-manifest',(Join-Path $copiedProject ([IO.Path]::GetFileName($manifest))),'--scene',(Join-Path $copiedProject $settings.entryScene),'--asset-root',(Join-Path $copiedProject $settings.contentRoot),'--asset-cache',$cache,'--project',(Join-Path $stage $scriptAssembly),'--script',$ScriptType,'--locale',$Locale,'--validate-bindings')
     if($scriptBindings){$preflight+=@('--bindings',(Join-Path $stage $scriptBindings))};if($EntryUi){$preflight+=@('--ui',(Join-Path $copiedProject $EntryUi))};if(!$customScripts){$preflight+='--menu'}
     Step 'field_preflight' (Join-Path $stage 'SelfEngine.Bootstrap.exe') $preflight
     Step 'packaged_content' (Join-Path $stage 'ProjectTool.exe') @('validate',(Join-Path $copiedProject ([IO.Path]::GetFileName($manifest))))
     if(!$SkipSmoke){
-        Step 'headless_smoke' $powershell @('-NoProfile','-File',(Join-Path $stage 'Start-Game.ps1'),'-Headless','-Frames','120','-Locale',$Locale)
-        $capture=Join-Path $case 'game-window.ppm';Step 'window_smoke' $powershell @('-NoProfile','-File',(Join-Path $stage 'Start-Game.ps1'),'-Hidden','-Frames','12','-Capture',$capture,'-CaptureFrame','12','-Locale',$Locale)
+        Step 'headless_smoke' $powershell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $stage 'Start-Game.ps1'),'-Headless','-Frames','120','-Locale',$Locale)
+        $capture=Join-Path $case 'game-window.ppm';Step 'window_smoke' $powershell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $stage 'Start-Game.ps1'),'-Hidden','-Frames','12','-Capture',$capture,'-CaptureFrame','12','-Locale',$Locale)
         if(!(Test-Path -LiteralPath $capture)){Fail 'Export.StepFailed' 'window capture missing'}
+    }
+    if($recordVideo){
+        $work=Join-Path $stage ('.recording-'+[guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $work -ErrorAction Stop | Out-Null
+        $framesPath=Join-Path $work 'frames'
+        $frameCount=$videoSeconds*$videoFps
+        $stepSeconds=(1.0/$videoFps).ToString('R',[Globalization.CultureInfo]::InvariantCulture)
+        Push-Location -LiteralPath $work
+        try{
+            Step 'video_capture' $powershell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $stage 'Start-Game.ps1'),'-Hidden','-Resolution',$videoResolution,'-FixedStep',$stepSeconds,'-CaptureSequence',$framesPath,'-CaptureCount',"$frameCount",'-Locale',$Locale)
+            Step 'video_encode' (Join-Path $native 'VideoEncoder.exe') @('--frames',$framesPath,'--fps',"$videoFps",'--count',"$frameCount",'--output',(Join-Path $stage 'clip.mp4'),'--manifest',(Join-Path $case 'video-encode.json'))
+        }finally{Pop-Location}
+        $recordingDir=(Resolve-Path -LiteralPath $work).Path
+        if((Split-Path -Parent $recordingDir) -ne (Resolve-Path -LiteralPath $stage).Path -or (Split-Path -Leaf $recordingDir) -notmatch '^\.recording-[0-9a-f]{32}$'){Fail 'Export.PathOutsideRoot' $recordingDir}
+        # 项目脚本可写入工作目录，遇到重解析入口时沿用安全清理的拒绝规则。
+        if(((Get-Item -LiteralPath $recordingDir).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            @(Get-ChildItem -LiteralPath $recordingDir -Recurse -Force -Attributes ReparsePoint).Count){Fail 'Export.PathOutsideRoot' $recordingDir}
+        Remove-Item -LiteralPath $recordingDir -Recurse -Force
+        $report.video=[ordered]@{file='clip.mp4';resolution=$videoResolution;fps=$videoFps;frames=$frameCount}
     }
     foreach($file in $cooked){if((Get-FileHash -LiteralPath (Join-Path $stage $file.path) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256){Fail 'Export.CookFailed' $file.path}}
     if($packageMode){if((Read-EngineEditorPackage $workspace).editor_package_sha256 -ne $source.editor_package_sha256){Fail 'Export.SourceChanged' 'editor package'}}

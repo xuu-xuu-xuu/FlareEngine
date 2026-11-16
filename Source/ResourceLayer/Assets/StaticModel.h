@@ -1,4 +1,6 @@
 #pragma once
+#include "CoreLayer/MaterialAlpha.h"
+#include "CoreLayer/MaterialLayers.h"
 
 #include <array>
 #include <cstdint>
@@ -38,6 +40,17 @@ struct MaterialData
     bool doubleSided = false;
     bool needsFallbackTexture = false;
     float normalScale = 1.0f;
+    // opacity 只有 baseColor[3]；覆盖率为 factor alpha × baseColor texture alpha。
+    MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
+    float alphaCutoff = 0.5f;
+    ClearCoatParameters clearCoat;
+    // 三者均为线性数据：weight 取 R，roughness 取 G，normal 取切线空间 RGB。
+    std::int32_t clearCoatWeightTexture=-1,clearCoatRoughnessTexture=-1,clearCoatNormalTexture=-1;
+    SheenParameters sheen;
+    AnisotropyParameters anisotropy;
+    SubsurfaceParameters subsurface;
+    // sheenColor：sRGB RGB；sheenRoughness：保 alpha 的线性 A；anisotropy：线性 RG 方向、B 强度。
+    std::int32_t sheenColorTexture=-1,sheenRoughnessTexture=-1,anisotropyTexture=-1;
 };
 
 // 每顶点蒙皮权重，与 MeshData::vertices 一一对应；静态网格为空。
@@ -121,7 +134,7 @@ struct ImportOptions
 };
 
 inline constexpr std::uint32_t StaticModelFormatVersion = 2;
-inline constexpr const char* StaticModelImporterVersion = "SelfEngine.StaticModel.2/ufbx-0.17.1/cgltf-1.15/skin1";
+inline constexpr const char* StaticModelImporterVersion = "SelfEngine.StaticModel.2/ufbx-0.17.1/cgltf-1.15/skin1/alpha1/clearcoat1/sheen1/aniso1/skinDiffuse1";
 
 // 所有数据由引擎独立拥有；失败不改变 output。诊断只携带稳定文本键与细节。
 bool ImportStaticModel(const std::filesystem::path& path, const ImportOptions& options,

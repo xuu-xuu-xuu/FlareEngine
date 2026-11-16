@@ -467,29 +467,46 @@ void EditorShell::SetInspector(std::uint64_t id, std::string label, std::vector<
 
 void EditorShell::ShowInspectorCombo(std::size_t index)
 {
-    const auto field = inspectorModel_.Properties().at(index);
-    if (field.readOnly || field.options.empty()) return;
+    auto field = inspectorModel_.Properties().at(index);
+    if (field.readOnly) return;
     const auto target=inspectorModel_.Target();
+    if(field.options.empty()&&propertyChoices_){
+        auto status=propertyChoices_(target,field);if(!status.empty())SetStatus(std::move(status));}
+    if(field.options.empty())return;
     const auto content=layout_.Rect(InspectorContent());
     std::size_t row=0;
     for (;row<inspectorRows_.size();++row)
         if (std::find(inspectorRows_[row].fields.begin(),inspectorRows_[row].fields.end(),index)!=inspectorRows_[row].fields.end()) break;
+    ShowInspectorPage(std::make_shared<EditorProperty>(std::move(field)),target,
+        content.x+FieldAt(inspectorWidth_,1,0,false).valueStart,content.y+(row+1)*RowHeight-inspectorList_->Offset(),0);
+}
+
+void EditorShell::ShowInspectorPage(std::shared_ptr<const EditorProperty> field,std::uint64_t target,float x,float y,std::size_t first)
+{
+    if(target!=inspectorModel_.Target())return;
+    const auto surface=SurfaceRoot(inputSurface_);
+    const auto capacity=static_cast<std::size_t>(std::max(1.f,std::min(14.f,std::floor((layout_.Rect(surface).height-8)/26)-2)));
+    const auto end=std::min(first+capacity,field->options.size());
     std::vector<EditorMenuItem> items;
-    for (std::size_t i=0;i<field.options.size();++i)
-        items.push_back({"",i<field.optionLabels.size()?field.optionLabels[i]:field.options[i],EditorCommandId::SetProperty,field.options[i]});
+    if(first)items.push_back({"",Text("EditorUi.ChoicePrevious","Previous page"),EditorCommandId::SetProperty,{}});
+    for(auto i=first;i<end;++i)
+        items.push_back({"",i<field->optionLabels.size()?field->optionLabels[i]:field->options[i],EditorCommandId::SetProperty,field->options[i]});
+    if(end<field->options.size())items.push_back({"",Text("EditorUi.ChoiceNext","Next page"),EditorCommandId::SetProperty,{}});
     CloseMenu();
-    ShowMenu(SurfaceRoot(inputSurface_),content.x+FieldAt(inspectorWidth_,1,0,false).valueStart,
-        content.y+(row+1)*RowHeight-inspectorList_->Offset(),std::min(210.f,inspectorWidth_-12),items,target);
+    ShowMenu(surface,x,y,std::min(340.f,std::max(150.f,inspectorWidth_-12)),items,target);
     openMenu_="@inspector";
     auto button=document_.FirstChild(menuDropdown_);
-    for (std::size_t i=0;i<field.options.size()&&button.IsValid();++i,button=document_.NextSibling(button))
+    for (std::size_t row=0;row<items.size()&&button.IsValid();++row,button=document_.NextSibling(button))
     {
         dispatcher_.RemoveHandlers(button);
-        dispatcher_.AddHandler(button,UiEventType::PointerDown,[this,target,key=field.key,value=field.options[i]](UiInputEvent& event) {
+        dispatcher_.AddHandler(button,UiEventType::PointerDown,[this,target,field,x,y,row,first,end,capacity](UiInputEvent& event) {
             event.handled=true;
             if(event.button!=0)return;
+            if(first&&row==0){ShowInspectorPage(field,target,x,y,first>capacity?first-capacity:0);return;}
+            const auto i=first+row-(first?1:0);
+            if(i==end){ShowInspectorPage(field,target,x,y,end);return;}
             CloseMenu();
-            if (target==inspectorModel_.Target() && propertyHandler_ && !propertyHandler_(target,key,value))
+            if (target==inspectorModel_.Target() && propertyHandler_ && !propertyHandler_(target,field->key,field->options[i]))
                 SetStatus(Text("EditorUi.InvalidValue","Invalid value"));
         });
     }

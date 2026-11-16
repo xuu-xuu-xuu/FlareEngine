@@ -4,11 +4,17 @@ add_library(EngineGraphics STATIC
     Source/PlatformLayer/Graphics/D3D12/D3D12Indirect.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12HiZ.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12Exposure.cpp
+    Source/PlatformLayer/Graphics/D3D12/D3D12SceneCoverage.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12Taa.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12DepthPrepass.cpp
+    Source/PlatformLayer/Graphics/D3D12/D3D12DepthNormals.cpp
+    Source/PlatformLayer/Graphics/D3D12/D3D12AmbientOcclusion.cpp
+    Source/PlatformLayer/Graphics/D3D12/D3D12ShadingExtensions.cpp
+    Source/PlatformLayer/Graphics/D3D12/D3D12Heterogeneous.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12Gui.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12SceneOverlay.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12Forward.cpp
+    Source/PlatformLayer/Graphics/D3D12/D3D12LightClustering.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12Shadow.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12PostProcess.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12PipelineCache.cpp
@@ -31,6 +37,9 @@ target_link_libraries(EngineGraphics PUBLIC EngineCore PRIVATE EnginePlatform d3
 add_library(EngineSandboxRenderer STATIC
     Source/FunctionLayer/Rendering/SandboxRenderer.cpp
     Source/FunctionLayer/Rendering/StaticModelRender.cpp
+    Source/FunctionLayer/Rendering/MaterialSurfacePipelines.cpp
+    Source/FunctionLayer/Rendering/ShadingResources.cpp
+    Source/FunctionLayer/Rendering/MeshletSubmission.cpp
     Source/FunctionLayer/Rendering/Visibility.cpp
     Source/FunctionLayer/Rendering/RenderQueue.cpp
     Source/FunctionLayer/Rendering/Instancing.cpp

@@ -32,6 +32,27 @@ bool MaterialScene(SandboxScene scene){return scene==SandboxScene::Materials||sc
 bool HlodSceneMode(SandboxScene scene){return scene==SandboxScene::Hlod;}
 bool PbrScene(SandboxScene scene){return MaterialScene(scene)||scene==SandboxScene::Scene||HlodSceneMode(scene);}
 bool BasicLitScene(SandboxScene scene){return scene==SandboxScene::BasicLit;}
+bool RequiresMaterialCoverage(const se::FrameData& frame)
+{
+    if(!frame.assets)return false;
+    std::unordered_set<se::AssetId> materials,models;
+    std::vector<se::AssetDiagnostic> ignored;
+    for(const auto& instance:frame.meshes)
+    {
+        for(const auto& id:instance.mesh.materials)if(!id.empty()&&materials.insert(id).second)
+        {
+            const auto* preview=frame.materialPreview&&frame.materialPreview->id==id?&frame.materialPreview->document:nullptr;
+            const auto material=preview?std::shared_ptr<const se::MaterialDocument>{}:frame.assets->LoadMaterial(id,ignored);
+            if(preview?preview->alphaMode!=se::MaterialAlphaMode::Opaque:material&&material->alphaMode!=se::MaterialAlphaMode::Opaque)return true;
+        }
+        if(!se::IsBuiltinMesh(instance.mesh.meshAsset)&&models.insert(instance.mesh.meshAsset).second)
+        {
+            const auto model=frame.assets->LoadModel(instance.mesh.meshAsset,ignored);
+            if(model&&std::any_of(model->materials.begin(),model->materials.end(),[](const auto& material){return material.alphaMode!=se::MaterialAlphaMode::Opaque;}))return true;
+        }
+    }
+    return false;
+}
 }
 
 std::filesystem::path SandboxRenderer::ResourceDirectory() const
@@ -382,11 +403,49 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     std::optional<se::CpuScope> preparation;preparation.emplace(frame.profiler,"CPU.CommandPrepare");
     camera_.reset();
     if (!frame.surface.width || !frame.surface.height) return RenderResult::Occluded;
+    const bool coverageFrame=frame.data&&RequiresMaterialCoverage(*frame.data);
+    const bool materialShading=frame.data&&se::RequiresMaterialShading(*frame.data);
+    const bool shadingRequested=frame.data&&(materialShading||frame.data->multiscatter||frame.data->gtao||frame.data->contactShadows
+        ||frame.data->diffuseSh||frame.data->localDiffuseSh||!frame.data->rectangleLights.empty());
+    const bool shadingFrame=shadingRequested&&ForwardScene(scene_);
+    const bool bc7Color=frame.data&&frame.data->bc7Color;
+    const bool meshletSubmission=frame.data&&frame.data->meshletCulling;
+    if(bc7Color!=models_.Bc7ColorsEnabled()||meshletSubmission!=meshletSubmission_)
+    {
+        if(!device_->WaitIdle())return RenderResult::Failed;
+        models_.EnableBc7Colors(bc7Color,frame.data&&frame.data->assets?frame.data->assets->CacheRoot()/"textures":std::filesystem::path{});
+        models_.SetMeshletSubmissionEnabled(meshletSubmission);meshletSubmission_=meshletSubmission;
+        // 派生代理也可能强持上个编码版本，切换后重新建立代理及驻留账本。
+        hlodProxies_.clear();hlodOverrides_.clear();hlodProxyActive_.clear();
+        hlodProxyCache_.Reset();hlodBaked_=false;featureHlodSignature_.clear();
+        instances_.Clear();
+        lodTransitions_.clear();
+        std::vector<se::AssetDiagnostic> diagnostics;
+        const auto reloadBuiltin=[&](std::shared_ptr<const se::StaticRenderModel>& value,bool sphere)
+        {
+            if(!value)return true;
+            auto source=value->source;const bool compressed=value->compressed;
+            const auto levels=value->meshes.empty()||!value->meshes[0].lod?0u:static_cast<std::uint32_t>(value->meshes[0].lod->levels.size());
+            std::shared_ptr<const se::StaticRenderModel> candidate;
+            const auto path=sphere&&scene_!=SandboxScene::Scene?std::filesystem::path{}:ResourceDirectory()/"Textures/builtin";
+            if(!models_.Upload(std::move(source),path,ResourceDirectory(),*device_,candidate,diagnostics,compressed,levels))return false;
+            value=std::move(candidate);return true;
+        };
+        if(!reloadBuiltin(cube_,false)||!reloadBuiltin(sphere_,true))return RenderResult::Failed;
+    }
+    const bool requestedPost=frame.data&&frame.data->post.has_value();
+    const bool sceneInstancing=frame.data&&frame.data->instancing&&!coverageFrame&&!requestedPost&&!shadingFrame
+        &&!frame.data->depthNormals&&!frame.data->gpuDriven&&!frame.data->meshletCulling&&!frame.data->gpuDrivenHiZ;
+    if(frame.data&&frame.data->instancing&&!sceneInstancing&&reportedDiagnostics_.insert("Rendering.ShadingInstancingFallback").second)
+        Log(LogLevel::Warning,localization.GetText("Rendering.ShadingInstancingFallback"));
+    if(coverageFrame&&frame.data&&(frame.data->instancing||frame.data->modelHlod)
+        &&reportedDiagnostics_.insert("Rendering.MaterialCoverageFallback").second)
+        Log(LogLevel::Warning,localization.GetText("Rendering.MaterialCoverageFallback"));
     const bool postFrame=scene_==SandboxScene::PostProcess||(BasicLitScene(scene_)&&frame.data&&frame.data->sceneRenderSettings&&frame.data->post.has_value());
     if(BasicLitScene(scene_))
     {
         // 编辑期间实例姿态、材质或资源改变后失效代理；相机变化不触发重烘焙。
-        const bool hlod=frame.data&&frame.data->modelHlod;
+        const bool hlod=frame.data&&frame.data->modelHlod&&!coverageFrame&&!shadingFrame;
         std::string signature;
         if(hlod)for(const auto& mesh:frame.data->meshes)
         {
@@ -402,11 +461,12 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             featureHlodSignature_=std::move(signature);hlodEnabled_=hlod;
         }
         hlodResidentRadius_=frame.data?frame.data->hlodRadius:0;
-        const bool pbr=frame.data&&frame.data->fullPbr;
+        const bool pbr=frame.data&&(frame.data->fullPbr||materialShading||frame.data->multiscatter
+            ||frame.data->diffuseSh||frame.data->localDiffuseSh||!frame.data->rectangleLights.empty());
         if(pbr!=featureFullPbr_){std::swap(featureEnvironment_?featureEnvironmentPipeline_:pipeline_,featurePbrPipeline_);featureFullPbr_=pbr;previousViewProjectionValid_=false;}
-        const bool instanced=frame.data&&frame.data->instancing;
+        const bool instanced=sceneInstancing;
         if(instanced!=featureForward_){std::swap(outputPipeline_,featureForwardOutput_);featureForward_=instanced;previousViewProjectionValid_=false;}
-        const bool environment=frame.data&&!frame.data->environment.asset.empty()&&!instanced;
+        const bool environment=frame.data&&(!frame.data->environment.asset.empty()||frame.data->diffuseSh||frame.data->localDiffuseSh)&&!instanced;
         if(environment!=featureEnvironment_)
         {std::swap(pipeline_,featureEnvironmentPipeline_);std::swap(skyPipeline_,featureEnvironmentSky_);featureEnvironment_=environment;previousViewProjectionValid_=false;}
         const bool taa=postFrame&&frame.data->post->taa;
@@ -495,9 +555,43 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 +(status.detail.empty()?"":", "+status.detail));
         }
     }
-    models_.SetMaterialPipelineKind(featureEnvironment_||EnvironmentScene(scene_)?se::rhi::PipelineKind::EnvironmentMesh:BasicLitScene(scene_)||scene_==SandboxScene::Shadows?se::rhi::PipelineKind::ShadowedMesh:ForwardScene(scene_)?se::rhi::PipelineKind::ForwardMesh:se::rhi::PipelineKind::PbrMesh);
-    models_.SetCustomMaterialPipelinesEnabled(!frame.data||!frame.data->instancing);
-    const bool instancing=frame.data&&frame.data->instancing;
+    const bool cascadeRequested=frame.data&&frame.data->shadow.cascades;
+    const bool clusterRequested=frame.data&&frame.data->clusteredLighting;
+    bool customCascadeUnsupported=false;
+    if((cascadeRequested||clusterRequested)&&frame.data->assets)
+        for(const auto& object:frame.data->meshes)for(const auto& id:object.mesh.materials)if(!id.empty())
+        {
+            std::vector<se::AssetDiagnostic> ignored;
+            const auto* preview=frame.data->materialPreview&&frame.data->materialPreview->id==id?&frame.data->materialPreview->document:nullptr;
+            const auto material=preview?std::shared_ptr<const se::MaterialDocument>{}:frame.data->assets->LoadMaterial(id,ignored);
+            customCascadeUnsupported=customCascadeUnsupported||(preview?!preview->shader.empty():material&&!material->shader.empty());
+        }
+    const bool cascadedFrame=cascadeRequested&&camera_&&!sceneInstancing&&!customCascadeUnsupported
+        &&(BasicLitScene(scene_)||scene_==SandboxScene::Shadows||EnvironmentScene(scene_));
+    if(cascadeRequested&&!cascadedFrame&&reportedDiagnostics_.insert("Rendering.CsmUnavailable").second)
+        Log(LogLevel::Warning,localization.GetText("Rendering.CsmUnavailable"));
+    if(cascadedFrame&&!PrepareCascadedPipelines())return RenderResult::Failed;
+    const bool clusteredFrame=clusterRequested&&!sceneInstancing&&!customCascadeUnsupported&&camera_&&ForwardScene(scene_);
+    const std::size_t clusterGroup=cascadedFrame?2:scene_==SandboxScene::Lighting?0:1;
+    if(clusterRequested&&!clusteredFrame&&reportedDiagnostics_.insert("Rendering.ClusterUnavailable").second)
+        Log(LogLevel::Warning,localization.GetText("Rendering.ClusterUnavailable"));
+    if(clusteredFrame&&!PrepareClusteredPipelines(clusterGroup))return RenderResult::Failed;
+    const bool shadowFilterRequested=frame.data&&frame.data->shadow.filter.pcss;
+    const bool shadowFilterFrame=shadowFilterRequested&&cascadedFrame&&frame.data->shadow.enabled&&frame.data->shadow.pcf;
+    if(shadowFilterRequested&&!shadowFilterFrame&&reportedDiagnostics_.insert("Rendering.ShadowFilterUnavailable").second)
+        Log(LogLevel::Warning,localization.GetText("Rendering.ShadowFilterUnavailable"));
+    if(shadowFilterFrame&&!PrepareShadowFilterPipelines(clusteredFrame))return RenderResult::Failed;
+    const auto& filterPipelines=shadowFilterPipelines_[clusteredFrame?1:0];
+    const auto& clusterPipelines=clusteredPipelines_[clusterGroup];
+    const auto clusteredKind=clusterGroup==0?se::rhi::PipelineKind::ClusteredForwardMesh:
+        featureEnvironment_||EnvironmentScene(scene_)?(cascadedFrame?se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh:se::rhi::PipelineKind::ClusteredEnvironmentMesh):
+        BasicLitScene(scene_)&&!featureFullPbr_?(cascadedFrame?se::rhi::PipelineKind::ClusteredCascadedBasicLitMesh:se::rhi::PipelineKind::ClusteredBasicLitMesh):
+        cascadedFrame?se::rhi::PipelineKind::ClusteredCascadedShadowedMesh:se::rhi::PipelineKind::ClusteredShadowedMesh;
+    models_.SetMaterialPipelineKind(clusteredFrame?clusteredKind:cascadedFrame?(featureEnvironment_||EnvironmentScene(scene_)?se::rhi::PipelineKind::CascadedEnvironmentMesh:
+        BasicLitScene(scene_)&&!featureFullPbr_?se::rhi::PipelineKind::CascadedBasicLitMesh:se::rhi::PipelineKind::CascadedShadowedMesh):
+        featureEnvironment_||EnvironmentScene(scene_)?se::rhi::PipelineKind::EnvironmentMesh:BasicLitScene(scene_)||scene_==SandboxScene::Shadows?se::rhi::PipelineKind::ShadowedMesh:ForwardScene(scene_)?se::rhi::PipelineKind::ForwardMesh:se::rhi::PipelineKind::PbrMesh);
+    models_.SetCustomMaterialPipelinesEnabled(!sceneInstancing&&!cascadedFrame&&!clusteredFrame&&!coverageFrame&&!shadingFrame);
+    const bool instancing=sceneInstancing;
     // G06.10：Forward 实例化本轮只接 Lighting（无阴影/环境的 FinalOutput HDR 路径）。
     const bool forwardInstancing=instancing&&(scene_==SandboxScene::Lighting||BasicLitScene(scene_));
     if(instancing&&!MaterialScene(scene_)&&!forwardInstancing){Log(LogLevel::Error,localization.GetText("Rhi.Unsupported"));return RenderResult::Failed;}
@@ -576,10 +670,22 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     }
     if(result&&!forward){result=commands->BeginPass({se::rhi::PassKind::Clear,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Clear"});if(result)result=commands->EndPass();}
     const auto viewProjectionBase=camera_?camera_->viewProjection:se::Mat4{};
+    const auto framebufferScale=editor?frame.data->editorGui.framebufferScale:se::Vec2{1,1};
+    const auto sceneWidth=editor?static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.width*(framebufferScale.x>0?framebufferScale.x:1)))):frame.surface.width;
+    const auto sceneHeight=editor?static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.height*(framebufferScale.y>0?framebufferScale.y:1)))):frame.surface.height;
+    const auto geometryScale=postFrame&&frame.data&&frame.data->post&&frame.data->post->supersample4x?2u:1u;
     const bool taaFrame=taaEnabled_&&postFrame&&frame.surface.width&&frame.surface.height;
     const auto viewProjection=taaFrame?se::ApplyProjectionJitter(viewProjectionBase,
-        se::HaltonJitter(static_cast<std::uint32_t>(frame.updateIndex)),frame.surface.width,frame.surface.height):viewProjectionBase;
+        se::HaltonJitter(static_cast<std::uint32_t>(frame.updateIndex)),sceneWidth*geometryScale,sceneHeight*geometryScale):viewProjectionBase;
     if(result&&forward)result=commands->ConfigureView(viewProjection);
+    const se::rhi::DepthNormalSettings geometrySettings{frame.data&&camera_&&(frame.data->depthNormals||frame.data->gtao||frame.data->contactShadows||frame.data->gpuDrivenHiZ)};
+    std::optional<se::rhi::ScreenSpaceOcclusionSettings> screenSettings;
+    if(frame.data&&camera_&&(frame.data->gtao||frame.data->contactShadows))
+    {
+        screenSettings.emplace();screenSettings->gtao=frame.data->gtao;screenSettings->contactShadows=frame.data->contactShadows;
+        screenSettings->view=camera_->view;screenSettings->clipFromView=viewProjection*camera_->inverseView;
+        screenSettings->radius=frame.data->aoRadius;screenSettings->intensity=frame.data->aoIntensity;screenSettings->contactLength=frame.data->contactLength;
+    }
     if(result&&scene_==SandboxScene::Triangle&&(!frame.data||frame.data->cameras.empty()||camera_))
     {
         result=commands->BeginPass({se::rhi::PassKind::Triangle,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Triangle"});
@@ -589,8 +695,15 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     }
     if(result&&(scene_==SandboxScene::TexturedCube||scene_==SandboxScene::Scene||MaterialScene(scene_)||HlodSceneMode(scene_)||forward))
     {
-        std::vector<se::rhi::DrawIndexed> meshes,casters;
-        const auto opaquePipeline=instancing?(forwardInstancing?*forwardInstancedPipeline_:*instancedPipeline_):*pipeline_;
+        std::vector<se::rhi::DrawIndexed> meshes,casters,transparent;
+        const auto opaquePipeline=shadowFilterFrame?(featureEnvironment_||EnvironmentScene(scene_)?*filterPipelines.environment:
+            BasicLitScene(scene_)&&!featureFullPbr_?*filterPipelines.basic:*filterPipelines.pbr):
+            clusteredFrame?(clusterGroup==0?*clusterPipelines.pbr:
+            featureEnvironment_||EnvironmentScene(scene_)?*clusterPipelines.environment:
+            BasicLitScene(scene_)&&!featureFullPbr_?*clusterPipelines.basic:*clusterPipelines.pbr):
+            cascadedFrame?(featureEnvironment_||EnvironmentScene(scene_)?*cascadedEnvironment_:
+            BasicLitScene(scene_)&&!featureFullPbr_?*cascadedBasic_:*cascadedPbr_):
+            instancing?(forwardInstancing?*forwardInstancedPipeline_:*instancedPipeline_):*pipeline_;
         struct Candidate {const se::MeshInstance* instance;std::shared_ptr<const se::StaticRenderModel> model;bool visible=true,missing=false;};
         std::vector<Candidate> candidates;
         // G06.08：只有单批次、无 LOD/HLOD/Impostor/调试线的帧才收集遮挡包围盒；
@@ -917,15 +1030,35 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             std::uint32_t skinJointCount=0;
             std::span<const std::byte> skinPalette;
             if(skinnedModel)skinPalette=BuildSkinPalette(mesh.skinPalette,model->source->joints.size(),skinJointCount);
-            const auto skinDrawPipeline=skinnedPipeline_&&!featureEnvironment_&&!instancing?*skinnedPipeline_:se::rhi::PipelineHandle{};
+            const auto skinDrawPipeline=!instancing?(shadowFilterFrame?
+                (featureEnvironment_||EnvironmentScene(scene_)?*filterPipelines.skinnedEnvironment:*filterPipelines.skinned):clusteredFrame?
+                (featureEnvironment_||EnvironmentScene(scene_)?*clusterPipelines.skinnedEnvironment:*clusterPipelines.skinned):cascadedFrame?
+                (featureEnvironment_||EnvironmentScene(scene_)?*cascadedSkinnedEnvironment_:*cascadedSkinned_):
+                !featureEnvironment_&&skinnedPipeline_?*skinnedPipeline_:se::rhi::PipelineHandle{}):se::rhi::PipelineHandle{};
             const auto skinShadowPipeline=skinnedShadowPipeline_?*skinnedShadowPipeline_:se::rhi::PipelineHandle{};
+            // 阴影投射者包含主相机外物体，必须在可见性分支前解析同一份材质覆盖。
+            std::vector<std::shared_ptr<const se::PbrRenderMaterial>> overrides;
+            for(const auto& id:mesh.mesh.materials)
+            {
+                auto found=frameMaterials.find(id);
+                if(found==frameMaterials.end())
+                {
+                    std::vector<se::AssetDiagnostic> diagnostics;
+                    const auto* preview=frame.data->materialPreview&&frame.data->materialPreview->id==id?&frame.data->materialPreview->document:nullptr;
+                    auto material=frame.data->assets&&!id.empty()?models_.LoadMaterial(*frame.data->assets,id,*device_,diagnostics,preview):nullptr;
+                    if(material&&variants_.Add(material->featureMask))
+                        Log(LogLevel::Debug,localization.GetText("Rendering.MaterialVariant")+": "+se::VariantId(material->featureMask));
+                    found=frameMaterials.emplace(id,std::move(material)).first;report(diagnostics);
+                }
+                overrides.push_back(found->second);
+            }
             if((scene_==SandboxScene::Shadows||BasicLitScene(scene_)||EnvironmentScene(scene_))&&mesh.mesh.castsShadow)
-                se::AppendShadowModelDraws(*model,mesh.world,casters,0,skinPalette,skinJointCount,skinShadowPipeline);
+                se::AppendShadowModelDraws(*model,mesh.world,casters,0,skinPalette,skinJointCount,skinShadowPipeline,overrides);
             if(!candidate.visible)continue;
             if(candidateIndex<proxyCandidate.size()&&proxyCandidate[candidateIndex])continue;
             ++instanceDrawCount;
             // G05.12：远处实例改画 16 视角 Impostor 四边形；相邻视角在 Shader 内插值，alpha test 保留轮廓。
-            if(impostorEnabled_&&camera_&&impostorQuad_&&impostorPipeline_)
+            if(impostorEnabled_&&!coverageFrame&&!shadingFrame&&camera_&&impostorQuad_&&impostorPipeline_)
             {
                 const auto& minimum=model->layout.minimum;const auto& maximum=model->layout.maximum;
                 const se::Vec3 localCenter{(minimum.x+maximum.x)*0.5f,(minimum.y+maximum.y)*0.5f,(minimum.z+maximum.z)*0.5f};
@@ -950,21 +1083,6 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 }
             }
             if(!PbrScene(scene_)&&!forward){const auto first=meshes.size();se::AppendStaticModelDraws(*model,mesh.world,meshes,*pipeline_,viewProjection);drawStatistics_.visible+=meshes.size()>first;continue;}
-            std::vector<std::shared_ptr<const se::PbrRenderMaterial>> overrides;
-            for(const auto& id:mesh.mesh.materials)
-            {
-                auto found=frameMaterials.find(id);
-                if(found==frameMaterials.end())
-                {
-                    std::vector<se::AssetDiagnostic> diagnostics;
-                    const auto* preview=frame.data->materialPreview&&frame.data->materialPreview->id==id?&frame.data->materialPreview->document:nullptr;
-                    auto material=frame.data->assets&&!id.empty()?models_.LoadMaterial(*frame.data->assets,id,*device_,diagnostics,preview):nullptr;
-                    if(material&&variants_.Add(material->featureMask))
-                        Log(LogLevel::Debug,localization.GetText("Rendering.MaterialVariant")+": "+se::VariantId(material->featureMask));
-                    found=frameMaterials.emplace(id,std::move(material)).first;report(diagnostics);
-                }
-                overrides.push_back(found->second);
-            }
             const auto first=meshes.size();
             auto drawPipeline=opaquePipeline;
             if(model->compressed&&compressedPipeline_)drawPipeline=*compressedPipeline_;
@@ -1018,7 +1136,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 if(!box)occlusionBoundsValid=false;
                 else for(auto index=first;index<meshes.size();++index)meshBounds.push_back(*box);
             }
-            for(auto index=first;index<meshes.size();++index){meshes[index].castsShadow=mesh.mesh.castsShadow;meshes[index].pbr.receivesShadow=mesh.mesh.receivesShadow;
+            for(auto index=first;index<meshes.size();++index){meshes[index].stableId=mesh.entity;meshes[index].castsShadow=mesh.mesh.castsShadow;meshes[index].pbr.receivesShadow=mesh.mesh.receivesShadow;
                 if(candidate.missing){meshes[index].texture=meshes[index].metallicRoughnessTexture;meshes[index].tint={1,0,1,1};meshes[index].unlit=true;}}
         }
         bounds_.EndFrame();drawStatistics_.boundsUpdates=bounds_.Updates();
@@ -1045,15 +1163,56 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             drawStatistics_.debugLines=frame.data->debugLines.size();
         }
         // G04.06：压缩纹理驻留必须在记录绘制前更新 SRV；超预算时降级最久未用的最细 mip。
-        if(models_.Bc1TexturesEnabled()||models_.Bc5NormalsEnabled())
+        if(models_.Bc1TexturesEnabled()||models_.Bc5NormalsEnabled()||models_.Bc7ColorsEnabled())
         {
             const auto residency=models_.UpdateTextureResidency(*device_);
             if(residency.degraded)
                 Log(LogLevel::Warning,localization.GetText("Rendering.TextureBudgetExceeded")+": "
                     +std::to_string(residency.loadedBytes)+"/"+std::to_string(residency.budgetBytes)+" B");
         }
-        drawStatistics_.draws=meshes.size();
-        drawStatistics_.instances=meshes.size();
+        // 在分桶之前统一设置逐绘制质量开关；实例批次保留同一帧设置。
+        if(frame.data)for(auto& draw:meshes)
+        {draw.pbr.multiscatter=frame.data->multiscatter;draw.pbr.specularAA=frame.data->specularAA;}
+        if(coverageFrame||shadingFrame)
+        {
+            auto kind=clusteredFrame?clusteredKind:cascadedFrame?
+                (featureEnvironment_||EnvironmentScene(scene_)?se::rhi::PipelineKind::CascadedEnvironmentMesh:
+                 BasicLitScene(scene_)&&!featureFullPbr_?se::rhi::PipelineKind::CascadedBasicLitMesh:se::rhi::PipelineKind::CascadedShadowedMesh):
+                featureEnvironment_||EnvironmentScene(scene_)?se::rhi::PipelineKind::EnvironmentMesh:
+                BasicLitScene(scene_)&&!featureFullPbr_?se::rhi::PipelineKind::BasicLitMesh:
+                BasicLitScene(scene_)||scene_==SandboxScene::Shadows?se::rhi::PipelineKind::ShadowedMesh:
+                ForwardScene(scene_)?se::rhi::PipelineKind::ForwardMesh:se::rhi::PipelineKind::PbrMesh;
+            const auto shaders=ResourceDirectory()/"Shaders";
+            for(auto& draw:casters)if(draw.alphaMode==se::MaterialAlphaMode::Mask)
+            {
+                const auto pipeline=surfacePipelines_.Load(*device_,shaders,se::rhi::PipelineKind::ShadowDepth,
+                    draw.alphaMode,!draw.skinPalette.empty());
+                if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
+                draw.pipeline=*pipeline;
+            }
+            std::vector<se::rhi::DrawIndexed> opaque;opaque.reserve(meshes.size());
+            for(auto draw:meshes)
+            {
+                if(draw.alphaMode!=se::MaterialAlphaMode::Opaque||shadingFrame)
+                {
+                    const bool skin=!draw.skinPalette.empty();auto materialKind=kind;
+                    // 与已有BasicLit蒙皮路径相同：蒙皮受光使用Full PBR技术。
+                    if(skin&&se::rhi::IsBasicLit(materialKind))
+                        materialKind=se::rhi::IsClustered(materialKind)?(se::rhi::IsCascaded(materialKind)?se::rhi::PipelineKind::ClusteredCascadedShadowedMesh:se::rhi::PipelineKind::ClusteredShadowedMesh):
+                            se::rhi::IsCascaded(materialKind)?se::rhi::PipelineKind::CascadedShadowedMesh:se::rhi::PipelineKind::ShadowedMesh;
+                    const auto pipeline=surfacePipelines_.Load(*device_,shaders,materialKind,draw.alphaMode,skin,shadowFilterFrame,
+                        draw.compressedVertices,models_.Bc5NormalsEnabled()&&!forward,shadingFrame);
+                    if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
+                    draw.pipeline=*pipeline;
+                }
+                if(draw.alphaMode==se::MaterialAlphaMode::Blend){draw.castsShadow=false;transparent.push_back(draw);}
+                else opaque.push_back(draw);
+            }
+            meshes=std::move(opaque);
+            if(!transparent.empty()&&(!camera_||!se::SortTransparentDraws(transparent,camera_->view)))return RenderResult::Failed;
+        }
+        drawStatistics_.draws=meshes.size()+transparent.size();
+        drawStatistics_.instances=meshes.size()+transparent.size();
         if(frame.data&&frame.data->sortOpaque&&!occlusionWanted){se::CpuScope sort(frame.profiler,"CPU.OpaqueSort");se::SortOpaqueDraws(meshes);}
         std::span<const se::PbrInstanceBatch> batches;
         if(instancing)
@@ -1122,7 +1281,35 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         {
             std::vector<se::AssetDiagnostic> diagnostics;
             auto lighting=se::PrepareForwardLighting(frame.data?std::span<const se::LightInstance>(frame.data->lights):std::span<const se::LightInstance>{},
-                frame.data?frame.data->exposure:1,frame.data?frame.data->skyColor:se::Vec3{},diagnostics);report(diagnostics);
+                frame.data?frame.data->exposure:1,frame.data?frame.data->skyColor:se::Vec3{},diagnostics,clusteredFrame);report(diagnostics);
+            if(frame.data)
+            {
+                lighting.gpuDriven=frame.data->gpuDriven||frame.data->meshletCulling||frame.data->gpuDrivenHiZ;
+                lighting.meshletCulling=frame.data->meshletCulling;
+                lighting.gpuDrivenHiZ=frame.data->gpuDrivenHiZ;
+            }
+            if(shadingFrame&&camera_&&frame.data)
+            {
+                std::shared_ptr<const se::RenderEnvironment> environment;
+                if(frame.data->assets&&!frame.data->environment.asset.empty())
+                    environment=environments_.Load(*frame.data->assets,frame.data->environment.asset,*device_,diagnostics);
+                shadingResources_.Prepare(*frame.data,*camera_,environment.get(),*device_,ResourceDirectory(),lighting.shading,diagnostics);
+                const auto available=[&](se::rhi::DrawIndexed& draw)
+                {
+                    if(lighting.shading.constants.probeOrigin.w<.5f)draw.layers.constants.sheen={};
+                    if(lighting.shading.constants.probeDimensions.w<.5f)draw.layers.constants.subsurface.x=0;
+                };
+                for(auto& draw:meshes)available(draw);for(auto& draw:transparent)available(draw);
+                lighting.shading.enabled=true;report(diagnostics);
+            }
+            if(clusteredFrame)
+            {
+                lighting.cluster.debug=frame.data->clusterDebug;
+                lighting.cluster.counterReadback=true;
+                lighting.cluster.view=camera_->view;
+                lighting.cluster.clipFromView=viewProjection*camera_->inverseView;
+                lighting.cluster.nearPlane=camera_->lens.nearPlane;lighting.cluster.farPlane=camera_->lens.farPlane;
+            }
             if(frame.data&&frame.data->sky.enabled)
             {
                 // W07：项目天空覆盖；太阳方向仍来自场景方向光，圆盘与品牌合成共用同一方向。
@@ -1188,7 +1375,10 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     if(!environment)result={se::rhi::Error::BackendFailure};
                     else environmentBindings=se::PrepareEnvironmentBindings(*environment,camera_.value_or(se::CameraSnapshot{}),frame.data?frame.data->environment.intensity:0,frame.data?frame.data->environment.yaw:0,diagnostics);
                 }
-                if(!se::PrepareDirectionalShadow(frame.data?frame.data->shadow:se::DirectionalShadowView{},lighting,shadows,diagnostics))result={se::rhi::Error::InvalidArgument};
+                auto view=frame.data?frame.data->shadow:se::DirectionalShadowView{};
+                view.filter.pcss=shadowFilterFrame;
+                if(!(cascadedFrame?se::PrepareDirectionalCascadeShadow(view,lighting,*camera_,shadows,diagnostics):
+                    se::PrepareDirectionalShadow(view,lighting,shadows,diagnostics)))result={se::rhi::Error::InvalidArgument};
                 else if(result)
                 {
                     std::optional<se::rhi::PostProcessSettings> settings;std::vector<se::rhi::OverlayQuad> overlays;
@@ -1202,29 +1392,32 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                             settings->lutRevision=lutFile_.Status().revision;
                         }
                         settings->exposureDeltaSeconds=static_cast<float>(std::clamp(frame.updateDeltaSeconds,0.0,0.5));
-                        // G14：TAA 抖动已进入 viewProjection；这里只传未抖动前的实际矩阵与历史有效性。
+                        // 深度和覆盖用本帧抖动投影；历史颜色位于固定像素网格，速度只包含真实运动。
                         settings->taa=taaEnabled_;
                         if(taaEnabled_)
                         {
-                            settings->taaCurrentClipFromWorld=viewProjection;
+                            settings->taaCurrentClipFromWorld=viewProjectionBase;
                             settings->taaPreviousClipFromWorld=previousViewProjection_;
                             settings->taaHistoryValid=previousViewProjectionValid_
                                 &&lastSurfaceWidth_==frame.surface.width&&lastSurfaceHeight_==frame.surface.height;
                         }
                         if(frame.data&&frame.data->referenceUiOverlays)overlays=se::PreparePostProcessOverlays(frame.data->ui,diagnostics);}
                     if(frameGraphEnabled_)
-                        result=se::RecordShadowedFrameGraph(*commands,lighting,shadows,*shadowPipeline_,*outputPipeline_,*skyPipeline_,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
-                            settings?&*settings:nullptr,settings?&pipelines:nullptr,overlays,cacheBindings,frameGraph_,frame.surface.width,frame.surface.height);
+                        result=se::RecordShadowedFrameGraph(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,*skyPipeline_,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
+                            settings?&*settings:nullptr,settings?&pipelines:nullptr,overlays,cacheBindings,frameGraph_,sceneWidth,sceneHeight,transparent,
+                            geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
                     else
-                        result=se::RecordShadowedFrame(*commands,lighting,shadows,*shadowPipeline_,*outputPipeline_,*skyPipeline_,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
-                            settings?&*settings:nullptr,settings?&pipelines:nullptr,overlays,cacheBindings);
+                        result=se::RecordShadowedFrame(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,*skyPipeline_,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
+                            settings?&*settings:nullptr,settings?&pipelines:nullptr,overlays,cacheBindings,transparent,
+                            geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
                 }
                 report(diagnostics);
             }
             else if(frameGraphEnabled_)
                 result=se::RecordForwardFrameGraph(*commands,lighting,*outputPipeline_,*skyPipeline_,meshes,cacheBindings,
-                    frameGraph_,frame.surface.width,frame.surface.height);
-            else result=se::RecordForwardFrame(*commands,lighting,*outputPipeline_,*skyPipeline_,meshes,cacheBindings);
+                    frameGraph_,sceneWidth,sceneHeight,transparent,geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
+            else result=se::RecordForwardFrame(*commands,lighting,*outputPipeline_,*skyPipeline_,meshes,cacheBindings,transparent,
+                geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
         }
         else
         {
@@ -1287,13 +1480,36 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if(result)result=device_->Resize(frame.surface.width,frame.surface.height);
     if(taaFrame&&result)
     {
-        previousViewProjection_=viewProjection;previousViewProjectionValid_=true;
+        previousViewProjection_=viewProjectionBase;previousViewProjectionValid_=true;
         lastSurfaceWidth_=frame.surface.width;lastSurfaceHeight_=frame.surface.height;
     }
     preparation.reset();
     se::rhi::CompletionToken token;
     se::rhi::Image capture;const bool requested=!captureOutput_.empty()&&!captured_&&frame.updateIndex==captureFrame_;
     if(result)result=device_->Submit(*commands,token,requested?&capture:nullptr);
+    if(result)
+    {
+        const auto indirect=device_->Stats().gpuDriven;
+        const std::string key="Rendering.GpuDrivenHiZUnavailable";
+        if(indirect.hzbRequested&&!indirect.hzbValid&&reportedDiagnostics_.insert(key).second)
+            Log(LogLevel::Warning,localization.GetText(key));
+    }
+    if(clusteredFrame&&result)
+    {
+        const auto cluster=device_->Stats().clustered;
+        if(cluster.valid)
+        {
+            const auto reportCluster=[&](const char* key,const std::string& shape)
+            {
+                if(reportedDiagnostics_.insert(std::string(key)+":"+shape).second)
+                    Log(LogLevel::Warning,localization.GetText(key)+": source="+std::to_string(cluster.sourceFrame)+", "+shape);
+            };
+            if(cluster.counters[6])reportCluster("Rendering.ClusterGlobalFallback","lights="+std::to_string(cluster.counters[0])
+                +", retained="+std::to_string(cluster.counters[7])+", requested="+std::to_string(cluster.counters[4])+", capacity="+std::to_string(cluster.counters[5]));
+            if(cluster.counters[2])reportCluster("Rendering.ClusterLocalTruncation","clusters="+std::to_string(cluster.counters[2])
+                +", dropped_references="+std::to_string(cluster.counters[3]));
+        }
+    }
     const float cpuMilliseconds=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-telemetryStart).count();
     telemetry_.EndFrame(Statistics(),static_cast<std::uint32_t>(drawStatistics_.draws),static_cast<std::uint32_t>(drawStatistics_.instances),static_cast<std::uint32_t>(frameTriangles_),cpuMilliseconds);
     auto completedTimings=device_->GpuTimingsSince(timingCursor_);
@@ -1367,11 +1583,109 @@ bool SandboxRenderer::UpdateLutStrip(const Localization& localization)
         +std::to_string(lutFile_.Status().size)+"^3 "+(highPrecision?"Rgba16F":"Rgba8"));
     return true;
 }
+bool SandboxRenderer::PrepareShadowFilterPipelines(bool clustered)
+{
+    auto& stored=shadowFilterPipelines_[clustered?1:0];if(stored.pbr&&stored.skinned)return true;
+    ClusterPipelines next;const auto shaders=ResourceDirectory()/"Shaders";
+    const auto create=[&](se::rhi::PipelineKind kind,const char* file,se::rhi::Pipeline& target,bool skin=false)
+    {
+        se::rhi::PipelineDescription description{kind,shaders/file,se::rhi::ShadowFilterBindingLayout(kind,skin)};
+        description.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+        if(skin){description.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;description.macros.push_back({"SE_SKINNED","1"});}
+        return bool(device_->CreatePipeline(description,target));
+    };
+    if(clustered)
+    {
+        if(!create(se::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"PcssClusteredCascadedShadowedForward.hlsl",next.pbr)
+            ||!create(se::rhi::PipelineKind::ClusteredCascadedBasicLitMesh,"PcssClusteredCascadedBasicLit.hlsl",next.basic)
+            ||!create(se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"PcssClusteredCascadedEnvironmentForward.hlsl",next.environment)
+            ||!create(se::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"PcssClusteredCascadedSkinnedForward.hlsl",next.skinned,true)
+            ||!create(se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"PcssClusteredCascadedSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
+    }
+    else
+    {
+        if(!create(se::rhi::PipelineKind::CascadedShadowedMesh,"PcssCascadedShadowedForward.hlsl",next.pbr)
+            ||!create(se::rhi::PipelineKind::CascadedBasicLitMesh,"PcssCascadedBasicLit.hlsl",next.basic)
+            ||!create(se::rhi::PipelineKind::CascadedEnvironmentMesh,"PcssCascadedEnvironmentForward.hlsl",next.environment)
+            ||!create(se::rhi::PipelineKind::CascadedShadowedMesh,"PcssCascadedSkinnedForward.hlsl",next.skinned,true)
+            ||!create(se::rhi::PipelineKind::CascadedEnvironmentMesh,"PcssCascadedSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
+    }
+    stored=std::move(next);return true;
+}
+
+bool SandboxRenderer::PrepareClusteredPipelines(std::size_t group)
+{
+    if(group>=clusteredPipelines_.size())return false;
+    auto& stored=clusteredPipelines_[group];if(stored.pbr&&stored.skinned)return true;
+    ClusterPipelines next;const auto shaders=ResourceDirectory()/"Shaders";
+    const auto create=[&](se::rhi::PipelineKind kind,const char* file,se::rhi::Pipeline& target,bool skin=false)
+    {
+        se::rhi::PipelineDescription description{kind,shaders/file,
+            skin?se::rhi::SkinnedClusteredLayoutVersion:se::rhi::ClusteredForwardLayoutVersion};
+        description.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+        if(skin){description.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;description.macros.push_back({"SE_SKINNED","1"});}
+        return bool(device_->CreatePipeline(description,target));
+    };
+    if(group==0)
+    {
+        if(!create(se::rhi::PipelineKind::ClusteredForwardMesh,"ClusteredForward.hlsl",next.pbr)
+            ||!create(se::rhi::PipelineKind::ClusteredForwardMesh,"ClusteredSkinnedForward.hlsl",next.skinned,true))return false;
+    }
+    else if(group==1)
+    {
+        if(!create(se::rhi::PipelineKind::ClusteredShadowedMesh,"ClusteredShadowedForward.hlsl",next.pbr)
+            ||!create(se::rhi::PipelineKind::ClusteredBasicLitMesh,"ClusteredBasicLit.hlsl",next.basic)
+            ||!create(se::rhi::PipelineKind::ClusteredEnvironmentMesh,"ClusteredEnvironmentForward.hlsl",next.environment)
+            ||!create(se::rhi::PipelineKind::ClusteredShadowedMesh,"ClusteredSkinnedShadowedForward.hlsl",next.skinned,true)
+            ||!create(se::rhi::PipelineKind::ClusteredEnvironmentMesh,"ClusteredSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
+    }
+    else
+    {
+        if(!create(se::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"ClusteredCascadedShadowedForward.hlsl",next.pbr)
+            ||!create(se::rhi::PipelineKind::ClusteredCascadedBasicLitMesh,"ClusteredCascadedBasicLit.hlsl",next.basic)
+            ||!create(se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"ClusteredCascadedEnvironmentForward.hlsl",next.environment)
+            ||!create(se::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"ClusteredCascadedSkinnedForward.hlsl",next.skinned,true)
+            ||!create(se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"ClusteredCascadedSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
+    }
+    stored=std::move(next);return true;
+}
+
+bool SandboxRenderer::PrepareCascadedPipelines()
+{
+    if(cascadedPbr_&&cascadedBasic_&&cascadedEnvironment_&&cascadedSkinned_&&cascadedSkinnedEnvironment_&&cascadedOutput_)return true;
+    const auto shaders=ResourceDirectory()/"Shaders";
+    se::rhi::Pipeline pbr,basic,environment,skinned,skinnedEnvironment,output;
+    const auto create=[&](se::rhi::PipelineKind kind,const char* file,se::rhi::Pipeline& target,bool skin=false)
+    {
+        se::rhi::PipelineDescription description{kind,shaders/file,
+            skin?se::rhi::SkinnedCascadedLayoutVersion:se::rhi::CascadedShadowLayoutVersion};
+        description.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+        if(skin){description.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;description.macros.push_back({"SE_SKINNED","1"});}
+        return bool(device_->CreatePipeline(description,target));
+    };
+    if(!create(se::rhi::PipelineKind::CascadedShadowedMesh,"CascadedShadowedForward.hlsl",pbr)
+        ||!create(se::rhi::PipelineKind::CascadedBasicLitMesh,"CascadedBasicLit.hlsl",basic)
+        ||!create(se::rhi::PipelineKind::CascadedEnvironmentMesh,"CascadedEnvironmentForward.hlsl",environment)
+        ||!create(se::rhi::PipelineKind::CascadedShadowedMesh,"CascadedSkinnedForward.hlsl",skinned,true)
+        ||!create(se::rhi::PipelineKind::CascadedEnvironmentMesh,"CascadedSkinnedEnvironmentForward.hlsl",skinnedEnvironment,true))return false;
+    se::rhi::PipelineDescription final{se::rhi::PipelineKind::CascadedShadowOutput,shaders/"CascadedShadowOutput.hlsl",
+        outputLutScene_?se::rhi::OutputLutLayoutVersion:se::rhi::CascadedShadowLayoutVersion};
+    if(outputLutScene_)final.macros.push_back({"SE_OUTPUT_LUT","1"});
+    if(!device_->CreatePipeline(final,output))return false;
+    cascadedPbr_=std::move(pbr);cascadedBasic_=std::move(basic);cascadedEnvironment_=std::move(environment);
+    cascadedSkinned_=std::move(skinned);cascadedSkinnedEnvironment_=std::move(skinnedEnvironment);cascadedOutput_=std::move(output);return true;
+}
+
 void SandboxRenderer::Shutdown() noexcept
 {
     hlodStreamer_.Cancel(); // 先停止后台读取与结果发布，再排空和释放 GPU。
     if(device_&&!profileOutput_.empty())
-        try{std::string telemetryError;if(!telemetry_.ExportCsv(profileOutput_/"telemetry.csv",telemetryError))profileExportFailed_=true;
+        try{std::string telemetryError;
+            if(!device_->WaitIdle())profileExportFailed_=true;
+            const auto tail=device_->GpuTimingsSince(timingCursor_);
+            for(const auto& timing:tail)timingCursor_=std::max(timingCursor_,timing.submission);
+            telemetry_.ObserveTimings(tail);
+            if(!telemetry_.ExportCsv(profileOutput_/"telemetry.csv",telemetryError))profileExportFailed_=true;
             if(!device_->ExportGpuTimingsCsv(profileOutput_/"gpu.csv")
             ||(ForwardScene(scene_)&&!device_->ExportGpuPassTimingsCsv(profileOutput_/"gpu-passes.csv")))profileExportFailed_=true;}
         catch(...){profileExportFailed_=true;}
@@ -1380,6 +1694,11 @@ void SandboxRenderer::Shutdown() noexcept
     if(editorGui_)editorGui_->Clear();
     editorGui_.reset();editorTarget_.reset();
     gameUi_.Clear();
+    cascadedPbr_.reset();cascadedBasic_.reset();cascadedEnvironment_.reset();cascadedSkinned_.reset();cascadedSkinnedEnvironment_.reset();cascadedOutput_.reset();
+    clusteredPipelines_={};
+    shadowFilterPipelines_={};
+    surfacePipelines_.Clear();
+    shadingResources_.Clear();meshletSubmission_=false;
     featureEnvironmentPipeline_.reset();featureEnvironmentSky_.reset();featureForwardOutput_.reset();featurePbrPipeline_.reset();featureEnvironment_=featureForward_=featureFullPbr_=false;
     cube_.reset();sphere_.reset();pipeline_.reset();instancedPipeline_.reset();forwardInstancedPipeline_.reset();compressedPipeline_.reset();instances_.Clear();outputPipeline_.reset();skyPipeline_.reset();shadowPipeline_.reset();skinnedPipeline_.reset();skinnedShadowPipeline_.reset();skinPaletteStorage_.clear();models_.Clear();models_.SetLodLevels(0);environments_.Clear();post_.Clear();bounds_.Clear();reportedDiagnostics_.clear();device_.reset();
     camera_.reset();

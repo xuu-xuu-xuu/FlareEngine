@@ -6,6 +6,7 @@
 #include "FunctionLayer/GameUI/UiTree.h"
 #include "PlatformLayer/Graphics/Rhi.h"
 #include "ResourceLayer/Assets/MaterialDocument.h"
+#include "ResourceLayer/Assets/LtcBake.h"
 #include <functional>
 #include <filesystem>
 #include <Windows.h>
@@ -19,6 +20,7 @@ class AssetStore;
 class Profiler;
 struct MeshInstance { StableEntityId entity; Mat4 world; MeshComponent mesh; std::vector<Mat4> skinPalette; };
 struct LightInstance { StableEntityId entity; Mat4 world; LightComponent light; };
+struct RectangleLightInstance {StableEntityId entity=0;RectangleEmitter emitter;};
 struct DirectionalShadowView
 {
     Vec3 center{};
@@ -26,6 +28,12 @@ struct DirectionalShadowView
     std::uint32_t resolution=1024;
     float depthBias=0.0008f,slopeBias=0.002f,normalBias=0.015f;
     bool enabled=true,pcf=true,preview=false;
+    // RG104-03：独立默认关闭；级数下降时保留近级，2/1 级分别止于约 35/10 m。
+    bool cascades=false,cascadeDebug=false;
+    std::uint32_t cascadeCount=3,cascadeResolution=2048;
+    float cascadeDistance=100;
+    float cascadeDepthBias=.00003f,cascadeSlopeBias=.0002f,cascadeNormalBias=.01f;
+    rhi::ShadowFilterSettings filter;
 };
 struct EnvironmentView {std::string asset;float intensity=1,yaw=0;};
 // W07：项目对程序化天空的可选覆盖。关闭时沿用引擎默认天空，不改动环境贴图路径。
@@ -42,6 +50,7 @@ struct FrameData
     std::vector<CameraInstance> cameras;
     std::optional<StableEntityId> cameraBinding; // 每视口显式绑定；空时按有效 primary 的稳定 ID 选择。
     std::vector<LightInstance> lights;
+    std::vector<RectangleLightInstance> rectangleLights;
     std::vector<UiVisual> ui;
     bool referenceUiOverlays=false; // 仅旧后处理基准使用固定矩形路径，普通控件使用 GameUIRenderer。
     std::vector<DebugLine> debugLines;
@@ -86,6 +95,13 @@ struct FrameData
     std::filesystem::path colorLutPath;
     bool frustumCulling=false; // 只裁剪主相机不透明列表，阴影投射列表独立保留。
     bool sortOpaque=false,cacheOpaqueBindings=false; // 两项独立，默认保留原始提交路径。
+    bool multiscatter=false,specularAA=false; // RG104：只影响相应 PBR 路径。
+    bool bc7Color=false; // 显式颜色压缩，数据纹理格式保持独立。
+    bool depthNormals=false,gtao=false,contactShadows=false;
+    float aoRadius=.6f,aoIntensity=.8f,contactLength=.5f;
+    bool diffuseSh=false,localDiffuseSh=false,gpuDriven=false,meshletCulling=false,gpuDrivenHiZ=false;
+    std::string diffuseProbeAsset; // 项目资产ID；无局部资产时只能使用全局环境SH。
+    bool clusteredLighting=false,clusterDebug=false; // RG104-07：默认保留旧8点光路径。
     bool instancing=false; // 当前仅 PBR/Benchmark，单例也使用实例管线。
 };
 void BuildFrameData(const World& world,const UiTree* ui,const PhysicsWorld* physics,FrameData& output);

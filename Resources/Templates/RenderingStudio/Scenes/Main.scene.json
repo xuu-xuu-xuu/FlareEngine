@@ -1,0 +1,108 @@
+{
+  "format": "SelfEngine.Scene",
+  "version": 2,
+  "retiredIds": [],
+  "entities": [
+    {
+      "id": "1", "name": "主相机", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [0, 8, 12], "rotation": [-0.27154694, 0, 0, 0.96242520], "scale": [1, 1, 1]}},
+        {"type": "2", "version": 1, "enabled": true, "properties": {"fov": 1.0471976, "near": 0.1, "far": 200, "primary": true}}
+      ]
+    },
+    {
+      "id": "2", "name": "暖色主光", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [0, 0, 0], "rotation": [-0.36964381, -0.23911762, -0.09904576, 0.89239910], "scale": [1, 1, 1]}},
+        {"type": "4", "version": 1, "enabled": true, "properties": {"color": [1, 0.94, 0.84], "intensity": 3, "type": false, "range": 10}}
+      ]
+    },
+    {
+      "id": "3", "name": "冷色矩形补光", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [0, 4.5, 4], "rotation": [0, 1, 0, 0], "scale": [1, 1, 1]}},
+        {"type": "1179385862", "version": 1, "enabled": true, "properties": {"color": [0.7, 0.82, 1], "radiance": 7, "width": 5, "height": 2}}
+      ]
+    },
+    {
+      "id": "4", "name": "渲染设置", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}},
+        {"type": "1179385859", "version": 1, "enabled": true, "properties": {
+          "fullPbr": true, "multiscatter": true, "specularAA": true,
+          "exposure": 1, "post": true, "aces": true, "bloom": true, "bloomThreshold": 1.5, "bloomStrength": 0.025,
+          "fxaa": true, "taa": false, "supersample4x": false, "autoExposure": false,
+          "shadowEnabled": true, "shadowPcf": true, "cascades": true, "cascadeCount": 3, "cascadeResolution": 2048,
+          "cascadeDistance": 60, "cascadeBias": 0.00003, "cascadeSlopeBias": 0.0002, "cascadeNormalBias": 0.01,
+          "depthNormals": true, "gtao": true, "aoRadius": 0.45, "aoIntensity": 0.65, "contactShadows": true, "contactLength": 0.3,
+          "frustumCulling": true, "sortOpaque": true, "cacheBindings": true,
+          "diffuseSh": true, "localDiffuseSh": false, "diffuseProbe": "", "gpuDriven": false, "meshletCulling": false,
+          "instancing": false, "occlusion": false, "lod": false, "hlod": false, "frameGraph": false
+        }}
+      ]
+    },
+    {
+      "id": "5", "name": "地面", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [0, -0.12, -0.5], "rotation": [0, 0, 0, 1], "scale": [16, 0.24, 11]}},
+        {"type": "3", "version": 1, "enabled": true, "properties": {"asset": "00000000000000000000000000000001", "materials": ["71000000000000000000000000000007"], "castsShadow": true, "receivesShadow": true}}
+      ]
+    },
+    {
+      "id": "6", "name": "工作室环境", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}},
+        {"type": "1179385860", "version": 1, "enabled": true, "properties": {"asset": "71000000000000000000000000000009", "intensity": 0.6, "yaw": 0}}
+      ]
+    },
+    {
+      "id": "10", "name": "01 清漆", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [-3, 0.9, 1.8], "rotation": [0, 0, 0, 1], "scale": [1.8, 1.8, 1.8]}},
+        {"type": "3", "version": 1, "enabled": true, "properties": {"asset": "00000000000000000000000000000002", "materials": ["71000000000000000000000000000001"], "castsShadow": true, "receivesShadow": true}}
+      ]
+    },
+    {
+      "id": "11", "name": "02 绒布", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [0, 0.9, 1.8], "rotation": [0, 0, 0, 1], "scale": [1.8, 1.8, 1.8]}},
+        {"type": "3", "version": 1, "enabled": true, "properties": {"asset": "00000000000000000000000000000002", "materials": ["71000000000000000000000000000002"], "castsShadow": true, "receivesShadow": true}}
+      ]
+    },
+    {
+      "id": "12", "name": "03 拉丝金属", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [3, 0.9, 1.8], "rotation": [0, 0, 0, 1], "scale": [1.8, 1.8, 1.8]}},
+        {"type": "3", "version": 1, "enabled": true, "properties": {"asset": "00000000000000000000000000000002", "materials": ["71000000000000000000000000000003"], "castsShadow": true, "receivesShadow": true}}
+      ]
+    },
+    {
+      "id": "13", "name": "04 次表面漫反射", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [-3, 0.9, -2.8], "rotation": [0, 0, 0, 1], "scale": [1.8, 1.8, 1.8]}},
+        {"type": "3", "version": 1, "enabled": true, "properties": {"asset": "00000000000000000000000000000002", "materials": ["71000000000000000000000000000004"], "castsShadow": true, "receivesShadow": true}}
+      ]
+    },
+    {
+      "id": "14", "name": "05 裁切覆盖", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [0, 0.9, -2.8], "rotation": [0, 0, 0, 1], "scale": [1.8, 1.8, 1.8]}},
+        {"type": "3", "version": 1, "enabled": true, "properties": {"asset": "00000000000000000000000000000002", "materials": ["71000000000000000000000000000005"], "castsShadow": true, "receivesShadow": true}}
+      ]
+    },
+    {
+      "id": "15", "name": "06 半透明混合", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [3, 0.9, -2.8], "rotation": [0, 0, 0, 1], "scale": [1.8, 1.8, 1.8]}},
+        {"type": "3", "version": 1, "enabled": true, "properties": {"asset": "00000000000000000000000000000002", "materials": ["71000000000000000000000000000006"], "castsShadow": false, "receivesShadow": true}}
+      ]
+    },
+    {
+      "id": "16", "name": "透明球后方参照块", "enabled": true, "parent": null,
+      "components": [
+        {"type": "1", "version": 1, "enabled": true, "properties": {"position": [3, 0.55, -4.1], "rotation": [0, 0, 0, 1], "scale": [0.75, 1.1, 0.5]}},
+        {"type": "3", "version": 1, "enabled": true, "properties": {"asset": "00000000000000000000000000000001", "materials": ["71000000000000000000000000000007"], "castsShadow": true, "receivesShadow": true}}
+      ]
+    }
+  ]
+}

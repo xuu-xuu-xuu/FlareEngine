@@ -7,6 +7,7 @@
 #include "CoreLayer/Math/Projection.h"
 #include "PlatformLayer/Graphics/Rhi.h"
 #include "TextureResidency.h"
+#include "MeshletSubmission.h"
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -21,12 +22,16 @@ struct PbrRenderMaterial
     float metallic=0,roughness=1,normalScale=1;
     bool normalMapping=false,doubleSided=false;
     std::uint32_t featureMask=0; // G02：由贴图槽推导，供变体清单与后续 PSO 选择。
+    MaterialAlphaMode alphaMode=MaterialAlphaMode::Opaque;
+    float alphaCutoff=.5f;
     // 材质引用的用户 PBR 产物；空表示使用调用方传入的默认 PBR Pipeline。
     rhi::Pipeline pipeline;
+    rhi::ShadingMaterialBindings layers;
+    std::array<rhi::Texture,6> layerTextures{}; // b6 六贴图的自有句柄，顺序与 t19..24 相同。
 };
 // W03：skinned 表示顶点缓冲是 80 字节 v3 布局（rhi::SkinnedVertex），
 // skinJointCount 是资产的关节数，用于校验调色板大小；静态网格保持 48 字节参考布局。
-struct StaticRenderMesh {rhi::Buffer vertices,indices;std::vector<rhi::Buffer> lodIndices;std::shared_ptr<const LodChain> lod;rhi::Texture texture;std::shared_ptr<const PbrRenderMaterial> material;std::uint32_t indexCount=0;std::uint32_t vertexLayoutVersion=rhi::VertexLayoutVersionLegacy;Vec3 quantizationMinimum{};float quantizationExtent=1;bool skinned=false;std::uint32_t skinJointCount=0;};
+struct StaticRenderMesh {rhi::Buffer vertices,indices;std::vector<rhi::Buffer> lodIndices;std::shared_ptr<const LodChain> lod;rhi::Texture texture;std::shared_ptr<const PbrRenderMaterial> material;std::uint32_t indexCount=0;std::uint32_t vertexLayoutVersion=rhi::VertexLayoutVersionLegacy;Vec3 quantizationMinimum{};float quantizationExtent=1;bool skinned=false;std::uint32_t skinJointCount=0;Vec3 localCenter{};Aabb localBounds;std::shared_ptr<const MeshletSubmission> meshlets;std::vector<rhi::GeometryCluster> geometryClusters;};
 void ConfigurePbrMaterial(const MaterialData* material,PbrRenderMaterial& output,
     std::string_view name,std::vector<AssetDiagnostic>& diagnostics);
 struct StaticRenderModel
@@ -58,6 +63,7 @@ public:
     std::size_t ModelCount() const noexcept { return models_.size(); }
     // 改变离线层数前由调用方等待 GPU；只失效模型派生缓存，保持资产源不变。
     void SetLodLevels(std::uint32_t levels){if(lodLevels_!=levels){lodLevels_=levels;models_.clear();attempted_.clear();}}
+    void SetMeshletSubmissionEnabled(bool enabled){if(meshletSubmission_!=enabled){meshletSubmission_=enabled;models_.clear();attempted_.clear();}}
     void SetMaterialPipelineKind(rhi::PipelineKind kind){if(materialKind_!=kind){materialKind_=kind;materials_.clear();}}
     void SetCustomMaterialPipelinesEnabled(bool enabled){if(customMaterialPipelines_!=enabled){customMaterialPipelines_=enabled;materials_.clear();}}
     // G04：压缩派生纹理。默认关闭保持 RGBA8；目录非空时读写 .sebc 跨进程缓存。
@@ -67,6 +73,10 @@ public:
     bool Bc1TexturesEnabled() const noexcept {return bc1Textures_;}
     bool Bc1DataTexturesEnabled() const noexcept {return bc1DataTextures_;}
     bool Bc5NormalsEnabled() const noexcept {return bc5Normals_;}
+    // BC7只用于颜色；显式开启，BC1/未压缩与BC4/5数据槽仍可独立保留。
+    // 切换前由调用方排空GPU；保留派生磁盘目录，按格式/编码器键失效。
+    void EnableBc7Colors(bool enabled,std::filesystem::path bakeDirectory={});
+    bool Bc7ColorsEnabled() const noexcept {return bc7Colors_;}
     std::size_t BakedTextureCount() const noexcept {return bakeCache_.Count();}
     std::uint64_t BakedTextureBytes() const noexcept {return bakeCache_.Bytes();}
     std::uint64_t CompressedUploads() const noexcept {return compressedUploads_;}
@@ -78,7 +88,7 @@ public:
     ResidencyUpdate UpdateTextureResidency(rhi::Device& device,std::uint64_t uploadBudgetBytes=24ull*1024*1024);
     const TextureResidency& Residency() const noexcept {return residency_;}
 private:
-    enum class TextureRole { Color, Normal, Data };
+    enum class TextureRole { Color, Normal, Data, CoverageColor, LayerColor, LayerData };
     struct TextureEntry
     {
         std::weak_ptr<const rhi::TextureHandle> handle;
@@ -98,18 +108,20 @@ private:
     struct MaterialRevision
     {
         std::shared_ptr<const MaterialDocument> source;
-        std::array<std::shared_ptr<const ImageData>,3> images;
+        std::array<std::shared_ptr<const ImageData>,9> images;
         std::shared_ptr<const PbrRenderMaterial> gpu;
         std::string previewKey;
         std::string shaderKey; // 用户产物内容 SHA-256；空表示默认 PBR。
     };
     bool pbr_=false;
+    bool meshletSubmission_=false;
     bool customMaterialPipelines_=true;
     rhi::PipelineKind materialKind_=rhi::PipelineKind::PbrMesh;
     std::uint32_t lodLevels_=0;
     bool bc1Textures_=false;
     bool bc1DataTextures_=false;
     bool bc5Normals_=false;
+    bool bc7Colors_=false;
     std::uint64_t compressedUploads_=0;
     TextureBakeCache bakeCache_;
     TextureResidency residency_{512ull*1024*1024};
@@ -133,5 +145,5 @@ void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
     rhi::PipelineHandle skinPipeline={});
 void AppendShadowModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,std::vector<rhi::DrawIndexed>& output,
     std::uint32_t lodLevel=0,std::span<const std::byte> skinPalette={},std::uint32_t skinJointCount=0,
-    rhi::PipelineHandle skinPipeline={});
+    rhi::PipelineHandle skinPipeline={},std::span<const std::shared_ptr<const PbrRenderMaterial>> overrides={});
 }

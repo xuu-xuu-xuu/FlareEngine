@@ -36,4 +36,20 @@ bool LightClusterZSlice(float viewDepth,float nearPlane,float farPlane,std::uint
 bool LightClusterIndex(float ndcX,float ndcY,float viewDepth,float nearPlane,float farPlane,std::uint32_t& index);
 // 容量溢出的回退：把所有灯放入每个集群（全局灯列表）。
 void FillLightClustersGlobal(std::uint32_t lightCount,LightClusterData& output);
+
+// G09 GPU 路径的独立有界 CPU 参考。indices 始终指向调用者的灯数组，
+// rawCounts 保留相交原数；局部截断和整表容量溢出分别留证，不伪装成无损。
+struct BoundedLightClusterData
+{
+    LightClusterData table;
+    std::vector<std::uint32_t> rawCounts,fallbackIndices;
+    std::uint32_t truncatedClusters=0;
+    std::uint64_t droppedReferences=0,requestedIndices=0;
+};
+// 最多256灯；稳定ID必须非零且唯一。每簇按到视空间 AABB 中心的平方距离排序，
+// 等距按稳定ID。超全局容量时表为空、overflow=true，fallbackIndices为全局稳定前8。
+// 失败保留 output；capacity=0 使用65536；maximumPerCluster只接受1..32。
+bool BuildBoundedLightClusters(std::span<const rhi::PointLight> lights,std::span<const std::uint64_t> stableIds,
+    const LightClusterProjection& matrices,float nearPlane,float farPlane,BoundedLightClusterData& output,
+    std::uint32_t capacity=LightClusterCapacity,std::uint32_t maximumPerCluster=32);
 }

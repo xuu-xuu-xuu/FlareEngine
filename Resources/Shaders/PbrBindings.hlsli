@@ -12,7 +12,7 @@ cbuffer PbrConstants : register(b0)
     float4 parameters; // metallic、roughness、normalScale、世界线性行列式符号。
     float4 options; // normalMapping、unlit、doubleSided；w 为 receivesShadow，G05.08 起非整数时表示 LOD dither。
     float4 look; // W06：x 模式（0 基础色/1 白模/2 Toon），y 混合，z Toon 分档，w 边缘强度。
-    float4 skin; // W03：x 调色板字节偏移，y 关节数。空缓冲时静态绘制。
+    float4 skin; // xy：W03 调色板字节偏移/关节数；zw：IBL 多散射/法线镜面 AA 开关，旧绘制为 0。
 };
 Texture2D<float4> baseColorMap : register(t0);
 Texture2D<float4> normalMap : register(t1);
@@ -21,7 +21,8 @@ SamplerState materialSampler : register(s0);
 float3 UnitVector(float3 value,float3 fallback)
 {
     float squared=dot(value,value);
-    return squared>1e-12&&isfinite(squared)?value*rsqrt(squared):fallback;
+    // 显式有限范围也能处理 NaN/Inf，避免 FXC 在常量向量调用处将 isfinite 诊断升级为错误。
+    return squared>1e-12&&squared<=3.402823466e38?value*rsqrt(squared):fallback;
 }
 // G05.08：与 CPU LodSelect::Bayer4x4Threshold 完全一致的 4×4 Bayer 阈值（(index+0.5)/16）。
 float LodBayerThreshold(uint2 pixel)
@@ -33,6 +34,16 @@ float3 OutputSrgb(float3 color)
 {
     float3 value=saturate(color);
     return lerp(value*12.92,1.055*pow(value,1.0/2.4)-0.055,step(0.0031308,value));
+}
+// 屏幕空间法线方差近似：将过滤核并入 GGX 的 alpha^2（感知粗糙度的四次方）。
+// 系数 0.15、核阈值 0.2^2 限制边界导数误差；不是完整 Toksvig/LEAN 资产管线。
+// point 法线采样在 <=1 texel/px 已被分辨，不扩大近景高光；1..2 texel/px 连续过渡。
+float FilterSpecularRoughness(float rough,float3 normalDx,float3 normalDy,float footprint)
+{
+    float variance=0.15*(dot(normalDx,normalDx)+dot(normalDy,normalDy));
+    float kernel=min(2.0*variance,0.04)*smoothstep(1.0,2.0,footprint);
+    float alpha=rough*rough;
+    return sqrt(sqrt(saturate(alpha*alpha+kernel)));
 }
 float3 DirectBrdf(float3 color,float metal,float rough,float3 n,float3 v,float3 l)
 {

@@ -7,7 +7,7 @@
 namespace se
 {
 rhi::ForwardLighting PrepareForwardLighting(std::span<const LightInstance> lights,float exposure,Vec3 sky,
-    std::vector<AssetDiagnostic>& diagnostics)
+    std::vector<AssetDiagnostic>& diagnostics,bool clustered)
 {
     rhi::ForwardLighting frame;bool clamped=false;
     const auto limited=[&](double value,double low,double high){
@@ -32,36 +32,80 @@ rhi::ForwardLighting PrepareForwardLighting(std::span<const LightInstance> light
         }
         else if(light.type==LightType::Point)
         {
-            if(++points>rhi::MaximumPointLights)continue;
-            auto& point=frame.points[frame.pointCount++];const auto position=TransformPoint(instance->world,{});
+            ++points;if(points>(clustered?256:rhi::MaximumPointLights))continue;
+            rhi::PointLight point;const auto position=TransformPoint(instance->world,{});
             point.position={limited(position.x,-1e6,1e6),limited(position.y,-1e6,1e6),limited(position.z,-1e6,1e6)};
             point.radiance=radiance;point.range=limited(light.range,0.05,10000);
+            if(frame.pointCount<rhi::MaximumPointLights)frame.points[frame.pointCount++]=point;
+            if(clustered){frame.cluster.lights.push_back(point);frame.cluster.ids.push_back(instance->entity);}
         }
         else asset_io::Diagnostic(diagnostics,"Rendering.LightInvalid",std::to_string(instance->entity),true);
     }
-    if(directional>1||points>rhi::MaximumPointLights)asset_io::Diagnostic(diagnostics,"Rendering.LightLimit",std::to_string(directional)+"/"+std::to_string(points),true);
+    if(directional>1||(!clustered&&points>rhi::MaximumPointLights))asset_io::Diagnostic(diagnostics,"Rendering.LightLimit",std::to_string(directional)+"/"+std::to_string(points),true);
+    if(clustered&&points>256)asset_io::Diagnostic(diagnostics,"Rendering.ClusterLightLimit",std::to_string(points),true);
+    frame.cluster.enabled=clustered;
     if(clamped)asset_io::Diagnostic(diagnostics,"Rendering.LightClamped",{},true);return frame;
 }
+namespace
+{
+bool NeedsGeometry(const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion)
+{return (geometry&&geometry->enabled)||(occlusion&&(occlusion->gtao||occlusion->contactShadows));}
+rhi::Result ConfigureGeometry(rhi::CommandContext& commands,const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion)
+{
+    if(NeedsGeometry(geometry,occlusion))
+    {auto result=commands.ConfigureDepthNormals({true});if(!result)return result;}
+    if(occlusion&&(occlusion->gtao||occlusion->contactShadows))return commands.ConfigureScreenSpaceOcclusion(*occlusion);
+    return {};
+}
+rhi::Result RecordGeometry(rhi::CommandContext& commands,const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion)
+{
+    rhi::Result result;
+    if(NeedsGeometry(geometry,occlusion))
+    {
+        result=commands.BeginPass({rhi::PassKind::DepthNormals,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthWrite,"DepthNormals"});
+        if(result)result=commands.EndPass();
+    }
+    if(result&&occlusion&&(occlusion->gtao||occlusion->contactShadows))
+    {
+        result=commands.BeginPass({rhi::PassKind::AmbientOcclusion,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::None,"AmbientOcclusion",rhi::ResourceUse::DepthRead});
+        if(result)result=commands.EndPass();
+    }
+    return result;
+}
+rhi::Result RecordTransparentPass(rhi::CommandContext& commands,std::span<const rhi::DrawIndexed> draws)
+{
+    if(draws.empty())return {};
+    auto result=commands.BeginPass({rhi::PassKind::Transparent,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthRead,"Transparent",rhi::ResourceUse::ColorRead});
+    if(result)for(const auto& draw:draws){result=commands.Draw(draw);if(!result)break;}
+    if(result)result=commands.EndPass();return result;
+}
+}
 rhi::Result RecordForwardFrame(rhi::CommandContext& commands,const rhi::ForwardLighting& lighting,
-    rhi::PipelineHandle output,rhi::PipelineHandle sky,std::span<const rhi::DrawIndexed> draws,bool cacheBindings)
+    rhi::PipelineHandle output,rhi::PipelineHandle sky,std::span<const rhi::DrawIndexed> draws,bool cacheBindings,
+    std::span<const rhi::DrawIndexed> transparent,const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion)
 {
     auto result=commands.ConfigureForward(lighting,output,sky);
+    if(result)result=ConfigureGeometry(commands,geometry,occlusion);
     if(result)result=commands.BeginPass({rhi::PassKind::Clear,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthWrite,"Clear"});
     if(result)result=commands.EndPass();
     if(result)result=commands.BeginPass({rhi::PassKind::Sky,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::None,"Sky"});
     if(result)result=commands.EndPass();
+    if(result)result=RecordGeometry(commands,geometry,occlusion);
     if(result)result=commands.BeginPass({rhi::PassKind::Opaque,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthWrite,"Opaque",rhi::ResourceUse::None,cacheBindings});
     if(result)for(const auto& draw:draws){result=commands.Draw(draw);if(!result)break;}
     if(result)result=commands.EndPass();
+    if(result)result=RecordTransparentPass(commands,transparent);
     if(result)result=commands.BeginPass({rhi::PassKind::Output,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::None,"Output",rhi::ResourceUse::ColorRead});
     if(result)result=commands.EndPass();if(result)result=commands.Close();return result;
 }
 rhi::Result RecordShadowedFrame(rhi::CommandContext& commands,const rhi::ForwardLighting& lighting,
     const rhi::ShadowSettings& shadows,rhi::PipelineHandle depth,rhi::PipelineHandle output,rhi::PipelineHandle sky,
     std::span<const rhi::DrawIndexed> visible,std::span<const rhi::DrawIndexed> casters,const rhi::EnvironmentBindings* environment,
-    const rhi::PostProcessSettings* post,const rhi::PostProcessPipelines* postPipelines,std::span<const rhi::OverlayQuad> overlays,bool cacheBindings)
+    const rhi::PostProcessSettings* post,const rhi::PostProcessPipelines* postPipelines,std::span<const rhi::OverlayQuad> overlays,bool cacheBindings,
+    std::span<const rhi::DrawIndexed> transparent,const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion)
 {
     auto result=commands.ConfigureForward(lighting,output,sky);if(result)result=commands.ConfigureShadows(shadows,depth);
+    if(result)result=ConfigureGeometry(commands,geometry,occlusion);
     if(result&&environment)result=commands.ConfigureEnvironment(*environment);
     if(result&&post){if(!postPipelines)return {rhi::Error::InvalidArgument};result=commands.ConfigurePostProcess(*post,*postPipelines);}
     if(result)result=commands.BeginPass({rhi::PassKind::Clear,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthWrite,"Clear"});
@@ -72,9 +116,11 @@ rhi::Result RecordShadowedFrame(rhi::CommandContext& commands,const rhi::Forward
     if(result)result=commands.EndPass();
     if(result)result=commands.BeginPass({rhi::PassKind::Sky,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::None,"Sky"});
     if(result)result=commands.EndPass();
+    if(result)result=RecordGeometry(commands,geometry,occlusion);
     if(result)result=commands.BeginPass({rhi::PassKind::Opaque,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthWrite,"Opaque",rhi::ResourceUse::DepthRead,cacheBindings});
     if(result)for(const auto& draw:visible){result=commands.Draw(draw);if(!result)break;}
     if(result)result=commands.EndPass();
+    if(result)result=RecordTransparentPass(commands,transparent);
     if(result&&post)result=RecordPostProcessPasses(commands,*post,overlays);
     if(result)result=commands.BeginPass({rhi::PassKind::Output,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::None,"Output",rhi::ResourceUse::ColorRead});
     if(result)result=commands.EndPass();if(result)result=commands.Close();return result;
@@ -84,7 +130,7 @@ namespace
 // G13：执行体编号只在本文件内解释；Graph 本身只保存数字。
 enum class GraphBody : std::uint32_t
 {
-    Clear=1,Shadow,Sky,Opaque,BloomExtract,BloomHorizontal,BloomVertical,ToneMap,Fxaa,Ui,Output
+    Clear=1,Shadow,Sky,Opaque,BloomExtract,BloomHorizontal,BloomVertical,ToneMap,Fxaa,Ui,Output,Transparent,DepthNormals,AmbientOcclusion
 };
 std::uint32_t AddGraphPass(FrameGraph& graph,std::string_view name,rhi::PassKind kind,
     rhi::ResourceUse color,rhi::ResourceUse depthUse,rhi::ResourceUse input,bool cacheBindings,
@@ -92,13 +138,29 @@ std::uint32_t AddGraphPass(FrameGraph& graph,std::string_view name,rhi::PassKind
 {
     return graph.AddPass({name,kind,color,depthUse,input,cacheBindings,sideEffect,static_cast<std::uint32_t>(body)});
 }
+std::uint32_t AddGeometryGraph(FrameGraph& graph,std::uint32_t width,std::uint32_t height,
+    const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion,std::uint32_t& geometryDepth)
+{
+    if(!NeedsGeometry(geometry,occlusion))return FrameGraphInvalid;
+    const auto depth=graph.AddTexture("PrepassDepth",{width,height,1,rhi::TextureFormat::Rgba8,true});
+    geometryDepth=depth;
+    const auto normals=graph.AddTexture("GeometricNormals",{width,height,1,rhi::TextureFormat::Rg16Float});
+    const auto prepass=AddGraphPass(graph,"DepthNormals",rhi::PassKind::DepthNormals,rhi::ResourceUse::ColorWrite,
+        rhi::ResourceUse::DepthWrite,rhi::ResourceUse::None,false,true,GraphBody::DepthNormals);
+    graph.Write(prepass,depth);graph.Write(prepass,normals);
+    if(!occlusion||(!occlusion->gtao&&!occlusion->contactShadows))return normals;
+    const auto visibility=graph.AddTexture("ScreenOcclusion",{width,height,1,rhi::TextureFormat::Rg16Float});
+    const auto ao=AddGraphPass(graph,"AmbientOcclusion",rhi::PassKind::AmbientOcclusion,rhi::ResourceUse::ColorWrite,
+        rhi::ResourceUse::None,rhi::ResourceUse::DepthRead,false,true,GraphBody::AmbientOcclusion);
+    graph.Read(ao,depth);graph.Read(ao,normals);graph.Write(ao,visibility);return visibility;
+}
 rhi::Error GraphFailure(FrameGraphStatus status)
 {
     return status==FrameGraphStatus::CapacityExceeded?rhi::Error::CapacityExceeded:rhi::Error::InvalidArgument;
 }
-template<class ShadowBody,class OpaqueBody,class UiBody>
+template<class ShadowBody,class OpaqueBody,class UiBody,class TransparentBody>
 rhi::Result ExecuteFrameGraph(rhi::CommandContext& commands,FrameGraph& graph,
-    ShadowBody shadowBody,OpaqueBody opaqueBody,UiBody uiBody)
+    ShadowBody shadowBody,OpaqueBody opaqueBody,UiBody uiBody,TransparentBody transparentBody)
 {
     rhi::Result result;
     for(const auto& pass:graph.Passes())
@@ -110,6 +172,7 @@ rhi::Result ExecuteFrameGraph(rhi::CommandContext& commands,FrameGraph& graph,
         case GraphBody::Shadow: result=shadowBody(); break;
         case GraphBody::Opaque: result=opaqueBody(); break;
         case GraphBody::Ui: result=uiBody(); break;
+        case GraphBody::Transparent: result=transparentBody(); break;
         default: break;
         }
         if(result)result=commands.EndPass();
@@ -121,9 +184,11 @@ rhi::Result ExecuteFrameGraph(rhi::CommandContext& commands,FrameGraph& graph,
 }
 rhi::Result RecordForwardFrameGraph(rhi::CommandContext& commands,const rhi::ForwardLighting& lighting,
     rhi::PipelineHandle output,rhi::PipelineHandle sky,std::span<const rhi::DrawIndexed> draws,bool cacheBindings,
-    FrameGraph& graph,std::uint32_t width,std::uint32_t height)
+    FrameGraph& graph,std::uint32_t width,std::uint32_t height,std::span<const rhi::DrawIndexed> transparent,
+    const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion)
 {
     auto result=commands.ConfigureForward(lighting,output,sky);
+    if(result)result=ConfigureGeometry(commands,geometry,occlusion);
     if(!result)return result;
     graph.Reset();
     width=(std::max)(1u,width);height=(std::max)(1u,height);
@@ -136,10 +201,20 @@ rhi::Result RecordForwardFrameGraph(rhi::CommandContext& commands,const rhi::For
     const auto skyPass=AddGraphPass(graph,"Sky",rhi::PassKind::Sky,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::None,
         rhi::ResourceUse::None,false,false,GraphBody::Sky);
     graph.Read(skyPass,sceneColor);graph.Write(skyPass,sceneColor);
+    std::uint32_t geometryDepth=FrameGraphInvalid;
+    const auto geometricInput=AddGeometryGraph(graph,width,height,geometry,occlusion,geometryDepth);
     const auto opaque=AddGraphPass(graph,"Opaque",rhi::PassKind::Opaque,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthWrite,
         rhi::ResourceUse::None,cacheBindings,false,GraphBody::Opaque);
     graph.Read(opaque,sceneColor);graph.Read(opaque,sceneDepth);
+    if(geometricInput!=FrameGraphInvalid)graph.Read(opaque,geometricInput);
+    if(lighting.gpuDrivenHiZ&&geometryDepth!=FrameGraphInvalid)graph.Read(opaque,geometryDepth);
     graph.Write(opaque,sceneColor);graph.Write(opaque,sceneDepth);
+    if(!transparent.empty())
+    {
+        const auto blend=AddGraphPass(graph,"Transparent",rhi::PassKind::Transparent,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthRead,
+            rhi::ResourceUse::ColorRead,false,false,GraphBody::Transparent);
+        graph.Read(blend,sceneColor);graph.Read(blend,sceneDepth);graph.Write(blend,sceneColor);
+    }
     const auto outputPass=AddGraphPass(graph,"Output",rhi::PassKind::Output,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::None,
         rhi::ResourceUse::ColorRead,false,true,GraphBody::Output);
     graph.Read(outputPass,sceneColor);graph.Write(outputPass,backbuffer);
@@ -147,15 +222,18 @@ rhi::Result RecordForwardFrameGraph(rhi::CommandContext& commands,const rhi::For
     if(status!=FrameGraphStatus::Success)return {GraphFailure(status)};
     return ExecuteFrameGraph(commands,graph,[]{return rhi::Result{};},
         [&]{rhi::Result record;for(const auto& draw:draws){record=commands.Draw(draw);if(!record)break;}return record;},
-        []{return rhi::Result{};});
+        []{return rhi::Result{};},
+        [&]{rhi::Result record;for(const auto& draw:transparent){record=commands.Draw(draw);if(!record)break;}return record;});
 }
 rhi::Result RecordShadowedFrameGraph(rhi::CommandContext& commands,const rhi::ForwardLighting& lighting,
     const rhi::ShadowSettings& shadows,rhi::PipelineHandle depth,rhi::PipelineHandle output,rhi::PipelineHandle sky,
     std::span<const rhi::DrawIndexed> visible,std::span<const rhi::DrawIndexed> casters,const rhi::EnvironmentBindings* environment,
     const rhi::PostProcessSettings* post,const rhi::PostProcessPipelines* postPipelines,std::span<const rhi::OverlayQuad> overlays,
-    bool cacheBindings,FrameGraph& graph,std::uint32_t width,std::uint32_t height)
+    bool cacheBindings,FrameGraph& graph,std::uint32_t width,std::uint32_t height,std::span<const rhi::DrawIndexed> transparent,
+    const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion)
 {
     auto result=commands.ConfigureForward(lighting,output,sky);
+    if(result)result=ConfigureGeometry(commands,geometry,occlusion);
     if(result)result=commands.ConfigureShadows(shadows,depth);
     if(result&&environment)result=commands.ConfigureEnvironment(*environment);
     if(result&&post){if(!postPipelines)return {rhi::Error::InvalidArgument};result=commands.ConfigurePostProcess(*post,*postPipelines);}
@@ -163,8 +241,9 @@ rhi::Result RecordShadowedFrameGraph(rhi::CommandContext& commands,const rhi::Fo
     graph.Reset();
     width=(std::max)(1u,width);height=(std::max)(1u,height);
     const auto shadowResolution=(std::max)(1u,shadows.resolution);
-    const auto sceneColor=graph.AddTexture("SceneColor",{width,height,1,rhi::TextureFormat::Rgba16Float},true);
-    const auto sceneDepth=graph.AddTexture("SceneDepth",{width,height,1,rhi::TextureFormat::Rgba8,true},true);
+    const auto geometryWidth=width*(post&&post->supersample4x?2u:1u),geometryHeight=height*(post&&post->supersample4x?2u:1u);
+    const auto sceneColor=graph.AddTexture("SceneColor",{geometryWidth,geometryHeight,1,rhi::TextureFormat::Rgba16Float},true);
+    const auto sceneDepth=graph.AddTexture("SceneDepth",{geometryWidth,geometryHeight,1,rhi::TextureFormat::Rgba8,true},true);
     const auto shadowDepth=graph.AddTexture("ShadowDepth",{shadowResolution,shadowResolution,1,rhi::TextureFormat::Rgba8,true},true);
     const auto backbuffer=graph.AddTexture("Backbuffer",{width,height,1,rhi::TextureFormat::Rgba8},true);
     const auto clear=AddGraphPass(graph,"Clear",rhi::PassKind::Clear,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthWrite,
@@ -176,10 +255,20 @@ rhi::Result RecordShadowedFrameGraph(rhi::CommandContext& commands,const rhi::Fo
     const auto skyPass=AddGraphPass(graph,"Sky",rhi::PassKind::Sky,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::None,
         rhi::ResourceUse::None,false,false,GraphBody::Sky);
     graph.Read(skyPass,sceneColor);graph.Write(skyPass,sceneColor);
+    std::uint32_t geometryDepth=FrameGraphInvalid;
+    const auto geometricInput=AddGeometryGraph(graph,geometryWidth,geometryHeight,geometry,occlusion,geometryDepth);
     const auto opaque=AddGraphPass(graph,"Opaque",rhi::PassKind::Opaque,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthWrite,
         rhi::ResourceUse::DepthRead,cacheBindings,false,GraphBody::Opaque);
     graph.Read(opaque,sceneColor);graph.Read(opaque,sceneDepth);graph.Read(opaque,shadowDepth);
+    if(geometricInput!=FrameGraphInvalid)graph.Read(opaque,geometricInput);
+    if(lighting.gpuDrivenHiZ&&geometryDepth!=FrameGraphInvalid)graph.Read(opaque,geometryDepth);
     graph.Write(opaque,sceneColor);graph.Write(opaque,sceneDepth);
+    if(!transparent.empty())
+    {
+        const auto blend=AddGraphPass(graph,"Transparent",rhi::PassKind::Transparent,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthRead,
+            rhi::ResourceUse::ColorRead,false,false,GraphBody::Transparent);
+        graph.Read(blend,sceneColor);graph.Read(blend,sceneDepth);graph.Read(blend,shadowDepth);graph.Write(blend,sceneColor);
+    }
     std::uint32_t ldr=FrameGraphInvalid,bloomA=FrameGraphInvalid;
     if(post)
     {
@@ -219,6 +308,7 @@ rhi::Result RecordShadowedFrameGraph(rhi::CommandContext& commands,const rhi::Fo
             for(const auto& draw:casters){if(!draw.castsShadow)continue;record=commands.DrawShadow(draw);if(!record)break;}
             return record;},
         [&]{rhi::Result record;for(const auto& draw:visible){record=commands.Draw(draw);if(!record)break;}return record;},
-        [&]{rhi::Result record;for(const auto& quad:overlays){record=commands.DrawOverlay(quad);if(!record)break;}return record;});
+        [&]{rhi::Result record;for(const auto& quad:overlays){record=commands.DrawOverlay(quad);if(!record)break;}return record;},
+        [&]{rhi::Result record;for(const auto& draw:transparent){record=commands.Draw(draw);if(!record)break;}return record;});
 }
 }

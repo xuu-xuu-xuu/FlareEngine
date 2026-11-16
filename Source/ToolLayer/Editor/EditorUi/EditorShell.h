@@ -90,6 +90,7 @@ public:
     void SetInspector(std::uint64_t id, std::string label, std::vector<EditorProperty> properties);
     void SetSelectionHandler(std::function<void(std::uint64_t)> handler);
     void SetPropertyHandler(std::function<bool(std::uint64_t, std::string, std::string)> handler);
+    void SetPropertyChoices(std::function<std::string(std::uint64_t,EditorProperty&)> handler){propertyChoices_=std::move(handler);}
     void SetPropertyEditHandler(std::function<bool(std::uint64_t, EditorPropertyEditPhase)> handler);
     [[nodiscard]] bool InspectorNumericCursorAt(float x, float y) const;
     [[nodiscard]] bool ColorPickerOpen() const noexcept { return inspectorColor_ != nullptr; }
@@ -283,6 +284,7 @@ private:
     void EndInspectorEdit(bool commit);
     void PaintInspectorEdit(float width);
     void ShowInspectorCombo(std::size_t index);
+    void ShowInspectorPage(std::shared_ptr<const EditorProperty> field,std::uint64_t target,float x,float y,std::size_t first);
     std::optional<std::size_t> InspectorNumericAt(float x, float y) const;
     void BeginInspectorDrag(std::size_t index, const UiInputEvent& event);
     void UpdateInspectorDrag(const UiInputEvent& event);
@@ -401,6 +403,7 @@ private:
     float inspectorWidth_ = 0.0f;
     std::function<void(std::uint64_t)> selectionHandler_;
     std::function<bool(std::uint64_t, std::string, std::string)> propertyHandler_;
+    std::function<std::string(std::uint64_t,EditorProperty&)> propertyChoices_;
     std::function<bool(std::uint64_t, EditorPropertyEditPhase)> propertyEditHandler_;
     struct InspectorDrag
     {

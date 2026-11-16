@@ -5,6 +5,7 @@ string failureText="Bootstrap.Failed"; // 语言表尚不可用时的启动回�
 BootstrapDiagnostics? diagnostics=null;
 try
 {
+    if(args.Length==0&&File.Exists(Path.Combine(AppContext.BaseDirectory,"launch.json")))args=PackagedLaunch.Arguments(AppContext.BaseDirectory);
     string? Option(string name)
     {
         var index = Array.IndexOf(args, name);
@@ -36,6 +37,14 @@ try
     using var session = new EngineSession();
     diagnostics.Write("Managed.Session.Create.End");
     session.LoadLocale(Option("--locale") ?? "zh-CN");
+    var playerManifest=Option("--player-manifest")??Path.Combine(projectRoot,"project.json");
+    if(!editorMode&&File.Exists(playerManifest))
+    {
+        var manifest=JsonNode.Parse(File.ReadAllText(playerManifest))!;
+        var settingsId=(string?)manifest["playerSettingsId"];
+        session.ConfigurePlayerQuality(string.IsNullOrWhiteSpace(settingsId)?(string?)manifest["name"]??script:settingsId,
+            (bool?)manifest["showPlayerQualityMenu"]??true,manifest["qualityProfiles"]?.ToJsonString());
+    }
     failureText=session.Text("Bootstrap.Failed");
     if(Option("--asset-root") is { } assetRoot)session.SetAssetRoot(ProjectFile(assetRoot),Option("--asset-cache") is { } cacheRoot?ProjectFile(cacheRoot):Path.Combine(projectRoot,"out","Cache","ManagedAssets"));
     else if(Option("--asset-cache") is not null)throw new ArgumentException("Bridge.InvalidArgument");

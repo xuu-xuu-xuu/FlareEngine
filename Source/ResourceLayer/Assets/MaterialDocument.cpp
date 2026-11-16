@@ -29,14 +29,23 @@ bool ValidateMaterialDocument(const MaterialDocument& material)
     if(material.name.size()>1024||!DecodeUtf8(material.name,decoded))return false;
     for(float value:material.baseColor)if(!std::isfinite(value)||value<0||value>1)return false;
     if(!std::isfinite(material.metallic)||material.metallic<0||material.metallic>1
-        ||!std::isfinite(material.roughness)||material.roughness<0||material.roughness>1||!std::isfinite(material.normalScale))return false;
+        ||!std::isfinite(material.roughness)||material.roughness<0||material.roughness>1||!std::isfinite(material.normalScale)
+        ||!IsValidMaterialAlphaMode(material.alphaMode)||!std::isfinite(material.alphaCutoff)||material.alphaCutoff<0)return false;
+    if(!std::isfinite(material.clearCoat.weight)||material.clearCoat.weight<0||material.clearCoat.weight>1
+        ||!std::isfinite(material.clearCoat.roughness)||material.clearCoat.roughness<0||material.clearCoat.roughness>1
+        ||!std::isfinite(material.clearCoat.normalScale))return false;
+    if(!IsValidMaterialLayer(material.sheen)||!IsValidMaterialLayer(material.anisotropy)||!IsValidMaterialLayer(material.subsurface))return false;
     return AssetReference(material.baseColorTexture)&&AssetReference(material.normalTexture)
-        &&AssetReference(material.metallicRoughnessTexture)&&AssetReference(material.shader);
+        &&AssetReference(material.metallicRoughnessTexture)&&AssetReference(material.shader)
+        &&AssetReference(material.clearCoatWeightTexture)&&AssetReference(material.clearCoatRoughnessTexture)&&AssetReference(material.clearCoatNormalTexture)
+        &&AssetReference(material.sheenColorTexture)&&AssetReference(material.sheenRoughnessTexture)&&AssetReference(material.anisotropyTexture);
 }
 std::vector<AssetId> MaterialTextureDependencies(const MaterialDocument& material)
 {
     std::vector<AssetId> ids;
-    for(const auto& id:{material.baseColorTexture,material.normalTexture,material.metallicRoughnessTexture})if(!id.empty())ids.push_back(id);
+    for(const auto& id:{material.baseColorTexture,material.normalTexture,material.metallicRoughnessTexture,
+        material.clearCoatWeightTexture,material.clearCoatRoughnessTexture,material.clearCoatNormalTexture,
+        material.sheenColorTexture,material.sheenRoughnessTexture,material.anisotropyTexture})if(!id.empty())ids.push_back(id);
     std::sort(ids.begin(),ids.end());ids.erase(std::unique(ids.begin(),ids.end()),ids.end());return ids;
 }
 std::vector<AssetId> MaterialDependencies(const MaterialDocument& material)
@@ -68,6 +77,8 @@ bool DeserializeMaterialDocument(std::string_view text,MaterialDocument& output,
         const auto json=nlohmann::json::parse(text);
         if(json.at("type")!="SelfEngine.Material"||json.at("version")!=1)
         {asset_io::Diagnostic(diagnostics,"Assets.MaterialVersionUnsupported");return false;}
+        for(const char* key:{"clearCoat","sheen","anisotropy","subsurface"})if(json.contains(key)&&!json.at(key).is_object())
+        {asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial",key);return false;}
         MaterialDocument loaded;
         for(const auto& field:MaterialProperties())
         {

@@ -6,13 +6,40 @@
 #include "ResourceLayer/Assets/Primitives.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "CoreLayer/Localization.h"
+#include <algorithm>
 
 namespace se
 {
+bool AddModelToScene(EditorSession& session, AssetStore& assets, const std::string& asset, std::string& error)
+{
+    if(session.IsPlaying()){error="Editor.EditWhilePlaying";return false;}
+    std::vector<AssetDiagnostic> diagnostics;
+    const auto model=assets.LoadModel(asset,diagnostics);
+    if(!model){error=diagnostics.empty()?"EditorUi.AnimationModelUnavailable":diagnostics.back().key;return false;}
+    if(!session.BeginEdit("Editor.Create")){error=session.LastError();return false;}
+    const auto id=session.Create(asset_io::Utf8(assets.Resolve(asset).stem()));
+    bool ready=id&&session.SetMesh(id,{asset,{}});
+    if(ready&&!model->joints.empty()&&!model->animations.empty())
+    {
+        const auto idle=std::find_if(model->animations.begin(),model->animations.end(),[](const auto& clip){return clip.name=="Idle";});
+        const auto& clip=idle==model->animations.end()?model->animations.front():*idle;
+        ready=session.Apply("Feature.Edit",[&](World& world){
+            const auto entity=world.FindByStableId(id);
+            return AddComponent(world,entity,"actor",error)
+                &&WriteProperty(world,entity,"actor.asset",asset,error)
+                &&WriteProperty(world,entity,"actor.clip",clip.name,error);
+        });
+    }
+    if(ready&&session.CommitEdit())return true;
+    if(error.empty())error=session.LastError();
+    session.CancelEdit();
+    return false;
+}
+
 bool CreateEditorObject(EditorSession& session, std::string_view kind, StableEntityId parent,const Localization* text)
 {
     const bool mesh = kind == "cube" || kind == "sphere" ||kind=="physics-cube";
-    const auto feature=kind=="render-settings"?"render":kind=="environment-settings"?"environmentmap":kind=="physics-cube"?"body":kind=="character"?"character":"";
+    const auto feature=kind=="render-settings"?"render":kind=="environment-settings"?"environmentmap":kind=="rectangle-light"?"rectangle":kind=="physics-cube"?"body":kind=="character"?"character":"";
     if (!mesh && kind != "empty" && kind != "camera" && kind != "light"&&!*feature) return false;
     if (!session.BeginEdit("Editor.Create")) return false;
     const char* name = kind == "cube" ? "Cube" : kind == "sphere" ? "Sphere" :

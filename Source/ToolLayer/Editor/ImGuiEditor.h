@@ -111,6 +111,7 @@ public:
     void SetScriptInspector(std::function<void(StableEntityId,bool)> callback) { scriptInspector_=std::move(callback); }
     // 供工具栏/自动化入口共用同一导出路径；返回 false 时 errorKey 给出原因。
     bool StartExport(const std::string& name,std::string& errorKey);
+    void OpenInExplorer(const std::filesystem::path& path,bool selectFile=false) const;
     bool ExportBusy() const;
     bool ExportFinished() const;
     ExportJobSnapshot ExportSnapshot() const;
@@ -207,7 +208,6 @@ private:
     bool StampChanged(const FileStamp&,const std::filesystem::path&) const;
     std::filesystem::path EditorRoot() const;
     std::filesystem::path ProjectManifestPath() const;
-    void OpenInExplorer(const std::filesystem::path& path,bool selectFile=false) const;
     bool OpenMaterial(AssetStore&, const std::filesystem::path&, bool discard = false);
     bool MaterialDirty() const;
     bool SaveMaterial(AssetStore&,bool overwrite=false);

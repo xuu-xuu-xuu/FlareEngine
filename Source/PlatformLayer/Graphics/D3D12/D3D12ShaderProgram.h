@@ -11,6 +11,9 @@ struct D3D12ShaderSource
     se::rhi::PipelineKind kind=se::rhi::PipelineKind::TexturedMesh;
     UINT flags=0;
     UINT layoutVersion=se::rhi::MaterialLayoutVersion;
+    UINT materialLayoutVersion=0;
+    UINT shadingLayoutVersion=0;
+    bool depthNormals=false; // 39 号输出契约；独立于 b4 材质与既有绑定布局。
     bool compressedVertex=false;
     // W03：顶点布局 v3（JOINTS0/WEIGHTS0）与 t8 调色板；由 vertexLayoutVersion 推导，
     // 参与反射校验但不进入元数据（布局版本与宏已在键里）。

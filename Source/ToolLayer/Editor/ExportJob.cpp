@@ -1,4 +1,5 @@
 #include "ExportJob.h"
+#include "ResourceLayer/Assets/AssetIO.h"
 #include <nlohmann/json.hpp>
 #include <Windows.h>
 #include <fstream>
@@ -14,7 +15,8 @@ bool WriteAtomic(const std::filesystem::path& path,const std::string& text)
     std::error_code error;
     std::filesystem::create_directories(path.parent_path(),error);
     if(error)return false;
-    const auto temporary=path.parent_path()/(path.filename().string()+".tmp");
+    auto temporary=path;
+    temporary+=L".tmp";
     {
         std::ofstream output(temporary,std::ios::binary|std::ios::trunc);
         if(!output)return false;
@@ -97,7 +99,7 @@ bool ExportJob::Start(const ExportJobRequest& request,const ExportService::Runne
         }
         std::lock_guard lock(mutex_);
         auto& report=snapshot_.report;
-        const auto logPath=(evidence/"editor-export.log").string();
+        const auto logPath=asset_io::Utf8(evidence/"editor-export.log");
         if(cancel_.load())
         {
             std::string error;
@@ -167,8 +169,8 @@ bool SaveExportSnapshot(const std::filesystem::path& directory,const ExportJobSn
         {"stage",snapshot.report.stage},{"diagnostic_key",snapshot.report.diagnosticKey},
         {"exit_code",snapshot.report.exitCode},{"log_path",snapshot.report.logPath},
         {"detail",snapshot.detail},
-        {"output_package",snapshot.outputPackage.string()},
-        {"report_path",snapshot.reportPath.string()},
+        {"output_package",asset_io::Utf8(snapshot.outputPackage)},
+        {"report_path",asset_io::Utf8(snapshot.reportPath)},
         {"cancelled",snapshot.cancelled}};
     if(!WriteAtomic(directory/"last-export.json",json.dump(2)+"\n")){error="cannot write export report";return false;}
     return true;
@@ -192,8 +194,9 @@ bool LoadExportSnapshot(const std::filesystem::path& directory,ExportJobSnapshot
         loaded.report.exitCode=json.value("exit_code",0);
         loaded.report.logPath=json.value("log_path",std::string{});
         loaded.detail=json.value("detail",std::string{});
-        loaded.outputPackage=json.value("output_package",std::string{});
-        loaded.reportPath=json.value("report_path",std::string{});
+        loaded.logPath=asset_io::FromUtf8(loaded.report.logPath);
+        loaded.outputPackage=asset_io::FromUtf8(json.value("output_package",std::string{}));
+        loaded.reportPath=asset_io::FromUtf8(json.value("report_path",std::string{}));
         loaded.cancelled=json.value("cancelled",false);
         loaded.finished=true;
         output=std::move(loaded);

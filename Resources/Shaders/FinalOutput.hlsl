@@ -1,7 +1,11 @@
 cbuffer OutputConstants:register(b0){float4 exposureAndUnused;};
 Texture2D<float4> hdrScene:register(t0);
 #ifdef SE_SHADOW_PREVIEW
+#ifdef SE_CASCADED
+Texture2DArray<float> shadowPreview:register(t1);
+#else
 Texture2D<float> shadowPreview:register(t1);
+#endif
 #endif
 // G15：输出可选的显示线性 33³ LUT strip。strip 为 1089×33：
 // x = slice*33 + red，y = green；纹理可为 Rgba8（兼容）或 Rgba16Float（保留 >1 的显示线性值与精度）。
@@ -41,9 +45,17 @@ float4 PSMain(float4 position:SV_POSITION):SV_TARGET
 #ifdef SE_SHADOW_PREVIEW
     if(exposureAndUnused.y>0.5)
     {
+#ifdef SE_CASCADED
+        uint width,height,layers;shadowPreview.GetDimensions(width,height,layers);
+#else
         uint width,height;shadowPreview.GetDimensions(width,height);
+#endif
         float2 uv=position.xy/exposureAndUnused.zw;
+#ifdef SE_CASCADED
+        float depth=shadowPreview.Load(int4(min(int2(uv*float2(width,height)),int2(width-1,height-1)),0,0));
+#else
         float depth=shadowPreview.Load(int3(min(int2(uv*float2(width,height)),int2(width-1,height-1)),0));
+#endif
         return float4(depth,depth,depth,1);
     }
 #endif

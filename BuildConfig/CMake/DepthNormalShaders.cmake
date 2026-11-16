@@ -1,0 +1,25 @@
+# RG104-15：四个共用 PS 产物；实际预绘 PSO 复用主 VS/root/输入布局，不复制所有光照变体。
+file(GLOB depth_normal_includes CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/*.hlsli")
+set(depth_normal_outputs)
+foreach(depth_normal_pair "DepthNormals|depth-normals" "DepthNormalsBasic|depth-normals-basic")
+    string(REPLACE "|" ";" depth_normal_parts "${depth_normal_pair}")
+    list(GET depth_normal_parts 0 depth_normal_file)
+    list(GET depth_normal_parts 1 depth_normal_mode)
+    foreach(depth_normal_surface IN ITEMS FALSE TRUE)
+        if(depth_normal_surface)
+            set(depth_normal_suffix ".surface.depthnormals.sebin")
+            set(depth_normal_build_mode "surface-${depth_normal_mode}")
+        else()
+            set(depth_normal_suffix ".depthnormals.sebin")
+            set(depth_normal_build_mode "${depth_normal_mode}")
+        endif()
+        set(depth_normal_output "${CMAKE_CURRENT_BINARY_DIR}/Resources/Shaders/${depth_normal_file}.hlsl${depth_normal_suffix}")
+        add_custom_command(OUTPUT "${depth_normal_output}" "${depth_normal_output}.json"
+            COMMAND ShaderBuilder "${depth_normal_build_mode}" "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/${depth_normal_file}.hlsl" "${depth_normal_output}"
+            DEPENDS ShaderBuilder "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/${depth_normal_file}.hlsl"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/DepthNormals.hlsl" ${depth_normal_includes} VERBATIM)
+        list(APPEND depth_normal_outputs "${depth_normal_output}" "${depth_normal_output}.json")
+    endforeach()
+endforeach()
+add_custom_target(BuildDepthNormalShaders DEPENDS ${depth_normal_outputs})
+add_dependencies(BuildShaders BuildDepthNormalShaders)

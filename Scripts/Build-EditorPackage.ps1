@@ -46,18 +46,18 @@ try {
     AddStep 'copy_editor'
     CopyFile $executable (Join-Path $stage 'FlareEditor.exe')
     AddStep 'copy_resources'
-    CopyTree (Join-Path $native 'Resources') (Join-Path $stage 'Resources')
-    AddStep 'strip_derived_caches'
-    # 模板里可能留有开发机构建出的派生缓存/中间目录；便携包不带缓存与临时产物。
-    $templateOutput=Join-Path $stage 'Resources\Templates\EmptyGame\out'
-    $derived=@(Get-ChildItem -LiteralPath (Join-Path $stage 'Resources') -Directory -Recurse -Force | Where-Object {$_.Name -in @('.cache','bin','obj') -or $_.FullName -eq $templateOutput} | Sort-Object {$_.FullName.Length} -Descending)
-    foreach($directory in $derived){
-        $target=[IO.Path]::GetFullPath($directory.FullName)
-        if(!$target.StartsWith([IO.Path]::GetFullPath($stage).TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Export.PathOutsideRoot'}
-        if(Test-Path -LiteralPath $target){Remove-Item -LiteralPath $target -Recurse -Force}
+    $stageResources=New-Item -ItemType Directory -Path (Join-Path $stage 'Resources')
+    Get-ChildItem -LiteralPath (Join-Path $native 'Resources') -Force |
+        Where-Object Name -ne 'Templates' | Copy-Item -Destination $stageResources.FullName -Recurse -Force
+    # 模板取仓库中的制作文件。开发者试开构建目录中的模板后，里面可能有 IDE 工程、日志和几 GB 的缓存。
+    $templateInputs=@(& git -C $root -c core.quotepath=false ls-files --cached --others --exclude-standard -- Resources/Templates)
+    if($LASTEXITCODE -ne 0 -or !$templateInputs){throw 'Cannot enumerate the project templates.'}
+    foreach($relative in $templateInputs){
+        $templateInput=Join-Path $root $relative
+        if(Test-Path -LiteralPath $templateInput -PathType Leaf){CopyFile $templateInput (Join-Path $stage $relative)}
     }
     AddStep 'copy_tools'
-    foreach($tool in @('ProjectTool.exe','ShaderBuilder.exe')){
+    foreach($tool in @('ProjectTool.exe','ShaderBuilder.exe','VideoEncoder.exe','EnvironmentCooker.exe','RenderingCooker.exe','DiffuseProbeCooker.exe')){
         $source=Join-Path $native $tool
         if(!(Test-Path -LiteralPath $source)){throw ('Export.NativeMissing '+$tool)}
         CopyFile $source (Join-Path $stage ('Tools/'+$tool))
@@ -107,7 +107,8 @@ try {
     [IO.File]::WriteAllText((Join-Path $stage 'SDK/SelfEngine.Scripts.props'),$sdkProps,[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $stage 'SDK/SelfEngine.Scripts.targets'),$sdkTargets,[Text.UTF8Encoding]::new($false))
     AddStep 'prepare_package_template'
-    $template=Join-Path $stage 'Resources/Templates/EmptyGame'
+    foreach($packageTemplateName in @('EmptyGame','RenderingStudio')) {
+    $template=Join-Path $stage ('Resources/Templates/'+$packageTemplateName)
     $scriptProject=Join-Path $template 'Scripts/EmptyGame.Scripts.csproj'
     $xml=New-Object Xml.XmlDocument
     $xml.PreserveWhitespace=$true;$xml.Load($scriptProject)
@@ -127,7 +128,13 @@ try {
         $legacy=Join-Path $template $legacyName
         if(Test-Path -LiteralPath $legacy){Remove-Item -LiteralPath $legacy}
     }
-    [IO.File]::WriteAllText((Join-Path $template 'README.md'),"# 空游戏模板`n`n从 Flare 引擎打开 project.json，编辑后在构建与导出面板生成游戏。`n未修改的示例行为可直接使用随包预编译版本；修改 Scripts 后需要 .NET 10 SDK。`n",[Text.UTF8Encoding]::new($false))
+    if($packageTemplateName -eq 'EmptyGame') {
+        [IO.File]::WriteAllText((Join-Path $template 'README.md'),"# Flare 项目模板`n`n从启动器选择项目后进入编辑器，编辑后可在构建与导出面板生成游戏。`n未修改的示例行为可直接使用随包预编译版本；修改 Scripts 后需要 .NET 10 SDK。`n",[Text.UTF8Encoding]::new($false))
+    }
+    }
+    # 两模板共用同一组脚本源，预编译只做一次；独立清单仍按真实源摘要核验。
+    $template=Join-Path $stage 'Resources/Templates/EmptyGame'
+    $scriptProject=Join-Path $template 'Scripts/EmptyGame.Scripts.csproj'
     $dotnet=(Get-Command dotnet.exe -ErrorAction Stop).Source
     $scriptProperties=Get-EnginePackageScriptProperties $stage (Join-Path $evidence 'template-obj')
     RunStep 'restore_template_scripts' $dotnet (@('restore',$scriptProject,'--runtime','win-x64','--configfile',(Join-Path $root 'BuildConfig/NuGet.Config'),'--packages',(Join-Path $root 'out/nuget/packages'),'-p:Configuration=Release','-p:SelfContained=false','--nologo')+$scriptProperties)
@@ -145,6 +152,13 @@ try {
     foreach($directory in Get-ChildItem -LiteralPath (Join-Path $root 'ThirdParty') -Directory){
         foreach($license in (Get-ChildItem -LiteralPath $directory.FullName -File | Where-Object {$_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE)'})){
             CopyFile $license.FullName (Join-Path $stage ('ThirdParty/'+$directory.Name+'/'+$license.Name))
+        }
+    }
+    $ltcDirectory=Join-Path $root 'ThirdParty/LtcReference'
+    if(Test-Path -LiteralPath $ltcDirectory -PathType Container){
+        foreach($notice in Get-ChildItem -LiteralPath $ltcDirectory -Recurse -File | Where-Object {$_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE|UPSTREAM)'}){
+            $noticeRelative=$notice.FullName.Substring($ltcDirectory.TrimEnd('\').Length+1)
+            CopyFile $notice.FullName (Join-Path $stage ('ThirdParty/LtcReference/'+$noticeRelative))
         }
     }
     if(Test-Path -LiteralPath (Join-Path $root 'ThirdParty/README.md') -PathType Leaf){
@@ -187,8 +201,15 @@ exit $LASTEXITCODE
     $absolute=@(Get-ChildItem -LiteralPath $stage -File -Recurse | Where-Object {$_.Extension -in '.txt','.ps1','.json','.md','.cfg'} | Select-String -Pattern ([regex]::Escape($root)) -List)
     if($absolute.Count){throw ('Package text contains an absolute workspace path: '+$absolute[0].Path)}
     AddStep 'startup_check'
-    $start=Start-Process -FilePath (Join-Path $stage 'FlareEditor.exe') -ArgumentList @('--smoke-launcher','400','--no-ui-errors') -WorkingDirectory $env:TEMP -PassThru -Wait -WindowStyle Hidden
-    if($start.ExitCode -ne 0){throw ('Package startup check failed with exit code '+$start.ExitCode)}
+    $savedLogDirectory=$env:SELFENGINE_LOG_DIRECTORY
+    $savedStartupLocation=Get-Location
+    try {
+        $env:SELFENGINE_LOG_DIRECTORY=$evidence
+        Set-Location -LiteralPath $env:TEMP
+        # 只等待自检进程本身；Start-Process -Wait 可能一并等待继承作业中的驻留编译节点。
+        $startupExit=Invoke-EngineProgram (Join-Path $stage 'FlareEditor.exe') @('--smoke-launcher','400','--no-ui-errors') (Join-Path $evidence 'startup_check.log')
+    } finally {Set-Location -LiteralPath $savedStartupLocation.Path;$env:SELFENGINE_LOG_DIRECTORY=$savedLogDirectory}
+    if($startupExit -ne 0){throw ('Package startup check failed with exit code '+$startupExit)}
     AddStep 'write_manifest'
     $finalSource=Get-EngineSourceIdentity $root
     if($finalSource.source_sha256 -ne $sourceIdentity.source_sha256){throw 'Export.SourceChanged'}

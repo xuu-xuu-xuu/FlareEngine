@@ -1,0 +1,11 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "02 绒布",
+  "baseColor": [0.055, 0.075, 0.2, 1],
+  "metallic": 0,
+  "roughness": 0.7,
+  "doubleSided": false,
+  "textures": {"baseColor": "", "normal": "", "metallicRoughness": ""},
+  "sheen": {"color": [0.22, 0.32, 0.7], "roughness": 0.5}
+}

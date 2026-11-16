@@ -10,7 +10,7 @@ namespace
 struct Key
 {
     OpaqueSortKey draw;
-    std::array<std::uint32_t,25> shared{};
+    std::array<std::uint32_t,27> shared{};
     auto operator<=>(const Key&) const=default;
 };
 Key BatchKey(const rhi::DrawIndexed& draw)
@@ -18,7 +18,9 @@ Key BatchKey(const rhi::DrawIndexed& draw)
     Key key{BuildOpaqueSortKey(draw)};size_t index=0;
     for(const auto value:{draw.pbr.cameraPosition.x,draw.pbr.cameraPosition.y,draw.pbr.cameraPosition.z,
         draw.pbr.directionToLight.x,draw.pbr.directionToLight.y,draw.pbr.directionToLight.z,draw.pbr.radiance.x,draw.pbr.radiance.y,draw.pbr.radiance.z})key.shared[index++]=std::bit_cast<std::uint32_t>(value);
-    for(float value:draw.viewProjection.values)key.shared[index++]=std::bit_cast<std::uint32_t>(value);return key;
+    for(float value:draw.viewProjection.values)key.shared[index++]=std::bit_cast<std::uint32_t>(value);
+    key.shared[index++]=draw.pbr.multiscatter?1u:0u;
+    key.shared[index]=draw.pbr.specularAA?1u:0u;return key;
 }
 }
 std::span<const PbrInstanceBatch> PbrInstanceBatcher::Build(std::span<const rhi::DrawIndexed> draws,

@@ -75,7 +75,8 @@ std::string Type(const fs::path& path)
     if(extension==".sebin")return "shader";
     if(extension==".tod")return "tod";
     if(extension==".seenv")return "environment";
-    if(extension==".selod"||extension==".sehlod"||extension==".semeshlet"||extension==".seimp"||extension==".sebc"||extension==".ppm")return "data";
+    if(extension==".selod"||extension==".sehlod"||extension==".semeshlet"||extension==".seimp"||extension==".sebc"||extension==".ppm"
+        ||extension==".sesh"||extension==".sedp"||extension==".sebrdf"||extension==".seltc"||extension==".sesheen"||extension==".seskin")return "data";
     return {};
 }
 std::optional<EditorAssetDocumentKind> Kind(const fs::path& path)
@@ -472,7 +473,9 @@ bool EditorAssetActions::ValidatePlayAssets(const World& world,const UiTree* ui,
         else if(const auto loaded=assets.LoadMaterial(id,errors))value=*loaded;
         else{report(errors,location,"Assets.InvalidMaterial");return;}
         auto dependency=location;dependency.document=assets.Resolve(id);
-        for(const auto& [name,texture]:std::vector<std::pair<std::string,AssetId>>{{"baseColor",value.baseColorTexture},{"normal",value.normalTexture},{"metallicRoughness",value.metallicRoughnessTexture}})
+        for(const auto& [name,texture]:std::vector<std::pair<std::string,AssetId>>{{"baseColor",value.baseColorTexture},{"normal",value.normalTexture},{"metallicRoughness",value.metallicRoughnessTexture},
+            {"clearCoatWeight",value.clearCoatWeightTexture},{"clearCoatRoughness",value.clearCoatRoughnessTexture},{"clearCoatNormal",value.clearCoatNormalTexture},
+            {"sheenColor",value.sheenColorTexture},{"sheenRoughness",value.sheenRoughnessTexture},{"anisotropy",value.anisotropyTexture}})
         {dependency.pointer="/textures/"+name;image(texture,dependency);}
         if(!value.shader.empty())
         {

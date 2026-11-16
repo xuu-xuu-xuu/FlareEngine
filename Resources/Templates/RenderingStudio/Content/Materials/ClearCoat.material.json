@@ -1,0 +1,11 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "01 清漆",
+  "baseColor": [0.32, 0.055, 0.025, 1],
+  "metallic": 0,
+  "roughness": 0.34,
+  "doubleSided": false,
+  "textures": {"baseColor": "", "normal": "", "metallicRoughness": ""},
+  "clearCoat": {"weight": 1, "roughness": 0.12, "normalScale": 1}
+}

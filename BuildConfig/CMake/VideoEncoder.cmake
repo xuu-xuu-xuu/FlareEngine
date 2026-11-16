@@ -12,3 +12,4 @@ set_target_properties(FlareVideoEncoder PROPERTIES OUTPUT_NAME VideoEncoder)
 # 构建入口别名：允许 `cmake --build <dir> --target VideoEncoder` 直接构建交付程序，
 # 而 CMake 目标本身仍沿用 FlareVideoEncoder 命名。
 add_custom_target(VideoEncoder DEPENDS FlareVideoEncoder)
+add_dependencies(SelfEngineEditor FlareVideoEncoder)

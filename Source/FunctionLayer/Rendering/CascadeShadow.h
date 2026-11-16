@@ -5,9 +5,8 @@
 
 namespace se
 {
-// G08 原型：3 级 CSM 的 CPU 拟合。级划分使用计划中的归一化距离 {0.10,0.35,1.0}
-// （near+ (far-near)*t，near/far=0.1/100 时为 10/35/100 m）；每级对切片 8 角点拟合包围球，
-// 在光空间按 texel 取整后构造正交投影，主 Pass 用 SelectCascade 选级与 10% 重叠混合。
+// 级划分使用归一化距离 {0.10,0.35,1.0}；count=2/1 保留前两级/最近一级，
+// 因而属于明确缩短远端距离的降级，不重新分配分割点。实际拟合覆盖相邻混合带。
 inline constexpr std::uint32_t CascadeShadowMaximumCascades=3;
 struct CascadeShadowSettings
 {
@@ -17,10 +16,17 @@ struct CascadeShadowSettings
     std::array<Vec3,CascadeShadowMaximumCascades> sphereCenter{};
     std::array<float,CascadeShadowMaximumCascades> sphereRadius{};
     float blendFraction=0.10f;
+    std::array<float,CascadeShadowMaximumCascades> fitNear{},fitFar{};
+    float coverageDistance=0,casterDepthPadding=0;
 };
 // 失败不替换 output；cascadeCount 只接受 1..3。
 bool PrepareCascadeShadows(const Mat4& viewProjection,float nearPlane,float farPlane,const Vec3& directionToLight,
     std::uint32_t cascadeCount,std::uint32_t resolution,CascadeShadowSettings& output);
+// near/far 必须对应实际 projection；shadowDistance 是独立的接收范围。
+// casterDepthPadding 只向光源方向扩展深度，保留在接收体视锥外但仍投影到体内的投射者。
+bool PrepareCascadeShadows(const Mat4& view,const Mat4& projection,float nearPlane,float farPlane,float shadowDistance,
+    const Vec3& directionToLight,std::uint32_t cascadeCount,std::uint32_t resolution,CascadeShadowSettings& output,
+    float casterDepthPadding=100.0f,float filterGuardTexels=3.0f,float filterGuardWorld=0.0f);
 struct CascadeSelection
 {
     std::uint32_t first=0,second=0;

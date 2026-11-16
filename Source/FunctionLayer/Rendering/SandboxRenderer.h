@@ -1,4 +1,5 @@
 #pragma once
+#include "ShadingResources.h"
 
 #include "FunctionLayer/Rendering/Renderer.h"
 #include "PlatformLayer/Graphics/Rhi.h"
@@ -6,6 +7,7 @@
 #include "FunctionLayer/Rendering/MaterialInstance.h"
 #include "FunctionLayer/Runtime/Camera.h"
 #include "StaticModelRender.h"
+#include "MaterialSurfacePipelines.h"
 #include "LodSelect.h"
 #include "HlodSelect.h"
 #include "HlodStream.h"
@@ -58,6 +60,9 @@ private:
     // G15：把当前 `.selut` 晶格烘成 1089×33 显示线性 strip；失败保留旧 strip。
     // G15.09：默认 Rgba16Float（保留 >1 值与精度），SELFENGINE_LUT_8BIT=1 回退 Rgba8 做 A/B。
     bool UpdateLutStrip(const Localization& localization);
+    bool PrepareCascadedPipelines();
+    bool PrepareClusteredPipelines(std::size_t group);
+    bool PrepareShadowFilterPipelines(bool clustered);
     std::shared_ptr<se::rhi::Device> device_;
     SandboxScene scene_=SandboxScene::Clear;
     std::filesystem::path resourceDirectory_;
@@ -72,6 +77,11 @@ private:
     se::rhi::Pipeline skyPipeline_;
     se::rhi::Pipeline featureEnvironmentPipeline_,featureEnvironmentSky_;
     se::rhi::Pipeline featurePbrPipeline_;
+    se::rhi::Pipeline cascadedPbr_,cascadedBasic_,cascadedEnvironment_,cascadedSkinned_,cascadedSkinnedEnvironment_,cascadedOutput_;
+    struct ClusterPipelines {se::rhi::Pipeline pbr,basic,environment,skinned,skinnedEnvironment;};
+    std::array<ClusterPipelines,3> clusteredPipelines_; // 普通前向、单图阴影、CSM。
+    std::array<ClusterPipelines,2> shadowFilterPipelines_; // CSM / cluster+CSM，独立b3。
+    se::MaterialSurfacePipelineCache surfacePipelines_;
     bool featureFullPbr_=false;
     bool featureEnvironment_=false,featurePostAces_=false;
     se::rhi::Pipeline featureForwardOutput_;
@@ -86,6 +96,8 @@ private:
     std::shared_ptr<const se::StaticRenderModel> sphere_;
     se::StaticModelRenderCache models_;
     se::EnvironmentRenderCache environments_;
+    se::ShadingResourceCache shadingResources_;
+    bool meshletSubmission_=false;
     se::PostProcessRenderer post_;
     se::GuiRenderer gui_;
     std::unique_ptr<se::GuiCompositor> editorGui_;

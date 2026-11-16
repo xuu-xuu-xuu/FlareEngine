@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstring>
 
-bool CreateD3D12GuiTarget(D3D12Presentation& p,const se::rhi::RenderTargetDescription& d,D3D12GuiTarget& out,const Localization& text,const se::Vec4* optimizedClear)
+bool CreateD3D12GuiTarget(D3D12Presentation& p,const se::rhi::RenderTargetDescription& d,D3D12GuiTarget& out,const Localization& text,const se::Vec4* optimizedClear,bool sampleDepth)
 {
     Microsoft::WRL::ComPtr<ID3D12Device> device;
     if(FAILED(p.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf()))))return false;
@@ -35,7 +35,7 @@ bool CreateD3D12GuiTarget(D3D12Presentation& p,const se::rhi::RenderTargetDescri
     out.color.width=d.width;out.color.height=d.height;out.color.format=d.format;out.srgb=d.srgb;
     if(d.depth)
     {
-        desc.Format=DXGI_FORMAT_D32_FLOAT;desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+        desc.Format=sampleDepth?DXGI_FORMAT_R32_TYPELESS:DXGI_FORMAT_D32_FLOAT;desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
         clear={};clear.Format=DXGI_FORMAT_D32_FLOAT;clear.DepthStencil.Depth=1;
         if(!CheckGraphicsResult(p.memory->Create(desc,D3D12_RESOURCE_STATE_DEPTH_WRITE,&clear,out.depth,"GuiSceneDepth"),text,"D3D12.GuiFailed")
             ||!CheckGraphicsResult(p.dsvPool->Allocate(1,out.dsv),text,"D3D12.DescriptorCapacityExceeded"))return false;

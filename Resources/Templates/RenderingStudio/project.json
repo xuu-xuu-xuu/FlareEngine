@@ -1,0 +1,20 @@
+{
+  "format": "SelfEngine.Project",
+  "version": 1,
+  "name": "RenderingStudio",
+  "contentRoot": "Content",
+  "entryScene": "Scenes/Main.scene.json",
+  "scenes": ["Scenes/Main.scene.json"],
+  "ui": [],
+  "assets": [
+    {"id": "71000000000000000000000000000001", "type": "material"},
+    {"id": "71000000000000000000000000000002", "type": "material"},
+    {"id": "71000000000000000000000000000003", "type": "material"},
+    {"id": "71000000000000000000000000000004", "type": "material"},
+    {"id": "71000000000000000000000000000005", "type": "material"},
+    {"id": "71000000000000000000000000000006", "type": "material"},
+    {"id": "71000000000000000000000000000007", "type": "material"},
+    {"id": "71000000000000000000000000000008", "type": "image"},
+    {"id": "71000000000000000000000000000009", "type": "environment"}
+  ]
+}

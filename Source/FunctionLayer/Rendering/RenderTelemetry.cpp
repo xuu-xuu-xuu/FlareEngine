@@ -54,6 +54,8 @@ void RenderTelemetry::ApplyTiming(RenderStats& stats,const rhi::GpuTiming& timin
 {
     if(!timing.frequency)return;
     const auto ms=[&](std::uint64_t begin,std::uint64_t end){return Duration(begin,end,timing.frequency);};
+    if(timing.clustered)
+        stats.gpuPassMilliseconds[static_cast<std::size_t>(RenderPassId::ClusterCull)]=ms(timing.clusterTicks[0],timing.clusterTicks[1]);
     if(timing.forward)
     {
         stats.gpuPassMilliseconds[static_cast<std::size_t>(RenderPassId::Sky)]=ms(timing.passTicks[2],timing.passTicks[3]);

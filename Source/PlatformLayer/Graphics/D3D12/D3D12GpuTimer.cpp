@@ -18,11 +18,14 @@ bool ReadD3D12GpuTimings(D3D12Presentation& p,const Localization& text)
         se::CpuScope scope(p.cpuProfiler,"CPU.QueryRead");
         se::rhi::GpuTiming sample;sample.sourceFrame=frame.timestampFrame;sample.submission=frame.timestampSubmission;
         sample.frequency=p.timestampFrequency;sample.draws=frame.timestampDraws;
-        void* mapped=nullptr;const D3D12_RANGE range{0,frame.timestampPost?sizeof(UINT64)*(frame.timestampShadow?21:19):frame.timestampShadow?sizeof(UINT64)*11:frame.timestampForward?sizeof(UINT64)*9:sizeof(sample.ticks)};
+        const SIZE_T baseBytes=frame.timestampPost?sizeof(UINT64)*(frame.timestampShadow?21:19):frame.timestampShadow?sizeof(UINT64)*11:frame.timestampForward?sizeof(UINT64)*9:sizeof(sample.ticks);
+        const SIZE_T bytes=frame.timestampHeterogeneousHiZ?sizeof(UINT64)*34:frame.timestampHeterogeneous?sizeof(UINT64)*31:
+            frame.timestampAoResolve?sizeof(UINT64)*29:frame.timestampAoHalf?sizeof(UINT64)*27:frame.timestampDepthNormals?sizeof(UINT64)*25:frame.timestampCluster?sizeof(UINT64)*23:baseBytes;
+        void* mapped=nullptr;const D3D12_RANGE range{0,bytes};
         if(!CheckGraphicsResult(frame.timestampReadback->Map(0,&range,&mapped),text,"D3D12.ReadTimestampsFailed"))return false;
         if(frame.timestampPost)
         {
-            std::array<UINT64,21> raw{};std::memcpy(raw.data(),mapped,range.End);const size_t first=frame.timestampShadow?8:6;
+            std::array<UINT64,21> raw{};std::memcpy(raw.data(),mapped,baseBytes);const size_t first=frame.timestampShadow?8:6;
             sample.forward=sample.post=true;sample.shadow=frame.timestampShadow;const size_t sky=sample.shadow?4:2,opaque=sky+2;
             sample.passTicks={raw[0],raw[1],raw[sky],raw[sky+1],raw[opaque],raw[opaque+1],raw[first],raw[first+11]};
             if(sample.shadow)sample.shadowTicks={raw[2],raw[3]};std::copy_n(raw.begin()+first,12,sample.postTicks.begin());
@@ -44,7 +47,32 @@ bool ReadD3D12GpuTimings(D3D12Presentation& p,const Localization& text)
             sample.ticks={sample.passTicks[0],sample.passTicks[4],sample.passTicks[5],end};
         }
         else std::memcpy(sample.ticks.data(),mapped,sizeof(sample.ticks));
+        sample.clustered=frame.timestampCluster;
+        if(sample.clustered)std::memcpy(sample.clusterTicks.data(),static_cast<const std::byte*>(mapped)+21*sizeof(UINT64),sizeof(sample.clusterTicks));
+        sample.depthNormals=frame.timestampDepthNormals;
+        if(sample.depthNormals)std::memcpy(sample.depthNormalTicks.data(),static_cast<const std::byte*>(mapped)+23*sizeof(UINT64),sizeof(sample.depthNormalTicks));
+        sample.ambientOcclusionHalf=frame.timestampAoHalf;sample.ambientOcclusion=frame.timestampAoResolve;
+        if(sample.ambientOcclusionHalf)std::memcpy(sample.aoTicks.data(),static_cast<const std::byte*>(mapped)+25*sizeof(UINT64),sizeof(sample.aoTicks));
+        if(sample.ambientOcclusion)std::memcpy(sample.aoResolveTicks.data(),static_cast<const std::byte*>(mapped)+27*sizeof(UINT64),sizeof(sample.aoResolveTicks));
+        sample.heterogeneous=frame.timestampHeterogeneous;sample.heterogeneousHiZ=frame.timestampHeterogeneousHiZ;
+        if(sample.heterogeneous)std::memcpy(sample.heterogeneousTicks.data(),static_cast<const std::byte*>(mapped)+29*sizeof(UINT64),sizeof(sample.heterogeneousTicks));
+        if(sample.heterogeneousHiZ)std::memcpy(sample.heterogeneousHiZTicks.data(),static_cast<const std::byte*>(mapped)+31*sizeof(UINT64),sizeof(sample.heterogeneousHiZTicks));
         const D3D12_RANGE noWrites{0,0};frame.timestampReadback->Unmap(0,&noWrites);
+        if(sample.clustered&&(sample.clusterTicks[0]<sample.ticks[0]||sample.clusterTicks[1]<sample.clusterTicks[0]||sample.clusterTicks[1]>sample.ticks[3]))
+        {Log(LogLevel::Error,text.GetText("D3D12.InvalidTimestamps"));return false;}
+        const auto between=[&](const auto& ticks){return sample.forward&&ticks[0]>=sample.passTicks[3]&&ticks[1]>=ticks[0]&&ticks[1]<=sample.passTicks[4];};
+        if((sample.heterogeneous&&!between(sample.heterogeneousTicks))
+            ||(sample.heterogeneousHiZ&&(!sample.heterogeneous||sample.heterogeneousHiZTicks[0]<sample.passTicks[3]
+                ||sample.heterogeneousHiZTicks[1]<sample.heterogeneousHiZTicks[0]||sample.heterogeneousHiZTicks[2]<sample.heterogeneousHiZTicks[1]
+                ||sample.heterogeneousHiZTicks[2]>sample.heterogeneousTicks[0]))
+            ||(sample.depthNormals&&sample.heterogeneousHiZ&&sample.heterogeneousHiZTicks[0]<sample.depthNormalTicks[1])
+            ||(sample.ambientOcclusion&&sample.heterogeneous&&sample.heterogeneousTicks[0]<sample.aoResolveTicks[1]))
+        {Log(LogLevel::Error,text.GetText("D3D12.InvalidTimestamps"));return false;}
+        if((sample.depthNormals&&!between(sample.depthNormalTicks))||(sample.ambientOcclusionHalf&&!between(sample.aoTicks))
+            ||(sample.ambientOcclusion&&!between(sample.aoResolveTicks))
+            ||(sample.depthNormals&&sample.ambientOcclusion&&sample.aoResolveTicks[0]<sample.depthNormalTicks[1])
+            ||(sample.ambientOcclusionHalf&&sample.ambientOcclusion&&sample.aoResolveTicks[0]<sample.aoTicks[1]))
+        {Log(LogLevel::Error,text.GetText("D3D12.InvalidTimestamps"));return false;}
         if(sample.forward)for(size_t index=1;index<sample.passTicks.size();++index)if(sample.passTicks[index]<sample.passTicks[index-1])
         {Log(LogLevel::Error,text.GetText("D3D12.InvalidTimestamps"));return false;}
         if(sample.forward&&sample.ticks[3]<sample.passTicks[7]){Log(LogLevel::Error,text.GetText("D3D12.InvalidTimestamps"));return false;}
@@ -77,10 +105,10 @@ bool SetD3D12GpuTiming(D3D12Presentation& p,bool enabled,const Localization& tex
     std::array<Queries,D3D12Presentation::frameCount> candidates;
     for(auto& candidate:candidates)
     {
-        D3D12_QUERY_HEAP_DESC queries{};queries.Type=D3D12_QUERY_HEAP_TYPE_TIMESTAMP;queries.Count=21;
+        D3D12_QUERY_HEAP_DESC queries{};queries.Type=D3D12_QUERY_HEAP_TYPE_TIMESTAMP;queries.Count=D3D12FrameTimestampCount;
         if(!CheckGraphicsResult(device->CreateQueryHeap(&queries,IID_PPV_ARGS(candidate.heap.GetAddressOf())),text,"D3D12.CreateTimestampsFailed"))return false;
         D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_READBACK;heap.CreationNodeMask=heap.VisibleNodeMask=1;
-        D3D12_RESOURCE_DESC buffer{};buffer.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;buffer.Width=sizeof(UINT64)*21;
+        D3D12_RESOURCE_DESC buffer{};buffer.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;buffer.Width=sizeof(UINT64)*D3D12FrameTimestampCount;
         buffer.Height=buffer.DepthOrArraySize=buffer.MipLevels=1;buffer.SampleDesc={1,0};buffer.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         if(!CheckGraphicsResult(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&buffer,D3D12_RESOURCE_STATE_COPY_DEST,
             nullptr,IID_PPV_ARGS(candidate.readback.GetAddressOf())),text,"D3D12.CreateTimestampsFailed"))return false;

@@ -17,7 +17,8 @@ constexpr std::uint32_t kMaxRefsPerPass=16;
 bool IsBlockCompressed(rhi::TextureFormat format)
 {
     return format==rhi::TextureFormat::Bc1Unorm||format==rhi::TextureFormat::Bc1UnormSrgb
-        ||format==rhi::TextureFormat::Bc5Unorm||format==rhi::TextureFormat::Bc4Unorm;
+        ||format==rhi::TextureFormat::Bc5Unorm||format==rhi::TextureFormat::Bc4Unorm
+        ||format==rhi::TextureFormat::Bc7Unorm||format==rhi::TextureFormat::Bc7UnormSrgb;
 }
 
 std::uint64_t BlockBytes(rhi::TextureFormat format)
@@ -28,6 +29,8 @@ std::uint64_t BlockBytes(rhi::TextureFormat format)
     case rhi::TextureFormat::Bc1UnormSrgb:
     case rhi::TextureFormat::Bc4Unorm: return 8;
     case rhi::TextureFormat::Bc5Unorm: return 16;
+    case rhi::TextureFormat::Bc7Unorm:
+    case rhi::TextureFormat::Bc7UnormSrgb:return 16;
     default: return 0;
     }
 }
@@ -52,7 +55,8 @@ std::uint64_t TextureBytes(const FrameGraphTextureDesc& desc)
         }
         else
         {
-            const std::uint64_t bytesPerPixel=desc.format==rhi::TextureFormat::Rgba16Float?8:4;
+            const std::uint64_t bytesPerPixel=desc.format==rhi::TextureFormat::Rgba32Float?16:
+                desc.format==rhi::TextureFormat::Rgba16Float?8:4;
             total+=std::uint64_t(width)*height*bytesPerPixel;
         }
     }
@@ -75,6 +79,7 @@ const char* PassKindName(rhi::PassKind kind)
     case rhi::PassKind::ToneMap: return "ToneMap";
     case rhi::PassKind::Fxaa: return "Fxaa";
     case rhi::PassKind::Ui: return "Ui";
+    case rhi::PassKind::Transparent: return "Transparent";
     default: return "Unknown";
     }
 }
@@ -105,6 +110,8 @@ const char* TextureFormatName(rhi::TextureFormat format)
     case rhi::TextureFormat::Bc1UnormSrgb: return "Bc1UnormSrgb";
     case rhi::TextureFormat::Bc5Unorm: return "Bc5Unorm";
     case rhi::TextureFormat::Bc4Unorm: return "Bc4Unorm";
+    case rhi::TextureFormat::Bc7Unorm:return "Bc7Unorm";
+    case rhi::TextureFormat::Bc7UnormSrgb:return "Bc7UnormSrgb";
     default: return "Unknown";
     }
 }

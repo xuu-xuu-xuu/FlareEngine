@@ -1,5 +1,6 @@
 #include "FrameData.h"
 #include "FeatureFrameData.h"
+#include "FunctionLayer/Runtime/FeatureComponents.h"
 namespace se
 {
 void BuildFrameData(const Environment& environment,const UiTree* ui,const PhysicsWorld* physics,FrameData& output)
@@ -26,6 +27,16 @@ void BuildFrameData(const World& world,const UiTree* ui,const PhysicsWorld* phys
         if(const auto* mesh=world.GetMesh(entity);mesh&&active(ComponentTypes::Mesh))next.meshes.push_back({record->stableId,matrix,*mesh});
         if(const auto* camera=world.GetCamera(entity);camera&&active(ComponentTypes::Camera))next.cameras.push_back({record->stableId,matrix,*camera,rigidHierarchy});
         if(const auto* light=world.GetLight(entity);light&&active(ComponentTypes::Light))next.lights.push_back({record->stableId,matrix,*light});
+        if(active(RectangleLightComponent::TypeId))
+        {
+            const auto color=std::get<Vec3>(FeatureValue(world,entity,"rectangle.color"));
+            const auto radiance=std::get<float>(FeatureValue(world,entity,"rectangle.radiance"));
+            const auto width=std::get<float>(FeatureValue(world,entity,"rectangle.width"));
+            const auto height=std::get<float>(FeatureValue(world,entity,"rectangle.height"));
+            next.rectangleLights.push_back({record->stableId,{{matrix(0,3),matrix(1,3),matrix(2,3)},
+                {matrix(0,0)*width*.5f,matrix(1,0)*width*.5f,matrix(2,0)*width*.5f},
+                {matrix(0,1)*height*.5f,matrix(1,1)*height*.5f,matrix(2,1)*height*.5f},color*radiance}});
+        }
     }
     if(ui)next.ui=ui->Visuals();
     if(physics)next.debugLines=physics->DebugLines();

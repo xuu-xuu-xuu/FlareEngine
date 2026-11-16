@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreLayer/Math/Projection.h"
+#include "CoreLayer/MaterialAlpha.h"
 #include "MaterialLayout.h"
 #include "VisibilityData.h"
 #include "CoreLayer/GuiGeometry.h"
@@ -96,7 +97,7 @@ struct VertexLayoutDesc
 inline constexpr std::uint32_t VertexLayoutVersionLegacy=1,VertexLayoutVersionCompressed=2,VertexLayoutVersionSkinned=3;
 enum class BufferUsage { Vertex, Index };
 struct BufferDescription {BufferUsage usage=BufferUsage::Vertex;std::uint32_t stride=sizeof(Vertex);std::string name;};
-enum class TextureFormat { Rgba8, Rgba16Float, Bc1Unorm, Bc1UnormSrgb, Bc5Unorm, Bc4Unorm };
+enum class TextureFormat { Rgba8, Rgba16Float, Bc1Unorm, Bc1UnormSrgb, Bc5Unorm, Bc4Unorm, Bc7Unorm, Bc7UnormSrgb, Rg16Float, Rgba32Float };
 struct TextureDescription
 {
     std::uint32_t width=0,height=0,mipLevels=1,samples=1;
@@ -114,16 +115,19 @@ struct UploadFootprint
 {
     std::uint64_t payloadBytes=0,stagingBytes=0,rowPitch=0,alignment=0;
 };
-enum class PipelineKind { TexturedMesh, Triangle, PbrMesh, ForwardMesh, FinalOutput, Sky, ShadowedMesh, ShadowDepth, ShadowOutput, EnvironmentMesh, EnvironmentSky, BloomExtract, BloomBlur, ToneMap, Fxaa, UiOverlay, PbrInstancedMesh, Gui, BasicLitMesh, PbrForwardInstancedMesh };
+enum class PipelineKind { TexturedMesh, Triangle, PbrMesh, ForwardMesh, FinalOutput, Sky, ShadowedMesh, ShadowDepth, ShadowOutput, EnvironmentMesh, EnvironmentSky, BloomExtract, BloomBlur, ToneMap, Fxaa, UiOverlay, PbrInstancedMesh, Gui, BasicLitMesh, PbrForwardInstancedMesh, CascadedShadowedMesh, CascadedEnvironmentMesh, CascadedBasicLitMesh, CascadedShadowOutput, ClusteredForwardMesh, ClusteredShadowedMesh, ClusteredEnvironmentMesh, ClusteredBasicLitMesh, ClusteredCascadedShadowedMesh, ClusteredCascadedEnvironmentMesh, ClusteredCascadedBasicLitMesh };
+constexpr bool IsClustered(PipelineKind kind){return kind>=PipelineKind::ClusteredForwardMesh&&kind<=PipelineKind::ClusteredCascadedBasicLitMesh;}
+constexpr bool IsCascaded(PipelineKind kind){return kind==PipelineKind::ClusteredCascadedShadowedMesh||kind==PipelineKind::ClusteredCascadedEnvironmentMesh||kind==PipelineKind::ClusteredCascadedBasicLitMesh||kind==PipelineKind::CascadedShadowedMesh||kind==PipelineKind::CascadedEnvironmentMesh||kind==PipelineKind::CascadedBasicLitMesh||kind==PipelineKind::CascadedShadowOutput;}
+constexpr bool IsEnvironment(PipelineKind kind){return kind==PipelineKind::EnvironmentMesh||kind==PipelineKind::CascadedEnvironmentMesh||kind==PipelineKind::ClusteredEnvironmentMesh||kind==PipelineKind::ClusteredCascadedEnvironmentMesh;}
 constexpr bool IsInstanced(PipelineKind kind){return kind==PipelineKind::PbrInstancedMesh||kind==PipelineKind::PbrForwardInstancedMesh;}
-constexpr bool IsBasicLit(PipelineKind kind){return kind==PipelineKind::BasicLitMesh;}
+constexpr bool IsBasicLit(PipelineKind kind){return kind==PipelineKind::BasicLitMesh||kind==PipelineKind::CascadedBasicLitMesh||kind==PipelineKind::ClusteredBasicLitMesh||kind==PipelineKind::ClusteredCascadedBasicLitMesh;}
 constexpr bool IsPostProcess(PipelineKind kind){return kind>=PipelineKind::BloomExtract&&kind<=PipelineKind::UiOverlay;}
 constexpr std::uint32_t BindingLayout(PipelineKind kind)
-{return kind==PipelineKind::ToneMap?ToneMapLayoutVersion:kind==PipelineKind::Gui?GuiLayoutVersion:kind==PipelineKind::PbrForwardInstancedMesh?ForwardInstancingLayoutVersion:IsInstanced(kind)?InstancingLayoutVersion:IsPostProcess(kind)?PostProcessLayoutVersion:kind==PipelineKind::EnvironmentMesh||kind==PipelineKind::EnvironmentSky?EnvironmentLayoutVersion:kind==PipelineKind::ShadowedMesh||kind==PipelineKind::ShadowDepth||kind==PipelineKind::ShadowOutput||kind==PipelineKind::BasicLitMesh?ShadowLayoutVersion:kind==PipelineKind::Sky?SkyLayoutVersion:kind==PipelineKind::ForwardMesh||kind==PipelineKind::FinalOutput?ForwardLayoutVersion:kind==PipelineKind::PbrMesh?PbrMaterialLayoutVersion:MaterialLayoutVersion;}
-constexpr bool IsShadowed(PipelineKind kind){return kind==PipelineKind::ShadowedMesh||kind==PipelineKind::EnvironmentMesh||kind==PipelineKind::BasicLitMesh;}
+{return IsClustered(kind)?ClusteredForwardLayoutVersion:IsCascaded(kind)?CascadedShadowLayoutVersion:kind==PipelineKind::ToneMap?ToneMapLayoutVersion:kind==PipelineKind::Gui?GuiLayoutVersion:kind==PipelineKind::PbrForwardInstancedMesh?ForwardInstancingLayoutVersion:IsInstanced(kind)?InstancingLayoutVersion:IsPostProcess(kind)?PostProcessLayoutVersion:kind==PipelineKind::EnvironmentMesh||kind==PipelineKind::EnvironmentSky?EnvironmentLayoutVersion:kind==PipelineKind::ShadowedMesh||kind==PipelineKind::ShadowDepth||kind==PipelineKind::ShadowOutput||kind==PipelineKind::BasicLitMesh?ShadowLayoutVersion:kind==PipelineKind::Sky?SkyLayoutVersion:kind==PipelineKind::ForwardMesh||kind==PipelineKind::FinalOutput?ForwardLayoutVersion:kind==PipelineKind::PbrMesh?PbrMaterialLayoutVersion:MaterialLayoutVersion;}
+constexpr bool IsShadowed(PipelineKind kind){return (IsClustered(kind)&&kind!=PipelineKind::ClusteredForwardMesh)||kind==PipelineKind::ShadowedMesh||kind==PipelineKind::EnvironmentMesh||kind==PipelineKind::BasicLitMesh||(IsCascaded(kind)&&kind!=PipelineKind::CascadedShadowOutput);}
 constexpr bool IsSky(PipelineKind kind){return kind==PipelineKind::Sky||kind==PipelineKind::EnvironmentSky;}
-constexpr bool IsForward(PipelineKind kind){return kind==PipelineKind::ForwardMesh||kind==PipelineKind::PbrForwardInstancedMesh||IsShadowed(kind);}
-constexpr bool IsOutput(PipelineKind kind){return kind==PipelineKind::FinalOutput||kind==PipelineKind::ShadowOutput;}
+constexpr bool IsForward(PipelineKind kind){return kind==PipelineKind::ForwardMesh||kind==PipelineKind::ClusteredForwardMesh||kind==PipelineKind::PbrForwardInstancedMesh||IsShadowed(kind);}
+constexpr bool IsOutput(PipelineKind kind){return kind==PipelineKind::FinalOutput||kind==PipelineKind::ShadowOutput||kind==PipelineKind::CascadedShadowOutput;}
 constexpr bool IsPbr(PipelineKind kind){return kind==PipelineKind::PbrMesh||IsInstanced(kind)||(IsForward(kind)&&!IsBasicLit(kind));}
 // 所有使用 PbrDrawConstants + 3 贴图 + 阴影绑定布局的“受光网格”技术。
 constexpr bool UsesLitLayout(PipelineKind kind){return IsPbr(kind)||IsBasicLit(kind);}
@@ -131,9 +135,17 @@ constexpr bool UsesLitLayout(PipelineKind kind){return IsPbr(kind)||IsBasicLit(k
 // 目前只覆盖前向家族与阴影深度；实例化/后处理/天空不支持蒙皮。
 constexpr bool SupportsSkinning(PipelineKind kind)
 {return kind==PipelineKind::ShadowedMesh||kind==PipelineKind::ForwardMesh||kind==PipelineKind::PbrMesh
-    ||kind==PipelineKind::EnvironmentMesh||kind==PipelineKind::BasicLitMesh||kind==PipelineKind::ShadowDepth;}
-constexpr bool ValidPipelineKind(PipelineKind kind){return static_cast<unsigned>(kind)<=static_cast<unsigned>(PipelineKind::PbrForwardInstancedMesh);}
-enum class DepthMode { Default, Disabled, ReadWriteLess, ReadOnlyLessEqual };
+    ||kind==PipelineKind::EnvironmentMesh||kind==PipelineKind::BasicLitMesh||kind==PipelineKind::ShadowDepth
+    ||kind==PipelineKind::CascadedShadowedMesh||kind==PipelineKind::CascadedEnvironmentMesh||(IsClustered(kind)&&!IsBasicLit(kind));}
+constexpr bool IsShadowFilterLayout(std::uint32_t layout)
+{return layout>=CascadedShadowFilterLayoutVersion&&layout<=SkinnedClusteredShadowFilterLayoutVersion;}
+constexpr std::uint32_t ShadowFilterBindingLayout(PipelineKind kind,bool skinned=false)
+{return IsClustered(kind)?(skinned?SkinnedClusteredShadowFilterLayoutVersion:ClusteredShadowFilterLayoutVersion)
+    :(skinned?SkinnedCascadedShadowFilterLayoutVersion:CascadedShadowFilterLayoutVersion);}
+constexpr bool ValidShadowFilterBindingLayout(PipelineKind kind,std::uint32_t layout,bool skinned)
+{return IsCascaded(kind)&&IsShadowed(kind)&&(!skinned||SupportsSkinning(kind))&&layout==ShadowFilterBindingLayout(kind,skinned);}
+constexpr bool ValidPipelineKind(PipelineKind kind){return static_cast<unsigned>(kind)<=static_cast<unsigned>(PipelineKind::ClusteredCascadedBasicLitMesh);}
+enum class DepthMode { Default, Disabled, ReadWriteLess, ReadOnlyLessEqual, ReadOnlyEqual };
 enum class BlendMode { Opaque, Alpha };
 enum class ColorFormat { Rgba8Unorm, Rgba16Float, Rgba8Srgb };
 struct ShaderMacro {std::string name,value;bool operator==(const ShaderMacro&) const=default;};
@@ -150,7 +162,30 @@ struct PipelineDescription
     std::vector<ShaderMacro> macros;
     bool cachePrepared=true; // false 绕过 prepared PSO 缓存，Shader program 缓存与有效状态不变。
     ShaderInput shaderInput=ShaderInput::Source; // Artifact仅接受固定用户PBR包；失败不回退编译源文件。
+    std::uint32_t materialLayoutVersion=0; // 0 保留旧材质；38 在既有绑定布局上追加独立 b4。
+    MaterialAlphaMode alphaMode=MaterialAlphaMode::Opaque; // PSO pass/depth/blend 合同，surface 程序共享动态覆盖能力。
+    std::uint32_t shadingLayoutVersion=0; // 0 原布局；40 尾追加 b5/b6/t13..24。
 };
+inline bool ValidMaterialSurfacePipeline(const PipelineDescription& pipeline)
+{
+    if(!IsValidMaterialAlphaMode(pipeline.alphaMode))return false;
+    if(!pipeline.materialLayoutVersion)return pipeline.alphaMode==MaterialAlphaMode::Opaque;
+    if(pipeline.materialLayoutVersion!=MaterialSurfaceLayoutVersion||pipeline.shaderInput!=ShaderInput::Source
+        ||(!UsesLitLayout(pipeline.kind)&&pipeline.kind!=PipelineKind::ShadowDepth)||IsInstanced(pipeline.kind))return false;
+    if(pipeline.kind==PipelineKind::ShadowDepth)
+        return pipeline.alphaMode==MaterialAlphaMode::Mask&&pipeline.blend==BlendMode::Opaque
+            &&(pipeline.depth==DepthMode::Default||pipeline.depth==DepthMode::ReadWriteLess);
+    if(pipeline.alphaMode==MaterialAlphaMode::Blend)
+        return IsForward(pipeline.kind)&&pipeline.colorFormat==ColorFormat::Rgba16Float
+            &&pipeline.blend==BlendMode::Alpha&&pipeline.depth==DepthMode::ReadOnlyLessEqual;
+    return pipeline.blend==BlendMode::Opaque&&(pipeline.alphaMode!=MaterialAlphaMode::Mask
+        ||pipeline.depth==DepthMode::Default||pipeline.depth==DepthMode::ReadWriteLess);
+}
+inline bool ValidShadingExtensionPipeline(const PipelineDescription& pipeline)
+{
+    return !pipeline.shadingLayoutVersion||(pipeline.shadingLayoutVersion==ShadingExtensionLayoutVersion
+        &&pipeline.shaderInput==ShaderInput::Source&&IsForward(pipeline.kind)&&UsesLitLayout(pipeline.kind)&&!IsInstanced(pipeline.kind));
+}
 struct Surface {void* window=nullptr;std::uint32_t width=0,height=0;};
 struct AdapterInformation {std::string name;std::uint32_t vendorId=0,deviceId=0;std::uint64_t dedicatedVideoMemory=0;bool software=false;};
 struct CompletionToken {std::uint64_t device=0,queue=0,value=0;bool operator==(const CompletionToken&) const=default;};
@@ -158,7 +193,7 @@ enum class UploadMode { Pooled, DedicatedBaseline };
 enum class MemoryMode { Placed, CommittedBaseline };
 struct MemorySettings {MemoryMode mode=MemoryMode::Placed;std::uint64_t heapPageBytes=4*1024*1024,budgetBytes=256ull*1024*1024;};
 struct DescriptorLimits {std::uint32_t persistentPage=64,persistentMaximum=65536,frameInitial=64,frameMaximum=65536;};
-enum class PassKind { Clear, Opaque, Triangle, Sky, Output, Shadow, BloomExtract, BloomHorizontal, BloomVertical, ToneMap, Fxaa, Ui };
+enum class PassKind { Clear, Opaque, Triangle, Sky, Output, Shadow, BloomExtract, BloomHorizontal, BloomVertical, ToneMap, Fxaa, Ui, Transparent, DepthNormals, AmbientOcclusion };
 enum class ResourceUse { ColorWrite, DepthWrite, VertexRead, IndexRead, TextureRead, ColorRead, None, DepthRead };
 struct PassDescription
 {
@@ -167,6 +202,24 @@ struct PassDescription
     std::string name;
     ResourceUse input=ResourceUse::None;
     bool cacheBindings=false; // 只作用于本次 Opaque Pass，不跨命令列表缓存。
+};
+struct ShadingFrameBindings
+{
+    bool enabled=false;
+    ShadingFrameConstants constants;
+    // t14 directEnergy / t15 probeData / t16 LTCmatrix / t17 LTCamp / t18 skinLUT。
+    std::array<TextureHandle,5> textures{};
+};
+struct ShadingMaterialBindings
+{
+    ShadingMaterialConstants constants;
+    // t19 coatFactor / t20 coatRough / t21 coatNormal / t22 sheenColor / t23 sheenRough / t24 anisotropy。
+    std::array<TextureHandle,6> textures{};
+};
+struct GeometryCluster
+{
+    std::uint32_t firstIndex=0,indexCount=0;
+    Aabb localBounds; // 实际上传/重排 IB 的范围，界位于 draw.world 之前的实体局部空间。
 };
 struct DrawIndexed
 {
@@ -186,6 +239,8 @@ struct DrawIndexed
         // G05.08：LOD dither 编码。0 关闭；(0,1) 为新级像素占比，(−1,0) 为旧级对应绘制。
         // 只由不带阴影绑定的 PBR 技术（当前为 Materials 场景）使用，写入 options.w。
         float lodDither=0;
+        // RG104：独立开关；默认保持旧材质，IBL 多散射与法线高光抗锯齿不改变资产。
+        bool multiscatter=false,specularAA=false;
     } pbr;
     bool castsShadow=true;
     // G05.12：仅 TexturedMesh 管线的 Impostor 编码（相邻视角序号与插值权重）；普通绘制保持 0。
@@ -205,6 +260,15 @@ struct DrawIndexed
     // 因此不需要常驻缓冲或 GPU 句柄。jointOffset 是调色板在本绘制绑定范围内的字节偏移。
     std::span<const std::byte> skinPalette{};
     std::uint32_t skinJointOffset=0,skinJointCount=0;
+    MaterialAlphaMode alphaMode=MaterialAlphaMode::Opaque;
+    float alphaCutoff=.5f; // 有限且 >=0；>1 合法并自然全裁，不钳到1。
+    std::uint64_t stableId=0; // 仅 CPU 透明排序/诊断，绝不转成 float 上传。
+    Vec3 sortCenter{}; // 可选世界包围中心；缺省按 world 原点。
+    bool hasSortCenter=false;
+    ShadingMaterialBindings layers;
+    Aabb worldBounds;
+    bool hasWorldBounds=false;
+    std::span<const GeometryCluster> geometryClusters{}; // Draw 接收时复制快照；非法/缺失覆盖保留 CPU whole-draw。
 };
 // 世界空间辅助线。width 为逻辑像素；隐藏部分 alpha=0 表示遵守正常遮挡。
 struct SceneLine
@@ -220,12 +284,29 @@ struct InstanceParameters
     float metallic=0,roughness=1,normalScale=1;
     bool normalMapping=false,unlit=false,doubleSided=false,receivesShadow=true;
 };
+enum class ShadowFilterDebugMode : std::uint32_t { None=0,Visibility=1,Metrics=2 };
+struct ShadowFilterSettings
+{
+    bool pcss=false;
+    float angularRadius=.00465f; // 方向面积光角半径，弧度。
+    float blockerSearchDistance=20.f; // 搜索 footprint 对应的世界光轴距离，米。
+    float maximumRadiusTexels=16.f; // 搜索和滤波椭圆各轴的有限 texel 半径。
+    ShadowFilterDebugMode debug=ShadowFilterDebugMode::None;
+};
 struct ShadowSettings
 {
     Mat4 clipFromWorld;
     std::uint32_t resolution=1024;
     float depthBias=0.0008f,slopeBias=0.002f,normalBias=0.015f;
     bool enabled=true,pcf=true,preview=false;
+    // G08：0 保持旧单图；1..3 为真实深度数组，矩阵已经包含混合带与 caster 深度。
+    std::uint32_t cascadeCount=0;
+    std::array<Mat4,3> cascadeClipFromWorld{};
+    std::array<float,3> cascadeSplits{};
+    Vec4 cascadeViewDepth{}; // dot(world.xyz1, cascadeViewDepth) 得正视深。
+    float cascadeNear=0.1f,cascadeBlend=0.10f;
+    bool cascadeDebug=false;
+    ShadowFilterSettings filter; // 独立新布局消费；默认沿用旧 point / 5x5 PCF。
 };
 struct EnvironmentBindings
 {
@@ -250,12 +331,13 @@ struct PostProcessSettings
     std::shared_ptr<const std::vector<Vec3>> lutAsset;
     std::uint64_t lutRevision=0;
     // G14：TAA。关闭时 ToneMap/Bloom 直接读 HDR，FXAA 保持原回退路径。
-    // 两个裁剪矩阵由调用方提供（含亚像素抖动）；historyValid=false 表示首帧/resize/cut。
+    // 两个裁剪矩阵由调用方提供（均不含采样抖动）；historyValid=false 表示首帧/resize/cut。
     bool taa=false;
     Mat4 taaCurrentClipFromWorld{},taaPreviousClipFromWorld{};
     bool taaHistoryValid=false;
     float taaStaticBlend=0.1f,taaDynamicBlend=0.2f;
     float taaDepthThreshold=0.05f,taaVelocityThreshold=0.01f,taaSharpen=0.0f;
+    bool supersample4x=false; // HDR 几何 2×2 空间采样，后处理保持输出分辨率。
 };
 struct PostProcessPipelines {PipelineHandle extract,blur,toneMap,fxaa,overlay;};
 struct OverlayQuad
@@ -263,6 +345,26 @@ struct OverlayQuad
     Vec4 rectangle,color{1,1,1,1},clip{0,0,1e6f,1e6f}; // 像素 x/y/width/height；颜色为线性 RGBA。
 };
 struct PointLight {Vec3 position{},radiance{};float range=10;};
+struct ClusteredLighting
+{
+    bool enabled=false,debug=false,bruteForce=false,counterReadback=false;
+    std::vector<PointLight> lights;
+    std::vector<std::uint64_t> ids;
+    Mat4 view,clipFromView;
+    float nearPlane=.1f,farPlane=1000;
+    std::uint32_t capacity=65536;
+};
+struct ClusterReadback
+{
+    std::vector<std::array<std::uint32_t,2>> ranges;
+    std::vector<std::uint32_t> rawCounts;
+    std::vector<std::uint32_t> indices;
+    std::array<std::uint32_t,8> counters{};
+    std::vector<std::uint64_t> inputIds;
+    std::vector<PointLight> lights;
+    Mat4 view,clipFromView;
+    float nearPlane=0,farPlane=0;
+};
 // 普通天空的方向渐变与太阳盘；EnvironmentSky 的 HDR 资产路径不受影响。
 struct SkySettings
 {
@@ -284,15 +386,71 @@ struct ForwardLighting
     // G15：可选显示线性 LUT strip（1089×33，Rgba8 或 Rgba16Float）。仅输出 LUT 布局的
     // FinalOutput/ShadowOutput 采样；无效句柄时后端使用调用方提供的 1×1 占位纹理或拒绝该布局。
     TextureHandle colorLut;
+    ClusteredLighting cluster;
+    ShadingFrameBindings shading;
+    bool gpuDriven=false,meshletCulling=false,gpuDrivenHiZ=false;
 };
 struct Image {std::uint32_t width=0,height=0;std::vector<std::uint8_t> rgba8;};
 struct RenderTargetDescription {std::uint32_t width=0,height=0;bool depth=true,srgb=false;TextureFormat format=TextureFormat::Rgba8;};
 struct HdrImage {std::uint32_t width=0,height=0;std::vector<float> rgba32;};
-struct DepthImage {std::uint32_t width=0,height=0;std::vector<float> depth;};
+struct DepthImage {std::uint32_t width=0,height=0;std::vector<float> depth;std::uint32_t layers=1;};
+struct DepthNormalSettings {bool enabled=false;};
+struct ScreenSpaceOcclusionSettings
+{
+    bool gtao=false,contactShadows=false;
+    Mat4 view,clipFromView; // 实际抖动投影；与39输入、HDR几何像素视口同一相机。
+    float radius=.6f,intensity=.8f,bias=.02f;
+    float contactLength=.5f,contactBias=.02f,contactThickness=.1f,contactFade=.1f;
+};
+enum class ScreenSpaceOcclusionFallback : std::uint32_t
+{None,MissingDepthNormals,IncompleteGeometry,UnsupportedPipeline,InvalidCamera,InitializationFailed,ResourceFailure};
+struct ScreenSpaceOcclusionStatistics
+{
+    bool requested=false,valid=false,aoValid=false,contactValid=false;
+    std::uint32_t width=0,height=0,halfWidth=0,halfHeight=0;
+    ScreenSpaceOcclusionFallback fallback=ScreenSpaceOcclusionFallback::None;
+    std::uint64_t allocatedBytes=0;
+    std::uint64_t kernelCreations=0,programCompilations=0,artifactLoads=0,artifactRejections=0;
+};
+struct ScreenSpaceOcclusionReadback
+{
+    ScreenSpaceOcclusionStatistics statistics;
+    // 实际全尺寸 RG16F 与半尺寸 RG16F 展开：full=(AO,contact)，half=(AO,有效样本)。
+    std::vector<float> visibility,halfAo;
+};
+struct DepthNormalStatistics
+{
+    bool requested=false,valid=false,complete=false;
+    std::uint32_t draws=0,unsupportedDraws=0;
+    std::uint64_t allocatedBytes=0;
+    std::uint64_t pipelineCreations=0,programCompilations=0,artifactLoads=0,artifactRejections=0;
+};
+// 正确性回读专用；depth 是预绘后/主颜色前的原 D32，octNormals 为 RG16F 展开浮点。
+// 世界几何法线八面体编码 [-1,1]；(2,2) 表示无几何，complete=false 禁止作为完整 AO 输入。
+struct DepthNormalReadback
+{
+    std::uint32_t layoutVersion=DepthNormalLayoutVersion,width=0,height=0;
+    bool complete=false,valid=false;
+    std::uint32_t draws=0,unsupportedDraws=0;
+    std::vector<float> depth,octNormals;
+};
+struct ClusteredStatistics
+{
+    bool valid=false;
+    std::uint64_t sourceFrame=0;
+    std::array<std::uint32_t,8> counters{};
+};
 struct DrawBindingStatistics
 {
     std::uint64_t pipelines=0,rootSignatures=0,descriptorTables=0,vertexBuffers=0,indexBuffers=0,constants=0;
     std::uint64_t instanceBuffers=0;
+};
+// 这里只报告实际生成/录制的候选命令；可见数需要独立 GPU 回读，不能用 CPU 估计填充。
+struct GpuDrivenStatistics
+{
+    bool requested=false,valid=false,meshlets=false,hzbRequested=false,hzbValid=false;
+    std::uint32_t sourceDraws=0,candidateCommands=0,gpuBuckets=0,cpuDraws=0,cpuBuckets=0,meshletCommands=0;
+    std::array<std::uint32_t,11> fallbackReasons{};
 };
 // G06.09：间接参数回读的遮挡计数。visible 来自 GPU 写入的 ExecuteIndirect 参数，
 // 不是 CPU 按包围盒估算；valid=false 表示当前设备还没有完成过任何回读。
@@ -314,6 +472,10 @@ struct OcclusionTiming
 };
 struct Statistics
 {
+    DepthNormalStatistics depthNormals;
+    ScreenSpaceOcclusionStatistics screenSpaceOcclusion;
+    GpuDrivenStatistics gpuDriven;
+    ClusteredStatistics clustered;
     std::uint32_t hdrWidth=0,hdrHeight=0;
     std::uint64_t hdrCreations=0;
     std::uint32_t shadowResolution=0;
@@ -347,7 +509,16 @@ struct Statistics
 };
 struct GpuTiming
 {
+    bool heterogeneous=false,heterogeneousHiZ=false;
+    std::array<std::uint64_t,2> heterogeneousTicks{};
+    std::array<std::uint64_t,3> heterogeneousHiZTicks{};
+    bool ambientOcclusionHalf=false,ambientOcclusion=false;
+    std::array<std::uint64_t,2> aoTicks{},aoResolveTicks{};
+    bool depthNormals=false;
+    std::array<std::uint64_t,2> depthNormalTicks{};
     std::uint64_t sourceFrame=0,submission=0,frequency=0;
+    bool clustered=false;
+    std::array<std::uint64_t,2> clusterTicks{};
     std::array<std::uint64_t,4> ticks{}; // frame begin, geometry begin/end, frame end
     std::uint32_t draws=0;
     double frameMilliseconds=0,geometryMilliseconds=0;
@@ -406,6 +577,8 @@ public:
     Result ConfigureShadows(const ShadowSettings& shadows,PipelineHandle depthPipeline);
     Result ConfigureEnvironment(const EnvironmentBindings& environment);
     Result ConfigurePostProcess(const PostProcessSettings& settings,const PostProcessPipelines& pipelines);
+    Result ConfigureDepthNormals(const DepthNormalSettings& settings);
+    Result ConfigureScreenSpaceOcclusion(const ScreenSpaceOcclusionSettings& settings);
     Result DrawOverlay(const OverlayQuad& quad);
     // W03：阴影投射统一走整份绘制描述，蒙皮投射需要顶点缓冲已记录调色板。
     Result DrawShadow(const DrawIndexed& draw);
@@ -460,7 +633,7 @@ public:
     std::unique_ptr<CommandContext> BeginCommands(std::uint64_t sourceFrame=0);
     Result Resize(std::uint32_t width,std::uint32_t height);
     // capture 非空时显式等待该次复制；正常提交不为测量/截图全局等待。
-    Result Submit(CommandContext& commands,CompletionToken& token,Image* capture=nullptr,HdrImage* hdrCapture=nullptr,DepthImage* shadowCapture=nullptr);
+    Result Submit(CommandContext& commands,CompletionToken& token,Image* capture=nullptr,HdrImage* hdrCapture=nullptr,DepthImage* shadowCapture=nullptr,ClusterReadback* clusterCapture=nullptr,DepthImage* sceneDepthCapture=nullptr,DepthNormalReadback* depthNormalCapture=nullptr,ScreenSpaceOcclusionReadback* occlusionCapture=nullptr);
     bool IsComplete(CompletionToken token) const;
     Result WaitIdle();
     void Collect();

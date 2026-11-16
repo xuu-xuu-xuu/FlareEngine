@@ -44,6 +44,12 @@ internal static unsafe partial class NativeMethods
     internal static partial int SetCaptureSequence(ulong handle,string? path,uint length,ulong count);
     [LibraryImport(Library, EntryPoint="se_session_set_window_resolution")]
     internal static partial int SetWindowResolution(ulong handle,uint width,uint height);
+    [LibraryImport(Library, EntryPoint="se_session_configure_quality", StringMarshalling=StringMarshalling.Utf8)]
+    internal static partial int ConfigureQuality(ulong handle,string file,uint length,int showMenu);
+    [LibraryImport(Library, EntryPoint="se_session_set_quality_profiles", StringMarshalling=StringMarshalling.Utf8)]
+    internal static partial int ConfigureQualityProfiles(ulong handle,string json,uint length);
+    [LibraryImport(Library, EntryPoint="se_session_player_quality")]
+    internal static partial int PlayerQuality(ulong handle,int requested,out int current);
     [LibraryImport(Library, EntryPoint="se_session_set_window_fixed_step")]
     internal static partial int SetWindowFixedStep(ulong handle,double seconds);
     [LibraryImport(Library, EntryPoint="se_entity_actor_play", StringMarshalling=StringMarshalling.Utf8)]

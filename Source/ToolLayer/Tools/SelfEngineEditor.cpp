@@ -1,5 +1,7 @@
 #include "ToolLayer/Editor/EditorLauncher.h"
 #include "ToolLayer/Editor/EditorWorker.h"
+#include "ToolLayer/Editor/ProjectWorkspaceSession.h"
+#include "PlatformLayer/Windows/ExecutablePath.h"
 #include "PlatformLayer/Windows/ProcessDiagnostics.h"
 #include "CoreLayer/Log.h"
 #include <Windows.h>
@@ -58,7 +60,18 @@ int Usage()
 
 int RunEditor(int argc,wchar_t** argv)
 {
+    // 便携包会核对安装目录中的全部文件。日志属于用户数据，不能写到清单旁边。
+    const auto executableDirectory=GetExecutableDirectory();
+    std::error_code fileError;
+    bool temporaryLogDirectory=false;
+    if(GetEnvironmentVariableW(L"SELFENGINE_LOG_DIRECTORY",nullptr,0)==0 &&
+       std::filesystem::is_regular_file(executableDirectory/"editor-package.json",fileError))
+    {
+        const auto logs=se::ProjectWorkspaceSession::UserDataDirectory(executableDirectory)/"Logs";
+        temporaryLogDirectory=SetEnvironmentVariableW(L"SELFENGINE_LOG_DIRECTORY",logs.c_str())!=FALSE;
+    }
     InitializeProcessDiagnostics("editor");
+    if(temporaryLogDirectory)SetEnvironmentVariableW(L"SELFENGINE_LOG_DIRECTORY",nullptr);
     LogCheckpoint("Editor.Entry");
     LogCheckpoint("Editor.Console",std::string("enabled=")+(ShowDebugConsole?"1":"0")+
         " attached="+(GetConsoleCP()?"1":"0")+" window="+(GetConsoleWindow()?"1":"0"));

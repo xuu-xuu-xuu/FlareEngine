@@ -11,8 +11,9 @@ namespace se
 {
 // G04：BC1/BC5 派生纹理烘焙。完整 mip 链一次压块，缓存键含源内容哈希、格式与编码器版本；
 // 磁盘 .sebc 只作跨进程缓存，读写失败回退到重新编码，不影响画面。
-enum class BakedTextureFormat : std::uint8_t { Bc1Unorm, Bc1UnormSrgb, Bc5Unorm, Bc4Unorm };
+enum class BakedTextureFormat : std::uint8_t { Bc1Unorm, Bc1UnormSrgb, Bc5Unorm, Bc4Unorm, Bc7Unorm, Bc7UnormSrgb };
 inline constexpr const char* TextureBakeEncoderVersion = "tex-1";
+inline constexpr const char* Bc7BakeEncoderVersion = "bc7-56-1";
 
 struct BakedTexture
 {
@@ -33,6 +34,7 @@ std::string BakedTextureKey(std::string_view sourceKey,BakedTextureFormat format
 bool BakeBc1Texture(const ImageData& image,BakedTextureFormat format,BakedTexture& output,std::string& error);
 bool BakeBc5Texture(const ImageData& image,BakedTexture& output,std::string& error);
 bool BakeBc4Texture(const ImageData& image,BakedTexture& output,std::string& error);
+bool BakeBc7Texture(const ImageData& image,BakedTextureFormat format,BakedTexture& output,std::string& error);
 // .sebc 单文件读写；头部校验版本/格式/尺寸/mip 数/字节总数。
 bool WriteBakedTexture(const std::filesystem::path& path,const BakedTexture& texture);
 bool ReadBakedTexture(const std::filesystem::path& path,BakedTexture& output);

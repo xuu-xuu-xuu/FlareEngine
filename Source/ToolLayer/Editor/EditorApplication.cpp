@@ -5,6 +5,8 @@
 #include "AssetImportService.h"
 #include "EditorAssetActions.h"
 #include "EditorCreation.h"
+#include "EditorClipPreview.h"
+#include <charconv>
 #include "EditorScriptWorkflow.h"
 #include "SceneInspector.h"
 #include "EditorFeatureTools.h"
@@ -269,6 +271,8 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
         ExternalChangeMonitor toolkitExternalChange;
         std::string toolkitPendingAsset;
         std::string inspectedAssetName;
+        AssetId inspectedModel;
+        EditorClipPreview clipPreview;
         HWND nativeMoveWindow=nullptr;
         std::vector<ui::editor::EditorProperty> inspectedAssetRows;
         struct ToolkitImportResult
@@ -361,6 +365,10 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
         }
         session.SetPlayCallbacks([&](World& world){
             authoredScenePhysics.Clear(authoredPhysics);
+            session.PlayEnvironment()->SetSkeletalResolver([&assets](const std::string& asset){
+                std::vector<AssetDiagnostic> diagnostics;
+                return assets.LoadModel(asset,diagnostics);
+            });
             if(!hooks||!hooks->update)
                 session.PlayEnvironment()->SetPhysicsService([&](double seconds){return authoredScenePhysics.Step(*session.PlayWorld(),authoredPhysics,static_cast<float>(seconds));});
             playUi=std::make_unique<UiTree>(ui);
@@ -527,7 +535,7 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                         }
                     });
                 toolkitShell->SetAssetSelectionHandler([&assets,&frontend,&toolkitShell,&text,&scriptWorkflow,&root,
-                    &inspectedAssetName,&inspectedAssetRows,&featureTools,&toolkitInspectUi,
+                    &inspectedAssetName,&inspectedAssetRows,&inspectedModel,&clipPreview,&session,&featureTools,&toolkitInspectUi,
                     &toolkitPreviewImage,&toolkitPreviewImageKey,&toolkitPreviewToken,&toolkitImageInfos](std::string path){
                     Log(LogLevel::Info,"EditorUi.ToolkitAsset: "+path);
                     if(toolkitInspectUi)toolkitShell->CancelPropertyInteraction();
@@ -536,6 +544,8 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                     const std::filesystem::path selected=asset_io::FromUtf8(path);
                     inspectedAssetName=asset_io::Utf8(selected.filename());
                     inspectedAssetRows.clear();
+                    inspectedModel.clear();
+                    clipPreview.Clear();
                     const auto addDetail=[&](const char* key,const char* label,std::string value){
                         inspectedAssetRows.push_back({key,text.GetText(label),ui::editor::EditorPropertyType::String,
                                                       std::move(value),true});
@@ -556,6 +566,11 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                     std::error_code sizeError;
                     const auto bytes=std::filesystem::file_size(selected,sizeError);
                     if(!sizeError) addDetail("asset.size","EditorUi.Size",std::to_string(bytes)+" B");
+                    if(model){
+                        for(const auto& id:assets.ListIds())if(assets.Resolve(id)==selected){inspectedModel=id;break;}
+                        if(!inspectedModel.empty())inspectedAssetRows.push_back({"asset.addModel",text.GetText("EditorUi.AddModelToScene"),
+                            ui::editor::EditorPropertyType::Action,{},session.IsPlaying()});
+                    }
                     if(extension==".cs") inspectedAssetRows.push_back({"asset.openScript",text.GetText("Editor.ScriptOpenSource"),
                         ui::editor::EditorPropertyType::Action,{},false});
                     scriptWorkflow.SelectSource(selected);
@@ -705,7 +720,30 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                     const auto tod=frontend.TimeOfDayPreview().EndEdit(phase==Commit);
                     const auto scene=phase == Commit ? session.CommitEdit() : session.CancelEdit();return tod||scene;
                 });
-                toolkitShell->SetPropertyHandler([&session,&assets,&scriptWorkflow,&frontend,&toolkitShell,&ui,&toolkitUiDirty,&toolkitEditTod,&text](std::uint64_t id,std::string key,std::string value){
+                toolkitShell->SetPropertyChoices([&](std::uint64_t id,ui::editor::EditorProperty& field){
+                    return FillSceneInspectorChoices(session,assets,text,id,field);
+                });
+                toolkitShell->SetPropertyHandler([&session,&assets,&scriptWorkflow,&frontend,&toolkitShell,&ui,&toolkitUiDirty,&toolkitEditTod,&text,
+                    &inspectedModel,&inspectedAssetName,&viewportController,&clipPreview](std::uint64_t id,std::string key,std::string value){
+                    if(key=="asset.addModel"){
+                        std::string error;
+                        if(!AddModelToScene(session,assets,inspectedModel,error)){toolkitShell->SetStatus(text.GetText(error));return false;}
+                        inspectedAssetName.clear();
+                        viewportController.Action("Frame",session,assets);
+                        return true;
+                    }
+                    if(key=="preview.play"||key=="preview.time"){
+                        std::string error;
+                        if(!clipPreview.Select(session,assets,id,error)){toolkitShell->SetStatus(text.GetText(error));return false;}
+                        if(key=="preview.play")clipPreview.Toggle();
+                        else{
+                            double seconds=0;
+                            auto [end,status]=std::from_chars(value.data(),value.data()+value.size(),seconds);
+                            if(status!=std::errc{}||end!=value.data()+value.size()||!std::isfinite(seconds)||seconds<0)return false;
+                            clipPreview.Seek(seconds);
+                        }
+                        return true;
+                    }
                     toolkitEditTod=key.starts_with("tod.");
                     if(toolkitEditTod){if(key=="tod.open"&&frontend.TimeOfDayPreview().Dirty()){toolkitShell->SetStatus(text.GetText("EditorUi.SaveFirst"));return false;}const auto result=ApplyTodInspector(frontend.TimeOfDayPreview(),assets,session,key,value);if(!result)toolkitShell->SetStatus(text.GetText(frontend.TimeOfDayPreview().LastError()));return result;}
                     if(key.starts_with("ui."))
@@ -833,12 +871,12 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                         {
                             frontend.RequestCancelExport();
                             Log(LogLevel::Info,"EditorUi.ToolkitExport: cancel");
-                            toolkitShell->SetFormStatus(EditorPanelId::BuildExport,"Cancelling export");
+                            toolkitShell->SetFormStatus(EditorPanelId::BuildExport,text.GetText("EditorUi.CancellingExport"));
                             return true;
                         }
                         if(!saveAll())
                         {
-                            toolkitShell->SetFormStatus(EditorPanelId::BuildExport,"Save failed; export cancelled");
+                            toolkitShell->SetFormStatus(EditorPanelId::BuildExport,text.GetText("EditorUi.SaveFailed"));
                             return false;
                         }
                         std::string error;
@@ -980,6 +1018,16 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                         rows.push_back({"name",text.GetText("EditorUi.Name"),ui::editor::EditorPropertyType::String,toolkitProjectSettings.name,false});
                         rows.push_back({"contentRoot",text.GetText("EditorUi.ContentRoot"),ui::editor::EditorPropertyType::String,toolkitProjectSettings.contentRoot,false});
                         rows.push_back({"entryScene",text.GetText("EditorUi.EntryScene"),ui::editor::EditorPropertyType::String,toolkitProjectSettings.entryScene,false});
+                        rows.push_back({"showPlayerQualityMenu",text.GetText("PlayerQuality.ShowMenu"),ui::editor::EditorPropertyType::Boolean,toolkitProjectSettings.showPlayerQualityMenu?"true":"false",false});
+                        rows.push_back({"playerSettingsId",text.GetText("PlayerQuality.GameId"),ui::editor::EditorPropertyType::String,toolkitProjectSettings.playerSettingsId,false});
+                        for(size_t i=0;i<toolkitProjectSettings.qualityProfiles.size();++i){
+                            const auto& profile=toolkitProjectSettings.qualityProfiles[i];
+                            const std::string prefix=std::string("quality.")+PlayerQualityIds[i+1]+".";
+                            const auto label=text.GetText(std::array{"PlayerQuality.Performance","PlayerQuality.Balanced","PlayerQuality.High"}[i])+" · ";
+                            rows.push_back({prefix+"sampling",label+text.GetText("PlayerQuality.Sampling"),ui::editor::EditorPropertyType::Combo,QualitySamplingIds[static_cast<size_t>(profile.sampling)],false});
+                            for(const auto* method:QualitySamplingIds){rows.back().options.push_back(method);rows.back().optionLabels.push_back(text.GetText(std::string("PlayerQuality.Sampling.")+method));}
+                            rows.push_back({prefix+"shadows",label+text.GetText("PlayerQuality.AllowShadows"),ui::editor::EditorPropertyType::Boolean,profile.allowShadows?"true":"false",false});
+                            rows.push_back({prefix+"bloom",label+text.GetText("PlayerQuality.AllowBloom"),ui::editor::EditorPropertyType::Boolean,profile.allowBloom?"true":"false",false});}
                         rows.push_back({"assets",text.GetText("EditorUi.Assets"),ui::editor::EditorPropertyType::String,
                             std::to_string(toolkitProjectSettings.assets.size())+" "+text.GetText("EditorUi.Registered"),true});
                         return rows;
@@ -987,6 +1035,16 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                     const auto buildRows=[&toolkitBuildSettings,&toolkitExportName,&text](){
                         std::vector<ui::editor::EditorProperty> rows;
                         rows.push_back({"exportName",text.GetText("EditorUi.ExportName"),ui::editor::EditorPropertyType::String,toolkitExportName,false});
+                        using ui::editor::EditorPropertyType;
+                        rows.push_back({"recordVideo",text.GetText("EditorUi.RecordVideo"),EditorPropertyType::Boolean,
+                            toolkitBuildSettings.recordVideo?"true":"false"});
+                        rows.push_back({"videoResolution",text.GetText("EditorUi.VideoResolution"),EditorPropertyType::Combo,
+                            toolkitBuildSettings.videoResolution,false,{"640x360","1280x720","1920x1080"}});
+                        rows.push_back({"videoFps",text.GetText("EditorUi.VideoFps"),EditorPropertyType::Combo,
+                            std::to_string(toolkitBuildSettings.videoFps),false,{"24","30","60"}});
+                        rows.push_back({"videoSeconds",text.GetText("EditorUi.VideoSeconds"),EditorPropertyType::Number,
+                            std::to_string(toolkitBuildSettings.videoSeconds)});
+                        rows.push_back({"openOutput",text.GetText("EditorUi.ExportOpenOutput"),EditorPropertyType::Action,{}});
                         rows.push_back({"scriptsProject",text.GetText("EditorUi.ScriptsProject"),ui::editor::EditorPropertyType::String,toolkitBuildSettings.scriptsProject,false});
                         rows.push_back({"scriptType",text.GetText("EditorUi.ScriptType"),ui::editor::EditorPropertyType::String,toolkitBuildSettings.scriptType,false});
                         rows.push_back({"bindings",text.GetText("EditorUi.Bindings"),ui::editor::EditorPropertyType::String,toolkitBuildSettings.bindings,false});
@@ -1000,6 +1058,19 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                             if(key=="name")toolkitProjectSettings.name=value;
                             else if(key=="contentRoot")toolkitProjectSettings.contentRoot=value;
                             else if(key=="entryScene")toolkitProjectSettings.entryScene=value;
+                            else if(key=="showPlayerQualityMenu"&&(value=="true"||value=="false"))toolkitProjectSettings.showPlayerQualityMenu=value=="true";
+                            else if(key=="playerSettingsId")toolkitProjectSettings.playerSettingsId=value;
+                            else if(key.starts_with("quality.")){
+                                bool found=false;
+                                for(size_t i=0;i<toolkitProjectSettings.qualityProfiles.size();++i){
+                                    const std::string prefix=std::string("quality.")+PlayerQualityIds[i+1]+".";
+                                    if(!key.starts_with(prefix))continue;
+                                    auto& p=toolkitProjectSettings.qualityProfiles[i];const auto field=key.substr(prefix.size());
+                                    if(field=="sampling"){auto method=ParseQualitySampling(value);if(!method)return false;p.sampling=*method;}
+                                    else if((field=="shadows"||field=="bloom")&&(value=="true"||value=="false"))
+                                        (field=="shadows"?p.allowShadows:p.allowBloom)=value=="true";
+                                    else return false;found=true;break;}
+                                if(!found)return false;}
                             else return false;
                             toolkitProjectDirty=true;
                             return true;
@@ -1017,14 +1088,34 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                             return true;
                         });
                     toolkitShell->SetFormHandlers(EditorPanelId::BuildExport,
-                        [&toolkitBuildSettings,&toolkitBuildDirty,&toolkitExportName](std::string key,std::string value){
+                        [&toolkitBuildSettings,&toolkitBuildDirty,&toolkitExportName,&frontend,&toolkitShell,&text](std::string key,std::string value){
+                            if(key=="openOutput"){
+                                const auto output=frontend.ExportSnapshot().outputPackage;
+                                if(output.empty()||!std::filesystem::is_directory(output)){toolkitShell->SetFormStatus(EditorPanelId::BuildExport,text.GetText("EditorUi.ExportFirst"));return false;}
+                                if(std::filesystem::is_regular_file(output/"clip.mp4"))frontend.OpenInExplorer(output/"clip.mp4",true);
+                                else frontend.OpenInExplorer(output);
+                                return true;
+                            }
                             if(key=="exportName")
                             {
                                 if(value.empty()||value.size()>128)return false;
                                 toolkitExportName=std::move(value);
                                 return true;
                             }
-                            if(key=="scriptsProject")toolkitBuildSettings.scriptsProject=value;
+                            if(key=="recordVideo")toolkitBuildSettings.recordVideo=value=="true";
+                            else if(key=="videoResolution")toolkitBuildSettings.videoResolution=value;
+                            else if(key=="videoFps"||key=="videoSeconds"){
+                                int n=0;auto [end,status]=std::from_chars(value.data(),value.data()+value.size(),n);
+                                if(status!=std::errc{}||end!=value.data()+value.size()||n<1)return false;
+                                if(key=="videoFps"){
+                                    if((n!=24&&n!=30&&n!=60)||toolkitBuildSettings.videoSeconds>100000/n)return false;
+                                    toolkitBuildSettings.videoFps=n;
+                                }else{
+                                    if(n>100000/toolkitBuildSettings.videoFps)return false;
+                                    toolkitBuildSettings.videoSeconds=n;
+                                }
+                            }
+                            else if(key=="scriptsProject")toolkitBuildSettings.scriptsProject=value;
                             else if(key=="scriptType")toolkitBuildSettings.scriptType=value;
                             else if(key=="bindings")toolkitBuildSettings.bindings=value;
                             else if(key=="entryUi")toolkitBuildSettings.entryUi=value;
@@ -1559,6 +1650,18 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                     else
                     {
                         AppendSceneInspector(session, assets, text, selected, properties);
+                        const auto clip=std::find_if(properties.begin(),properties.end(),[](const auto& p){return p.key=="actor.clip";});
+                        if(clip!=properties.end()&&!session.IsPlaying()){
+                            using ui::editor::EditorProperty;
+                            using ui::editor::EditorPropertyType;
+                            const bool active=clipPreview.Target()==selected;
+                            const bool running=active&&clipPreview.Playing();
+                            const auto group=clip->section;
+                            EditorProperty play{"preview.play",text.GetText(running?"EditorUi.PauseClip":"EditorUi.PlayClip"),EditorPropertyType::Action,{},false,{},group};
+                            EditorProperty time{"preview.time",text.GetText("EditorUi.ClipTime"),EditorPropertyType::Number,
+                                std::to_string(active?std::round(clipPreview.Time()*10.)/10.:0.),false,{},group};
+                            properties.insert(std::next(clip),{std::move(play),std::move(time)});
+                        }
                         AppendTodInspector(frontend.TimeOfDayPreview(),text,session.IsPlaying(),properties);
                         scriptWorkflow.AppendRows(selected, session.IsPlaying(), properties);
                         toolkitShell->SetInspector(selected, inspectorLabel, std::move(properties));
@@ -1639,16 +1742,22 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                     toolkitShell->SetFormActionLabel(EditorPanelId::BuildExport,
                         exportBusy?text.GetText("EditorUi.Cancel"):text.GetText("EditorUi.Export"));
                 }
-                if(!exportBusy)
+                if(exportBusy)
+                {
+                    const auto progress=frontend.ExportSnapshot();
+                    if(!progress.report.stage.empty())toolkitShell->SetFormStatus(EditorPanelId::BuildExport,text.GetText(progress.report.stage));
+                }
+                else
                 {
                     const auto snapshot=frontend.ExportSnapshot();
-                    if(snapshot.finished)
+                    if(snapshot.finished&&!toolkitExportFinished)
                     {
                         std::string exportStatus=snapshot.cancelled?text.GetText("EditorUi.ExportCancelled"):
                             snapshot.report.state==ExportOperationState::Succeeded?text.GetText("EditorUi.ExportSucceeded"):
                             text.GetText("EditorUi.ExportFailed");
                         if(!snapshot.cancelled&&snapshot.report.state!=ExportOperationState::Succeeded&&
                             !snapshot.report.diagnosticKey.empty())exportStatus+=": "+snapshot.report.diagnosticKey;
+                        if(!snapshot.outputPackage.empty())exportStatus+="  "+asset_io::Utf8(snapshot.outputPackage);
                         toolkitShell->SetFormStatus(EditorPanelId::BuildExport,exportStatus);
                         if(toolkitExportStarted&&!toolkitExportFinished)
                         {
@@ -1666,13 +1775,20 @@ int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesys
                             toolkitExportFinished=false;
                             if(toolkitAutoExportFn)toolkitAutoExportFn();
                         }
+                        else toolkitExportFinished=true;
                     }
                 }
                 if(toolkitShell->ConsumeCloseRequest())PostMessageW(hostWindow,WM_CLOSE,0,0);
-                // Play 时必须用播放环境的快照：蒙皮调色板在 Environment 的姿态系统里，
-            // 只传 World 会得到空调色板，角色停在绑定姿态（E18）。
-            if(session.IsPlaying())BuildFrameData(*session.PlayEnvironment(),playUi.get(),nullptr,frame);
-            else BuildFrameData(session.EditWorld(),nullptr,nullptr,frame);
+                if(session.IsPlaying())
+                {
+                    clipPreview.Clear();
+                    BuildFrameData(*session.PlayEnvironment(),playUi.get(),nullptr,frame);
+                }
+                else
+                {
+                    BuildFrameData(session.EditWorld(),nullptr,nullptr,frame);
+                    clipPreview.Update(session,frame);
+                }
                 if(session.IsPlaying()&&playUi&&hooks&&hooks->extract)hooks->extract(*session.PlayWorld(),*playUi,frame);
                 else if(viewportController.Gizmos())
                 {
