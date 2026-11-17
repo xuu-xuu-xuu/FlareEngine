@@ -8,6 +8,7 @@ set(material_surface_programs
     "EnvironmentForward|environment"
     "BasicLit|basiclit"
     "SkinnedForward|skinned-forward"
+    "SkinnedEnvironmentForward|skinned-environment"
     "ShadowDepth|shadowdepth"
     "SkinnedShadowDepth|skinned-shadowdepth"
     "CascadedShadowedForward|cascaded-shadowed"

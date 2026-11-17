@@ -2815,6 +2815,8 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
         add("EditorUi.CreateSphere", "Create sphere", EditorCommandId::CreateEntity, "sphere");
         add("EditorUi.CreateCamera", "Create camera", EditorCommandId::CreateEntity, "camera");
         add("EditorUi.CreateLight", "Create light", EditorCommandId::CreateEntity, "light");
+        add("EditorUi.LightPoint", "Point light", EditorCommandId::CreateEntity, "point-light");
+        add("EditorUi.LightSpot", "Spot light", EditorCommandId::CreateEntity, "spot-light");
         add("Feature.Rectangle", "Rectangle area light", EditorCommandId::CreateEntity, "rectangle-light");
         add("Feature.Render", "Scene rendering settings", EditorCommandId::CreateEntity, "render-settings");
         add("Feature.Environment", "Environment lighting", EditorCommandId::CreateEntity, "environment-settings");

@@ -13,6 +13,7 @@ struct D3D12PreparedPipeline
     se::rhi::ColorFormat colorFormat=se::rhi::ColorFormat::Rgba8Unorm;
     UINT materialRootParameter=UINT_MAX;
     UINT shadingFrameParameter=UINT_MAX,shadingMaterialParameter=UINT_MAX,shadingTexturesParameter=UINT_MAX;
+    UINT localLightParameter=UINT_MAX;
     se::MaterialAlphaMode alphaMode=se::MaterialAlphaMode::Opaque;
     // 派生预绘/Equal PSO 复用实际 VS、root、光栅及输入布局；拥有 InputLayout 指针的存储。
     std::vector<D3D12_INPUT_ELEMENT_DESC> inputElements;

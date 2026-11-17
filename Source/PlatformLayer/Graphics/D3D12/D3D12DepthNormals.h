@@ -6,7 +6,7 @@ struct D3D12FrameContent;
 class D3D12StateRecording;
 struct D3D12DepthNormalTarget
 {
-    Microsoft::WRL::ComPtr<ID3D12Resource> depth,normal;
+    Microsoft::WRL::ComPtr<ID3D12Resource> depth,normal,material;
     std::shared_ptr<D3D12DescriptorRange> dsv,rtv,views;
     UINT width=0,height=0;
     UINT64 allocatedBytes=0;
@@ -34,6 +34,7 @@ public:
     UINT64 PipelineCreations() const{return pipelineCreations_;}
 private:
     std::array<std::shared_ptr<const D3D12ShaderProgram>,4> pixels_;
+    std::array<Microsoft::WRL::ComPtr<ID3DBlob>,4> indoorPixels_;
     D3D12ShaderLoadStatistics shaderStatistics_;
     UINT64 pipelineCreations_=0;
     std::unordered_map<std::string,std::weak_ptr<const D3D12DepthNormalPipeline>> pipelines_;

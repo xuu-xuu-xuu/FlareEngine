@@ -130,7 +130,6 @@ void DrawLight(const World& world, EntityHandle entity, const CameraSnapshot& ed
             }
         return;
     }
-    if (light.type != LightType::Directional) return;
     // 渲染器的 +Z 是指向光源方向，箭头表示实际向场景传播的光线方向。
     const auto toLight = TransformVector(matrix, {0, 0, 1});
     const double magnitude = std::sqrt(double(toLight.x) * toLight.x + double(toLight.y) * toLight.y +
@@ -139,6 +138,24 @@ void DrawLight(const World& world, EntityHandle entity, const CameraSnapshot& ed
     const Vec3 direction{-float(toLight.x / magnitude), -float(toLight.y / magnitude), -float(toLight.z / magnitude)};
     const auto side = Normalize(Cross(direction, std::abs(direction.y) < .9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0}));
     const auto up = Cross(direction, side);
+    if(light.type==LightType::Spot)
+    {
+        const float range=std::clamp(light.range,.05f,10000.f);
+        constexpr int segments=48;
+        for(const float angle:{light.outerAngle,light.innerAngle})
+        {
+            const auto center=origin+direction*(range*std::cos(angle));
+            const float radius=range*std::sin(angle);
+            const auto rim=[&](int i){const float phase=2*Pi*i/segments;
+                return center+(side*std::cos(phase)+up*std::sin(phase))*radius;};
+            for(int i=0;i<segments;++i)
+            {
+                SceneLine(lines,rim(i),rim(i+1),LightColor);
+                if(i%(segments/4)==0&&angle==light.outerAngle)SceneLine(lines,origin,rim(i),LightColor);
+            }
+        }
+        return;
+    }
     const auto view = editor.view * Vec4{origin.x, origin.y, origin.z, 1};
     const float depth = std::max(std::abs(view.z), editor.lens.nearPlane);
     const float length = 2 * depth * 84 / (editor.projection(1, 1) * editor.viewport.height);

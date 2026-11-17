@@ -344,7 +344,8 @@ bool World::SetLight(EntityHandle entity,const LightComponent& component)
     if(!IsKnown(entity))return Fail("World.InvalidEntity");
     if(!IsFinite(component.color) || !IsFinite(component.intensity) || component.intensity<0
         || component.color.x<0 || component.color.y<0 || component.color.z<0||!IsFinite(component.range)||component.range<=0
-        ||(component.type!=LightType::Directional&&component.type!=LightType::Point))return Fail("World.InvalidComponent");
+        ||LightTypeName(component.type).empty()||!IsFinite(component.innerAngle)||!IsFinite(component.outerAngle)
+        ||component.innerAngle<0||component.innerAngle>component.outerAngle||component.outerAngle<.01f||component.outerAngle>1.55f)return Fail("World.InvalidComponent");
     return DeferEntity(entity,[entity,component](World& world){if(!world.IsAlive(entity))return world.Fail("World.InvalidEntity");return world.Store(world.lights_,entity,component);},lights_.Get(entity.index)==nullptr);
 }
 bool World::RemoveLight(EntityHandle entity)

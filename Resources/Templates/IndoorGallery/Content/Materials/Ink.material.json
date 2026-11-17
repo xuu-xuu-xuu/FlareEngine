@@ -1,0 +1,19 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "炭黑烤漆",
+  "baseColor": [
+    0.037,
+    0.048,
+    0.052,
+    1
+  ],
+  "metallic": 0.23,
+  "roughness": 0.42,
+  "doubleSided": false,
+  "textures": {
+    "baseColor": "",
+    "normal": "",
+    "metallicRoughness": ""
+  }
+}

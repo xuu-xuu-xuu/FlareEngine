@@ -188,10 +188,12 @@ bool ReservedName(const std::wstring& name)
 
 const char* ProjectTemplateId(ProjectTemplate value)
 {
+    if(value==ProjectTemplate::IndoorGallery)return "indoor-gallery";
     return value==ProjectTemplate::RenderingStudio?"rendering-studio":value==ProjectTemplate::BlankScene?"blank-scene":"basic-3d";
 }
 const char* ProjectTemplateNameKey(ProjectTemplate value)
 {
+    if(value==ProjectTemplate::IndoorGallery)return "Editor.TemplateIndoorGallery";
     return value==ProjectTemplate::RenderingStudio?"Editor.TemplateRenderingStudio":value==ProjectTemplate::BlankScene?"Editor.TemplateBlank":"Editor.TemplateBasic3D";
 }
 
@@ -364,7 +366,8 @@ bool ProjectWorkspaceSession::CreateProject(ProjectTemplate projectTemplate,cons
         if(!std::filesystem::is_directory(target,error)||!std::filesystem::is_empty(target,error))
         {errorKey="Project.TargetNotEmpty";detail=Utf8(target);return false;}
     }
-    const auto templateDirectory=templateRoot/(projectTemplate==ProjectTemplate::RenderingStudio?L"RenderingStudio":
+    const auto templateDirectory=templateRoot/(projectTemplate==ProjectTemplate::IndoorGallery?L"IndoorGallery":
+        projectTemplate==ProjectTemplate::RenderingStudio?L"RenderingStudio":
         projectTemplate==ProjectTemplate::BlankScene?L"BlankScene":L"EmptyGame");
     if(!std::filesystem::is_regular_file(templateDirectory/L"project.json",error))
     {errorKey="Project.TemplateMissing";detail=Utf8(templateDirectory);return false;}

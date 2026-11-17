@@ -1,0 +1,19 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "象牙白陶",
+  "baseColor": [
+    0.82,
+    0.75,
+    0.6,
+    1
+  ],
+  "metallic": 0.025,
+  "roughness": 0.24,
+  "doubleSided": false,
+  "textures": {
+    "baseColor": "",
+    "normal": "",
+    "metallicRoughness": ""
+  }
+}

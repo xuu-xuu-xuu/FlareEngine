@@ -25,14 +25,32 @@ const std::array meshProperties{
 const std::array lightProperties{
     PropertyDescriptor{"light.color","Property.Light.Color",PropertyType::Vector3,Vec3{1,1,1},0.0f,std::nullopt,true,{},PropertyPresentation::Color},
     PropertyDescriptor{"light.intensity","Property.Light.Intensity",PropertyType::Number,1.0f,0.0f,std::nullopt},
-    PropertyDescriptor{"light.point","Property.Light.Point",PropertyType::Boolean,false,std::nullopt,std::nullopt,true,"type"},
-    PropertyDescriptor{"light.range","Property.Light.Range",PropertyType::Number,10.0f,0.001f,std::nullopt}};
+    PropertyDescriptor{"light.kind","EditorUi.LightType",PropertyType::Text,std::string{"directional"}},
+    PropertyDescriptor{"light.range","Property.Light.Range",PropertyType::Number,10.0f,0.001f,std::nullopt},
+    PropertyDescriptor{"light.castsShadow","Property.Light.CastsShadow",PropertyType::Boolean,false,{},{},true,{},PropertyPresentation::Default,true},
+    PropertyDescriptor{"light.innerAngle","Property.Light.InnerAngle",PropertyType::Number,LightComponent{}.innerAngle,0.f,1.55f,true,{},PropertyPresentation::Default,true},
+    PropertyDescriptor{"light.outerAngle","Property.Light.OuterAngle",PropertyType::Number,LightComponent{}.outerAngle,.01f,1.55f,true,{},PropertyPresentation::Default,true},
+    // 兼容脚本/旧编辑器的布尔属性。新场景统一写 kind。
+    PropertyDescriptor{"light.point","Property.Light.Point",PropertyType::Boolean,false,{},{},true,{},PropertyPresentation::Default,false,false}};
 const std::array components{
     ComponentDescriptor{"transform","Component.Transform",transformProperties,false},
     ComponentDescriptor{"camera","Component.Camera",cameraProperties},
     ComponentDescriptor{"mesh","Component.Mesh",meshProperties},
     ComponentDescriptor{"light","Component.Light",lightProperties}};
 bool Fail(std::string& error,const char* key){error=key;return false;}
+bool MigrateLight(std::uint32_t version,std::vector<ComponentProperty>& properties,std::string& error)
+{
+    if(version!=1)return Fail(error,"Metadata.UnsupportedVersion");
+    for(auto& field:properties)
+    {
+        if(field.key!="type")continue;
+        const auto* point=std::get_if<bool>(&field.value);
+        if(!point)return Fail(error,"Metadata.InvalidValue");
+        field.key="kind";field.value=std::string(*point?"point":"directional");
+        return true;
+    }
+    return Fail(error,"Metadata.MissingProperty");
+}
 bool Safe(const World& world,EntityHandle entity,std::string& error)
 {
     if(!world.IsAlive(entity))return Fail(error,"Metadata.InvalidEntity");
@@ -70,6 +88,10 @@ bool ReadBuiltinProperty(const World& world,EntityHandle entity,std::string_view
     else if(key=="light.color")value=world.GetLight(entity)->color;
     else if(key=="light.intensity")value=world.GetLight(entity)->intensity;
     else if(key=="light.point")value=world.GetLight(entity)->type==LightType::Point;
+    else if(key=="light.kind")value=std::string(LightTypeName(world.GetLight(entity)->type));
+    else if(key=="light.castsShadow")value=world.GetLight(entity)->castsShadow;
+    else if(key=="light.innerAngle")value=world.GetLight(entity)->innerAngle;
+    else if(key=="light.outerAngle")value=world.GetLight(entity)->outerAngle;
     else if(key=="light.range")value=world.GetLight(entity)->range;
     return true;
 }
@@ -112,6 +134,10 @@ bool WriteBuiltinProperty(World& world,EntityHandle entity,std::string_view key,
         auto copy=*world.GetLight(entity);
         if(key=="light.color")copy.color=std::get<Vec3>(value);
         else if(key=="light.point")copy.type=std::get<bool>(value)?LightType::Point:LightType::Directional;
+        else if(key=="light.kind"){if(!ParseLightType(std::get<std::string>(value),copy.type))return Fail(error,"Metadata.InvalidValue");}
+        else if(key=="light.castsShadow")copy.castsShadow=std::get<bool>(value);
+        else if(key=="light.innerAngle")copy.innerAngle=std::get<float>(value);
+        else if(key=="light.outerAngle")copy.outerAngle=std::get<float>(value);
         else if(key=="light.range")copy.range=std::get<float>(value);
         else copy.intensity=std::get<float>(value);
         result=world.SetLight(entity,copy);
@@ -143,7 +169,12 @@ template<ComponentTypeId Type> ComponentHandle CreateBuiltin(World& world,Entity
     if constexpr(Type==ComponentTypes::Mesh)
         result=world.SetMesh(owner,{std::get<std::string>(v[0]),std::get<std::vector<std::string>>(v[1]),std::get<bool>(v[2]),std::get<bool>(v[3])});
     if constexpr(Type==ComponentTypes::Light)
-        result=world.SetLight(owner,{std::get<Vec3>(v[0]),std::get<float>(v[1]),std::get<bool>(v[2])?LightType::Point:LightType::Directional,std::get<float>(v[3])});
+    {
+        LightType kind{};
+        if(!ParseLightType(std::get<std::string>(v[2]),kind)){error="Metadata.InvalidValue";return {};}
+        result=world.SetLight(owner,{std::get<Vec3>(v[0]),std::get<float>(v[1]),kind,std::get<float>(v[3]),
+            std::get<bool>(v[4]),std::get<float>(v[5]),std::get<float>(v[6])});
+    }
     const auto handle=world.FindComponent(owner,Type);
     if(!result||!handle||!world.SetComponentEnabled(handle,enabled)){error=world.LastError();return {};}
     return handle;
@@ -155,6 +186,7 @@ std::vector<ComponentDescriptor>& Registry()
         const std::array ids{ComponentTypes::Transform,ComponentTypes::Camera,ComponentTypes::Mesh,ComponentTypes::Light};
         const std::array factories{CreateBuiltin<ComponentTypes::Transform>,CreateBuiltin<ComponentTypes::Camera>,CreateBuiltin<ComponentTypes::Mesh>,CreateBuiltin<ComponentTypes::Light>};
         for(std::size_t i=0;i<result.size();++i){result[i].type=ids[i];result[i].read=ReadBuiltin;result[i].write=WriteBuiltin;result[i].create=factories[i];}
+        for(auto& descriptor:result)if(descriptor.type==ComponentTypes::Light){descriptor.version=2;descriptor.migrate=MigrateLight;}
         AppendEngineFeatureMetadata(result);
         return result;
     }();return values;

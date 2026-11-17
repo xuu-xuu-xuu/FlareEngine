@@ -9,7 +9,9 @@ add_library(EngineGraphics STATIC
     Source/PlatformLayer/Graphics/D3D12/D3D12DepthPrepass.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12DepthNormals.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12AmbientOcclusion.cpp
+    Source/PlatformLayer/Graphics/D3D12/D3D12IndoorLighting.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12ShadingExtensions.cpp
+    Source/PlatformLayer/Graphics/D3D12/D3D12LocalLighting.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12Heterogeneous.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12Gui.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12SceneOverlay.cpp

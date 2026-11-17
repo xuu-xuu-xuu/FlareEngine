@@ -1,4 +1,5 @@
 #include "D3D12ShaderProgram.h"
+#include "D3D12LocalLighting.h"
 #include "PlatformLayer/Graphics/MaterialLayout.h"
 #include "CoreLayer/Hash.h"
 #include "CoreLayer/Localization.h"
@@ -125,7 +126,8 @@ Json Metadata(const D3D12ShaderSource& source)
     {result["material_layout"]=source.materialLayoutVersion;result["coverage_mode"]="dynamic-opaque-mask-blend";}
     if(source.depthNormals)result["geometry_layout"]=rhi::DepthNormalLayoutVersion;
     if(source.shadingLayoutVersion)
-    {result["shading_layout"]=source.shadingLayoutVersion;result["shading_frame_bytes"]=480;result["shading_material_bytes"]=96;}
+    {result["shading_layout"]=source.shadingLayoutVersion;result["shading_frame_bytes"]=480;result["shading_material_bytes"]=96;
+        result["local_light_bytes"]=sizeof(D3D12LocalLightConstants);result["local_shadow_register"]=25;}
     for(const auto& macro:source.macros)result["macros"].push_back({{"name",macro.name},{"value",macro.value}});
     for(const auto& dependency:source.dependencies)result["dependencies"].push_back({{"path",dependency.path},{"sha256",dependency.hash}});
     return result;
@@ -307,6 +309,23 @@ bool ShadingFields(ID3D12ShaderReflection& shader,bool frame,std::string& reason
     }
     return true;
 }
+bool LocalLightFields(ID3D12ShaderReflection& shader,std::string& reason)
+{
+    auto* buffer=shader.GetConstantBufferByName("LocalLightConstants");D3D12_SHADER_BUFFER_DESC desc{};
+    if(!buffer||FAILED(buffer->GetDesc(&desc))||desc.Size!=sizeof(D3D12LocalLightConstants)||desc.Variables!=6)
+    {reason="local light constants size/fields";return false;}
+    const char* names[]{"localLightInfo","localPositionRange","localRadianceSpot","localDirectionOuter","localConeShadow","localClipFromWorld"};
+    const UINT offsets[]{0,16,144,272,400,528},sizes[]{16,128,128,128,128,3072};
+    for(UINT i=0;i<6;++i)
+    {
+        auto* field=buffer->GetVariableByName(names[i]);D3D12_SHADER_VARIABLE_DESC value{};D3D12_SHADER_TYPE_DESC type{};
+        if(!field||FAILED(field->GetDesc(&value))||FAILED(field->GetType()->GetDesc(&type))
+            ||value.StartOffset!=offsets[i]||value.Size!=sizes[i]||type.Type!=D3D_SVT_FLOAT||type.Columns!=4
+            ||type.Class!=(i==5?D3D_SVC_MATRIX_COLUMNS:D3D_SVC_VECTOR)||type.Rows!=(i==5?4u:1u)||type.Elements!=(i==0?0u:i==5?48u:8u))
+        {reason="local light constant field offset/type";return false;}
+    }
+    return true;
+}
 bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,UINT layoutVersion,std::string& reason,UINT materialLayout=0,UINT shadingLayout=0)
 {
     const bool surface=materialLayout==rhi::MaterialSurfaceLayoutVersion;
@@ -353,11 +372,11 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
     if(shadingLayout&&!vertex)for(UINT index=0;index<desc.BoundResources;++index)
     {
         D3D12_SHADER_INPUT_BIND_DESC binding{};if(FAILED(shader.GetResourceBindingDesc(index,&binding)))return false;
-        if((binding.Type==D3D_SIT_CBUFFER&&(binding.BindPoint==5||binding.BindPoint==6))
-            ||(binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint>=13&&binding.BindPoint<=24))++expected;
+        if((binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint>=5&&binding.BindPoint<=7)
+            ||(binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint>=13&&binding.BindPoint<=25))++expected;
     }
     if(desc.BoundResources!=expected){reason="bindings="+std::to_string(desc.BoundResources)+", expected="+std::to_string(expected);return false;}
-    bool constants=false,frame=false,instances=false,bones=false,filter=false,material=false,shadingFrame=false,shadingMaterial=false;UINT samplers=0,textures=0,clusters=0,shadingTextures=0;
+    bool constants=false,frame=false,instances=false,bones=false,filter=false,material=false,shadingFrame=false,shadingMaterial=false,localLights=false,localShadow=false;UINT samplers=0,textures=0,clusters=0,shadingTextures=0;
     for(UINT index=0;index<desc.BoundResources;++index)
     {
         D3D12_SHADER_INPUT_BIND_DESC binding{};if(FAILED(shader.GetResourceBindingDesc(index,&binding)))return false;
@@ -367,6 +386,11 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
         {shadingFrame=true;if(!ShadingFields(shader,true,reason))return false;}
         else if(shadingLayout&&!vertex&&binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==6&&!shadingMaterial)
         {shadingMaterial=true;if(!ShadingFields(shader,false,reason))return false;}
+        else if(shadingLayout&&!vertex&&binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==7)
+        {localLights=true;if(!LocalLightFields(shader,reason))return false;}
+        else if(shadingLayout&&!vertex&&binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint==25
+            &&binding.Dimension==D3D_SRV_DIMENSION_TEXTURE2DARRAY&&binding.ReturnType==D3D_RETURN_TYPE_FLOAT)
+        {localShadow=true;if(std::strcmp(binding.Name,"localShadowMap")){reason="local shadow texture register/name";return false;}}
         else if(shadingLayout&&!vertex&&binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint>=13&&binding.BindPoint<=24
             &&binding.Dimension==D3D_SRV_DIMENSION_TEXTURE2D&&binding.ReturnType==D3D_RETURN_TYPE_FLOAT&&!(shadingTextures&(1u<<(binding.BindPoint-13))))
         {
@@ -399,7 +423,7 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
     return constants==(instanced?!vertex:environmentSky?true:(output||sky)?!vertex:mesh||vertex)&&textures==((mesh||output||environmentSky||surfaceDepth)&&!vertex?((1u<<textureCount)-1):0u)
         &&samplers==(!vertex?(environmentSky?4u:environment?7u:mesh?(shadow?3u:1u):surfaceDepth?1u:0u):0u)&&frame==(forward&&!vertex)&&instances==instanced
         &&bones==(skinned&&vertex)&&material==(surface&&!vertex)&&filter==(rhi::IsShadowFilterLayout(layoutVersion)&&!vertex)
-        &&clusters==((rhi::IsClustered(kind)&&!vertex)?15u:0u)&&(!shadingLayout||vertex||shadingFrame);
+        &&clusters==((rhi::IsClustered(kind)&&!vertex)?15u:0u)&&(!shadingLayout||vertex||(shadingFrame&&localLights&&localShadow));
 }
 
 bool DepthNormalBindings(ID3D12ShaderReflection& shader,bool surface,bool basic,std::string& reason)
@@ -566,7 +590,8 @@ std::shared_ptr<const D3D12ShaderProgram> ReadArtifact(D3D12ShaderSource source,
             ||(source.materialLayoutVersion&&metadata.value("coverage_mode",std::string{})!="dynamic-opaque-mask-blend"))return {};
         if(metadata.value("geometry_layout",0u)!=(source.depthNormals?rhi::DepthNormalLayoutVersion:0u))return {};
         if(metadata.value("shading_layout",0u)!=source.shadingLayoutVersion
-            ||(source.shadingLayoutVersion&&(metadata.value("shading_frame_bytes",0u)!=480||metadata.value("shading_material_bytes",0u)!=96)))return {};
+            ||(source.shadingLayoutVersion&&(metadata.value("shading_frame_bytes",0u)!=480||metadata.value("shading_material_bytes",0u)!=96
+                ||metadata.value("local_light_bytes",0u)!=sizeof(D3D12LocalLightConstants)||metadata.value("local_shadow_register",0u)!=25)))return {};
         auto program=std::make_shared<D3D12ShaderProgram>();program->source=std::move(source);
         program->vertex=std::move(parts.vertex);program->pixel=std::move(parts.pixel);
         const auto vertexHash=BlobHash(*program->vertex.Get()),pixelHash=BlobHash(*program->pixel.Get());
@@ -674,8 +699,9 @@ std::shared_ptr<const D3D12ShaderProgram> LoadD3D12ShaderProgram(D3D12ShaderSour
     // 同名旧宏变体继续从源码编译，避免把其它变体误报为过期产物。
     // 04 的新蒙皮 wrapper 每文件只对应一个规范 SE_SKINNED=1 变体；ReadArtifact 仍核完整
     // source key（宏/依赖/flags/layout）、字节码 SHA 和反射的顶点输入/资源布局。
-    const bool canonicalFilterSkin=source.skinnedVertex
-        &&(source.layoutVersion==rhi::SkinnedCascadedShadowFilterLayoutVersion||source.layoutVersion==rhi::SkinnedClusteredShadowFilterLayoutVersion)
+    const bool canonicalSkin=source.skinnedVertex
+        &&(source.layoutVersion==rhi::SkinnedCascadedShadowFilterLayoutVersion||source.layoutVersion==rhi::SkinnedClusteredShadowFilterLayoutVersion
+            ||(source.layoutVersion==rhi::SkinnedLayoutVersion&&source.path.filename()==L"SkinnedEnvironmentForward.hlsl"))
         &&source.macros.size()==1&&source.macros[0].name=="SE_SKINNED"&&source.macros[0].value=="1";
     const bool canonicalSurface=source.materialLayoutVersion==rhi::MaterialSurfaceLayoutVersion
         &&std::all_of(source.macros.begin(),source.macros.end(),[](const auto& macro){return macro.value=="1"&&(macro.name=="SE_MATERIAL_SURFACE"||macro.name=="SE_SKINNED");});
@@ -683,7 +709,7 @@ std::shared_ptr<const D3D12ShaderProgram> LoadD3D12ShaderProgram(D3D12ShaderSour
         {return macro.value=="1"&&(macro.name=="SE_DEPTH_NORMALS"||macro.name=="SE_MATERIAL_SURFACE");});
     const bool canonicalShading=source.shadingLayoutVersion&&!source.compressedVertex&&std::all_of(source.macros.begin(),source.macros.end(),[](const auto& macro)
         {return macro.value=="1"&&(macro.name=="SE_SHADING_EXTENSIONS"||macro.name=="SE_MATERIAL_SURFACE"||macro.name=="SE_SKINNED");});
-    if((source.macros.empty()||canonicalFilterSkin||canonicalSurface||canonicalDepthNormals||canonicalShading)&&fs::exists(artifact,error)&&!error)
+    if((source.macros.empty()||canonicalSkin||canonicalSurface||canonicalDepthNormals||canonicalShading)&&fs::exists(artifact,error)&&!error)
     {
         if(auto program=ReadArtifact(source,artifact)){++stats.artifactLoads;return program;}
         ++stats.artifactRejections;Log(LogLevel::Warning,text.GetText("Shader.ArtifactRejected")+": "+Utf8(artifact));

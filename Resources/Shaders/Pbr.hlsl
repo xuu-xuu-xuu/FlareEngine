@@ -5,6 +5,7 @@
 #endif
 #ifdef SE_SHADING_EXTENSIONS
 #include "ShadingBindings.hlsli"
+#include "LocalLightBindings.hlsli"
 #define SURFACE_DIRECT(L) SurfaceDirectBrdf(color,metal,rough,n,geometricNormal,v,L,input.tangent.xyz,input.tangent.w*materialParameters.w,logicalFront?1:-1,input.uv,materialUvDx,materialUvDy,surfaceCurvature)
 #else
 #define SURFACE_DIRECT(L) DirectBrdf(color,metal,rough,n,v,L)
@@ -150,6 +151,7 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     float3 v=UnitVector(cameraPosition.xyz-input.worldPosition,float3(0,0,1));
 #ifdef SE_SHADING_EXTENSIONS
     float2 materialUvDx=ddx(input.uv),materialUvDy=ddy(input.uv);
+    float3 receiverPlane=UnitVector(cross(ddx(input.worldPosition),ddy(input.worldPosition)),geometricNormal);
     float surfaceCurvature=max(length(ddx(geometricNormal))/max(length(ddx(input.worldPosition)),1e-5),
         length(ddy(geometricNormal))/max(length(ddy(input.worldPosition)),1e-5));
     bool blended=false;
@@ -210,6 +212,12 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
 #endif
 #endif
 #ifdef SE_SHADING_EXTENSIONS
+    [loop]for(uint localIndex=0;localIndex<(uint)localLightInfo.x;++localIndex)
+    {
+        float3 toLight;
+        float attenuation=LocalLightAttenuation(localIndex,input.worldPosition,receiverPlane,materialOptions.w!=0,toLight);
+        lit+=SURFACE_DIRECT(toLight)*localRadianceSpot[localIndex].rgb*attenuation;
+    }
     lit+=RectangleLighting(color,metal,rough,input.worldPosition,n,geometricNormal,v,input.tangent.xyz,
         input.tangent.w*materialParameters.w,logicalFront?1:-1,input.uv,materialUvDx,materialUvDy,surfaceCurvature);
 #endif

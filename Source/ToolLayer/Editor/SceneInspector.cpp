@@ -100,10 +100,10 @@ void AppendSceneInspector(const EditorSession& session, const AssetStore& assets
         if (const auto* l = world.GetLight(entity))
         {
             auto& type = add("light.type", "EditorUi.LightType", EditorPropertyType::Combo,
-                l->type == LightType::Point ? "point" : "directional", "Component.Light");
-            type.options = {"directional", "point"};
-            type.optionLabels = {text.GetText("EditorUi.LightDirectional"), text.GetText("EditorUi.LightPoint")};
-            type.displayValue = type.optionLabels[l->type == LightType::Point ? 1 : 0];
+                std::string(LightTypeName(l->type)), "Component.Light");
+            type.options = {"directional", "point", "spot"};
+            type.optionLabels = {text.GetText("EditorUi.LightDirectional"), text.GetText("EditorUi.LightPoint"),text.GetText("EditorUi.LightSpot")};
+            type.displayValue = type.optionLabels[static_cast<std::size_t>(l->type)];
             add("light.color", "EditorUi.LightColor", EditorPropertyType::Color,
                 Number(l->color.x) + " " + Number(l->color.y) + " " + Number(l->color.z), "Component.Light");
             const float channels[]{l->color.x, l->color.y, l->color.z};
@@ -117,7 +117,18 @@ void AppendSceneInspector(const EditorSession& session, const AssetStore& assets
             intensity.dragStep = .01f; intensity.dragMinimum = 0.0f;
             auto& range = add("light.range", "EditorUi.LightRange", EditorPropertyType::Number, Number(l->range), "Component.Light");
             range.dragStep = .05f; range.dragMinimum = .05f; range.dragMaximum = 10000.0f;
-            if (l->type != LightType::Point) {range.readOnly = true; range.displayValue = text.GetText("EditorUi.LightInfiniteRange");}
+            if (l->type == LightType::Directional) {range.readOnly = true; range.displayValue = text.GetText("EditorUi.LightInfiniteRange");}
+            else
+                add("light.castsShadow","Property.Light.CastsShadow",EditorPropertyType::Boolean,l->castsShadow?"true":"false","Component.Light");
+            if(l->type==LightType::Spot)
+            {
+                const auto angle=[&](const char* key,const char* label,float value,float minimum,float maximum){
+                    auto& row=add(key,label,EditorPropertyType::Number,Number(value*180/Pi),"Component.Light");
+                    row.dragStep=.25f;row.dragMinimum=minimum*180/Pi;row.dragMaximum=maximum*180/Pi;
+                };
+                angle("light.innerAngle","EditorUi.LightInnerDegrees",l->innerAngle,0,l->outerAngle);
+                angle("light.outerAngle","EditorUi.LightOuterDegrees",l->outerAngle,std::max(.01f,l->innerAngle),1.55f);
+            }
         }
         if (const auto* mesh = world.GetMesh(entity))
         {
@@ -206,7 +217,8 @@ bool ApplySceneInspector(EditorSession& session, std::uint64_t id, const std::st
     const auto& world = session.EditWorld();
     const auto entity = world.FindByStableId(id);
     if(const auto result=ApplyFeatureInspector(session,id,key,value))return *result;
-    if(key=="camera.primary"||key=="mesh.castsShadow"||key=="mesh.receivesShadow")
+    if(key=="light.castsShadow"&&(!world.GetLight(entity)||world.GetLight(entity)->type==LightType::Directional))return false;
+    if(key=="camera.primary"||key=="mesh.castsShadow"||key=="mesh.receivesShadow"||key=="light.castsShadow")
         return (value=="true"||value=="false")&&session.SetProperty(id,key,value=="true");
     if(key.starts_with("mesh.material.")||key.starts_with("mesh.slot."))
     {
@@ -248,8 +260,7 @@ bool ApplySceneInspector(EditorSession& session, std::uint64_t id, const std::st
     }
     if (key == "light.type")
     {
-        if (value != "point" && value != "directional") return false;
-        return session.SetProperty(id, "light.point", value == "point");
+        return session.SetProperty(id, "light.kind", value);
     }
     if (key == "light.color")
     {
@@ -272,8 +283,13 @@ bool ApplySceneInspector(EditorSession& session, std::uint64_t id, const std::st
     {
         const auto* light = world.GetLight(entity);
         if (!light) return false;
-        if (key == "light.range" && (light->type != LightType::Point || number < .05f || number > 10000.0f)) return false;
+        if (key == "light.range" && (light->type == LightType::Directional || number < .05f || number > 10000.0f)) return false;
         return session.SetProperty(id, key, number);
+    }
+    if(key=="light.innerAngle"||key=="light.outerAngle")
+    {
+        const auto* light=world.GetLight(entity);
+        return light&&light->type==LightType::Spot&&session.SetProperty(id,key,number*Pi/180);
     }
     if (key == "light.color.r" || key == "light.color.g" || key == "light.color.b")
     {

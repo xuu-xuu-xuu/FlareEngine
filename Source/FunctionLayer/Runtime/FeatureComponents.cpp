@@ -86,7 +86,15 @@ const std::array rendering{
     P{"render.diffuseProbe","Feature.Render.DiffuseProbe",PropertyType::AssetId,std::string{}},
     P{"render.gpuDriven","Feature.Render.GpuDriven",PropertyType::Boolean,false},
     P{"render.meshletCulling","Feature.Render.MeshletCulling",PropertyType::Boolean,false},
-    P{"render.gpuDrivenHiZ","Feature.Render.GpuDrivenHiZ",PropertyType::Boolean,false}};
+    P{"render.gpuDrivenHiZ","Feature.Render.GpuDrivenHiZ",PropertyType::Boolean,false},
+    P{"render.indirect","Feature.Render.DynamicIndirect",PropertyType::Boolean,false},
+    P{"render.indirectStrength","Feature.Render.IndirectStrength",PropertyType::Number,1.f,0.f,4.f},
+    P{"render.reflections","Feature.Render.ScreenReflections",PropertyType::Boolean,false},
+    P{"render.reflectionStrength","Feature.Render.ReflectionStrength",PropertyType::Number,1.f,0.f,1.f},
+    P{"render.volumetricFog","Feature.Render.VolumetricFog",PropertyType::Boolean,false},
+    P{"render.fogDensity","Feature.Render.FogDensity",PropertyType::Number,.035f,0.f,1.f},
+    P{"render.fogDistance","Feature.Render.FogDistance",PropertyType::Number,25.f,.1f,500.f},
+    P{"render.fogAlbedo","Feature.Render.FogAlbedo",PropertyType::Vector3,Vec3{.85f,.9f,1},0.f,1.f}};
 const std::array rectangleLight{
     P{"rectangle.color","Feature.Rectangle.Color",PropertyType::Vector3,Vec3{1,1,1},0.f,65504.f},
     P{"rectangle.radiance","Feature.Rectangle.Radiance",PropertyType::Number,10.f,0.f,65504.f},

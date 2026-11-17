@@ -21,7 +21,7 @@ PixelInput VSMain(VertexInput input)
     output.normal=mul(normalFromLocal,float4(input.normal,0)).xyz;
     output.uv=input.uv;output.tangent=input.tangent;return output;
 }
-float2 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
+float2 GeometryNormal(PixelInput input,bool frontFace)
 {
 #ifdef SE_DEPTH_NORMAL_BASIC
     if(!isfinite(input.tangent.w))discard;
@@ -45,4 +45,24 @@ float2 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     float2 encoded=n.xy;
     if(n.z<0)encoded=(1-abs(encoded.yx))*float2(encoded.x<0?-1:1,encoded.y<0?-1:1);
     return encoded;
+}
+float2 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
+{
+    return GeometryNormal(input,frontFace);
+}
+struct IndoorSurface {float2 normal:SV_Target0;float4 material:SV_Target1;};
+IndoorSurface PSIndoor(PixelInput input,bool frontFace:SV_IsFrontFace)
+{
+    IndoorSurface output;
+    output.normal=GeometryNormal(input,frontFace);
+    float2 mr=saturate(metallicRoughnessMap.Sample(materialSampler,input.uv).bg*parameters.xy);
+#ifdef SE_MATERIAL_SURFACE
+    float3 factor=surfaceBaseColorFactor.rgb;
+#else
+    float3 factor=baseColor.rgb;
+#endif
+    // alpha 内的 0..1023 在 FP16 中完全精确。-1 表示自发光着色，不接收漫反射或镜面合成。
+    float materialCode=round(mr.x*31)*32+round(mr.y*31);
+    output.material=float4(baseColorMap.Sample(materialSampler,input.uv).rgb*factor,options.y>.5?-1:materialCode);
+    return output;
 }

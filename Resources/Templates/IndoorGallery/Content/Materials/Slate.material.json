@@ -1,0 +1,19 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "抛光玄武岩",
+  "baseColor": [
+    0.13,
+    0.155,
+    0.16,
+    1
+  ],
+  "metallic": 0.48,
+  "roughness": 0.12,
+  "doubleSided": false,
+  "textures": {
+    "baseColor": "",
+    "normal": "",
+    "metallicRoughness": ""
+  }
+}

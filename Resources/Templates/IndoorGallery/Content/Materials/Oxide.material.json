@@ -1,0 +1,19 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "铁红矿物漆",
+  "baseColor": [
+    0.65,
+    0.067,
+    0.034,
+    1
+  ],
+  "metallic": 0,
+  "roughness": 0.91,
+  "doubleSided": false,
+  "textures": {
+    "baseColor": "",
+    "normal": "",
+    "metallicRoughness": ""
+  }
+}

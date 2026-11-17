@@ -10,6 +10,7 @@
 #include "ShadowBindings.hlsli"
 #ifdef SE_SHADING_EXTENSIONS
 #include "ShadingBindings.hlsli"
+#include "LocalLightBindings.hlsli"
 #endif
 
 struct VertexInput {float3 position:POSITION;float3 normal:NORMAL;float2 uv:TEXCOORD0;float4 tangent:TANGENT;};
@@ -78,6 +79,7 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     float3 v=UnitVector(cameraPosition.xyz-input.worldPosition,float3(0,0,1));
     float3 color=albedo*frameSkyExposure.rgb*0.35;
 #ifdef SE_SHADING_EXTENSIONS
+    float3 receiverPlane=UnitVector(cross(ddx(input.worldPosition),ddy(input.worldPosition)),n);
     bool blended=false;
 #ifdef SE_MATERIAL_SURFACE
     blended=surfaceCoverage.y>1.5;
@@ -123,6 +125,14 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
         float attenuation=window*window/max(squared,0.0025);
         color+=DirectLight(albedo,metal,rough,n,v,UnitVector(delta,n))*pointRadiance[index].rgb*attenuation;
     }
+#ifdef SE_SHADING_EXTENSIONS
+    [loop]for(uint i=0;i<(uint)localLightInfo.x;++i)
+    {
+        float3 toLight;
+        float attenuation=LocalLightAttenuation(i,input.worldPosition,receiverPlane,options.w!=0,toLight);
+        color+=DirectLight(albedo,metal,rough,n,v,toLight)*localRadianceSpot[i].rgb*attenuation;
+    }
+#endif
     // W06：与 PBR 前向路径共享同一外观覆盖实现（白模/Toon）。
     color=ApplyLook(color,albedo,n,v,lookNdl,lookVisibility);
 #ifdef SE_CASCADED

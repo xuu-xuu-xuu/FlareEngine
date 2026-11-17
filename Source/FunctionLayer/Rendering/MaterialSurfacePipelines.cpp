@@ -12,7 +12,7 @@ std::string ShaderName(rhi::PipelineKind kind,bool skin)
     case K::PbrMesh:return "Pbr.hlsl";
     case K::ForwardMesh:return skin?"":"Forward.hlsl";
     case K::ShadowedMesh:return skin?"SkinnedForward.hlsl":"ShadowedForward.hlsl";
-    case K::EnvironmentMesh:return skin?"":"EnvironmentForward.hlsl";
+    case K::EnvironmentMesh:return skin?"SkinnedEnvironmentForward.hlsl":"EnvironmentForward.hlsl";
     case K::BasicLitMesh:return skin?"":"BasicLit.hlsl";
     case K::CascadedShadowedMesh:return skin?"CascadedSkinnedForward.hlsl":"CascadedShadowedForward.hlsl";
     case K::CascadedEnvironmentMesh:return skin?"CascadedSkinnedEnvironmentForward.hlsl":"CascadedEnvironmentForward.hlsl";

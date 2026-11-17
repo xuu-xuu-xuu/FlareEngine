@@ -29,6 +29,7 @@ export default defineConfig({
             { text: '新建项目', link: '/user/create-project' },
             { text: '编辑器界面', link: '/user/editor-interface' },
             { text: '用渲染工作室调光', link: '/user/rendering-studio' },
+            { text: '给室内展厅布光', link: '/user/indoor-lighting' },
             { text: '导入 FBX', link: '/user/import-fbx' },
             { text: '运行预览', link: '/user/run-preview' }
           ] },

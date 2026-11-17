@@ -1,0 +1,19 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "钴蓝釉面",
+  "baseColor": [
+    0.035,
+    0.15,
+    0.48,
+    1
+  ],
+  "metallic": 0.18,
+  "roughness": 0.2,
+  "doubleSided": false,
+  "textures": {
+    "baseColor": "",
+    "normal": "",
+    "metallicRoughness": ""
+  }
+}

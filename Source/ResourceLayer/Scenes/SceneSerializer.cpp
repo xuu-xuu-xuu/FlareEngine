@@ -75,7 +75,7 @@ bool MigrateV1(Json& root,std::string& error)
                 if(properties["type"]!="point"&&properties["type"]!="directional"){error="Scene.InvalidData";return false;}
                 properties["type"]=properties["type"]=="point";
             }
-            records.push_back({{"type",std::to_string(descriptor->type)},{"version",descriptor->version},{"enabled",true},{"properties",std::move(properties)}});
+            records.push_back({{"type",std::to_string(descriptor->type)},{"version",descriptor->type==ComponentTypes::Light?1u:descriptor->version},{"enabled",true},{"properties",std::move(properties)}});
         }
         entity.erase("transform");entity["components"]=std::move(records);
     }

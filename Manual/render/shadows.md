@@ -21,3 +21,9 @@ CPU 算法 [PrepareCascadeShadows()](https://github.com/xuu-xuu-xuu/FlareEngine/
 ## 深度、法线与屏幕空间遮蔽
 
 `DepthNormals` 使用实际网格和蒙皮姿态写入 D32 深度和 RG16F 世界空间几何法线，裁切材质与主绘制共享覆盖规则。半分辨率 GTAO 结果经深度与法线引导的双边升采样，在不透明着色时调制间接光。接触阴影沿方向光查询深度，只作用于接收阴影的表面。将 AO 强度设为零时遮蔽系数为 1。[预绘制](https://github.com/xuu-xuu-xuu/FlareEngine/blob/34bad2e/Source/PlatformLayer/Graphics/D3D12/D3D12DepthNormals.cpp#L109) · [遮蔽计算](https://github.com/xuu-xuu-xuu/FlareEngine/blob/34bad2e/Source/PlatformLayer/Graphics/D3D12/D3D12AmbientOcclusion.cpp#L253)
+
+## 点光投影与聚光锥
+
+`PrepareForwardLighting()` 按稳定实体 ID 分配八个 `ForwardLighting::localLights` 槽位。聚光灯和可投影的点光各占一个槽。超量点光回到普通点光路径，超量聚光会生成诊断。聚光在内外锥夹角之间平滑衰减；设置 `innerAngle == outerAngle` 可获得硬切光锥。
+
+一个投影点光占用同一 D32 深度数组的六个面，投影聚光占用一层，每层为 512 × 512。`RecordShadowedFrame()` 与 `RecordShadowedFrameGraph()` 都使用完整投射者列表。即使场景没有太阳，局部灯仍能投影。绘制材质时，HLSL 在 `b7` 读取局部光常量、在 `t25` 采样对应的深度层，将 3 × 3 PCF 可见度用于该灯的直接光。关掉网格的接收属性可单独移除这部分遮挡。[灯光组件与场景格式](../runtime/light.md)

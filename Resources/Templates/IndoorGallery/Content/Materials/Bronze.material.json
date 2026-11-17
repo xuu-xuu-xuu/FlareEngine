@@ -1,0 +1,19 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "拉丝黄铜",
+  "baseColor": [
+    0.88,
+    0.53,
+    0.19,
+    1
+  ],
+  "metallic": 0.84,
+  "roughness": 0.28,
+  "doubleSided": false,
+  "textures": {
+    "baseColor": "",
+    "normal": "",
+    "metallicRoughness": ""
+  }
+}

@@ -1,0 +1,401 @@
+{
+  "format": "SelfEngine.Scene",
+  "version": 2,
+  "retiredIds": [],
+  "entities": [
+    {
+      "id": "1", "name": "展厅主相机", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[3.4,2.7,6.65],"rotation":[-0.0592955,0.2041636,0.0123902,0.9770608],"scale":[1,1,1]}},
+        {"type":"2","version":1,"enabled":true,"properties":{"fov":0.86,"near":0.12,"far":65,"primary":true}}
+      ]
+    },
+    {
+      "id": "2", "name": "室内光照设置", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}},
+        {"type":"1179385859","version":1,"enabled":true,"properties":{"fullPbr":true,"exposure":1.12,"post":true,"aces":true,"bloom":false,"autoExposure":false,"fxaa":true,"taa":false,"depthNormals":true,"gtao":true,"aoRadius":0.36,"aoIntensity":0.64,"shadowEnabled":false,"multiscatter":true,"specularAA":true,"indirect":true,"reflections":true,"volumetricFog":true,"indirectStrength":1,"reflectionStrength":1,"fogDensity":0.012,"fogDistance":19,"fogAlbedo":[0.88,0.91,0.98]}}
+      ]
+    },
+    {
+      "id": "3", "name": "微弱环境反射", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}},
+        {"type":"1179385860","version":1,"enabled":true,"properties":{"asset":"71000000000000000000000000000009","intensity":0.17,"yaw":36}}
+      ]
+    },
+    {
+      "id": "4", "name": "琥珀点灯 · 桌面投影", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-3.27,2.53,-1.12],"rotation":[0,0,0,1],"scale":[1,1,1]}},
+        {"type":"4","version":2,"enabled":true,"properties":{"color":[1,0.69,0.43],"intensity":39,"kind":"point","range":10,"castsShadow":true}}
+      ]
+    },
+    {
+      "id": "5", "name": "轨道聚光 · 展台", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[2.34,3.96,-0.94],"rotation":[-0.3353145,0.5270431,0.2375741,0.7438739],"scale":[1,1,1]}},
+        {"type":"4","version":2,"enabled":true,"properties":{"color":[1,0.87,0.67],"intensity":85,"kind":"spot","range":11,"castsShadow":true,"innerAngle":0.22,"outerAngle":0.49}}
+      ]
+    },
+    {
+      "id": "6", "name": "窗侧冷色聚光", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[2.7,3.76,-3.75],"rotation":[-0.0729543,0.926948,0.2531516,0.2671318],"scale":[1,1,1]}},
+        {"type":"4","version":2,"enabled":true,"properties":{"color":[0.55,0.74,1],"intensity":46,"kind":"spot","range":12,"castsShadow":true,"innerAngle":0.19,"outerAngle":0.44}}
+      ]
+    },
+    {
+      "id": "7", "name": "入口柔光", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[1.4,2.96,3.18],"rotation":[0,0,0,1],"scale":[1,1,1]}},
+        {"type":"4","version":2,"enabled":true,"properties":{"color":[0.73,0.82,1],"intensity":22,"kind":"point","range":10,"castsShadow":false}}
+      ]
+    },
+    {
+      "id": "8", "name": "窗内冷光", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[3.6,2.8,-3.28],"rotation":[0,0,0,1],"scale":[1,1,1]}},
+        {"type":"4","version":2,"enabled":true,"properties":{"color":[0.58,0.79,1.0],"intensity":16,"kind":"point","range":8,"castsShadow":false}}
+      ]
+    },
+    {
+      "id": "9", "name": "展厅建筑", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}}
+      ]
+    },
+    {
+      "id": "10", "name": "抛光地坪", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0,-0.12,-0.35],"rotation":[0,0,0,1],"scale":[11,0.24,10.6]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000003"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "11", "name": "背墙", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0,2.23,-4.85],"rotation":[0,0,0,1],"scale":[11,4.62,0.22]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000001"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "12", "name": "左侧铁红墙", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-5.38,2.22,-0.35],"rotation":[0,0,0,1],"scale":[0.24,4.6,9.05]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000002"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "13", "name": "窗侧下槛", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[5.34,0.55,-0.86],"rotation":[0,0,0,1],"scale":[0.23,1.1,8]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000001"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "14", "name": "顶板", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0,4.59,-0.76],"rotation":[0,0,0,1],"scale":[11,0.23,8.3]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000001"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "15", "name": "右窗上梁", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[5.34,4.03,-0.86],"rotation":[0,0,0,1],"scale":[0.23,0.93,8]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000001"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "16", "name": "展桌与藏品", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-0.36,0,-1.58],"rotation":[0,0,0,1],"scale":[1,1,1]}}
+      ]
+    },
+    {
+      "id": "17", "name": "阅读长椅", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-2.52,0,0.15],"rotation":[0,0,0,1],"scale":[1,1,1]}}
+      ]
+    },
+    {
+      "id": "18", "name": "背墙装饰画", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-3.5,2.45,-4.66],"rotation":[0,0,0,1],"scale":[1,1,1]}}
+      ]
+    },
+    {
+      "id": "19", "name": "窗侧格栅", "enabled": true, "parent": null,
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[1.3,0,-4.6],"rotation":[0,0,0,1],"scale":[1,1,1]}}
+      ]
+    },
+    {
+      "id": "20", "name": "青铜窗框 1", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[5.34,2.32,-4.6],"rotation":[0,0,0,1],"scale":[0.24,2.54,0.08]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "21", "name": "青铜窗框 2", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[5.34,2.32,-2.75],"rotation":[0,0,0,1],"scale":[0.24,2.54,0.08]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "22", "name": "青铜窗框 3", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[5.34,2.32,-0.9],"rotation":[0,0,0,1],"scale":[0.24,2.54,0.08]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "23", "name": "青铜窗框 4", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[5.34,2.32,0.95],"rotation":[0,0,0,1],"scale":[0.24,2.54,0.08]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "24", "name": "青铜窗框 5", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[5.34,2.32,2.8],"rotation":[0,0,0,1],"scale":[0.24,2.54,0.08]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "30", "name": "展桌台面", "enabled": true, "parent": "16",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0.0,1.01,0.0],"rotation":[0,0,0,1],"scale":[3.34,0.15,1.5]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "31", "name": "黄铜桌脚 1", "enabled": true, "parent": "16",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-1.45,0.48,-0.56],"rotation":[0,0,0,1],"scale":[0.12,0.96,0.12]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000005"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "32", "name": "黄铜桌脚 2", "enabled": true, "parent": "16",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[1.46,0.48,-0.56],"rotation":[0,0,0,1],"scale":[0.12,0.96,0.12]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000005"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "33", "name": "黄铜桌脚 3", "enabled": true, "parent": "16",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-1.45,0.48,0.56],"rotation":[0,0,0,1],"scale":[0.12,0.96,0.12]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000005"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "34", "name": "黄铜桌脚 4", "enabled": true, "parent": "16",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[1.46,0.48,0.56],"rotation":[0,0,0,1],"scale":[0.12,0.96,0.12]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000005"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "36", "name": "陶瓷雕塑底座", "enabled": true, "parent": "16",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-0.1,1.16,-0.09],"rotation":[0,0,0,1],"scale":[1.02,0.16,0.89]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000001"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "37", "name": "回环 / 白瓷雕塑", "enabled": true, "parent": "16",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-0.24,1.24,-0.12],"rotation":[0,-0.087156,0,0.996195],"scale":[1,1,1]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"72000000000000000000000000000010","materials":["72000000000000000000000000000006"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "39", "name": "钴蓝釉瓶", "enabled": true, "parent": "16",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[1.07,1.085,0.16],"rotation":[0,0,0,1],"scale":[1.2,1.2,1.2]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"72000000000000000000000000000011","materials":["72000000000000000000000000000008"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "40", "name": "阅读长椅", "enabled": true, "parent": "17",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0.0,0.52,0.0],"rotation":[0,0,0,1],"scale":[2,0.24,0.64]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000009"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "41", "name": "长椅支座 1", "enabled": true, "parent": "17",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-0.73,0.21,0.0],"rotation":[0,0,0,1],"scale":[0.22,0.42,0.53]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000006"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "42", "name": "长椅支座 2", "enabled": true, "parent": "17",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0.73,0.21,0.0],"rotation":[0,0,0,1],"scale":[0.22,0.42,0.53]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000006"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "45", "name": "立灯底盘", "enabled": true, "parent": "4",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-0.18,-2.46,-0.46],"rotation":[0,0,0,1],"scale":[0.62,0.14,0.62]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000007"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "46", "name": "立灯灯杆", "enabled": true, "parent": "4",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-0.18,-1.27,-0.46],"rotation":[0,0,0,1],"scale":[0.053,2.42,0.053]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000005"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "47", "name": "立灯乳白色灯罩", "enabled": true, "parent": "4",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-0.18,-0.14,-0.46],"rotation":[0,0,0,1],"scale":[0.58,0.61,0.58]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000002","materials":["72000000000000000000000000000006"],"castsShadow":false,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "49", "name": "画框", "enabled": true, "parent": "18",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0.0,0.0,0.0],"rotation":[0,0,0,1],"scale":[3.25,2.51,0.13]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "50", "name": "画布", "enabled": true, "parent": "18",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0.0,0.0,0.11],"rotation":[0,0,0,1],"scale":[3.09,2.35,0.085]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000006"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "51", "name": "画面 / 赤陶", "enabled": true, "parent": "18",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-0.64,-0.03,0.17],"rotation":[0,0,0,1],"scale":[1.39,1.65,0.018]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000002"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "52", "name": "画面 / 靛蓝", "enabled": true, "parent": "18",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0.5,0.04,0.18],"rotation":[0,0,0,1],"scale":[0.6,1.32,0.018]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000008"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "53", "name": "画面 / 暖白圆", "enabled": true, "parent": "18",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[-0.31,0.24,0.21],"rotation":[0,0,0,1],"scale":[0.96,0.96,0.036]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000002","materials":["72000000000000000000000000000006"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "60", "name": "胡桃木格栅 1", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0.0,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "61", "name": "胡桃木格栅 2", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0.25,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "62", "name": "胡桃木格栅 3", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0.5,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "63", "name": "胡桃木格栅 4", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[0.75,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "64", "name": "胡桃木格栅 5", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[1.0,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "65", "name": "胡桃木格栅 6", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[1.25,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "66", "name": "胡桃木格栅 7", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[1.5,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "67", "name": "胡桃木格栅 8", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[1.75,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "68", "name": "胡桃木格栅 9", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[2.0,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "69", "name": "胡桃木格栅 10", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[2.25,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "70", "name": "胡桃木格栅 11", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[2.5,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "71", "name": "胡桃木格栅 12", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[2.75,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "72", "name": "胡桃木格栅 13", "enabled": true, "parent": "19",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[3.0,2.22,0.0],"rotation":[0,0,0,1],"scale":[0.11,4.48,0.21]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000004"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    },
+    {
+      "id": "80", "name": "青铜灯轨", "enabled": true, "parent": "9",
+      "components": [
+        {"type":"1","version":1,"enabled":true,"properties":{"position":[1.54,4.28,-2.31],"rotation":[0,0,0,1],"scale":[0.09,0.08,3.82]}},
+        {"type":"3","version":1,"enabled":true,"properties":{"asset":"00000000000000000000000000000001","materials":["72000000000000000000000000000007"],"castsShadow":true,"receivesShadow":true}}
+      ]
+    }
+  ]
+}

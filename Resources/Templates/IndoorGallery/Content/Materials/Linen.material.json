@@ -1,0 +1,19 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "亚麻坐垫",
+  "baseColor": [
+    0.32,
+    0.38,
+    0.32,
+    1
+  ],
+  "metallic": 0,
+  "roughness": 0.92,
+  "doubleSided": false,
+  "textures": {
+    "baseColor": "",
+    "normal": "",
+    "metallicRoughness": ""
+  }
+}

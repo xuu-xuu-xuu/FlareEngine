@@ -15,7 +15,7 @@ rhi::ForwardLighting PrepareForwardLighting(std::span<const LightInstance> light
     frame.exposure=limited(exposure,1.0/1024,64);frame.sky={limited(sky.x,0,10000),limited(sky.y,0,10000),limited(sky.z,0,10000)};
     std::vector<const LightInstance*> ordered;for(const auto& light:lights)ordered.push_back(&light);
     std::stable_sort(ordered.begin(),ordered.end(),[](const auto* a,const auto* b){return a->entity<b->entity;});
-    std::size_t directional=0,points=0;
+    std::size_t directional=0,points=0,excessLocal=0;
     for(const auto* instance:ordered)
     {
         const auto& light=instance->light;
@@ -30,12 +30,32 @@ rhi::ForwardLighting PrepareForwardLighting(std::span<const LightInstance> light
             frame.directionalEnabled=true;frame.directionToLight={float(direction.x/length),float(direction.y/length),float(direction.z/length)};
             frame.directionalRadiance=radiance;
         }
-        else if(light.type==LightType::Point)
+        else if(light.type==LightType::Point||light.type==LightType::Spot)
         {
-            ++points;if(points>(clustered?256:rhi::MaximumPointLights))continue;
             rhi::PointLight point;const auto position=TransformPoint(instance->world,{});
             point.position={limited(position.x,-1e6,1e6),limited(position.y,-1e6,1e6),limited(position.z,-1e6,1e6)};
             point.radiance=radiance;point.range=limited(light.range,0.05,10000);
+            if(light.type==LightType::Spot||light.castsShadow)
+            {
+                if(frame.localLights.size()<rhi::MaximumLocalLights)
+                {
+                    rhi::LocalLight local;
+                    local.position=point.position;local.radiance=point.radiance;local.range=point.range;
+                    local.spot=light.type==LightType::Spot;local.castsShadow=light.castsShadow;
+                    if(local.spot)
+                    {
+                        local.direction=Normalize(TransformVector(instance->world,{0,0,-1}));
+                        if(!IsFinite(local.direction)||LengthSquared(local.direction)<.99f)
+                        {asset_io::Diagnostic(diagnostics,"Rendering.LightInvalid",std::to_string(instance->entity),true);continue;}
+                        local.innerCos=std::cos(light.innerAngle);local.outerCos=std::cos(light.outerAngle);
+                    }
+                    frame.localLights.push_back(local);
+                    continue;
+                }
+                ++excessLocal;
+                if(light.type==LightType::Spot)continue;
+            }
+            ++points;if(points>(clustered?256:rhi::MaximumPointLights))continue;
             if(frame.pointCount<rhi::MaximumPointLights)frame.points[frame.pointCount++]=point;
             if(clustered){frame.cluster.lights.push_back(point);frame.cluster.ids.push_back(instance->entity);}
         }
@@ -43,11 +63,18 @@ rhi::ForwardLighting PrepareForwardLighting(std::span<const LightInstance> light
     }
     if(directional>1||(!clustered&&points>rhi::MaximumPointLights))asset_io::Diagnostic(diagnostics,"Rendering.LightLimit",std::to_string(directional)+"/"+std::to_string(points),true);
     if(clustered&&points>256)asset_io::Diagnostic(diagnostics,"Rendering.ClusterLightLimit",std::to_string(points),true);
+    if(excessLocal)asset_io::Diagnostic(diagnostics,"Rendering.LocalLightLimit",std::to_string(excessLocal),true);
+    frame.shading.enabled=!frame.localLights.empty();
     frame.cluster.enabled=clustered;
     if(clamped)asset_io::Diagnostic(diagnostics,"Rendering.LightClamped",{},true);return frame;
 }
 namespace
 {
+bool NeedsShadowCasters(const rhi::ShadowSettings& shadows,const rhi::ForwardLighting& lighting)
+{
+    return shadows.enabled||std::any_of(lighting.localLights.begin(),lighting.localLights.end(),
+        [](const auto& light){return light.castsShadow;});
+}
 bool NeedsGeometry(const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion)
 {return (geometry&&geometry->enabled)||(occlusion&&(occlusion->gtao||occlusion->contactShadows));}
 rhi::Result ConfigureGeometry(rhi::CommandContext& commands,const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion)
@@ -111,7 +138,7 @@ rhi::Result RecordShadowedFrame(rhi::CommandContext& commands,const rhi::Forward
     if(result)result=commands.BeginPass({rhi::PassKind::Clear,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthWrite,"Clear"});
     if(result)result=commands.EndPass();
     if(result)result=commands.BeginPass({rhi::PassKind::Shadow,rhi::ResourceUse::None,rhi::ResourceUse::DepthWrite,"Shadow"});
-    if(result&&shadows.enabled)for(const auto& draw:casters)if(draw.castsShadow)
+    if(result&&NeedsShadowCasters(shadows,lighting))for(const auto& draw:casters)if(draw.castsShadow)
     {result=commands.DrawShadow(draw);if(!result)break;}
     if(result)result=commands.EndPass();
     if(result)result=commands.BeginPass({rhi::PassKind::Sky,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::None,"Sky"});
@@ -304,7 +331,7 @@ rhi::Result RecordShadowedFrameGraph(rhi::CommandContext& commands,const rhi::Fo
     const auto status=graph.Compile();
     if(status!=FrameGraphStatus::Success)return {GraphFailure(status)};
     return ExecuteFrameGraph(commands,graph,
-        [&]{rhi::Result record;if(!shadows.enabled)return record;
+        [&]{rhi::Result record;if(!NeedsShadowCasters(shadows,lighting))return record;
             for(const auto& draw:casters){if(!draw.castsShadow)continue;record=commands.DrawShadow(draw);if(!record)break;}
             return record;},
         [&]{rhi::Result record;for(const auto& draw:visible){record=commands.Draw(draw);if(!record)break;}return record;},

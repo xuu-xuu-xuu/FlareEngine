@@ -4,15 +4,15 @@
 #include "D3D12Memory.h"
 #include "D3D12Result.h"
 #include "D3D12PipelineCache.h"
+#include "D3D12LocalLighting.h"
+#include "D3D12ShadingExtensions.h"
 
-bool PrepareD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,const Localization& text)
+namespace
 {
-    if(!content.shadow||!content.shadowPipeline||!p.memory||!p.srvPool||!p.dsvPool)return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.ShadowTargetsFailed");
-    const auto resolution=content.shadow->resolution;
-    const bool cascaded=content.shadow->cascadeCount>0;
-    const UINT layers=cascaded?content.shadow->cascadeCount:1;
-    const UINT targetKey=resolution|(layers<<16)|(cascaded?(1u<<20):0u);
-    if(resolution<256||resolution>4096||((resolution&(resolution-1))&&!(cascaded&&resolution==1536))||!se::IsFinite(content.shadow->clipFromWorld))return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.ShadowTargetsFailed");
+bool AcquireTarget(D3D12Presentation& p,UINT resolution,UINT layers,bool array,bool local,
+    std::shared_ptr<D3D12ShadowTarget>& output,const Localization& text)
+{
+    const UINT targetKey=resolution|(layers<<16)|(array?1u<<24:0u)|(local?1u<<25:0u);
     auto found=p.shadowTargets.find(targetKey);auto target=found==p.shadowTargets.end()?std::shared_ptr<D3D12ShadowTarget>{}:found->second.lock();
     if(!target)
     {
@@ -24,12 +24,13 @@ bool PrepareD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D1
         D3D12_RESOURCE_DESC desc{};desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=desc.Height=resolution;
         desc.DepthOrArraySize=static_cast<UINT16>(layers);desc.MipLevels=1;desc.Format=DXGI_FORMAT_R32_TYPELESS;desc.SampleDesc={1,0};desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
         D3D12_CLEAR_VALUE clear{};clear.Format=DXGI_FORMAT_D32_FLOAT;clear.DepthStencil.Depth=1;
-        const auto created=p.memory->Create(desc,D3D12_RESOURCE_STATE_DEPTH_WRITE,&clear,target->depth,"DirectionalShadow["+std::to_string(resolution)+"]");
+        const auto created=p.memory->Create(desc,D3D12_RESOURCE_STATE_DEPTH_WRITE,&clear,target->depth,
+            std::string(local?"LocalShadow[":"DirectionalShadow[")+std::to_string(resolution)+"]");
         if(!CheckGraphicsResult(created,text,created==D3D12MemoryBudgetExceeded?"D3D12.GpuMemoryBudgetExceeded":"D3D12.ShadowTargetsFailed")
             ||!CheckGraphicsResult(p.dsvPool->Allocate(layers,target->dsv),text,"D3D12.DescriptorCapacityExceeded")
             ||!CheckGraphicsResult(p.srvPool->Allocate(1,target->srv),text,"D3D12.DescriptorCapacityExceeded"))return false;
         D3D12_DEPTH_STENCIL_VIEW_DESC depth{};depth.Format=DXGI_FORMAT_D32_FLOAT;depth.ViewDimension=D3D12_DSV_DIMENSION_TEXTURE2D;
-        if(cascaded)
+        if(array)
         {
             depth.ViewDimension=D3D12_DSV_DIMENSION_TEXTURE2DARRAY;depth.Texture2DArray.ArraySize=1;
             for(UINT slice=0;slice<layers;++slice)
@@ -38,15 +39,16 @@ bool PrepareD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D1
         else device->CreateDepthStencilView(target->depth.Get(),&depth,target->dsv->Cpu());
         D3D12_SHADER_RESOURCE_VIEW_DESC view{};view.Format=DXGI_FORMAT_R32_FLOAT;view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
         view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;view.Texture2D.MipLevels=1;
-        if(cascaded){view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2DARRAY;view.Texture2DArray.MipLevels=1;view.Texture2DArray.ArraySize=layers;}
+        if(array){view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2DARRAY;view.Texture2DArray.MipLevels=1;view.Texture2DArray.ArraySize=layers;}
         device->CreateShaderResourceView(target->depth.Get(),&view,target->srv->Cpu());
         p.shadowTargets.insert_or_assign(targetKey,target);++p.shadowCreations;
     }
-    p.shadow=target;frame.shadow=std::move(target);return true;
+    output=std::move(target);return true;
 }
-bool RecordD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,D3D12StateRecording& states,const Localization& text)
+bool RecordLayers(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,
+    D3D12ShadowTarget& target,std::span<const se::Mat4> matrices,bool enabled,D3D12StateRecording& states,const Localization& text)
 {
-    auto& commands=*p.commandList.Get();auto& target=*frame.shadow;const auto& pipeline=*content.shadowPipeline;
+    auto& commands=*p.commandList.Get();const auto& pipeline=*content.shadowPipeline;
     if(!CheckGraphicsResult(states.Use(commands,*target.depth.Get(),D3D12_RESOURCE_STATE_DEPTH_WRITE,"Shadow"),text,"D3D12.StateTrackingFailed"))return false;
     commands.SetPipelineState(pipeline.pipeline.Get());commands.SetGraphicsRootSignature(pipeline.rootSignature.Get());
     // W03：蒙皮投射使用各自的 ShadowDepth 变体（b0 仍是 16 个 root32 常量，t8 调色板在参数 1）。
@@ -63,9 +65,9 @@ bool RecordD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12
     {
     const auto dsv=target.dsv->Cpu(slice);commands.ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1,0,0,nullptr);
     commands.OMSetRenderTargets(0,nullptr,FALSE,&dsv);
-    const auto& shadowMatrix=content.shadow->cascadeCount?content.shadow->cascadeClipFromWorld[slice]:content.shadow->clipFromWorld;
+    const auto& shadowMatrix=matrices[slice];
     // 每级从完整世界候选重新提交，在光视锥中硬件裁剪，绝不读取主相机可见集。
-    if(content.shadow->enabled)for(size_t index=0;index<content.shadowMeshes.size();++index)
+    if(enabled)for(size_t index=0;index<content.shadowMeshes.size();++index)
     {
         const auto& draw=content.shadowMeshes[index];
         if(!draw.mesh||!draw.mesh->vertices||!draw.mesh->indices||!draw.mesh->indexCount||!se::IsFinite(draw.world)
@@ -106,6 +108,34 @@ bool RecordD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12
         commands.IASetVertexBuffers(0,1,&draw.mesh->vertexView);commands.IASetIndexBuffer(&draw.mesh->indexView);commands.DrawIndexedInstanced(draw.mesh->indexCount,1,0,0,0);
     }
     }
+    return true;
+}
+}
+
+bool PrepareD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,const Localization& text)
+{
+    if(!content.shadow||!content.shadowPipeline||!p.memory||!p.srvPool||!p.dsvPool)return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.ShadowTargetsFailed");
+    const auto resolution=content.shadow->resolution;const bool cascaded=content.shadow->cascadeCount>0;
+    if(resolution<256||resolution>4096||((resolution&(resolution-1))&&!(cascaded&&resolution==1536))||!se::IsFinite(content.shadow->clipFromWorld))
+        return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.ShadowTargetsFailed");
+    if(!AcquireTarget(p,resolution,cascaded?content.shadow->cascadeCount:1,cascaded,false,frame.shadow,text))return false;
+    p.shadow=frame.shadow;return true;
+}
+
+bool AcquireD3D12LocalShadow(D3D12Presentation& p,UINT layers,std::shared_ptr<D3D12ShadowTarget>& output,const Localization& text)
+{
+    if(!layers||layers>se::rhi::MaximumLocalLights*6)return false;
+    return AcquireTarget(p,D3D12LocalShadowResolution,layers,true,true,output,text);
+}
+
+bool RecordD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,D3D12StateRecording& states,const Localization& text)
+{
+    const auto& settings=*content.shadow;
+    const auto matrices=settings.cascadeCount?std::span<const se::Mat4>(settings.cascadeClipFromWorld).first(settings.cascadeCount):
+        std::span<const se::Mat4>(&settings.clipFromWorld,1);
+    if(!RecordLayers(p,frame,content,*frame.shadow,matrices,settings.enabled,states,text))return false;
+    if(frame.shading&&frame.shading->localShadow)
+        return RecordLayers(p,frame,content,*frame.shading->localShadow,frame.shading->localShadowMatrices,true,states,text);
     return true;
 }
 

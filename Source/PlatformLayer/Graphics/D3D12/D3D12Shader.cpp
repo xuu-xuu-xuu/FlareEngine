@@ -7,13 +7,13 @@
 #include <utility>
 
 bool CompileD3D12Shader(const std::filesystem::path& path,const char* entry,const char* target,
-    Microsoft::WRL::ComPtr<ID3DBlob>& output,const Localization& localization,UINT additionalFlags)
+    Microsoft::WRL::ComPtr<ID3DBlob>& output,const Localization& localization,UINT additionalFlags,const D3D_SHADER_MACRO* defines)
 {
     if(path.empty()||!entry||!target)
     {Log(LogLevel::Error,localization.GetText("D3D12.ShaderCompileFailed"));return false;}
     const UINT flags=D3D12ShaderCompileFlags()|additionalFlags;
     Microsoft::WRL::ComPtr<ID3DBlob> compiled,diagnostics;
-    const HRESULT result=D3DCompileFromFile(path.c_str(),nullptr,D3D_COMPILE_STANDARD_FILE_INCLUDE,
+    const HRESULT result=D3DCompileFromFile(path.c_str(),defines,D3D_COMPILE_STANDARD_FILE_INCLUDE,
         entry,target,flags,0,compiled.GetAddressOf(),diagnostics.GetAddressOf());
     if(FAILED(result))
     {

@@ -16,6 +16,8 @@ struct D3D12ShadowTarget
     UINT resolution=0;
     UINT layers=1;
 };
+bool AcquireD3D12LocalShadow(D3D12Presentation& presentation,UINT layers,
+    std::shared_ptr<D3D12ShadowTarget>& output,const Localization& text);
 bool PrepareD3D12Shadow(D3D12Presentation& presentation,D3D12FrameContext& frame,
     const D3D12FrameContent& content,const Localization& text);
 bool RecordD3D12Shadow(D3D12Presentation& presentation,D3D12FrameContext& frame,

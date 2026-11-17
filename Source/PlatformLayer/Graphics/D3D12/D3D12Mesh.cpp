@@ -1,4 +1,5 @@
 #include "D3D12Mesh.h"
+#include "D3D12ShadingExtensions.h"
 #include "D3D12Context.h"
 #include "D3D12Presentation.h"
 #include "D3D12PipelineCache.h"
@@ -250,6 +251,7 @@ void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12Me
         {
             commands.SetGraphicsRootConstantBufferView(program.prepared->shadingFrameParameter,frame.shadingConstants.Gpu());
             commands.SetGraphicsRootConstantBufferView(program.prepared->shadingMaterialParameter,frame.shadingMaterials[firstDraw+index-1].Gpu());binds.constants+=2;
+            commands.SetGraphicsRootConstantBufferView(program.prepared->localLightParameter,frame.shading->localLightConstants.Gpu());++binds.constants;
             auto table=frame.descriptors.Draw(firstDraw+static_cast<UINT>(index-1));const auto kind=program.prepared->program->source.kind;
             const UINT materialCount=se::rhi::IsEnvironment(kind)?7:se::rhi::IsShadowed(kind)?4:3;
             table.ptr+=UINT64(materialCount+(se::rhi::IsClustered(kind)?4:0))*frame.shadingDescriptorIncrement;

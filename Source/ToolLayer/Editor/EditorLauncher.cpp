@@ -52,7 +52,7 @@ struct LauncherStrings
     Localization localization;
     std::wstring title,newProject,openProject,openSample,quit;
     std::wstring newSoon,recentEmpty,sampleMissing,invalidProject,workerFailed,safeMode,openTitle;
-    std::wstring recentTitle,open,remove,relocate,selectHint,newTitle,templateLabel,templateBlank,templateBasic,templateRenderingStudio;
+    std::wstring recentTitle,open,remove,relocate,selectHint,newTitle,templateLabel,templateBlank,templateBasic,templateRenderingStudio,templateIndoorGallery;
     std::wstring nameLabel,parentLabel,browse,finalPath,create,cancel,leaseBusy,openFailed,createFailed,preferenceFailed;
     std::wstring Get(std::string_view key,const wchar_t* fallback) const
     {
@@ -94,6 +94,7 @@ struct LauncherStrings
         strings.templateBlank=value("Editor.LauncherTemplateBlank",L"Blank scene");
         strings.templateBasic=value("Editor.LauncherTemplateBasic",L"Basic 3D sample");
         strings.templateRenderingStudio=value("Editor.LauncherTemplateRenderingStudio",L"Rendering Studio");
+        strings.templateIndoorGallery=value("Editor.TemplateIndoorGallery",L"Indoor Gallery");
         strings.nameLabel=value("Editor.LauncherName",L"Project name");
         strings.parentLabel=value("Editor.LauncherParent",L"Parent folder");
         strings.browse=value("Editor.LauncherBrowse",L"Browse...");
@@ -290,6 +291,7 @@ void CreateNewProjectDialogControls(NewProjectDialogState& dialog,const Launcher
     SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateBlank.c_str()));
     SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateBasic.c_str()));
     SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateRenderingStudio.c_str()));
+    SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateIndoorGallery.c_str()));
     SendMessageW(dialog.combo,CB_SETCURSEL,0,0);
     make(L"STATIC",launcher.strings.nameLabel,SS_LEFT,16,52,120,22,-1,label);
     make(L"EDIT",L"NewProject",WS_BORDER|WS_TABSTOP|ES_AUTOHSCROLL,150,50,340,24,ControlName,dialog.name);
@@ -345,7 +347,7 @@ LRESULT CALLBACK NewProjectProcedure(HWND window,UINT message,WPARAM wParam,LPAR
             GetWindowTextW(dialog->name,nameBuffer,256);GetWindowTextW(dialog->parent,parentBuffer,1024);
             if(RejectPackageProject(*dialog->launcher,std::filesystem::path(parentBuffer)/nameBuffer))return 0;
             const auto templateIndex=static_cast<int>(SendMessageW(dialog->combo,CB_GETCURSEL,0,0));
-            const auto projectTemplate=templateIndex==2?ProjectTemplate::RenderingStudio:
+            const auto projectTemplate=templateIndex==3?ProjectTemplate::IndoorGallery:templateIndex==2?ProjectTemplate::RenderingStudio:
                 templateIndex==1?ProjectTemplate::Basic3D:ProjectTemplate::BlankScene;
             std::string errorKey,detail;
             if(!ProjectWorkspaceSession::CreateProject(projectTemplate,Utf8(nameBuffer),std::filesystem::path(parentBuffer),

@@ -3,6 +3,7 @@
 #include "D3D12PipelineCache.h"
 #include "D3D12Memory.h"
 #include "D3D12Result.h"
+#include "D3D12Shader.h"
 #include "CoreLayer/Hash.h"
 #include <algorithm>
 #include <filesystem>
@@ -18,7 +19,7 @@ bool BuiltinCoverage(const D3D12ShaderSource& source)
     if(error)return false;const auto actual=std::filesystem::weakly_canonical(source.path.parent_path(),error);
     if(error||_wcsicmp(actual.c_str(),expected.c_str()))return false;
     const std::string name=source.path.filename().string();
-    static constexpr const char* names[]{"Pbr.hlsl","Forward.hlsl","ShadowedForward.hlsl","EnvironmentForward.hlsl","BasicLit.hlsl","SkinnedForward.hlsl",
+    static constexpr const char* names[]{"Pbr.hlsl","Forward.hlsl","ShadowedForward.hlsl","EnvironmentForward.hlsl","BasicLit.hlsl","SkinnedForward.hlsl","SkinnedEnvironmentForward.hlsl",
         "CascadedShadowedForward.hlsl","CascadedEnvironmentForward.hlsl","CascadedBasicLit.hlsl","CascadedSkinnedForward.hlsl","CascadedSkinnedEnvironmentForward.hlsl",
         "ClusteredForward.hlsl","ClusteredShadowedForward.hlsl","ClusteredEnvironmentForward.hlsl","ClusteredBasicLit.hlsl","ClusteredSkinnedForward.hlsl","ClusteredSkinnedShadowedForward.hlsl","ClusteredSkinnedEnvironmentForward.hlsl",
         "ClusteredCascadedShadowedForward.hlsl","ClusteredCascadedEnvironmentForward.hlsl","ClusteredCascadedBasicLit.hlsl","ClusteredCascadedSkinnedForward.hlsl","ClusteredCascadedSkinnedEnvironmentForward.hlsl",
@@ -40,7 +41,7 @@ bool Supported(const D3D12MeshDraw& draw,const D3D12MeshPipeline& pipeline)
         &&prepared.blend==rhi::BlendMode::Opaque&&prepared.description.SampleDesc.Count==1&&prepared.description.DSVFormat==DXGI_FORMAT_D32_FLOAT
         &&BuiltinCoverage(source);
 }
-bool CreateTarget(D3D12Presentation& p,ID3D12Device& device,UINT width,UINT height,std::shared_ptr<D3D12DepthNormalTarget>& output,const Localization& text)
+bool CreateTarget(D3D12Presentation& p,ID3D12Device& device,UINT width,UINT height,bool material,std::shared_ptr<D3D12DepthNormalTarget>& output,const Localization& text)
 {
     auto candidate=std::make_shared<D3D12DepthNormalTarget>();candidate->width=width;candidate->height=height;
     D3D12_RESOURCE_DESC description{};description.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;description.Width=width;description.Height=height;
@@ -54,22 +55,37 @@ bool CreateTarget(D3D12Presentation& p,ID3D12Device& device,UINT width,UINT heig
     if(!CheckGraphicsResult(p.memory->Create(description,D3D12_RESOURCE_STATE_COMMON,&clear,candidate->normal,"DepthNormals.WorldGeometricOct"),text,"D3D12.PostTargetsFailed"))return false;
     const auto normalAllocation=p.memory->Allocation(*candidate->normal.Get());if(!normalAllocation)return false;
     candidate->allocatedBytes+=normalAllocation->bytes;
+    if(material)
+    {
+        description.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
+        clear={};clear.Format=description.Format;clear.Color[3]=-1;
+        if(!CheckGraphicsResult(p.memory->Create(description,D3D12_RESOURCE_STATE_COMMON,&clear,candidate->material,"DepthNormals.Material"),text,"D3D12.PostTargetsFailed"))return false;
+        const auto allocation=p.memory->Allocation(*candidate->material.Get());if(!allocation)return false;
+        candidate->allocatedBytes+=allocation->bytes;
+    }
     if(!CheckGraphicsResult(p.dsvPool->Allocate(1,candidate->dsv),text,"D3D12.DescriptorCapacityExceeded")
-        ||!CheckGraphicsResult(p.rtvPool->Allocate(1,candidate->rtv),text,"D3D12.DescriptorCapacityExceeded")
-        ||!CheckGraphicsResult(p.srvPool->Allocate(2,candidate->views),text,"D3D12.DescriptorCapacityExceeded"))return false;
+        ||!CheckGraphicsResult(p.rtvPool->Allocate(material?2:1,candidate->rtv),text,"D3D12.DescriptorCapacityExceeded")
+        ||!CheckGraphicsResult(p.srvPool->Allocate(material?3:2,candidate->views),text,"D3D12.DescriptorCapacityExceeded"))return false;
     D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};dsv.Format=DXGI_FORMAT_D32_FLOAT;dsv.ViewDimension=D3D12_DSV_DIMENSION_TEXTURE2D;
     device.CreateDepthStencilView(candidate->depth.Get(),&dsv,candidate->dsv->Cpu());device.CreateRenderTargetView(candidate->normal.Get(),nullptr,candidate->rtv->Cpu());
     D3D12_SHADER_RESOURCE_VIEW_DESC view{};view.Format=DXGI_FORMAT_R32_FLOAT;view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
     view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;view.Texture2D.MipLevels=1;
     device.CreateShaderResourceView(candidate->depth.Get(),&view,candidate->views->Cpu());view.Format=DXGI_FORMAT_R16G16_FLOAT;
-    device.CreateShaderResourceView(candidate->normal.Get(),&view,candidate->views->Cpu(1));output=std::move(candidate);return true;
+    device.CreateShaderResourceView(candidate->normal.Get(),&view,candidate->views->Cpu(1));
+    if(material)
+    {
+        device.CreateRenderTargetView(candidate->material.Get(),nullptr,candidate->rtv->Cpu(1));view.Format=description.Format;
+        device.CreateShaderResourceView(candidate->material.Get(),&view,candidate->views->Cpu(2));
+    }
+    output=std::move(candidate);return true;
 }
 }
 bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,UINT width,UINT height,const Localization& text)
 {
     Microsoft::WRL::ComPtr<ID3D12Device> device;if(FAILED(p.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf()))))return false;
-    if(!p.depthNormalTarget||p.depthNormalTarget->width!=width||p.depthNormalTarget->height!=height)
-        if(!CreateTarget(p,*device.Get(),width,height,p.depthNormalTarget,text))return false;
+    const bool material=content.forward&&content.forward->indoor.SurfaceEnabled();
+    if(!p.depthNormalTarget||p.depthNormalTarget->width!=width||p.depthNormalTarget->height!=height||bool(p.depthNormalTarget->material)!=material)
+        if(!CreateTarget(p,*device.Get(),width,height,material,p.depthNormalTarget,text))return false;
     auto candidate=std::make_shared<D3D12DepthNormalFrame>();candidate->target=p.depthNormalTarget;
     auto& statistics=candidate->statistics;statistics.requested=statistics.valid=true;statistics.complete=true;statistics.allocatedBytes=candidate->target->allocatedBytes;
     const auto count=std::min(content.opaqueDrawCount,content.meshes.size());candidate->pipelines.resize(count);
@@ -87,7 +103,13 @@ bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,co
             D3D12ShaderSource source;if(!ReadD3D12ShaderSource(description,source,text))return false;
             pixels_[slot]=LoadD3D12ShaderProgram(std::move(source),shaderStatistics_,text);if(!pixels_[slot])return false;
         }
-        const auto key=se::Sha256(prepared.key+":"+pixels_[slot]->bytecodeKey+":geometry39:independent-d32-rg16-less:v1");
+        if(material&&!indoorPixels_[slot])
+        {
+            const D3D_SHADER_MACRO defines[]{{"SE_MATERIAL_SURFACE","1"},{nullptr,nullptr}};
+            const auto path=prepared.program->source.path.parent_path()/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl");
+            if(!CompileD3D12Shader(path,"PSIndoor","ps_5_1",indoorPixels_[slot],text,0,surface?defines:nullptr))return false;
+        }
+        const auto key=se::Sha256(prepared.key+":"+pixels_[slot]->bytecodeKey+(material?":indoor-material:v1":":geometry39:independent-d32-rg16-less:v1"));
         auto found=pipelines_.find(key);std::shared_ptr<const D3D12DepthNormalPipeline> pair=found==pipelines_.end()?nullptr:found->second.lock();
         if(!pair)
         {
@@ -96,6 +118,14 @@ bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,co
             auto description=prepared.description;description.PS={next->pixel->pixel->GetBufferPointer(),next->pixel->pixel->GetBufferSize()};
             description.NumRenderTargets=1;description.RTVFormats[0]=DXGI_FORMAT_R16G16_FLOAT;description.CachedPSO={};
             description.BlendState.RenderTarget[0].BlendEnable=FALSE;description.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_RED|D3D12_COLOR_WRITE_ENABLE_GREEN;
+            if(material)
+            {
+                auto* pixel=indoorPixels_[slot].Get();description.PS={pixel->GetBufferPointer(),pixel->GetBufferSize()};
+                description.NumRenderTargets=2;description.RTVFormats[1]=DXGI_FORMAT_R16G16B16A16_FLOAT;
+                description.BlendState.IndependentBlendEnable=TRUE;
+                description.BlendState.RenderTarget[1]=description.BlendState.RenderTarget[0];
+                description.BlendState.RenderTarget[1].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
+            }
             description.DepthStencilState.DepthEnable=TRUE;description.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ALL;description.DepthStencilState.DepthFunc=D3D12_COMPARISON_FUNC_LESS;
             derived->pipeline.Reset();if(!CheckGraphicsResult(device->CreateGraphicsPipelineState(&description,IID_PPV_ARGS(derived->pipeline.GetAddressOf())),text,"D3D12.CreatePipelineFailed"))return false;
             derived->description=description;derived->description.InputLayout={derived->inputElements.data(),static_cast<UINT>(derived->inputElements.size())};
@@ -112,7 +142,13 @@ bool D3D12DepthNormals::Record(D3D12Presentation& p,D3D12FrameContext& frame,con
     if(!CheckGraphicsResult(states.Use(commands,*target.depth.Get(),D3D12_RESOURCE_STATE_DEPTH_WRITE,"DepthNormals.Depth"),text,"D3D12.StateTrackingFailed")
         ||!CheckGraphicsResult(states.Use(commands,*target.normal.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"DepthNormals.Normal"),text,"D3D12.StateTrackingFailed"))return false;
     const auto dsv=target.dsv->Cpu(),rtv=target.rtv->Cpu();const float invalidNormal[4]{2,2,0,0};
-    commands.ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1,0,0,nullptr);commands.ClearRenderTargetView(rtv,invalidNormal,0,nullptr);commands.OMSetRenderTargets(1,&rtv,FALSE,&dsv);
+    commands.ClearDepthStencilView(dsv,D3D12_CLEAR_FLAG_DEPTH,1,0,0,nullptr);commands.ClearRenderTargetView(rtv,invalidNormal,0,nullptr);
+    if(target.material)
+    {
+        if(!CheckGraphicsResult(states.Use(commands,*target.material.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"DepthNormals.Material"),text,"D3D12.StateTrackingFailed"))return false;
+        const float invalidMaterial[4]{0,0,0,-1};commands.ClearRenderTargetView(target.rtv->Cpu(1),invalidMaterial,0,nullptr);
+    }
+    commands.OMSetRenderTargets(target.material?2:1,&rtv,TRUE,&dsv);
     for(size_t index=0;index<frame.depthNormals->pipelines.size();++index)
     {
         const auto& pipeline=frame.depthNormals->pipelines[index];if(!pipeline)continue;

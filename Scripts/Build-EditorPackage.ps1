@@ -107,7 +107,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $stage 'SDK/SelfEngine.Scripts.props'),$sdkProps,[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $stage 'SDK/SelfEngine.Scripts.targets'),$sdkTargets,[Text.UTF8Encoding]::new($false))
     AddStep 'prepare_package_template'
-    foreach($packageTemplateName in @('EmptyGame','RenderingStudio')) {
+    foreach($packageTemplateName in @('EmptyGame','RenderingStudio','IndoorGallery')) {
     $template=Join-Path $stage ('Resources/Templates/'+$packageTemplateName)
     $scriptProject=Join-Path $template 'Scripts/EmptyGame.Scripts.csproj'
     $xml=New-Object Xml.XmlDocument

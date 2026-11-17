@@ -46,13 +46,13 @@ int wmain(int argc,wchar_t** argv)
     const bool userSurface=mode==L"user-pbr"||mode==L"user-forward"||mode==L"user-shadowed"||mode==L"user-environment";
     // W03：蒙皮变体使用 31 号绑定布局 + v3 顶点布局；宏与运行时 PipelineDescription 完全一致，
     // 否则源码键不同会导致产物被拒绝并回退到运行时编译。
-    const bool skinned=(clustered&&mode.find(L"skinned")!=std::wstring_view::npos)||mode==L"skinned-forward"||mode==L"skinned-shadowdepth"||mode==L"cascaded-skinned-forward"||mode==L"cascaded-skinned-environment";
+    const bool skinned=(clustered&&mode.find(L"skinned")!=std::wstring_view::npos)||mode==L"skinned-forward"||mode==L"skinned-environment"||mode==L"skinned-shadowdepth"||mode==L"cascaded-skinned-forward"||mode==L"cascaded-skinned-environment";
     const bool cascaded=clustered||mode==L"cascaded-shadowed"||mode==L"cascaded-environment"||mode==L"cascaded-basiclit"||mode==L"cascaded-skinned-forward"||mode==L"cascaded-output"||mode==L"cascaded-skinned-environment";
     if(argc<4||(!depthNormals&&!userSurface&&!cascaded&&mode!=L"mesh"&&mode!=L"triangle"&&mode!=L"pbr"&&mode!=L"forward"&&mode!=L"output"&&mode!=L"sky"
         &&mode!=L"shadowed"&&mode!=L"shadowdepth"&&mode!=L"shadowoutput"
         &&mode!=L"environment"&&mode!=L"environmentsky"&&mode!=L"pbr-instanced"
         &&mode!=L"pbr-forward-instanced"
-        &&mode!=L"skinned-forward"&&mode!=L"skinned-shadowdepth"
+        &&mode!=L"skinned-forward"&&mode!=L"skinned-environment"&&mode!=L"skinned-shadowdepth"
         &&mode!=L"bloomextract"&&mode!=L"bloomblur"&&mode!=L"tonemap"&&mode!=L"fxaa"&&mode!=L"overlay"&&mode!=L"gui"&&mode!=L"user-pbr"&&mode!=L"basiclit"))
     {Log(LogLevel::Error,text.GetText("ShaderBuilder.Usage"));return 1;}
     se::rhi::PipelineDescription description;
@@ -75,7 +75,7 @@ int wmain(int argc,wchar_t** argv)
     if(mode==L"skinned-forward")description.kind=se::rhi::PipelineKind::ShadowedMesh;
     if(mode==L"skinned-shadowdepth")description.kind=se::rhi::PipelineKind::ShadowDepth;
     if(mode==L"shadowoutput")description.kind=se::rhi::PipelineKind::ShadowOutput;
-    if(mode==L"environment")description.kind=se::rhi::PipelineKind::EnvironmentMesh;
+    if(mode==L"environment"||mode==L"skinned-environment")description.kind=se::rhi::PipelineKind::EnvironmentMesh;
     if(mode==L"environmentsky")description.kind=se::rhi::PipelineKind::EnvironmentSky;
     if(mode==L"bloomextract")description.kind=se::rhi::PipelineKind::BloomExtract;
     if(mode==L"bloomblur")description.kind=se::rhi::PipelineKind::BloomBlur;

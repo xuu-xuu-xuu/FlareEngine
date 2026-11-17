@@ -7,6 +7,7 @@
 #include "D3D12DepthNormals.h"
 #include "D3D12AmbientOcclusion.h"
 #include "D3D12ShadingExtensions.h"
+#include "D3D12LocalLighting.h"
 #include "D3D12Context.h"
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
@@ -857,6 +858,14 @@ Result CommandContext::ConfigureForward(const ForwardLighting& lighting,Pipeline
         ||!IsFinite(skySettings.sunIntensity)||skySettings.sunIntensity<0||skySettings.sunIntensity>1000
         ||!IsFinite(skySettings.sunAngularRadius)||skySettings.sunAngularRadius<0.001f||skySettings.sunAngularRadius>0.1f)
         return Fail(Error::InvalidArgument);
+    const auto& indoor=lighting.indoor;
+    if(indoor.indirect||indoor.reflections||indoor.volumetricFog)
+    {
+        const auto range=[](float v,float low,float high){return IsFinite(v)&&v>=low&&v<=high;};
+        if(!range(indoor.indirectStrength,0,4)||!range(indoor.reflectionStrength,0,1)||!range(indoor.fogDensity,0,1)
+            ||!range(indoor.fogDistance,.1f,500)||!range(indoor.fogAlbedo.x,0,1)||!range(indoor.fogAlbedo.y,0,1)||!range(indoor.fogAlbedo.z,0,1)
+            ||!IsFinite(indoor.view)||!IsFinite(indoor.clipFromView)||!Inverse(indoor.view)||!Inverse(indoor.clipFromView))return Fail(Error::InvalidArgument);
+    }
     if(lighting.pointCount>MaximumPointLights||!IsFinite(lighting.exposure)||lighting.exposure<1.0f/1024||lighting.exposure>64
         ||!radiance(lighting.sky)||!radiance(lighting.directionalRadiance)||!IsFinite(lighting.directionToLight)||!IsFinite(length)||length<1e-12f)return Fail(Error::InvalidArgument);
     for(UINT index=0;index<lighting.pointCount;++index)
@@ -866,6 +875,9 @@ Result CommandContext::ConfigureForward(const ForwardLighting& lighting,Pipeline
             ||!radiance(point.radiance)||!IsFinite(point.range)||point.range<0.05f||point.range>10000)return Fail(Error::InvalidArgument);
     }
     ForwardLighting prepared=lighting;
+    if(lighting.localLights.size()>MaximumLocalLights||(!lighting.localLights.empty()&&!lighting.shading.enabled)
+        ||!std::all_of(lighting.localLights.begin(),lighting.localLights.end(),ValidD3D12LocalLight))
+        return Fail(Error::InvalidArgument);
     std::array<std::shared_ptr<TextureEntry>,5> shadingTextures;
     if(lighting.shading.enabled)
     {
@@ -1271,7 +1283,7 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
         source+="Shading:";
         for(const auto& textureEntry:layerTextures)source+=textureEntry?std::to_string(textureEntry->native.views->Cpu().ptr)+":":"white:";
     }
-    if(!impl_->descriptors.contains(source)&&(impl_->descriptors.size()+1)*((environment?7:shadow?4:pbr?3:1)+(IsClustered(pipeline->kind)?4:0)+(forward&&impl_->forward->shading.enabled?12:0))>device->presentation.frames[0].descriptors.Maximum())
+    if(!impl_->descriptors.contains(source)&&(impl_->descriptors.size()+1)*((environment?7:shadow?4:pbr?3:1)+(IsClustered(pipeline->kind)?4:0)+(forward&&impl_->forward->shading.enabled?D3D12ShadingTextureCount:0))>device->presentation.frames[0].descriptors.Maximum())
     {++device->descriptorRejections;return Fail(Error::CapacityExceeded);}
     impl_->descriptors.insert(source);
     impl_->geometry.push_back(std::move(mesh));impl_->draws.push_back(draw);

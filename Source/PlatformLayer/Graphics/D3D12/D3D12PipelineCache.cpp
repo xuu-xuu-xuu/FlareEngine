@@ -1,4 +1,5 @@
 #include "D3D12PipelineCache.h"
+#include "D3D12Descriptors.h"
 #include "D3D12PipelineLibraryStorage.h"
 #include "D3D12Triangle.h"
 #include "D3D12Result.h"
@@ -211,7 +212,8 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
         parameters[materialRootParameter].Descriptor={4,0};parameters[materialRootParameter].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
     }
     UINT shadingFrameParameter=UINT_MAX,shadingMaterialParameter=UINT_MAX,shadingTexturesParameter=UINT_MAX;
-    D3D12_DESCRIPTOR_RANGE shadingRange{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,12,13,0,D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};
+    UINT localLightParameter=UINT_MAX;
+    D3D12_DESCRIPTOR_RANGE shadingRange{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,D3D12ShadingTextureCount,13,0,D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND};
     if(description.shadingLayoutVersion)
     {
         shadingFrameParameter=root.NumParameters++;shadingMaterialParameter=root.NumParameters++;shadingTexturesParameter=root.NumParameters++;
@@ -220,6 +222,9 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
         parameters[shadingFrameParameter].ShaderVisibility=parameters[shadingMaterialParameter].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
         parameters[shadingTexturesParameter].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         parameters[shadingTexturesParameter].DescriptorTable={1,&shadingRange};parameters[shadingTexturesParameter].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+        localLightParameter=root.NumParameters++;
+        parameters[localLightParameter].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;
+        parameters[localLightParameter].Descriptor={7,0};parameters[localLightParameter].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
     }
     // 蒙皮材质管线把参数 3 留给实例 SRV，但非实例化时它是空表；补一个不冲突的 t7 单槽表，
     // 避免调试层报“空根描述符表”。该寄存器不在任何着色器里读取。
@@ -256,6 +261,7 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     auto prepared=std::make_shared<D3D12PreparedPipeline>();prepared->program=std::move(program);prepared->key=key;
     prepared->materialRootParameter=materialRootParameter;prepared->alphaMode=description.alphaMode;
     prepared->shadingFrameParameter=shadingFrameParameter;prepared->shadingMaterialParameter=shadingMaterialParameter;prepared->shadingTexturesParameter=shadingTexturesParameter;
+    prepared->localLightParameter=localLightParameter;
     prepared->depth=depth;prepared->blend=description.blend;prepared->colorFormat=description.colorFormat;
     if(!CheckGraphicsResult(p.device->CreateRootSignature(0,serialized->GetBufferPointer(),serialized->GetBufferSize(),IID_PPV_ARGS(prepared->rootSignature.GetAddressOf())),text,"D3D12.CreateRootSignatureFailed"))return {};
     ++p.stats.rootCreations;

@@ -2,7 +2,7 @@
 
 ## 从灯光组件到绘制命令
 
-[灯光组件](../runtime/light.md) 随世界快照提取为灯光实例。[PrepareForwardLighting()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/ForwardRenderer.cpp#L9) 按稳定实体顺序选择方向光和点光源，将颜色乘以强度并限制输入范围。场景路径由 [SceneRenderRequest](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/SceneRenderPath.h#L10) 指定，编辑器视口组合基础光照、阴影与程序化天空。
+`PrepareForwardLighting()` 从世界快照按稳定实体 ID 提取方向光、点光源和聚光灯，将光色乘以强度并限制输入范围。一盏投影点灯只进入一个灯表，聚光锥的朝向取实体变换后的本地 −Z。`SceneRenderRequest` 指定编辑器和运行时采用的场景绘制路径。[灯光组件与格式](../runtime/light.md) · [局部灯槽与阴影提交](shadows.md) · [场景路径接口](https://github.com/xuu-xuu-xuu/FlareEngine/blob/34bad2e/Source/FunctionLayer/Rendering/SceneRenderPath.h)
 
 ## FrameGraph
 

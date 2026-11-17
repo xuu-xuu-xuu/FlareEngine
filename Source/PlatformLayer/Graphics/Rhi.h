@@ -345,6 +345,13 @@ struct OverlayQuad
     Vec4 rectangle,color{1,1,1,1},clip{0,0,1e6f,1e6f}; // 像素 x/y/width/height；颜色为线性 RGBA。
 };
 struct PointLight {Vec3 position{},radiance{};float range=10;};
+inline constexpr std::uint32_t MaximumLocalLights=8;
+struct LocalLight
+{
+    Vec3 position{},radiance{},direction{0,0,-1};
+    float range=10,innerCos=.9f,outerCos=.8f;
+    bool spot=false,castsShadow=false;
+};
 struct ClusteredLighting
 {
     bool enabled=false,debug=false,bruteForce=false,counterReadback=false;
@@ -375,6 +382,15 @@ struct SkySettings
     float sunIntensity=12.0f;
     float sunAngularRadius=0.012f;
 };
+struct IndoorLightingSettings
+{
+    bool indirect=false,reflections=false,volumetricFog=false;
+    float indirectStrength=1,reflectionStrength=1,fogDensity=.035f,fogDistance=25;
+    Vec3 fogAlbedo{.85f,.9f,1};
+    Mat4 view,clipFromView; // 与本帧几何实际抖动投影一致。
+    bool SurfaceEnabled() const {return (indirect&&indirectStrength>0)||(reflections&&reflectionStrength>0);}
+    bool Enabled() const {return SurfaceEnabled()||(volumetricFog&&fogDensity>0&&fogDistance>0);}
+};
 struct ForwardLighting
 {
     Vec3 directionToLight{0,0,1},directionalRadiance{},sky{0.02f,0.04f,0.08f};
@@ -388,7 +404,9 @@ struct ForwardLighting
     TextureHandle colorLut;
     ClusteredLighting cluster;
     ShadingFrameBindings shading;
+    std::vector<LocalLight> localLights;
     bool gpuDriven=false,meshletCulling=false,gpuDrivenHiZ=false;
+    IndoorLightingSettings indoor;
 };
 struct Image {std::uint32_t width=0,height=0;std::vector<std::uint8_t> rgba8;};
 struct RenderTargetDescription {std::uint32_t width=0,height=0;bool depth=true,srgb=false;TextureFormat format=TextureFormat::Rgba8;};

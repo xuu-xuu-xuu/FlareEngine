@@ -4,6 +4,8 @@
 #include "D3D12SceneCoverage.h"
 #include "D3D12Memory.h"
 #include "D3D12Result.h"
+#include "D3D12Shadow.h"
+#include "D3D12LocalLighting.h"
 #include <cstring>
 bool PrepareD3D12ShadingExtensions(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,const Localization& text)
 {
@@ -17,12 +19,27 @@ bool PrepareD3D12ShadingExtensions(D3D12Presentation& p,D3D12FrameContext& frame
         description.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;description.SampleDesc={1,0};
         for(UINT i=0;i<2;++i)
             if(!CheckGraphicsResult(p.memory->Create(description,D3D12_RESOURCE_STATE_COMMON,nullptr,defaults->textures[i],i?"Shading.FlatNormal":"Shading.White"),text,"D3D12.CreateTextureFailed"))return false;
-        if(!CheckGraphicsResult(p.srvPool->Allocate(2,defaults->views),text,"D3D12.DescriptorCapacityExceeded"))return false;
+        if(!CheckGraphicsResult(p.srvPool->Allocate(3,defaults->views),text,"D3D12.DescriptorCapacityExceeded"))return false;
         D3D12_SHADER_RESOURCE_VIEW_DESC view{};view.Format=description.Format;view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
         view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;view.Texture2D.MipLevels=1;
-        for(UINT i=0;i<2;++i)device->CreateShaderResourceView(defaults->textures[i].Get(),&view,defaults->views->Cpu(i));p.shadingDefaults=std::move(defaults);
+        for(UINT i=0;i<2;++i)device->CreateShaderResourceView(defaults->textures[i].Get(),&view,defaults->views->Cpu(i));
+        D3D12_SHADER_RESOURCE_VIEW_DESC empty{};empty.Format=DXGI_FORMAT_R32_FLOAT;
+        empty.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2DARRAY;empty.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        empty.Texture2DArray.ArraySize=empty.Texture2DArray.MipLevels=1;
+        device->CreateShaderResourceView(nullptr,&empty,defaults->views->Cpu(2));p.shadingDefaults=std::move(defaults);
     }
     auto candidate=std::make_shared<D3D12ShadingFrame>();candidate->defaults=p.shadingDefaults;
+    D3D12LocalLightConstants local{};
+    if(!PrepareD3D12LocalLightConstants(content.forward->localLights,local))return false;
+    if(!CheckGraphicsResult(frame.uploads.Allocate(sizeof(local),256,candidate->localLightConstants),text,"D3D12.UploadCapacityExceeded"))return false;
+    std::memcpy(candidate->localLightConstants.cpu,&local,sizeof(local));
+    const UINT layers=static_cast<UINT>(local.info.z);
+    if(layers)
+    {
+        if(!content.shadow||!content.shadowPipeline||!AcquireD3D12LocalShadow(p,layers,candidate->localShadow,text))return false;
+        candidate->localShadowMatrices.assign(local.clipFromWorld.begin(),local.clipFromWorld.begin()+layers);
+        candidate->resources.push_back(candidate->localShadow->depth);
+    }
     if(!candidate->defaults->initialized)
     {
         if(!CheckGraphicsResult(frame.uploads.Allocate(1024,512,candidate->defaultUpload),text,"D3D12.UploadCapacityExceeded"))return false;
@@ -42,6 +59,7 @@ bool PrepareD3D12ShadingExtensions(D3D12Presentation& p,D3D12FrameContext& frame
     for(size_t index=0;index<content.meshes.size();++index)
     {
         const auto& draw=content.meshes[index];auto& table=candidate->views[index];table.fill(candidate->defaults->views->Cpu());table[8]=candidate->defaults->views->Cpu(1);
+        table[12]=candidate->localShadow?candidate->localShadow->srv->Cpu():candidate->defaults->views->Cpu(2);
         if(occlusion.ptr)table[0]=occlusion;
         const auto store=[&](const D3D12Texture* texture,UINT slot,bool srgb)
         {
@@ -74,6 +92,7 @@ bool RecordD3D12ShadingExtensions(D3D12Presentation& p,D3D12FrameContext& frame,
     for(const auto& texture:data.defaults->textures)if(!use(*texture.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Shading.DefaultRead"))return false;
     for(const auto& resource:data.resources)if(!use(*resource.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Shading.TextureRead"))return false;
     if(!use(*frame.shadingConstants.resource,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"Shading.FrameConstants"))return false;
+    if(!use(*data.localLightConstants.resource,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"Shading.LocalLightConstants"))return false;
     for(const auto& slice:frame.shadingMaterials)if(!use(*slice.resource,D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"Shading.MaterialConstants"))return false;
     return true;
 }

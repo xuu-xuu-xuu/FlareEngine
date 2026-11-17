@@ -1,0 +1,19 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "胡桃木",
+  "baseColor": [
+    0.24,
+    0.105,
+    0.047,
+    1
+  ],
+  "metallic": 0,
+  "roughness": 0.44,
+  "doubleSided": false,
+  "textures": {
+    "baseColor": "",
+    "normal": "",
+    "metallicRoughness": ""
+  }
+}

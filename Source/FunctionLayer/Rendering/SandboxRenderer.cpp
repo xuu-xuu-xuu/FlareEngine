@@ -14,6 +14,7 @@
 #include <algorithm>
 #include "ResourceLayer/Assets/Primitives.h"
 #include "ResourceLayer/Assets/AssetStore.h"
+#include "ResourceLayer/Assets/AssetIO.h"
 #include <vector>
 #include "CoreLayer/Profiler.h"
 #include "ForwardRenderer.h"
@@ -194,8 +195,8 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
         if(shadow&&!device_->CreatePipeline({se::rhi::PipelineKind::ShadowDepth,resources/"Shaders/ShadowDepth.hlsl",4},shadowPipeline_))return false;
         // W03：蒙皮变体。前向家族用 ShadowedMesh + 31 号绑定布局 + v3 顶点布局；
         // 阴影深度用 ShadowDepth + 31 号布局（b0 常量 + t8 调色板）。
-        // 环境场景走 EnvironmentMesh，本变体不参与，避免 pass 类别不一致。
-        if((basic||scene_==SandboxScene::Shadows)&&!EnvironmentScene(scene_))
+        // 环境材质的蒙皮受光管线按需加载，投射共享 SkinnedShadowDepth。
+        if(shadow)
         {
             se::rhi::PipelineDescription skinned{se::rhi::PipelineKind::ShadowedMesh,resources/"Shaders/SkinnedForward.hlsl",
                 se::rhi::SkinnedLayoutVersion};
@@ -206,7 +207,7 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
                 se::rhi::SkinnedLayoutVersion};
             skinnedShadow.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;
             skinnedShadow.macros.push_back({"SE_SKINNED","1"});
-            if(!device_->CreatePipeline(skinned,skinnedPipeline_)||!device_->CreatePipeline(skinnedShadow,skinnedShadowPipeline_))return false;
+            if((!environment&&!device_->CreatePipeline(skinned,skinnedPipeline_))||!device_->CreatePipeline(skinnedShadow,skinnedShadowPipeline_))return false;
         }
         if(forward)
         {
@@ -405,7 +406,11 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if (!frame.surface.width || !frame.surface.height) return RenderResult::Occluded;
     const bool coverageFrame=frame.data&&RequiresMaterialCoverage(*frame.data);
     const bool materialShading=frame.data&&se::RequiresMaterialShading(*frame.data);
-    const bool shadingRequested=frame.data&&(materialShading||frame.data->multiscatter||frame.data->gtao||frame.data->contactShadows
+    const bool localLighting=frame.data&&std::any_of(frame.data->lights.begin(),frame.data->lights.end(),[](const auto& instance){
+        return instance.light.type==se::LightType::Spot||(instance.light.type==se::LightType::Point&&instance.light.castsShadow);
+    });
+    const bool indoorLighting=frame.data&&frame.data->indoor.Enabled();
+    const bool shadingRequested=frame.data&&(materialShading||localLighting||indoorLighting||frame.data->multiscatter||frame.data->gtao||frame.data->contactShadows
         ||frame.data->diffuseSh||frame.data->localDiffuseSh||!frame.data->rectangleLights.empty());
     const bool shadingFrame=shadingRequested&&ForwardScene(scene_);
     const bool bc7Color=frame.data&&frame.data->bc7Color;
@@ -461,7 +466,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             featureHlodSignature_=std::move(signature);hlodEnabled_=hlod;
         }
         hlodResidentRadius_=frame.data?frame.data->hlodRadius:0;
-        const bool pbr=frame.data&&(frame.data->fullPbr||materialShading||frame.data->multiscatter
+        const bool pbr=frame.data&&(frame.data->fullPbr||materialShading||localLighting||indoorLighting||frame.data->multiscatter
             ||frame.data->diffuseSh||frame.data->localDiffuseSh||!frame.data->rectangleLights.empty());
         if(pbr!=featureFullPbr_){std::swap(featureEnvironment_?featureEnvironmentPipeline_:pipeline_,featurePbrPipeline_);featureFullPbr_=pbr;previousViewProjectionValid_=false;}
         const bool instanced=sceneInstancing;
@@ -678,7 +683,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     const auto viewProjection=taaFrame?se::ApplyProjectionJitter(viewProjectionBase,
         se::HaltonJitter(static_cast<std::uint32_t>(frame.updateIndex)),sceneWidth*geometryScale,sceneHeight*geometryScale):viewProjectionBase;
     if(result&&forward)result=commands->ConfigureView(viewProjection);
-    const se::rhi::DepthNormalSettings geometrySettings{frame.data&&camera_&&(frame.data->depthNormals||frame.data->gtao||frame.data->contactShadows||frame.data->gpuDrivenHiZ)};
+    const se::rhi::DepthNormalSettings geometrySettings{frame.data&&camera_&&(frame.data->depthNormals||frame.data->gtao||frame.data->contactShadows||frame.data->gpuDrivenHiZ||frame.data->indoor.Enabled())};
     std::optional<se::rhi::ScreenSpaceOcclusionSettings> screenSettings;
     if(frame.data&&camera_&&(frame.data->gtao||frame.data->contactShadows))
     {
@@ -1030,11 +1035,18 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             std::uint32_t skinJointCount=0;
             std::span<const std::byte> skinPalette;
             if(skinnedModel)skinPalette=BuildSkinPalette(mesh.skinPalette,model->source->joints.size(),skinJointCount);
-            const auto skinDrawPipeline=!instancing?(shadowFilterFrame?
+            auto skinDrawPipeline=!instancing?(shadowFilterFrame?
                 (featureEnvironment_||EnvironmentScene(scene_)?*filterPipelines.skinnedEnvironment:*filterPipelines.skinned):clusteredFrame?
                 (featureEnvironment_||EnvironmentScene(scene_)?*clusterPipelines.skinnedEnvironment:*clusterPipelines.skinned):cascadedFrame?
                 (featureEnvironment_||EnvironmentScene(scene_)?*cascadedSkinnedEnvironment_:*cascadedSkinned_):
                 !featureEnvironment_&&skinnedPipeline_?*skinnedPipeline_:se::rhi::PipelineHandle{}):se::rhi::PipelineHandle{};
+            if(skinnedModel&&!instancing&&!clusteredFrame&&!cascadedFrame&&(featureEnvironment_||EnvironmentScene(scene_)))
+            {
+                const auto environmentSkin=surfacePipelines_.Load(*device_,ResourceDirectory()/"Shaders",se::rhi::PipelineKind::EnvironmentMesh,
+                    se::MaterialAlphaMode::Opaque,true,false,false,false,shadingFrame);
+                if(!environmentSkin){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
+                skinDrawPipeline=*environmentSkin;
+            }
             const auto skinShadowPipeline=skinnedShadowPipeline_?*skinnedShadowPipeline_:se::rhi::PipelineHandle{};
             // 阴影投射者包含主相机外物体，必须在可见性分支前解析同一份材质覆盖。
             std::vector<std::shared_ptr<const se::PbrRenderMaterial>> overrides;
@@ -1281,12 +1293,27 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         {
             std::vector<se::AssetDiagnostic> diagnostics;
             auto lighting=se::PrepareForwardLighting(frame.data?std::span<const se::LightInstance>(frame.data->lights):std::span<const se::LightInstance>{},
-                frame.data?frame.data->exposure:1,frame.data?frame.data->skyColor:se::Vec3{},diagnostics,clusteredFrame);report(diagnostics);
+                frame.data?frame.data->exposure:1,frame.data?frame.data->skyColor:se::Vec3{},diagnostics,clusteredFrame);
+            if(!camera_){lighting.localLights.clear();lighting.shading.enabled=false;}
+            // 无深度阴影 pass 的旧 Lighting 调试模式仍可显示聚光；正式编辑器与 Player 均有阴影 pass。
+            if(scene_==SandboxScene::Lighting)
+            {
+                bool disabled=false;
+                for(auto& light:lighting.localLights)if(light.castsShadow){light.castsShadow=false;disabled=true;}
+                if(disabled)se::asset_io::Diagnostic(diagnostics,"Rendering.LocalShadowsUnavailable",{},true);
+            }
+            report(diagnostics);
             if(frame.data)
             {
                 lighting.gpuDriven=frame.data->gpuDriven||frame.data->meshletCulling||frame.data->gpuDrivenHiZ;
                 lighting.meshletCulling=frame.data->meshletCulling;
                 lighting.gpuDrivenHiZ=frame.data->gpuDrivenHiZ;
+                if(camera_&&frame.data->indoor.Enabled())
+                {
+                    lighting.indoor=frame.data->indoor;
+                    lighting.indoor.view=camera_->view;
+                    lighting.indoor.clipFromView=viewProjection*camera_->inverseView;
+                }
             }
             if(shadingFrame&&camera_&&frame.data)
             {

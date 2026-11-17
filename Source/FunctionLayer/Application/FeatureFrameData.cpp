@@ -14,6 +14,14 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame)
         frame.instancing=flag("render.instancing");frame.occlusion=flag("render.occlusion");frame.occlusionCounters=flag("render.occlusionCounters");frame.occlusionTiming=flag("render.occlusionTiming");frame.frameGraph=flag("render.frameGraph");
         frame.multiscatter=flag("render.multiscatter");frame.specularAA=flag("render.specularAA");
         frame.bc7Color=flag("render.bc7Color");
+        frame.indoor.indirect=flag("render.indirect");
+        frame.indoor.indirectStrength=number("render.indirectStrength");
+        frame.indoor.reflections=flag("render.reflections");
+        frame.indoor.reflectionStrength=number("render.reflectionStrength");
+        frame.indoor.volumetricFog=flag("render.volumetricFog");
+        frame.indoor.fogDensity=number("render.fogDensity");
+        frame.indoor.fogDistance=number("render.fogDistance");
+        frame.indoor.fogAlbedo=std::get<Vec3>(get("render.fogAlbedo"));
         frame.depthNormals=flag("render.depthNormals");frame.gtao=flag("render.gtao");frame.contactShadows=flag("render.contactShadows");
         frame.aoRadius=number("render.aoRadius");frame.aoIntensity=number("render.aoIntensity");frame.contactLength=number("render.contactLength");
         frame.diffuseSh=flag("render.diffuseSh");frame.localDiffuseSh=flag("render.localDiffuseSh");

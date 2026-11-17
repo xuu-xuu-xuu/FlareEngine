@@ -21,6 +21,7 @@
 #include "D3D12DepthPrepass.h"
 #include "D3D12DepthNormals.h"
 #include "D3D12AmbientOcclusion.h"
+#include "D3D12IndoorLighting.h"
 #include "D3D12ShadingExtensions.h"
 #include "D3D12Heterogeneous.h"
 #include "D3D12Dred.h"
@@ -732,7 +733,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     }
     ComPtr<ID3D12Device> device;
     if(!CheckGraphicsResult(presentation.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf())),localization,"D3D12.DescriptorCapacityExceeded")
-        ||!CheckGraphicsResult(frame.descriptors.Prepare(*device.Get(),textureViews,(content.environment?7:shadow?4:pbr?3:1)+(forward&&content.forward->cluster.enabled?4:0)+(frame.shading?12:0)),localization,"D3D12.DescriptorCapacityExceeded"))
+        ||!CheckGraphicsResult(frame.descriptors.Prepare(*device.Get(),textureViews,(content.environment?7:shadow?4:pbr?3:1)+(forward&&content.forward->cluster.enabled?4:0)+(frame.shading?D3D12ShadingTextureCount:0)),localization,"D3D12.DescriptorCapacityExceeded"))
     {presentation.commandList->Close();return false;}
     if(!transparentMeshes.empty()&&frame.transparentDepth.Get()!=rasterDepth)
     {
@@ -1041,6 +1042,11 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     else presentation.commandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     if (triangle) RecordD3D12Triangle(*triangle, *presentation.commandList.Get(),
         sceneWidth, sceneHeight, clipFromWorld);
+    if(forward&&content.forward->indoor.Enabled())
+    {
+        if(!RecordD3D12IndoorLighting(presentation,frame,content,states,*rasterColor,rtv,rasterWidth,rasterHeight,localization))return false;
+    }
+    else frame.indoor.reset();
     if(!transparentMeshes.empty())
     {
         if(!RecordD3D12OpaqueTemporal(presentation,frame,content,opaqueMeshes,*rasterColor,*rasterDepth,states,localization))return false;
@@ -1259,6 +1265,7 @@ bool ResizeD3D12Presentation(D3D12Presentation& presentation, UINT width, UINT h
         if (!CheckGraphicsResult(frame.allocator->Reset(), localization, "D3D12.ResetCommandAllocatorFailed"))
         { presentation.failed = true; return false; }
         frame.fenceValue = 0;
+        frame.indoor.reset();
     }
     if (!CheckGraphicsResult(presentation.commandList->Reset(presentation.frames[0].allocator.Get(), nullptr),
         localization, "D3D12.ResetCommandListFailed")
@@ -1317,7 +1324,8 @@ void ReleaseD3D12Presentation(D3D12Presentation& presentation) noexcept
         frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploadDestinations.clear();frame.uploads.Release();frame.baselineConstants.Release();frame.descriptors.Release();frame.outputDescriptors.Release();frame.environmentDescriptors.Release();frame.postDescriptors.Release();frame.guiDescriptors.Release();frame.gameUiDescriptors.Release();frame.shadowMaterialDescriptors.Release();frame.transparentDsv.reset();frame.transparentDepth.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
     }
     presentation.fenceEvent.Close();
-    presentation.sceneOverlay.reset();presentation.coverage.reset();
+    for(auto& frame:presentation.frames)frame.indoor.reset();
+    presentation.indoorLighting.reset();presentation.sceneOverlay.reset();presentation.coverage.reset();
     presentation.fence.Reset();
     for (auto& buffer : presentation.backBuffers) buffer.Reset();
     presentation.rtvs.reset();presentation.gameUiRtvs.reset();
