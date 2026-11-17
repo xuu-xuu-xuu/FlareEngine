@@ -1,6 +1,7 @@
 #include "SandboxRenderer.h"
 #include "OcclusionHud.h"
 #include "TemporalAA.h"
+#include "PlatformLayer/Graphics/SceneSampling.h"
 #include "PlatformLayer/Windows/ExecutablePath.h"
 #include "FunctionLayer/Application/FrameData.h"
 #include "CoreLayer/Localization.h"
@@ -409,9 +410,22 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     const bool localLighting=frame.data&&std::any_of(frame.data->lights.begin(),frame.data->lights.end(),[](const auto& instance){
         return instance.light.type==se::LightType::Spot||(instance.light.type==se::LightType::Point&&instance.light.castsShadow);
     });
+    const bool cascadeRequested=frame.data&&frame.data->shadow.cascades;
+    const bool clusterRequested=frame.data&&frame.data->clusteredLighting;
+    bool customCascadeUnsupported=false;
+    if(frame.data&&frame.data->assets&&(cascadeRequested||clusterRequested||BasicLitScene(scene_)))
+        for(const auto& object:frame.data->meshes)for(const auto& id:object.mesh.materials)if(!id.empty())
+        {
+            std::vector<se::AssetDiagnostic> ignored;
+            const auto* preview=frame.data->materialPreview&&frame.data->materialPreview->id==id?&frame.data->materialPreview->document:nullptr;
+            const auto material=preview?std::shared_ptr<const se::MaterialDocument>{}:frame.data->assets->LoadMaterial(id,ignored);
+            customCascadeUnsupported=customCascadeUnsupported||(preview?!preview->shader.empty():material&&!material->shader.empty());
+        }
     const bool indoorLighting=frame.data&&frame.data->indoor.Enabled();
-    const bool shadingRequested=frame.data&&(materialShading||localLighting||indoorLighting||frame.data->multiscatter||frame.data->gtao||frame.data->contactShadows
-        ||frame.data->diffuseSh||frame.data->localDiffuseSh||!frame.data->rectangleLights.empty());
+    // 已编译的用户 Shader 沿用其布局；需要材质扩展的表面仍使用引擎的对应技术。
+    const bool shadingRequested=frame.data&&(materialShading||localLighting||!frame.data->rectangleLights.empty()
+        ||(!customCascadeUnsupported&&(indoorLighting||frame.data->multiscatter||frame.data->gtao||frame.data->contactShadows
+            ||frame.data->diffuseSh||frame.data->localDiffuseSh)));
     const bool shadingFrame=shadingRequested&&ForwardScene(scene_);
     const bool bc7Color=frame.data&&frame.data->bc7Color;
     const bool meshletSubmission=frame.data&&frame.data->meshletCulling;
@@ -447,8 +461,17 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         &&reportedDiagnostics_.insert("Rendering.MaterialCoverageFallback").second)
         Log(LogLevel::Warning,localization.GetText("Rendering.MaterialCoverageFallback"));
     const bool postFrame=scene_==SandboxScene::PostProcess||(BasicLitScene(scene_)&&frame.data&&frame.data->sceneRenderSettings&&frame.data->post.has_value());
+    std::shared_ptr<const se::RenderEnvironment> defaultEnvironment;
     if(BasicLitScene(scene_))
     {
+        if(frame.data&&frame.data->environment.useEngineDefault&&frame.data->environment.asset.empty()
+            &&!sceneInstancing&&!customCascadeUnsupported)
+        {
+            std::vector<se::AssetDiagnostic> diagnostics;
+            defaultEnvironment=environments_.EngineDefault(ResourceDirectory(),*device_,diagnostics);
+            for(const auto& diagnostic:diagnostics)if(reportedDiagnostics_.insert(diagnostic.key+":"+diagnostic.detail).second)
+                Log(LogLevel::Warning,localization.GetText(diagnostic.key)+": "+diagnostic.detail);
+        }
         // 编辑期间实例姿态、材质或资源改变后失效代理；相机变化不触发重烘焙。
         const bool hlod=frame.data&&frame.data->modelHlod&&!coverageFrame&&!shadingFrame;
         std::string signature;
@@ -471,7 +494,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         if(pbr!=featureFullPbr_){std::swap(featureEnvironment_?featureEnvironmentPipeline_:pipeline_,featurePbrPipeline_);featureFullPbr_=pbr;previousViewProjectionValid_=false;}
         const bool instanced=sceneInstancing;
         if(instanced!=featureForward_){std::swap(outputPipeline_,featureForwardOutput_);featureForward_=instanced;previousViewProjectionValid_=false;}
-        const bool environment=frame.data&&(!frame.data->environment.asset.empty()||frame.data->diffuseSh||frame.data->localDiffuseSh)&&!instanced;
+        const bool environment=frame.data&&(defaultEnvironment||!frame.data->environment.asset.empty()||frame.data->diffuseSh||frame.data->localDiffuseSh)&&!instanced;
         if(environment!=featureEnvironment_)
         {std::swap(pipeline_,featureEnvironmentPipeline_);std::swap(skyPipeline_,featureEnvironmentSky_);featureEnvironment_=environment;previousViewProjectionValid_=false;}
         const bool taa=postFrame&&frame.data->post->taa;
@@ -560,20 +583,9 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 +(status.detail.empty()?"":", "+status.detail));
         }
     }
-    const bool cascadeRequested=frame.data&&frame.data->shadow.cascades;
-    const bool clusterRequested=frame.data&&frame.data->clusteredLighting;
-    bool customCascadeUnsupported=false;
-    if((cascadeRequested||clusterRequested)&&frame.data->assets)
-        for(const auto& object:frame.data->meshes)for(const auto& id:object.mesh.materials)if(!id.empty())
-        {
-            std::vector<se::AssetDiagnostic> ignored;
-            const auto* preview=frame.data->materialPreview&&frame.data->materialPreview->id==id?&frame.data->materialPreview->document:nullptr;
-            const auto material=preview?std::shared_ptr<const se::MaterialDocument>{}:frame.data->assets->LoadMaterial(id,ignored);
-            customCascadeUnsupported=customCascadeUnsupported||(preview?!preview->shader.empty():material&&!material->shader.empty());
-        }
     const bool cascadedFrame=cascadeRequested&&camera_&&!sceneInstancing&&!customCascadeUnsupported
         &&(BasicLitScene(scene_)||scene_==SandboxScene::Shadows||EnvironmentScene(scene_));
-    if(cascadeRequested&&!cascadedFrame&&reportedDiagnostics_.insert("Rendering.CsmUnavailable").second)
+    if(cascadeRequested&&frame.data->shadow.enabled&&!cascadedFrame&&reportedDiagnostics_.insert("Rendering.CsmUnavailable").second)
         Log(LogLevel::Warning,localization.GetText("Rendering.CsmUnavailable"));
     if(cascadedFrame&&!PrepareCascadedPipelines())return RenderResult::Failed;
     const bool clusteredFrame=clusterRequested&&!sceneInstancing&&!customCascadeUnsupported&&camera_&&ForwardScene(scene_);
@@ -583,7 +595,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if(clusteredFrame&&!PrepareClusteredPipelines(clusterGroup))return RenderResult::Failed;
     const bool shadowFilterRequested=frame.data&&frame.data->shadow.filter.pcss;
     const bool shadowFilterFrame=shadowFilterRequested&&cascadedFrame&&frame.data->shadow.enabled&&frame.data->shadow.pcf;
-    if(shadowFilterRequested&&!shadowFilterFrame&&reportedDiagnostics_.insert("Rendering.ShadowFilterUnavailable").second)
+    if(shadowFilterRequested&&frame.data->shadow.enabled&&!shadowFilterFrame&&reportedDiagnostics_.insert("Rendering.ShadowFilterUnavailable").second)
         Log(LogLevel::Warning,localization.GetText("Rendering.ShadowFilterUnavailable"));
     if(shadowFilterFrame&&!PrepareShadowFilterPipelines(clusteredFrame))return RenderResult::Failed;
     const auto& filterPipelines=shadowFilterPipelines_[clusteredFrame?1:0];
@@ -678,7 +690,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     const auto framebufferScale=editor?frame.data->editorGui.framebufferScale:se::Vec2{1,1};
     const auto sceneWidth=editor?static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.width*(framebufferScale.x>0?framebufferScale.x:1)))):frame.surface.width;
     const auto sceneHeight=editor?static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.height*(framebufferScale.y>0?framebufferScale.y:1)))):frame.surface.height;
-    const auto geometryScale=postFrame&&frame.data&&frame.data->post&&frame.data->post->supersample4x?2u:1u;
+    const auto geometryScale=se::rhi::SceneRasterScale(postFrame&&frame.data&&frame.data->post&&frame.data->post->supersample4x,sceneWidth,sceneHeight);
     const bool taaFrame=taaEnabled_&&postFrame&&frame.surface.width&&frame.surface.height;
     const auto viewProjection=taaFrame?se::ApplyProjectionJitter(viewProjectionBase,
         se::HaltonJitter(static_cast<std::uint32_t>(frame.updateIndex)),sceneWidth*geometryScale,sceneHeight*geometryScale):viewProjectionBase;
@@ -1317,7 +1329,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             }
             if(shadingFrame&&camera_&&frame.data)
             {
-                std::shared_ptr<const se::RenderEnvironment> environment;
+                auto environment=defaultEnvironment;
                 if(frame.data->assets&&!frame.data->environment.asset.empty())
                     environment=environments_.Load(*frame.data->assets,frame.data->environment.asset,*device_,diagnostics);
                 shadingResources_.Prepare(*frame.data,*camera_,environment.get(),*device_,ResourceDirectory(),lighting.shading,diagnostics);
@@ -1393,11 +1405,11 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             else if(scene_==SandboxScene::Shadows||BasicLitScene(scene_)||EnvironmentScene(scene_))
             {
                 se::rhi::ShadowSettings shadows;
-                std::shared_ptr<const se::RenderEnvironment> environment;
+                auto environment=defaultEnvironment;
                 std::optional<se::rhi::EnvironmentBindings> environmentBindings;
                 if(EnvironmentScene(scene_)||featureEnvironment_)
                 {
-                    if(frame.data&&frame.data->assets)environment=environments_.Load(*frame.data->assets,frame.data->environment.asset,*device_,diagnostics);
+                    if(frame.data&&frame.data->assets&&!frame.data->environment.asset.empty())environment=environments_.Load(*frame.data->assets,frame.data->environment.asset,*device_,diagnostics);
                     if(!environment)environment=environments_.Fallback(*device_,diagnostics);
                     if(!environment)result={se::rhi::Error::BackendFailure};
                     else environmentBindings=se::PrepareEnvironmentBindings(*environment,camera_.value_or(se::CameraSnapshot{}),frame.data?frame.data->environment.intensity:0,frame.data?frame.data->environment.yaw:0,diagnostics);
@@ -1411,9 +1423,9 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     std::optional<se::rhi::PostProcessSettings> settings;std::vector<se::rhi::OverlayQuad> overlays;
                     const auto pipelines=post_.Bindings();
                     if(postFrame){settings=se::PreparePostProcessSettings(frame.data&&frame.data->post?*frame.data->post:se::rhi::PostProcessSettings{},diagnostics);
-                        settings->autoExposure=autoExposureEnabled_;settings->lutEnabled=lutEnabled_;
+                        settings->autoExposure=autoExposureEnabled_;settings->lutEnabled=lutEnabled_||(!editorLutPath_.empty()&&lutFile_.Ready());
                         // 文件 LUT 与 LGG 生成互斥；revision 变化时由 D3D12 后处理上传一次。
-                        if(lutEnabled_&&lutFile_.Ready())
+                        if(settings->lutEnabled&&lutFile_.Ready())
                         {
                             settings->lutAsset=lutFile_.Values();
                             settings->lutRevision=lutFile_.Status().revision;
@@ -1429,12 +1441,16 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                                 &&lastSurfaceWidth_==frame.surface.width&&lastSurfaceHeight_==frame.surface.height;
                         }
                         if(frame.data&&frame.data->referenceUiOverlays)overlays=se::PreparePostProcessOverlays(frame.data->ui,diagnostics);}
+                    // 反射、漫反射继续采样 IBL，自定义天空和编辑器的天空开关只决定背景。
+                    const bool useProceduralSky=featureEnvironment_&&frame.data&&(frame.data->sky.enabled||frame.data->timeOfDay
+                        ||(frame.data->editorGuiEnabled&&!frame.data->editorSkyEnabled));
+                    const auto sky=useProceduralSky?*featureEnvironmentSky_:*skyPipeline_;
                     if(frameGraphEnabled_)
-                        result=se::RecordShadowedFrameGraph(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,*skyPipeline_,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
+                        result=se::RecordShadowedFrameGraph(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,sky,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
                             settings?&*settings:nullptr,settings?&pipelines:nullptr,overlays,cacheBindings,frameGraph_,sceneWidth,sceneHeight,transparent,
                             geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
                     else
-                        result=se::RecordShadowedFrame(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,*skyPipeline_,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
+                        result=se::RecordShadowedFrame(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,sky,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
                             settings?&*settings:nullptr,settings?&pipelines:nullptr,overlays,cacheBindings,transparent,
                             geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
                 }

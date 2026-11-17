@@ -1,4 +1,5 @@
 #include "PlatformLayer/Graphics/Rhi.h"
+#include "PlatformLayer/Graphics/SceneSampling.h"
 #include "D3D12Buffer.h"
 #include "D3D12StagedUpload.h"
 #include "D3D12Mesh.h"
@@ -436,6 +437,7 @@ std::shared_ptr<Device> Device::CreateD3D12(Surface surface,const Localization& 
     if(!surface.window||!surface.width||!surface.height)return {};
     auto device=std::shared_ptr<Device>(new Device);auto& p=*device->impl_;p.text=text;
     if(!InitializeD3D12Context(p.context,text)){result=Fail(Error::BackendFailure);return {};}
+    if(!memory.budgetBytes)memory.budgetBytes=AutomaticD3D12MemoryBudget(p.context.adapter.Get());
     if(!p.context.memory->Configure(memory)){result=Fail(Error::InvalidArgument);return {};}
     if(!InitializeD3D12Presentation(p.presentation,p.context,static_cast<HWND>(surface.window),text))
     {result=Fail(p.context.memory->Stats().budgetFailures?Error::CapacityExceeded:Error::BackendFailure);return {};}
@@ -1000,7 +1002,7 @@ Result CommandContext::ConfigureEnvironment(const EnvironmentBindings& environme
 {
     auto device=impl_?impl_->device.lock():nullptr;
     if(!device||!device->Usable()||impl_->phase||!impl_->shadow||impl_->environment)return Fail(Error::InvalidState);
-    if(!impl_->skyPipeline||impl_->skyPipeline->kind!=PipelineKind::EnvironmentSky)return Fail(Error::Unsupported);
+    if(!impl_->skyPipeline||!IsSky(impl_->skyPipeline->kind))return Fail(Error::Unsupported);
     if(!IsFinite(environment.intensity)||environment.intensity<0||environment.intensity>64||!IsFinite(environment.yaw)||!IsFinite(environment.skyFromClip)||!Inverse(environment.skyFromClip))return Fail(Error::InvalidArgument);
     for(float value:environment.skyFromClip.values)if(std::abs(value)>1e6f)return Fail(Error::InvalidArgument);
     const TextureHandle handles[]{environment.irradiance,environment.specular,environment.brdfLut};
@@ -1327,7 +1329,7 @@ Result CommandContext::Close()
 {
     auto device=impl_?impl_->device.lock():nullptr;
     if(!device||!device->Usable()||(impl_->forward?impl_->phase!=10:impl_->phase!=2&&impl_->phase!=4)
-        ||(impl_->skyPipeline&&impl_->environment.has_value()!=(impl_->skyPipeline->kind==PipelineKind::EnvironmentSky))
+        ||(impl_->skyPipeline&&impl_->skyPipeline->kind==PipelineKind::EnvironmentSky&&!impl_->environment)
         ||(impl_->outputPipeline&&impl_->shadow.has_value()!=(impl_->outputPipeline->kind==PipelineKind::ShadowOutput||impl_->outputPipeline->kind==PipelineKind::CascadedShadowOutput)))return Fail(Error::InvalidState);
     impl_->phase=5;return {};
 }
@@ -1501,7 +1503,19 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     content.skyPipeline=c.skyPipeline?&c.skyPipeline->mesh:nullptr;
     content.environment=c.environment?&*c.environment:nullptr;
     for(size_t i=0;i<c.environmentTextures.size();++i)if(c.environmentTextures[i])content.environmentTextures[i]=&c.environmentTextures[i]->native;
-    content.post=c.post?&*c.post:nullptr;content.overlays=c.overlays;
+    static_assert(MaximumSceneTextureDimension==D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION);
+    const UINT outputWidth=c.composition?c.composition->scene.width:c.guiScene?c.guiScene->native.width:p.width;
+    const UINT outputHeight=c.composition?c.composition->scene.height:c.guiScene?c.guiScene->native.height:p.height;
+    const UINT sceneScale=SceneRasterScale(c.post&&c.post->supersample4x,outputWidth,outputHeight);
+    content.post=c.post?&*c.post:nullptr;
+    std::optional<PostProcessSettings> nativeSampling;
+    if(c.post&&c.post->supersample4x&&sceneScale==1)
+    {
+        nativeSampling=*c.post;
+        nativeSampling->supersample4x=false;
+        content.post=&*nativeSampling;
+    }
+    content.overlays=c.overlays;
     for(size_t i=0;i<c.postPipelines.size();++i)if(c.postPipelines[i])content.postPipelines[i]=&c.postPipelines[i]->mesh;
     std::vector<D3D12MeshDraw> shadowDraws;shadowDraws.reserve(c.shadowWorlds.size());
     for(size_t index=0;index<c.shadowWorlds.size();++index)
@@ -1535,9 +1549,7 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     if(capture&&!prepareCapture(DXGI_FORMAT_R8G8B8A8_UNORM,p.width,p.height,readback,copying,bytes))return Fail(Error::BackendFailure);
     if(hdrCapture&&!prepareCapture(DXGI_FORMAT_R16G16B16A16_FLOAT,p.width,p.height,hdrReadback,hdrCopying,hdrBytes))return Fail(Error::BackendFailure);
     if(shadowCapture&&!prepareCapture(DXGI_FORMAT_R32_TYPELESS,c.shadow->resolution,c.shadow->resolution,shadowReadback,shadowCopying,shadowBytes,c.shadow->cascadeCount?c.shadow->cascadeCount:1))return Fail(Error::BackendFailure);
-    const UINT sceneScale=c.post&&c.post->supersample4x?2u:1u;
-    const UINT sceneWidth=(c.composition?c.composition->scene.width:c.guiScene?c.guiScene->native.width:p.width)*sceneScale;
-    const UINT sceneHeight=(c.composition?c.composition->scene.height:c.guiScene?c.guiScene->native.height:p.height)*sceneScale;
+    const UINT sceneWidth=outputWidth*sceneScale,sceneHeight=outputHeight*sceneScale;
     if(sceneDepthCapture)
     {
         if(!c.forward||!prepareCapture(DXGI_FORMAT_R32_TYPELESS,sceneWidth,sceneHeight,sceneDepthReadback,sceneDepthCopying,sceneDepthBytes))return Fail(Error::InvalidArgument);

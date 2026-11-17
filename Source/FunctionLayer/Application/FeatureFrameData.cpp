@@ -1,13 +1,24 @@
 #include "FeatureFrameData.h"
-#include "FrameData.h"
+#include <unordered_map>
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 namespace se
 {
-void ApplyFeatureFrameData(const World& world,FrameData& frame)
+void ApplyFeatureFrameData(const World& world,FrameData& frame,RenderDefaults defaults)
 {
-    if(const auto* component=world.GetComponent(SceneFeature(world,RenderSettingsComponent::TypeId)))
+    const auto* render=world.GetRegisteredComponent<RenderSettingsComponent>(SceneFeature(world,RenderSettingsComponent::TypeId));
+    if(render||defaults==RenderDefaults::Project)
     {
-        const auto owner=component->Owner();const auto get=[&](const char* key){return FeatureValue(world,owner,key);};
+        // 组件和无组件场景共用注册表默认值。字段位置只解析一次，不在逐帧提取时遍历反射表。
+        static const auto fields=FindComponentDescriptor(RenderSettingsComponent::TypeId)->properties;
+        static const auto indices=[] {
+            std::unordered_map<std::string_view,std::size_t> result;
+            for(std::size_t i=0;i<fields.size();++i)result.emplace(fields[i].key,i);
+            return result;
+        }();
+        const auto get=[&](std::string_view key)->const PropertyValue& {
+            const auto index=indices.at(key);
+            return render&&index<render->values.size()?render->values[index]:fields[index].defaultValue;
+        };
         const auto number=[&](const char* key){return std::get<float>(get(key));};
         const auto flag=[&](const char* key){return std::get<bool>(get(key));};
         frame.sceneRenderSettings=true;frame.exposure=number("render.exposure");frame.acesToneMap=flag("render.aces");frame.modelLod=flag("render.lod");frame.fullPbr=flag("render.fullPbr");
@@ -47,6 +58,7 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame)
         frame.shadow.filter.blockerSearchDistance=number("render.shadowSearchDistance");
         frame.shadow.filter.maximumRadiusTexels=number("render.shadowFilterRadius");
         frame.shadow.filter.debug=static_cast<rhi::ShadowFilterDebugMode>(static_cast<std::uint32_t>(number("render.shadowFilterDebug")));
+        frame.post.reset();
         if(flag("render.post"))
         {
             rhi::PostProcessSettings settings;settings.bloom=flag("render.bloom");settings.bloomThreshold=number("render.bloomThreshold");settings.bloomStrength=number("render.bloomStrength");
@@ -57,11 +69,14 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame)
             frame.post=settings;
         }
     }
-    if(const auto* component=world.GetComponent(SceneFeature(world,EnvironmentSettingsComponent::TypeId)))
+    frame.environment={};
+    bool authoredEnvironment=false;
+    if(const auto* component=world.GetComponent(SceneFeature(world,EnvironmentSettingsComponent::TypeId,&authoredEnvironment)))
     {
         const auto owner=component->Owner();frame.environment.asset=std::get<std::string>(FeatureValue(world,owner,"environmentmap.asset"));
         frame.environment.intensity=std::get<float>(FeatureValue(world,owner,"environmentmap.intensity"));
         frame.environment.yaw=std::get<float>(FeatureValue(world,owner,"environmentmap.yaw"))*Pi/180.f;
     }
+    else frame.environment.useEngineDefault=defaults==RenderDefaults::Project&&frame.fullPbr&&!authoredEnvironment;
 }
 }

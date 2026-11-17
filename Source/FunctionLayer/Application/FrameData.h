@@ -35,7 +35,7 @@ struct DirectionalShadowView
     float cascadeDepthBias=.00003f,cascadeSlopeBias=.0002f,cascadeNormalBias=.01f;
     rhi::ShadowFilterSettings filter;
 };
-struct EnvironmentView {std::string asset;float intensity=1,yaw=0;};
+struct EnvironmentView {std::string asset;float intensity=1,yaw=0;bool useEngineDefault=false;};
 // W07：项目对程序化天空的可选覆盖。关闭时沿用引擎默认天空，不改动环境贴图路径。
 struct SkyView
 {
@@ -105,7 +105,10 @@ struct FrameData
     bool clusteredLighting=false,clusterDebug=false; // RG104-07：默认保留旧8点光路径。
     bool instancing=false; // 当前仅 PBR/Benchmark，单例也使用实例管线。
 };
-void BuildFrameData(const World& world,const UiTree* ui,const PhysicsWorld* physics,FrameData& output);
+// 独立算法基准可请求原始快照，以便自行配置对照组。
+enum class RenderDefaults { Project, Reference };
+void BuildFrameData(const World& world,const UiTree* ui,const PhysicsWorld* physics,FrameData& output,
+    RenderDefaults defaults=RenderDefaults::Project);
 void BuildFrameData(const Environment& environment,const UiTree* ui,const PhysicsWorld* physics,FrameData& output);
 struct ApplicationServices
 {

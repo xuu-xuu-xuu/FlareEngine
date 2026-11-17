@@ -45,7 +45,7 @@ public:
     ProjectLease& operator=(const ProjectLease&)=delete;
     // 失败时 acquired=false；occupant 给出已占用进程的描述（若可读）。
     static ProjectLease Acquire(const std::filesystem::path& userDirectory,const std::filesystem::path& manifest,
-        bool& acquired,std::string& occupant);
+        bool& acquired,std::string& occupant,std::error_code* failure=nullptr);
     bool Held() const noexcept{return handle_!=nullptr;}
     void Release() noexcept;
 private:

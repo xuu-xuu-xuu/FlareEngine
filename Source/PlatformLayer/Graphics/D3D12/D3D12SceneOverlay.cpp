@@ -1,5 +1,6 @@
 #include "D3D12SceneOverlay.h"
 #include "D3D12Presentation.h"
+#include "D3D12SceneCoverage.h"
 #include "D3D12Shader.h"
 #include "D3D12Result.h"
 #include "D3D12StateTracker.h"
@@ -121,25 +122,33 @@ bool D3D12SceneOverlay::Record(D3D12Presentation& p,D3D12FrameContext& frame,con
     const D3D12_VIEWPORT viewport{0,0,float(width),float(height),0,1};const D3D12_RECT scissor{0,0,LONG(width),LONG(height)};
     commands.RSSetViewports(1,&viewport);commands.RSSetScissorRects(1,&scissor);
     commands.SetGraphicsRootSignature(root_.Get());commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    Constants constants;constants.options={0,std::clamp(2*c.sceneLineScale,1.f,8.f),0,0};
+    const auto* coverageSamples=frame.coverage&&frame.coverage->samples.depth&&frame.coverage->samples.dsv
+        &&frame.coverage->samples.color.width==width*2&&frame.coverage->samples.color.height==height*2
+        ?&frame.coverage->samples:nullptr;
+    const UINT maskScale=coverageSamples?2u:1u,maskWidth=width*maskScale,maskHeight=height*maskScale;
+    Constants constants;constants.options={0,std::clamp(2*c.sceneLineScale,1.f,8.f),float(maskScale),0};
     if(selected)
     {
         if(!frame.sceneOverlay)frame.sceneOverlay=std::make_shared<D3D12SceneOverlayFrame>();
         auto& f=*frame.sceneOverlay;
-        if(f.mask.color.width!=width||f.mask.color.height!=height)
+        if(f.mask.color.width!=maskWidth||f.mask.color.height!=maskHeight)
         {
             D3D12GuiTarget replacement;const se::Vec4 clear{};
-            if(!CreateD3D12GuiTarget(p,{width,height,false,false,se::rhi::TextureFormat::Rgba8},replacement,text,&clear))return false;
+            if(!CreateD3D12GuiTarget(p,{maskWidth,maskHeight,false,false,se::rhi::TextureFormat::Rgba8},replacement,text,&clear))return false;
             f.mask=std::move(replacement);
         }
         const auto maskRtv=f.mask.rtv->Cpu();
         if(!use(f.mask.color.resource.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET))return false;
+        const auto maskDsv=coverageSamples?coverageSamples->dsv->Cpu():depth;
+        if(coverageSamples&&!use(coverageSamples->depth.Get(),D3D12_RESOURCE_STATE_DEPTH_WRITE))return false;
+        const D3D12_VIEWPORT maskViewport{0,0,float(maskWidth),float(maskHeight),0,1};const D3D12_RECT maskScissor{0,0,LONG(maskWidth),LONG(maskHeight)};
+        commands.RSSetViewports(1,&maskViewport);commands.RSSetScissorRects(1,&maskScissor);
         const float clear[4]{};commands.ClearRenderTargetView(maskRtv,clear,0,nullptr);
-        // 完整投影写 R，不受遮挡影响；实际可见像素写 G，复用场景深度且不写深度。
+        // 完整投影写 R，不受遮挡影响；实际可见像素写 G，与主几何同一采样网格复用场景深度且不写深度。
         // 两遍只写各自通道，遮挡物造成的缺口不会成为模型自身的轮廓。
         for(bool visible:{false,true})
         {
-            commands.OMSetRenderTargets(1,&maskRtv,FALSE,visible?&depth:nullptr);
+            commands.OMSetRenderTargets(1,&maskRtv,FALSE,visible?&maskDsv:nullptr);
             for(const auto& draw:c.meshes)if(draw.outline)
             {
                 if(!use(draw.mesh->vertices.Get(),D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER)
@@ -151,6 +160,7 @@ bool D3D12SceneOverlay::Record(D3D12Presentation& p,D3D12FrameContext& frame,con
                 commands.DrawIndexedInstanced(draw.mesh->indexCount,1,0,0,0);
             }
         }
+        commands.RSSetViewports(1,&viewport);commands.RSSetScissorRects(1,&scissor);
     }
     commands.OMSetRenderTargets(1,&color,FALSE,&depth);
     if(c.sceneGrid)
@@ -160,7 +170,7 @@ bool D3D12SceneOverlay::Record(D3D12Presentation& p,D3D12FrameContext& frame,con
         constants.options={c.sceneLineScale,0,1.f/width,1.f/height};
         commands.SetPipelineState(pipelines_[GroundGrid].Get());
         commands.SetGraphicsRoot32BitConstants(0,36,&constants,0);commands.DrawInstanced(3,1,0,0);
-        constants.options={0,std::clamp(2*c.sceneLineScale,1.f,8.f),0,0};
+        constants.options={0,std::clamp(2*c.sceneLineScale,1.f,8.f),float(maskScale),0};
     }
     if(!vertices.empty())
     {

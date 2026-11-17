@@ -11,7 +11,7 @@ void BuildFrameData(const Environment& environment,const UiTree* ui,const Physic
     for(auto& mesh:output.meshes)
         if(const auto* pose=environment.Skeletal().Find(mesh.entity))mesh.skinPalette=pose->joints;
 }
-void BuildFrameData(const World& world,const UiTree* ui,const PhysicsWorld* physics,FrameData& output)
+void BuildFrameData(const World& world,const UiTree* ui,const PhysicsWorld* physics,FrameData& output,RenderDefaults defaults)
 {
     FrameData next;
     for(auto entity:world.Entities())
@@ -40,7 +40,7 @@ void BuildFrameData(const World& world,const UiTree* ui,const PhysicsWorld* phys
     }
     if(ui)next.ui=ui->Visuals();
     if(physics)next.debugLines=physics->DebugLines();
-    ApplyFeatureFrameData(world,next);
+    ApplyFeatureFrameData(world,next,defaults);
     output=std::move(next);
 }
 }

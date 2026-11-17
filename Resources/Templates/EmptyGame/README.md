@@ -1,10 +1,10 @@
 # EmptyGame 项目模板
 
-`build.json` 连接 C# 项目、默认 Spin 行为绑定与入口 UI。先用 ProjectTool create 复制新项目；在仓库根目录运行 `powershell -NoProfile -File 新项目/Build.ps1 -SelfEngineRoot 引擎源码目录 -Name 新包名`，会编译、预检并导出到引擎 out/packages。具体阶段与验证状态见 [游戏导出说明](../../../Docs/GameExport.md)。复制到其他位置后，该说明链接需按引擎源码位置查阅。
+`build.json` 连接 C# 项目、默认 Spin 行为绑定与入口 UI。先用 ProjectTool create 复制新项目；在仓库根目录运行 `powershell -NoProfile -File 新项目/Build.ps1 -SelfEngineRoot 引擎源码目录 -Name 新包名`，会编译、预检并导出到引擎 out/packages。具体阶段与验证入口见 [构建与导出](../../../Manual/tools/delivery.md) 与 [项目创建指引](../../../Manual/user/create-project.md)。复制到其他位置后，该说明链接需按引擎源码位置查阅。
 
-可通过编辑器脚本 Inspector 或 ScriptBindings 的同一元数据协议修改、增删并保存 `Scripts/Main.bindings.json`；默认绑定实体 3 的旋转速度为每秒 1 弧度。`Run-ProjectPreview.ps1` 支持本模板的 SelfEngineRoot 参数传递，停止并关闭后重新编译/启动。下文原生无窗口回放仍是独立诊断入口，不代替玩家窗口。
+可通过编辑器脚本 Inspector 或 ScriptBindings 的同一元数据协议修改、增删并保存 `Scripts/Main.bindings.json`；默认绑定实体 4（蓝色清漆方块）的旋转速度为每秒 1 弧度。`Run-ProjectPreview.ps1` 支持本模板的 SelfEngineRoot 参数传递，停止并关闭后重新编译/启动。下文原生无窗口回放仍是独立诊断入口，不代替玩家窗口。
 
-`project.json` 声明入口场景、UI 文档、模型/图片 ID，以及固定步物理回放输入。场景含地面、落箱、模型引用和相机数据；UI 含图片节点。`Content/Models` 的三角形和棋盘图来自 SelfEngine 自有小样，不附带第三方素材许可负担。
+`project.json` 声明入口场景、UI、资产和固定步物理回放输入。相机对准蓝色清漆方块和粗糙石板地面。可在场景里调整暖色方向光、矩形补光和环境反射，在 `Content/Materials` 调整表面参数。`Sources/Studio.recipe.json` 记录工作室环境的 HDR 来源与烘焙参数。UI 左上角显示 `Content/Models` 的 Flare 标志，该目录也保留了三角形模型。
 
 从模板复制新项目后，在仓库根目录使用 `ProjectTool create Resources/Templates/EmptyGame <目标目录>`、`ProjectTool validate <目标目录>/project.json`，以及 `ProjectTool replay <目标目录>/project.json <输出目录>`。工具完整路径由构建配置决定。`dependencies` 命令输出带 SHA-256 的场景、UI、声明资源及模型外部依赖清单。
 

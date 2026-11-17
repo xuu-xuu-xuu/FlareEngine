@@ -18,9 +18,10 @@ using EnvironmentSettingsComponent=FeatureComponent<0x464C0004>;
 using ActorSettingsComponent=FeatureComponent<0x464C0005>;
 using RectangleLightComponent=FeatureComponent<0x464C0006>;
 
+void CompleteRenderProperties(std::vector<ComponentProperty>& properties);
 void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors);
 bool IsEngineFeature(ComponentTypeId type) noexcept;
 // 未挂载、禁用或缺失时返回空；稳定 ID 最小的有效配置作为场景级设置。
-ComponentHandle SceneFeature(const World& world,ComponentTypeId type);
+ComponentHandle SceneFeature(const World& world,ComponentTypeId type,bool* authored=nullptr);
 PropertyValue FeatureValue(const World& world,EntityHandle owner,std::string_view key);
 }

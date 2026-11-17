@@ -31,7 +31,7 @@
         {"type": "1179385859", "version": 1, "enabled": true, "properties": {
           "fullPbr": true, "multiscatter": true, "specularAA": true,
           "exposure": 1, "post": true, "aces": true, "bloom": true, "bloomThreshold": 1.5, "bloomStrength": 0.025,
-          "fxaa": true, "taa": false, "supersample4x": false, "autoExposure": false,
+          "fxaa": true, "taa": false, "autoExposure": false,
           "shadowEnabled": true, "shadowPcf": true, "cascades": true, "cascadeCount": 3, "cascadeResolution": 2048,
           "cascadeDistance": 60, "cascadeBias": 0.00003, "cascadeSlopeBias": 0.0002, "cascadeNormalBias": 0.01,
           "depthNormals": true, "gtao": true, "aoRadius": 0.45, "aoIntensity": 0.65, "contactShadows": true, "contactLength": 0.3,

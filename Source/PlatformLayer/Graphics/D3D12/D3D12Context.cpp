@@ -8,6 +8,7 @@
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
 
+#include <algorithm>
 #include <d3d12sdklayers.h>
 #include <sstream>
 #include <string>
@@ -209,6 +210,18 @@ namespace
     }
 }
 
+std::uint64_t AutomaticD3D12MemoryBudget(IDXGIAdapter1* adapter)
+{
+    // 4× 空间采样在最常见的 1080p 输出上已接近 256 MiB；默认预算按专用显存给足，
+    // 但保留最低/最高边界，避免低显存机器被过度承诺、也避免大显存机器无上限占用。
+    constexpr std::uint64_t lower=768ull*1024*1024,upper=2ull*1024*1024*1024,alignment=64ull*1024;
+    std::uint64_t dedicated=0;DXGI_ADAPTER_DESC1 description{};
+    if(adapter&&SUCCEEDED(adapter->GetDesc1(&description)))dedicated=description.DedicatedVideoMemory;
+    auto budget=dedicated?dedicated/2:1024ull*1024*1024;
+    budget=std::clamp(budget,lower,upper);
+    return budget-budget%alignment;
+}
+
 bool InitializeD3D12Context(D3D12Context& context, const Localization& localization)
 {
     if (context.factory || context.adapter || context.device || context.states || context.srvDescriptors || context.rtvDescriptors || context.dsvDescriptors || context.memory || context.pipelines)
@@ -235,6 +248,8 @@ bool InitializeD3D12Context(D3D12Context& context, const Localization& localizat
     initialized.rtvDescriptors=std::make_shared<D3D12DescriptorPool>(*initialized.device.Get(),D3D12_DESCRIPTOR_HEAP_TYPE_RTV,8,1024);
     initialized.dsvDescriptors=std::make_shared<D3D12DescriptorPool>(*initialized.device.Get(),D3D12_DESCRIPTOR_HEAP_TYPE_DSV,8,1024);
     initialized.memory=std::make_shared<D3D12MemoryAllocator>(*initialized.device.Get(),initialized.states);
+    se::rhi::MemorySettings defaultMemory;defaultMemory.budgetBytes=AutomaticD3D12MemoryBudget(initialized.adapter.Get());
+    if(!initialized.memory->Configure(defaultMemory)){Log(LogLevel::Error,localization.GetText("D3D12.GpuMemoryBudgetExceeded"));return false;}
     initialized.pipelines=std::make_shared<D3D12PipelineCache>(*initialized.device.Get());
     {const auto cache=initialized.pipelines->Stats();Log(LogLevel::Debug,localization.GetText(cache.libraryLoaded?"D3D12.PsoLibraryLoaded":"D3D12.PsoLibraryNew")
         +": stores="+std::to_string(cache.libraryStores)+", hits="+std::to_string(cache.libraryHits));}

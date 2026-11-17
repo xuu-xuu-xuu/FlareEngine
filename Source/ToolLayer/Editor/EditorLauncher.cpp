@@ -8,9 +8,11 @@
 #include "ResourceLayer/Assets/AssetIO.h"
 #include "PlatformLayer/Windows/ExecutablePath.h"
 #include <Windows.h>
+#include <pathcch.h>
 #include <shobjidl.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -27,6 +29,19 @@ constexpr int ControlRecentList=1010,ControlRecentOpen=1011,ControlRecentRemove=
 constexpr int ControlTemplate=2001,ControlName=2002,ControlParent=2003,ControlBrowse=2004,ControlPreview=2005,ControlCreate=2006,ControlCancel=2007;
 constexpr int WindowWidth=760,WindowHeight=520;
 constexpr int DialogWidth=520,DialogHeight=300;
+
+struct TemplateChoice
+{
+    ProjectTemplate type;
+    const wchar_t* fallbackLabel;
+    const char* sampleCopyName;
+};
+constexpr std::array<TemplateChoice,4> templateChoices{{
+    {ProjectTemplate::BlankScene,L"Blank scene",nullptr},
+    {ProjectTemplate::Basic3D,L"Basic 3D sample","Sample"},
+    {ProjectTemplate::RenderingStudio,L"Rendering Studio","RenderingStudio"},
+    {ProjectTemplate::IndoorGallery,L"Indoor Gallery","IndoorGallery"}
+}};
 
 std::wstring Wide(std::string_view text)
 {
@@ -51,8 +66,8 @@ struct LauncherStrings
 {
     Localization localization;
     std::wstring title,newProject,openProject,openSample,quit;
-    std::wstring newSoon,recentEmpty,sampleMissing,invalidProject,workerFailed,safeMode,openTitle;
-    std::wstring recentTitle,open,remove,relocate,selectHint,newTitle,templateLabel,templateBlank,templateBasic,templateRenderingStudio,templateIndoorGallery;
+    std::wstring newSoon,recentEmpty,invalidProject,workerFailed,safeMode,openTitle;
+    std::wstring recentTitle,open,remove,relocate,selectHint,newTitle,templateLabel;
     std::wstring nameLabel,parentLabel,browse,finalPath,create,cancel,leaseBusy,openFailed,createFailed,preferenceFailed;
     std::wstring Get(std::string_view key,const wchar_t* fallback) const
     {
@@ -79,7 +94,6 @@ struct LauncherStrings
         strings.quit=value("Editor.LauncherQuit",L"Quit");
         strings.newSoon=value("Editor.LauncherNewProjectSoon",L"Creating projects is planned for U02.");
         strings.recentEmpty=value("Editor.LauncherRecentEmpty",L"No recent project yet; open an existing project or the sample.");
-        strings.sampleMissing=value("Editor.LauncherSampleMissing",L"The sample project is not shipped with this build.");
         strings.invalidProject=value("Editor.LauncherInvalidProject",L"Project manifest is missing or invalid:");
         strings.workerFailed=value("Editor.LauncherWorkerFailed",L"Editor worker exited with code:");
         strings.safeMode=value("Editor.LauncherSafeMode",L"Safe mode: session restore is skipped (restore arrives in U07).");
@@ -91,10 +105,6 @@ struct LauncherStrings
         strings.selectHint=value("Editor.LauncherSelectHint",L"Double-click a recent project to open it.");
         strings.newTitle=value("Editor.LauncherNewTitle",L"New project");
         strings.templateLabel=value("Editor.LauncherTemplate",L"Template");
-        strings.templateBlank=value("Editor.LauncherTemplateBlank",L"Blank scene");
-        strings.templateBasic=value("Editor.LauncherTemplateBasic",L"Basic 3D sample");
-        strings.templateRenderingStudio=value("Editor.LauncherTemplateRenderingStudio",L"Rendering Studio");
-        strings.templateIndoorGallery=value("Editor.TemplateIndoorGallery",L"Indoor Gallery");
         strings.nameLabel=value("Editor.LauncherName",L"Project name");
         strings.parentLabel=value("Editor.LauncherParent",L"Parent folder");
         strings.browse=value("Editor.LauncherBrowse",L"Browse...");
@@ -112,7 +122,7 @@ struct LauncherStrings
 struct LauncherState
 {
     LauncherStrings strings;
-    std::filesystem::path executable,resourceDirectory,sample,userDirectory,templateRoot,smokeCreateParent;
+    std::filesystem::path executable,resourceDirectory,defaultProjectParent,templateRoot,smokeCreateParent;
     std::string locale;
     bool safeMode=false,uiErrors=true;
     ProjectWorkspaceSession workspace;
@@ -229,32 +239,58 @@ bool OpenProjectFlow(LauncherState& state,const std::filesystem::path& requested
     WaitWorker(process,pid,exitCode);
     ShowWindow(state.window,SW_SHOW);SetForegroundWindow(state.window);
     RefreshRecent(state);
-    if(exitCode==6){ShowError(state,state.strings.leaseBusy);SetNote(state,state.strings.leaseBusy);return true;}
+    // 工作进程已显示具体原因；返回启动器时保留提示，不再弹出第二个窗口。
+    if(exitCode==6||exitCode==7){SetNote(state,exitCode==6?state.strings.leaseBusy:state.strings.Error("Editor.ProjectLockUnavailable"));return true;}
     if(exitCode!=0){ShowError(state,state.strings.workerFailed+L" "+std::to_wstring(exitCode));return true;}
     SetNote(state,state.strings.selectHint);
     return true;
 }
-bool OpenSampleFlow(LauncherState& state)
+const TemplateChoice* PickSample(const LauncherState& state)
 {
-    if(!PackageProject(state,state.sample))return OpenProjectFlow(state,state.sample);
-    const auto parent=state.userDirectory/L"Samples";
-    if(RejectPackageProject(state,parent))return false;
+    HMENU menu=CreatePopupMenu();
+    if(!menu){ShowError(state,state.strings.openFailed);return nullptr;}
+    for(size_t index=0;index<templateChoices.size();++index)
+    {
+        const auto& choice=templateChoices[index];
+        if(!choice.sampleCopyName)continue;
+        const auto label=state.strings.Get(ProjectTemplateNameKey(choice.type),choice.fallbackLabel);
+        if(!AppendMenuW(menu,MF_STRING,index+1,label.c_str()))
+        {
+            DestroyMenu(menu);
+            ShowError(state,state.strings.openFailed);
+            return nullptr;
+        }
+    }
+    RECT button{};
+    GetWindowRect(state.openSample,&button);
+    const auto command=TrackPopupMenuEx(menu,TPM_RETURNCMD|TPM_NONOTIFY|TPM_LEFTALIGN|TPM_TOPALIGN,
+        button.left,button.bottom,state.window,nullptr);
+    DestroyMenu(menu);
+    if(command<=0||static_cast<size_t>(command)>templateChoices.size())return nullptr;
+    return &templateChoices[static_cast<size_t>(command)-1];
+}
+void OpenSampleCopy(LauncherState& state,const TemplateChoice& choice)
+{
+    const auto& parent=state.defaultProjectParent;
+    if(parent.empty()){ShowError(state,state.strings.Error("Project.ParentUnavailable"));return;}
+    if(RejectPackageProject(state,parent))return;
     std::error_code error;std::filesystem::create_directories(parent,error);
-    if(error){ShowError(state,state.strings.createFailed+L"\n"+state.strings.Error("Project.ParentMissing"));return false;}
+    if(error){ShowError(state,state.strings.createFailed+L"\n"+state.strings.Error("Project.ParentUnavailable")+L"\n"+parent.wstring());return;}
     // 原子预留一个短名称，让最近项目易于辨认，也为项目内的运行文件留出路径长度。
-    std::string name="Sample";
+    const std::string baseName=choice.sampleCopyName;
+    std::string name=baseName;
     for(std::uint64_t number=2;!std::filesystem::create_directory(parent/name,error);++number)
     {
-        if(error&&error!=std::errc::file_exists){ShowError(state,state.strings.createFailed);return false;}
-        name="Sample "+std::to_string(number);
+        if(error&&error!=std::errc::file_exists){ShowError(state,state.strings.createFailed+L"\n"+(parent/name).wstring());return;}
+        name=baseName+" "+std::to_string(number);
     }
     ProjectPreflight copied;std::string key,detail;
-    if(!ProjectWorkspaceSession::CreateProject(ProjectTemplate::Basic3D,name,parent,state.templateRoot,copied,key,detail))
+    if(!ProjectWorkspaceSession::CreateProject(choice.type,name,parent,state.templateRoot,copied,key,detail))
     {
         std::filesystem::remove(parent/name,error);  // 只移除本次预留的空目录。
-        ShowError(state,state.strings.createFailed+L"\n"+state.strings.Error(key)+L"\n"+Wide(detail));return false;
+        ShowError(state,state.strings.createFailed+L"\n"+state.strings.Error(key)+L"\n"+Wide(detail));return;
     }
-    return OpenProjectFlow(state,copied.root);
+    OpenProjectFlow(state,copied.root);
 }
 
 struct NewProjectDialogState
@@ -288,10 +324,12 @@ void CreateNewProjectDialogControls(NewProjectDialogState& dialog,const Launcher
     };
     HWND label=nullptr;make(L"STATIC",launcher.strings.templateLabel,SS_LEFT,16,16,120,22,-1,label);
     make(L"COMBOBOX",L"",CBS_DROPDOWNLIST|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS|WS_VSCROLL|WS_TABSTOP,150,14,340,120,ControlTemplate,dialog.combo);
-    SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateBlank.c_str()));
-    SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateBasic.c_str()));
-    SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateRenderingStudio.c_str()));
-    SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(launcher.strings.templateIndoorGallery.c_str()));
+    for(const auto& choice:templateChoices)
+    {
+        const auto templateName=launcher.strings.Get(ProjectTemplateNameKey(choice.type),choice.fallbackLabel);
+        const auto row=SendMessageW(dialog.combo,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(templateName.c_str()));
+        if(row>=0)SendMessageW(dialog.combo,CB_SETITEMDATA,row,static_cast<LPARAM>(choice.type));
+    }
     SendMessageW(dialog.combo,CB_SETCURSEL,0,0);
     make(L"STATIC",launcher.strings.nameLabel,SS_LEFT,16,52,120,22,-1,label);
     make(L"EDIT",L"NewProject",WS_BORDER|WS_TABSTOP|ES_AUTOHSCROLL,150,50,340,24,ControlName,dialog.name);
@@ -303,9 +341,7 @@ void CreateNewProjectDialogControls(NewProjectDialogState& dialog,const Launcher
     make(L"BUTTON",launcher.strings.create,BS_OWNERDRAW|WS_TABSTOP,290,220,100,30,ControlCreate,label);
     make(L"BUTTON",launcher.strings.cancel,BS_OWNERDRAW|WS_TABSTOP,400,220,100,30,ControlCancel,label);
     SetWindowTextW(dialog.name,L"NewProject");
-    wchar_t buffer[1024]{};
-    GetCurrentDirectoryW(1024,buffer);
-    SetWindowTextW(dialog.parent,buffer);
+    SetWindowTextW(dialog.parent,launcher.defaultProjectParent.c_str());
     UpdateNewProjectPreview(dialog);
 }
 LRESULT CALLBACK NewProjectProcedure(HWND window,UINT message,WPARAM wParam,LPARAM lParam)
@@ -347,8 +383,8 @@ LRESULT CALLBACK NewProjectProcedure(HWND window,UINT message,WPARAM wParam,LPAR
             GetWindowTextW(dialog->name,nameBuffer,256);GetWindowTextW(dialog->parent,parentBuffer,1024);
             if(RejectPackageProject(*dialog->launcher,std::filesystem::path(parentBuffer)/nameBuffer))return 0;
             const auto templateIndex=static_cast<int>(SendMessageW(dialog->combo,CB_GETCURSEL,0,0));
-            const auto projectTemplate=templateIndex==3?ProjectTemplate::IndoorGallery:templateIndex==2?ProjectTemplate::RenderingStudio:
-                templateIndex==1?ProjectTemplate::Basic3D:ProjectTemplate::BlankScene;
+            if(templateIndex==CB_ERR)return 0;
+            const auto projectTemplate=static_cast<ProjectTemplate>(SendMessageW(dialog->combo,CB_GETITEMDATA,templateIndex,0));
             std::string errorKey,detail;
             if(!ProjectWorkspaceSession::CreateProject(projectTemplate,Utf8(nameBuffer),std::filesystem::path(parentBuffer),
                 dialog->launcher->templateRoot,dialog->created,errorKey,detail))
@@ -509,8 +545,7 @@ LRESULT CALLBACK LauncherProcedure(HWND window,UINT message,WPARAM wParam,LPARAM
             return 0;
         }
         case ControlOpenSample:
-            if(!std::filesystem::exists(state->sample/L"project.json")){SetNote(*state,state->strings.sampleMissing);ShowError(*state,state->strings.sampleMissing);return 0;}
-            OpenSampleFlow(*state);
+            if(const auto* choice=PickSample(*state))OpenSampleCopy(*state,*choice);
             return 0;
         case ControlRecentOpen:
         case ControlRecentList:
@@ -804,18 +839,19 @@ int RunEditorLauncher(const EditorLaunchOptions& options)
     const DWORD executableLength=GetModuleFileNameW(nullptr,executableFile,static_cast<DWORD>(std::size(executableFile)));
     if(!executableLength||executableLength>=std::size(executableFile))return 5;
     state.executable=executableFile;
+    // 保留用户启动时的盘符（包括映射盘）或 UNC 共享根，不解析为底层卷的挂载目录。
+    if(SUCCEEDED(PathCchStripToRoot(executableFile,std::size(executableFile))))
+        state.defaultProjectParent=std::filesystem::path(executableFile)/L"Flare_Project";
     state.resourceDirectory=std::filesystem::path(executable);
     state.locale=options.locale;
     state.safeMode=options.safeMode;
     state.uiErrors=options.uiErrors;
     state.strings=LauncherStrings::Load(state.resourceDirectory,options.locale);
-    state.sample=state.resourceDirectory/L"Resources/Templates/EmptyGame";
     state.templateRoot=state.resourceDirectory/L"Resources/Templates";
     state.smokeCreateParent=options.smokeCreateParent;
     const auto engineRoot=ProjectWorkspaceSession::EngineRootFromExecutable();
-    state.userDirectory=ProjectWorkspaceSession::UserDataDirectory(engineRoot);
     std::string loadError;
-    state.workspace.Load(state.userDirectory,loadError);
+    state.workspace.Load(ProjectWorkspaceSession::UserDataDirectory(engineRoot),loadError);
     if(!options.project.empty())
     {
         if(RejectPackageProject(state,options.project))return 3;

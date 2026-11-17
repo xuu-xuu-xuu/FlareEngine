@@ -347,7 +347,6 @@ int RunEditorWorker(const EditorWorkerOptions& options)
     const auto userDirectory=ProjectWorkspaceSession::UserDataDirectory(engineRoot);
     Localization loadingStrings;std::string loadingError;
     loadingStrings.Load(engineRoot/("Resources/Localization/"+options.locale+".txt"),loadingError);
-    EditorLoadingScreen loading(loadingStrings,options.projectRoot,options.hidden);
     if(!options.projectRoot.empty()&&fs::is_regular_file(engineRoot/"editor-package.json")&&asset_io::Within(engineRoot,options.projectRoot))
     {
         Localization strings;std::string error;strings.Load(engineRoot/("Resources/Localization/"+options.locale+".txt"),error);
@@ -358,13 +357,20 @@ int RunEditorWorker(const EditorWorkerOptions& options)
     }
     const auto manifest=options.projectRoot.empty()?fs::path{}:options.projectRoot/L"project.json";
     bool acquired=true;std::string occupant;ProjectLease lease;
-    if(!manifest.empty())lease=ProjectLease::Acquire(userDirectory,manifest,acquired,occupant);
+    std::error_code leaseError;
+    if(!manifest.empty())lease=ProjectLease::Acquire(userDirectory,manifest,acquired,occupant,&leaseError);
     if(!acquired)
     {
-        Localization strings;std::string error;strings.Load(engineRoot/("Resources/Localization/"+options.locale+".txt"),error);
-        const auto text=Localized(strings,"Editor.LauncherLeaseBusy");std::wcerr<<text<<L"\n";
-        if(!options.hidden)MessageBoxW(nullptr,text.c_str(),L"Flare Engine",MB_ICONERROR|MB_OK);return 6;
+        const bool busy=leaseError.value()==ERROR_SHARING_VIOLATION;
+        const auto key=busy?"Editor.LauncherLeaseBusy":"Editor.ProjectLockUnavailable";
+        auto text=Localized(loadingStrings,key);
+        if(!busy)text+=L"\n"+(userDirectory/L"leases").wstring()+L" ("+std::to_wstring(leaseError.value())+L")";
+        LogCheckpoint(key,PathText(userDirectory/L"leases")+" error="+std::to_string(leaseError.value()));
+        std::wcerr<<text<<L"\n";
+        if(!options.hidden)MessageBoxW(nullptr,text.c_str(),L"Flare Engine",MB_ICONERROR|MB_OK);
+        return busy?6:7;
     }
+    EditorLoadingScreen loading(loadingStrings,options.projectRoot,options.hidden);
     SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_EXPLICIT",(!options.scene.empty()||options.smokePlayback)?L"1":nullptr);
     // 仅正式 Worker 参数设置烟测环境；RunEditorApp 的共用驱动负责执行和报告。
     SetPathEnvironment(L"SELFENGINE_EDITOR_SMOKE_REPORT",options.smokeExportReport.empty()?fs::path{}:fs::absolute(options.smokeExportReport));

@@ -42,6 +42,17 @@ namespace
 {
 thread_local const char* lastError = "Bridge.Success";
 std::recursive_mutex sessionsMutex;
+struct RuntimeAppearance
+{
+    float lookMode=-1,lookBlend=0;
+    std::optional<se::SkyView> sky;
+
+    void Apply(se::FrameData& frame) const
+    {
+        if(lookMode>=0){frame.lookMode=lookMode;frame.lookBlend=lookBlend;}
+        if(sky)frame.sky=*sky;
+    }
+};
 struct Session
 {
     Session(){environment.ConfigureClock(1.0/60,8,false);environment.Events().RegisterType({4,"engine.scene_state",1,8});}
@@ -81,9 +92,7 @@ struct Session
     double windowFixedStep=0;
     std::filesystem::path captureSequence;
     std::uint64_t captureSequenceCount=0;
-    // W06：运行时外观覆盖；<0 表示使用场景 RenderSettings 的值。
-    float lookMode=-1,lookBlend=0;
-    std::optional<se::SkyView> sky;
+    RuntimeAppearance appearance;
     std::filesystem::path windowProfile;
     std::uint32_t profileWidth=0,profileHeight=0;
     se::EditorSession* editor=nullptr;
@@ -904,9 +913,7 @@ int32_t SE_CALL se_session_run_window(SE_Session handle, const char* locale, uin
             se::BuildFrameData(s->Env(),&s->UiRef(),s->physicsDebugDraw?&s->physics:nullptr,data);data.assets=s->assets.get();
             if(interactive&&s->playerQuality)se::ApplyPlayerQuality(s->playerQuality->Level(),data,s->qualityProfiles);
             if(qualityMenu)qualityMenu->Append(playerWindow,data);
-            if(s->lookMode>=0){data.lookMode=s->lookMode;data.lookBlend=s->lookBlend;}
-            if(s->sky)data.sky=*s->sky;
-            if(s->Env().TimeOfDay().Profile())data.timeOfDay=s->Env().Snapshot();
+            s->appearance.Apply(data);
             if(s->physicsDebugDraw){for(const auto& item:s->characters){const auto lines=item.second.DebugLines();data.debugLines.insert(data.debugLines.end(),lines.begin(),lines.end());}}
             if(sequence&&gameRenderer&&captureCursor<s->captureSequenceCount)
             {
@@ -1067,7 +1074,9 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
                     {"RelativePath",document.relativePath},{"SourceDigest",document.sourceDigest}},false,response,error);
             };
         }
+        RuntimeAppearance appearanceBeforePlay;
         hooks.playStarted=[&](se::World& world,se::UiTree& ui){
+            appearanceBeforePlay=s->appearance;
             clearRuntime();s->borrowedWorld=&world;s->borrowedEnvironment=s->editor->PlayEnvironment();s->borrowedUi=&ui;
             // EditorSession 的 Play 用的是自己的 Environment 实例；不在这里装蒙皮解析器，
             // 姿态系统会因为没有解析器直接返回，角色停在绑定姿态（E18）。
@@ -1080,6 +1089,7 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
         };
         hooks.playStopping=[&](se::World&,se::UiTree&){
             if(s->editorCallback&&s->editorCallback(handle,1,s->editorContext)!=0)callbackFailed=true;
+            s->appearance=appearanceBeforePlay;
             clearRuntime();s->borrowedWorld=nullptr;s->borrowedEnvironment=nullptr;s->borrowedUi=nullptr;
             CloseEventPublishers(handle);s->eventSubscriptions.clear();
         };
@@ -1108,9 +1118,12 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
         hooks.extract=[s](se::World& world,se::UiTree& ui,se::FrameData& frame){
             // Play 时必须用播放环境重建帧：蒙皮调色板在 Environment 的姿态系统里，
             // 只传 World 会覆盖成空调色板，角色停在绑定姿态（E18）。
-            if(s->editor&&s->editor->IsPlaying())se::BuildFrameData(s->Env(),&ui,s->physicsDebugDraw?&s->physics:nullptr,frame);
+            if(s->editor&&s->editor->IsPlaying())
+            {
+                se::BuildFrameData(s->Env(),&ui,s->physicsDebugDraw?&s->physics:nullptr,frame);
+                s->appearance.Apply(frame);
+            }
             else se::BuildFrameData(world,&ui,s->physicsDebugDraw?&s->physics:nullptr,frame);
-            if(s->Env().TimeOfDay().Profile())frame.timeOfDay=s->Env().Snapshot();
             if(s->physicsDebugDraw){const auto authored=s->scenePhysics.CharacterLines();frame.debugLines.insert(frame.debugLines.end(),authored.begin(),authored.end());for(const auto& item:s->characters){const auto lines=item.second.DebugLines();frame.debugLines.insert(frame.debugLines.end(),lines.begin(),lines.end());}}
         };
         hooks.inspector=[s,handle](uint64_t entity,bool playing){DrawScriptInspector(handle,*s,entity,playing);};
@@ -1277,9 +1290,9 @@ int32_t SE_CALL se_session_set_look(SE_Session handle,float mode,float blend) no
 {
     return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
         if(!std::isfinite(mode)||!std::isfinite(blend))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
-        if(mode<0){s->lookMode=-1;s->lookBlend=0;return SE_OK;}
+        if(mode<0){s->appearance.lookMode=-1;s->appearance.lookBlend=0;return SE_OK;}
         if(mode>2||blend<0||blend>1)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
-        s->lookMode=mode;s->lookBlend=blend;return SE_OK;});
+        s->appearance.lookMode=mode;s->appearance.lookBlend=blend;return SE_OK;});
 }
 int32_t SE_CALL se_camera_project_direction(SE_Session handle,uint64_t camera_stable_id,SE_Vector3 direction,SE_Vector2* screen_uv,int32_t* in_front) noexcept
 {
@@ -1309,7 +1322,7 @@ int32_t SE_CALL se_camera_project_direction(SE_Session handle,uint64_t camera_st
 int32_t SE_CALL se_session_set_sky(SE_Session handle,const char* json,uint32_t length) noexcept
 {
     return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
-        if(length==0){s->sky.reset();return SE_OK;}
+        if(length==0){s->appearance.sky.reset();return SE_OK;}
         if(!json||length>4096||!ValidUtf8(json,length))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
         try
         {
@@ -1329,7 +1342,7 @@ int32_t SE_CALL se_session_set_sky(SE_Session handle,const char* json,uint32_t l
             if(!std::isfinite(view.sunIntensity)||view.sunIntensity<0||view.sunIntensity>1000||
                 !std::isfinite(view.sunAngularRadius)||view.sunAngularRadius<0.001f||view.sunAngularRadius>0.10f)
                 return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
-            s->sky=view;return SE_OK;
+            s->appearance.sky=view;return SE_OK;
         }
         catch(const std::exception&){return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");}
     });

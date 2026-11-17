@@ -209,14 +209,15 @@ void ProjectLease::Release() noexcept
     if(handle_){CloseHandle(static_cast<HANDLE>(handle_));handle_=nullptr;}
 }
 ProjectLease ProjectLease::Acquire(const std::filesystem::path& userDirectory,const std::filesystem::path& manifest,
-    bool& acquired,std::string& occupant)
+    bool& acquired,std::string& occupant,std::error_code* failure)
 {
     acquired=false;occupant.clear();
+    if(failure)failure->clear();
     ProjectLease lease;
     std::error_code error;
     const auto directory=userDirectory/"leases";
     std::filesystem::create_directories(directory,error);
-    if(error)return lease;
+    if(error){if(failure)*failure=error;return lease;}
     std::error_code canonicalError;
     const auto canonicalManifest=std::filesystem::weakly_canonical(manifest,canonicalError);
     const auto identity=canonicalError?manifest:canonicalManifest;
@@ -224,7 +225,9 @@ ProjectLease ProjectLease::Acquire(const std::filesystem::path& userDirectory,co
     HANDLE handle=CreateFileW(path.c_str(),GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(handle==INVALID_HANDLE_VALUE)
     {
-        if(GetLastError()!=ERROR_SHARING_VIOLATION)return lease;
+        const auto code=GetLastError();
+        if(failure)*failure=std::error_code(static_cast<int>(code),std::system_category());
+        if(code!=ERROR_SHARING_VIOLATION)return lease;
         HANDLE reader=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
         if(reader!=INVALID_HANDLE_VALUE)
         {
@@ -358,6 +361,9 @@ bool ProjectWorkspaceSession::CreateProject(ProjectTemplate projectTemplate,cons
     errorKey.clear();detail.clear();
     if(!ValidateProjectName(name,detail)){errorKey="Project.InvalidName";return false;}
     std::error_code error;
+    if(!parent.is_absolute()){errorKey="Project.ParentUnavailable";detail=Utf8(parent);return false;}
+    std::filesystem::create_directories(parent,error);
+    if(error){errorKey="Project.ParentUnavailable";detail=Utf8(parent);return false;}
     const auto base=std::filesystem::weakly_canonical(parent,error);
     if(error||!std::filesystem::is_directory(base,error)){errorKey="Project.ParentMissing";detail=Utf8(parent);return false;}
     const auto target=base/Wide(name);

@@ -11,6 +11,7 @@ cbuffer IndoorConstants : register(b0)
     float4 ordinaryPosition[8],ordinaryRadiance[8];
     column_major float4x4 sunClip[3];
     float4 sunSplits,sunShadowParameters;
+    float4 sampling;      // 稀疏漫反射的栅格步长；4 = 常规，8 = 4× 空间采样
 };
 Texture2D<float4> sceneRadiance : register(t0);
 Texture2D<float> sceneDepth : register(t1);
@@ -129,7 +130,8 @@ float3 DiffuseBounce(int2 receiver,float3 p,float3 normal,uint seed)
 }
 int2 BouncePixel(int2 gridPixel)
 {
-    return min(gridPixel*4+2,(int2)viewport.xy-1);
+    const int shift=max(2,(int)sampling.x),stride=1<<shift;
+    return min((gridPixel<<shift)+(stride>>1),(int2)viewport.xy-1);
 }
 float4 PSDiffuse(float4 position:SV_POSITION):SV_Target
 {
@@ -146,7 +148,8 @@ float3 ReconstructDiffuse(int2 receiver,float3 p,float3 n)
 {
     // 对稀疏入射辐亮度做低频重建。平面距离守住桌沿，法线约束避免穿过墙角；
     // 接收面颜色留待重建后再乘，墙上花纹不会在四分之一分辨率处被抹掉。
-    int2 cell=receiver>>2,extent=((int2)viewport.xy+3)>>2;
+    const int shift=max(2,(int)sampling.x);
+    int2 cell=receiver>>shift,extent=((int2)viewport.xy+(1<<shift)-1)>>shift;
     float sigma=max(.035,-p.z*.008),total=0;float3 sum=0;
     [loop]for(int y=-3;y<=3;++y)[loop]for(int x=-3;x<=3;++x)
     {
@@ -159,7 +162,7 @@ float3 ReconstructDiffuse(int2 receiver,float3 p,float3 n)
         float depth=sceneDepth.Load(int3(neighbor,0));
         float3 delta=ViewAt(PixelUv(neighbor),depth)-p;
         float separation=max(abs(dot(delta,n)),abs(dot(delta,qNormal)))/sigma;
-        float2 offset=(float2(neighbor)-float2(receiver))*.25;
+        float2 offset=(float2(neighbor)-float2(receiver))*sampling.y;
         float weight=exp(-.16*dot(offset,offset)-separation*separation)*pow(cosine,12);
         sum+=sampleValue.rgb*weight;total+=weight;
     }

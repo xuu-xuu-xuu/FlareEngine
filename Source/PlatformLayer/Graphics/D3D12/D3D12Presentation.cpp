@@ -596,7 +596,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         ||se::rhi::IsClustered(content.meshPipeline->prepared->program->source.kind)!=(forward&&content.forward->cluster.enabled)
         ||se::rhi::IsShadowed(content.meshPipeline->prepared->program->source.kind)!=shadow
         ||se::rhi::IsEnvironment(content.meshPipeline->prepared->program->source.kind)!=(content.environment!=nullptr)))return false;
-    if(content.environment&&(!shadow||content.skyPipeline->prepared->program->source.kind!=se::rhi::PipelineKind::EnvironmentSky
+    if(content.environment&&(!shadow
         ||std::any_of(content.environmentTextures.begin(),content.environmentTextures.end(),[](const auto* texture){return !texture||!texture->resource||!texture->views;})))return false;
     if(shadow&&(!forward||!content.shadowPipeline||!content.shadowPipeline->prepared
         ||content.shadowPipeline->prepared->program->source.kind!=se::rhi::PipelineKind::ShadowDepth

@@ -93,7 +93,7 @@ se_target(EngineEditorProduct)
 add_library(EngineEditorRenderer STATIC Source/ToolLayer/Editor/EditorRenderer.cpp)
 se_target(EngineEditorRenderer)
 target_link_libraries(EngineEditorRenderer PUBLIC EngineSandboxRenderer)
-target_link_libraries(EngineEditorProduct PUBLIC EngineEditorApp EngineEditorRenderer EngineSandboxRenderer EngineAssets EngineProjectSession ole32 uuid shell32 comdlg32 gdi32 PRIVATE dwmapi uxtheme comctl32 gdiplus)
+target_link_libraries(EngineEditorProduct PUBLIC EngineEditorApp EngineEditorRenderer EngineSandboxRenderer EngineAssets EngineProjectSession ole32 uuid shell32 comdlg32 gdi32 PRIVATE dwmapi uxtheme comctl32 gdiplus pathcch)
 
 add_executable(SelfEngineEditor WIN32 Source/ToolLayer/Tools/SelfEngineEditor.cpp)
 se_target(SelfEngineEditor)

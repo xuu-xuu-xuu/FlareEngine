@@ -128,9 +128,6 @@ try {
         $legacy=Join-Path $template $legacyName
         if(Test-Path -LiteralPath $legacy){Remove-Item -LiteralPath $legacy}
     }
-    if($packageTemplateName -eq 'EmptyGame') {
-        [IO.File]::WriteAllText((Join-Path $template 'README.md'),"# Flare 项目模板`n`n从启动器选择项目后进入编辑器，编辑后可在构建与导出面板生成游戏。`n未修改的示例行为可直接使用随包预编译版本；修改 Scripts 后需要 .NET 10 SDK。`n",[Text.UTF8Encoding]::new($false))
-    }
     }
     # 两模板共用同一组脚本源，预编译只做一次；独立清单仍按真实源摘要核验。
     $template=Join-Path $stage 'Resources/Templates/EmptyGame'

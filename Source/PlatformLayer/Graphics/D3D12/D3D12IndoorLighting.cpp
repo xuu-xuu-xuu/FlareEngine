@@ -22,9 +22,9 @@ struct alignas(16) IndoorConstants
     se::Vec4 viewport,strengths,fogAlbedo,sunDirection,sunRadiance,environment,ordinaryLightCount;
     std::array<se::Vec4,8> ordinaryPosition{},ordinaryRadiance{};
     std::array<se::Mat4,3> sunClip{};
-    se::Vec4 sunSplits{},sunShadowParameters{};
+    se::Vec4 sunSplits{},sunShadowParameters{},sampling{};
 };
-static_assert(sizeof(IndoorConstants)==848&&offsetof(IndoorConstants,sunClip)==624);
+static_assert(sizeof(IndoorConstants)==864&&offsetof(IndoorConstants,sunClip)==624);
 
 bool CreateFrame(D3D12Presentation& p,ID3D12Device& device,ID3D12Resource& color,UINT width,UINT height,
     std::shared_ptr<D3D12IndoorFrame>& output,const Localization& text)
@@ -96,7 +96,10 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
     if(!frame.indoor||frame.indoor->width!=width||frame.indoor->height!=height)
         if(!CreateFrame(p,*device.Get(),color,width,height,frame.indoor,text))return false;
     auto& output=*frame.indoor;
-    const UINT bounceWidth=(width+3)/4,bounceHeight=(height+3)/4;
+    // 4× 空间采样时栅格是输出两倍；稀疏漫反射按输出尺度取步长，避免重建核在输出上减半而放大采样噪声。
+    const UINT stride=content.post&&content.post->supersample4x?8u:4u;
+    const float shift=content.post&&content.post->supersample4x?3.f:2.f;
+    const UINT bounceWidth=(width+stride-1)/stride,bounceHeight=(height+stride-1)/stride;
     const bool bounce=indoor.indirect&&indoor.indirectStrength>0;
     if(bounce&&!output.bounce)
     {
@@ -111,6 +114,7 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
     constants.view=indoor.view;constants.projection=indoor.clipFromView;
     constants.inverseView=*inverseView;constants.inverseProjection=*inverseProjection;
     constants.viewport={float(width),float(height),1.f/width,1.f/height};
+    constants.sampling={shift,1.f/float(stride),0,0};
     constants.strengths={indoor.indirect?indoor.indirectStrength:0.f,indoor.reflections?indoor.reflectionStrength:0.f,
         indoor.volumetricFog?indoor.fogDensity:0.f,indoor.fogDistance};
     constants.fogAlbedo=Vector(indoor.fogAlbedo);

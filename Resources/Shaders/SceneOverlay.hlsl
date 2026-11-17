@@ -64,16 +64,26 @@ GridOutput PSGrid(float4 position : SV_POSITION)
 float4 PSOutline(float4 position : SV_POSITION) : SV_TARGET
 {
     uint width,height;selectionMask.GetDimensions(width,height);
-    int2 p=int2(position.xy);if(selectionMask.Load(int3(p,0)).g<.5)discard;
+    int scale=max(1,(int)round(options.z));
+    int2 p=int2(position.xy);
+    float visibleSum=0;
+    [loop] for(int oy=0;oy<scale;++oy)
+        [loop] for(int ox=0;ox<scale;++ox)
+            visibleSum+=selectionMask.Load(int3(p*scale+int2(ox,oy),0)).g;
+    if(visibleSum<(scale>1?scale*scale-1.5:.5))discard;
     int radius=(int)ceil(options.y);bool edge=false;
     [loop] for(int y=-radius;y<=radius;++y)
         [loop] for(int x=-radius;x<=radius;++x)
         {
             if(x*x+y*y>radius*radius)continue;
-            int2 q=p+int2(x,y);
+            int2 qBase=(p+int2(x,y))*scale;
             // 视口裁剪也不是模型轮廓；不能把纹理外侧当成背景，给屏幕边框描边。
-            if(any(q<0)||q.x>=(int)width||q.y>=(int)height)continue;
-            if(selectionMask.Load(int3(q,0)).r<.5)edge=true;
+            if(any(qBase<0)||qBase.x+scale-1>=(int)width||qBase.y+scale-1>=(int)height)continue;
+            float maskSum=0;
+            [loop] for(int sy=0;sy<scale;++sy)
+                [loop] for(int sx=0;sx<scale;++sx)
+                    maskSum+=selectionMask.Load(int3(qBase+int2(sx,sy),0)).r;
+            if(maskSum<scale*scale-.5)edge=true;
         }
     if(!edge)discard;
     return float4(ToLinear(float3(1,.6,.08)),1);

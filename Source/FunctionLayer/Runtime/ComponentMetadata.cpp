@@ -265,6 +265,7 @@ ComponentHandle CreateComponentFromProperties(World& world,EntityHandle owner,Co
     if(version!=descriptor->version&&(!descriptor->migrate||!descriptor->migrate(version,properties,error)))
     {if(error.empty())error="Metadata.UnsupportedVersion";return {};}
     if(descriptor->optional&&!descriptor->multiple&&world.FindComponent(owner,type)){error="Metadata.ComponentExists";return {};}
+    if(type==RenderSettingsComponent::TypeId)CompleteRenderProperties(properties);
     std::vector<PropertyValue> values;values.reserve(descriptor->properties.size());
     std::unordered_set<std::string> used;
     for(const auto& input:properties)

@@ -3,6 +3,7 @@
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
+#include <cstdint>
 #include <memory>
 
 class Localization;
@@ -22,6 +23,9 @@ struct D3D12Context
     std::shared_ptr<D3D12MemoryAllocator> memory;
     std::shared_ptr<D3D12PipelineCache> pipelines;
 };
+
+// 按适配器专用显存计算 DEFAULT 存储自动预算（768 MiB..2 GiB，64 KiB 对齐）。
+std::uint64_t AutomaticD3D12MemoryBudget(IDXGIAdapter1* adapter);
 
 // 启动时调用一次，在任何 D3D12 设备创建前启用调试层。
 // 只接受空 context；所有步骤成功后才交付资源，失败不留下半初始化状态。

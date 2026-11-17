@@ -6,7 +6,6 @@
 #include "D3D12Result.h"
 #include "D3D12Shadow.h"
 #include "D3D12LightClustering.h"
-#include "PlatformLayer/Windows/ExecutablePath.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -97,7 +96,8 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
         if(!p.clusterBuilder)
         {
             auto builder=std::make_shared<D3D12LightClustering>();
-            if(!CheckGraphicsResult(builder->Initialize(*device.Get(),p.memory,GetExecutableDirectory()/"Resources/Shaders",text),text,"Rhi.BackendFailure"))return false;
+            const auto shaders=content.outputPipeline->prepared->program->source.path.parent_path();
+            if(!CheckGraphicsResult(builder->Initialize(*device.Get(),p.memory,shaders,text),text,"Rhi.BackendFailure"))return false;
             p.clusterBuilder=std::move(builder);
         }
         if(!frame.clusters&&!CheckGraphicsResult(p.clusterBuilder->CreateOutput(frame.clusters),text,"Rhi.BackendFailure"))return false;
@@ -150,7 +150,7 @@ void RecordD3D12ForwardSky(D3D12Presentation& p,D3D12FrameContext& frame,const D
 {
     auto& commands=*p.commandList.Get();const auto& pipeline=*content.skyPipeline;
     commands.SetPipelineState(pipeline.pipeline.Get());commands.SetGraphicsRootSignature(pipeline.rootSignature.Get());
-    if(content.environment)
+    if(pipeline.prepared->program->source.kind==se::rhi::PipelineKind::EnvironmentSky)
     {
         const auto& environment=*content.environment;
         const se::rhi::EnvironmentSkyConstants constants{environment.skyFromClip,{environment.intensity,std::cos(environment.yaw),std::sin(environment.yaw),0}};

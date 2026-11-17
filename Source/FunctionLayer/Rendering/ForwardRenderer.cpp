@@ -1,5 +1,6 @@
 #include "ForwardRenderer.h"
 #include "PostProcessRenderer.h"
+#include "PlatformLayer/Graphics/SceneSampling.h"
 #include "ResourceLayer/Assets/AssetIO.h"
 #include <algorithm>
 #include <string>
@@ -268,7 +269,8 @@ rhi::Result RecordShadowedFrameGraph(rhi::CommandContext& commands,const rhi::Fo
     graph.Reset();
     width=(std::max)(1u,width);height=(std::max)(1u,height);
     const auto shadowResolution=(std::max)(1u,shadows.resolution);
-    const auto geometryWidth=width*(post&&post->supersample4x?2u:1u),geometryHeight=height*(post&&post->supersample4x?2u:1u);
+    const auto scale=rhi::SceneRasterScale(post&&post->supersample4x,width,height);
+    const auto geometryWidth=width*scale,geometryHeight=height*scale;
     const auto sceneColor=graph.AddTexture("SceneColor",{geometryWidth,geometryHeight,1,rhi::TextureFormat::Rgba16Float},true);
     const auto sceneDepth=graph.AddTexture("SceneDepth",{geometryWidth,geometryHeight,1,rhi::TextureFormat::Rgba8,true},true);
     const auto shadowDepth=graph.AddTexture("ShadowDepth",{shadowResolution,shadowResolution,1,rhi::TextureFormat::Rgba8,true},true);

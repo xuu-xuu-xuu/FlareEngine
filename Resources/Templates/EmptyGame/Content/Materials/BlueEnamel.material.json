@@ -1,0 +1,11 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "Blue Enamel",
+  "baseColor": [0.11, 0.34, 0.62, 1],
+  "metallic": 0,
+  "roughness": 0.29,
+  "doubleSided": false,
+  "textures": {"baseColor": "", "normal": "", "metallicRoughness": ""},
+  "clearCoat": {"weight": 0.85, "roughness": 0.18, "normalScale": 1}
+}

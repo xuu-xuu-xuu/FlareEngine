@@ -40,6 +40,17 @@ std::shared_ptr<const RenderEnvironment> EnvironmentRenderCache::Load(AssetStore
     std::shared_ptr<const RenderEnvironment> candidate;if(!Upload(source,device,candidate,diagnostics))return active_;
     active_=std::move(candidate);return active_;
 }
+std::shared_ptr<const RenderEnvironment> EnvironmentRenderCache::EngineDefault(const std::filesystem::path& resources,rhi::Device& device,std::vector<AssetDiagnostic>& diagnostics)
+{
+    if(!engineDefaultAttempted_)
+    {
+        engineDefaultAttempted_=true;
+        auto environment=std::make_shared<EnvironmentAsset>();
+        if(LoadEnvironment(resources/"Environments"/"soft.seenv",*environment,diagnostics))
+            Upload(std::move(environment),device,engineDefault_,diagnostics);
+    }
+    return engineDefault_;
+}
 std::shared_ptr<const RenderEnvironment> EnvironmentRenderCache::Fallback(rhi::Device& device,std::vector<AssetDiagnostic>& diagnostics)
 {
     if(fallback_)return fallback_;auto candidate=std::make_shared<RenderEnvironment>();std::array<EnvironmentTexture,3> textures;

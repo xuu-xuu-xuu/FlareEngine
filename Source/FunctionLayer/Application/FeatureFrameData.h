@@ -1,2 +1,3 @@
 #pragma once
-namespace se { class World;struct FrameData;void ApplyFeatureFrameData(const World&,FrameData&); }
+#include "FrameData.h"
+namespace se { void ApplyFeatureFrameData(const World&,FrameData&,RenderDefaults defaults=RenderDefaults::Project); }

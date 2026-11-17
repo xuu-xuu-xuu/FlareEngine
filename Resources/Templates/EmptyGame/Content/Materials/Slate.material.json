@@ -1,0 +1,10 @@
+{
+  "type": "SelfEngine.Material",
+  "version": 1,
+  "name": "Slate",
+  "baseColor": [0.22, 0.25, 0.28, 1],
+  "metallic": 0,
+  "roughness": 0.55,
+  "doubleSided": false,
+  "textures": {"baseColor": "", "normal": "", "metallicRoughness": ""}
+}

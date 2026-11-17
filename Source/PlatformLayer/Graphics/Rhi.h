@@ -191,7 +191,8 @@ struct AdapterInformation {std::string name;std::uint32_t vendorId=0,deviceId=0;
 struct CompletionToken {std::uint64_t device=0,queue=0,value=0;bool operator==(const CompletionToken&) const=default;};
 enum class UploadMode { Pooled, DedicatedBaseline };
 enum class MemoryMode { Placed, CommittedBaseline };
-struct MemorySettings {MemoryMode mode=MemoryMode::Placed;std::uint64_t heapPageBytes=4*1024*1024,budgetBytes=256ull*1024*1024;};
+// budgetBytes=0 时按适配器专用显存自动确定；4× 空间采样在 1080p 以上会超过固定小预算。
+struct MemorySettings {MemoryMode mode=MemoryMode::Placed;std::uint64_t heapPageBytes=4*1024*1024,budgetBytes=0;};
 struct DescriptorLimits {std::uint32_t persistentPage=64,persistentMaximum=65536,frameInitial=64,frameMaximum=65536;};
 enum class PassKind { Clear, Opaque, Triangle, Sky, Output, Shadow, BloomExtract, BloomHorizontal, BloomVertical, ToneMap, Fxaa, Ui, Transparent, DepthNormals, AmbientOcclusion };
 enum class ResourceUse { ColorWrite, DepthWrite, VertexRead, IndexRead, TextureRead, ColorRead, None, DepthRead };
@@ -247,7 +248,7 @@ struct DrawIndexed
     float impostorView=0,impostorNext=0,impostorBlend=0;
     // 仅用于统计与诊断；0 表示未提供，绘制仍以缓冲自身大小为准。
     std::uint32_t indexCount=0;
-    // G14：上一帧世界矩阵。缺省时速度 Pass 视为静止（previous=world）；
+    // G14/RG104：上一帧世界矩阵。缺省时表示首次出现或无可靠运动历史，速度 Pass 保持 invalidMotion 以重置历史；
     // compressedVertices 由 D3D12 后端按 PSO 填充，调用方无需设置。
     bool hasPreviousWorld=false;
     Mat4 previousWorld;
