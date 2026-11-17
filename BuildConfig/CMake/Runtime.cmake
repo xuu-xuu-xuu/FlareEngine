@@ -50,6 +50,8 @@ add_library(EngineRuntime STATIC
     Source/FunctionLayer/Runtime/WorldComponents.cpp
     Source/FunctionLayer/Runtime/Environment.cpp
     Source/ResourceLayer/Scenes/SceneSerializer.cpp
+    Source/ResourceLayer/Scenes/PrefabDocument.cpp
+    Source/FunctionLayer/Runtime/PrefabInstantiator.cpp
     Source/FunctionLayer/Runtime/ComponentMetadata.cpp
     Source/FunctionLayer/Runtime/FeatureComponents.cpp
     Source/FunctionLayer/Runtime/Camera.cpp

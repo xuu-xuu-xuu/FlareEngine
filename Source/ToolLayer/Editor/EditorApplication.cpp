@@ -280,7 +280,7 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
                 state.root, state.assetsRoot, state.assets, state.session, state.host, state.ui,
                 state.scriptWorkflow, state.clipPreview, state.viewportController, state.externalChange,
                 state.text, *state.shell, state.featureTools.get(), state.assetState,
-                state.exportName, state.importStatus, state.importTask});
+                state.exportName, state.importStatus, state.importTask, state.hooks});
             BindToolkitImportAndCommands(state, *workspaceContext);
             BindToolkitWorkspaceForms(*workspaceContext, state.exportAction);
             FinalizeToolkitWindowUi(state);

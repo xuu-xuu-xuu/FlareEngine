@@ -4,6 +4,7 @@
 #include "ToolLayer/Editor/EditorFloatingWindows.h"
 #include "ToolLayer/Editor/EditorPlayInput.h"
 #include "ToolLayer/Editor/EditorSessionStore.h"
+#include "ToolLayer/Editor/ViewportDropWorkflow.h"
 #include "ToolLayer/Editor/EditorViewportCamera.h"
 #include "ToolLayer/Editor/EditorUi/EditorInputAdapter.h"
 #include "FunctionLayer/Physics/ScenePhysics.h"
@@ -59,6 +60,7 @@ struct ToolkitAppState
     EditorScriptWorkflow scriptWorkflow;
     EditorViewportCamera editorCamera;
     EditorViewportController viewportController;
+    ViewportDropWorkflow dropWorkflow;
     EditorClipPreview clipPreview;
     ExternalChangeMonitor externalChange;
     std::unique_ptr<ui::editor::EditorShell> shell;

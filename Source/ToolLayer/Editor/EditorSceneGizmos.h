@@ -15,4 +15,7 @@ std::optional<Vec2> EditorSceneIconCenter(const World& world, EntityHandle entit
 void AppendEditorSceneGizmos(const World& world, StableEntityId selected,
                             const CameraSnapshot& editorCamera, ui::UiDisplayList& overlay,
                             std::vector<rhi::SceneLine>& lines);
+
+// 向场景辅助线通道提交视口拖放包围盒预览，不直接接触 D3D12。
+void AppendDropPreviewGizmo(const Aabb& worldBounds, bool valid, std::vector<rhi::SceneLine>& lines);
 }

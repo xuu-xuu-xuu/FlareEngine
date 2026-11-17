@@ -260,9 +260,57 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             if (event.button != 0 && event.button != 1) return;
             if (row >= 0 && static_cast<std::size_t>(row) < entries.size())
             {
-                SelectAsset(entries[static_cast<std::size_t>(row)].path);
+                const std::string& path = entries[static_cast<std::size_t>(row)].path;
+                SelectAsset(path);
+                if (event.button == 0)
+                {
+                    if (!assetDrag_) assetDrag_ = std::make_unique<EditorAssetDragState>();
+                    assetDrag_->assetPath = path;
+                    assetDrag_->startX = event.x;
+                    assetDrag_->startY = event.y;
+                    assetDrag_->dragging = false;
+                    dispatcher_.SetPointerCapture(Slot(EditorPanelId::Assets).content);
+                }
             }
             event.handled = true;
+        }, UiEventPhase::Bubble);
+        dispatcher_.AddHandler(slot.content, UiEventType::PointerMove, [this](UiInputEvent& event) {
+            if (!assetDrag_ || assetDrag_->assetPath.empty()) return;
+            const float dx = event.x - assetDrag_->startX;
+            const float dy = event.y - assetDrag_->startY;
+            if (!assetDrag_->dragging && std::abs(dx) + std::abs(dy) > 4.0f) assetDrag_->dragging = true;
+            if (!assetDrag_->dragging) return;
+            if (dragGhost_.IsValid())
+            {
+                if (CurrentInputRoot().IsValid()) document_.SetParent(dragGhost_, CurrentInputRoot());
+                document_.SetVisible(dragGhost_, true);
+                UiStyle ghostStyle = document_.Style(dragGhost_);
+                ghostStyle.left = UiLength::Px(event.x + 8.0f);
+                ghostStyle.top = UiLength::Px(event.y);
+                document_.SetStyle(dragGhost_, ghostStyle);
+                const auto sep = assetDrag_->assetPath.find_last_of("/\\");
+                document_.SetText(dragGhost_, assetDrag_->assetPath.substr(sep == std::string::npos ? 0 : sep + 1));
+            }
+            const auto target = UiHitTest(document_, layout_).Hit(CurrentInputRoot(), event.x, event.y).target;
+            const bool overViewport = target == ViewportPanel();
+            if (assetDrag_->hoverHandler) assetDrag_->hoverHandler(assetDrag_->assetPath, event.x, event.y, overViewport);
+            event.handled = true;
+        }, UiEventPhase::Bubble);
+        dispatcher_.AddHandler(slot.content, UiEventType::PointerUp, [this](UiInputEvent& event) {
+            if (!assetDrag_ || assetDrag_->assetPath.empty()) return;
+            const bool dropped = assetDrag_->dragging && event.button == 0;
+            const std::string path = assetDrag_->assetPath;
+            const auto dropHandler = assetDrag_->dropHandler;
+            CancelAssetDrag();
+            if (dropped)
+            {
+                const auto target = UiHitTest(document_, layout_).Hit(CurrentInputRoot(), event.x, event.y).target;
+                if (target == ViewportPanel() && dropHandler) dropHandler(path, event.x, event.y);
+            }
+            event.handled = true;
+        }, UiEventPhase::Bubble);
+        dispatcher_.AddHandler(slot.content, UiEventType::PointerCaptureLost, [this](UiInputEvent&) {
+            CancelAssetDrag();
         }, UiEventPhase::Bubble);
         dispatcher_.AddHandler(slot.panel, UiEventType::PointerDown, [this](UiInputEvent& event) {
             if (event.button != 1) return;
@@ -528,6 +576,32 @@ UiElementHandle EditorShell::PanelContent(EditorPanelId panel) const noexcept
 UiElementHandle EditorShell::ScrollThumb(EditorPanelId panel) const noexcept
 {
     return scrollThumbs_[static_cast<std::size_t>(panel)];
+}
+
+void EditorShell::SetAssetDragHandler(std::function<void(const std::string&, float, float, bool)> handler)
+{
+    if (!assetDrag_) assetDrag_ = std::make_unique<EditorAssetDragState>();
+    assetDrag_->hoverHandler = std::move(handler);
+}
+
+void EditorShell::SetAssetDropHandler(std::function<bool(const std::string&, float, float)> handler)
+{
+    if (!assetDrag_) assetDrag_ = std::make_unique<EditorAssetDragState>();
+    assetDrag_->dropHandler = std::move(handler);
+}
+
+void EditorShell::CancelAssetDrag()
+{
+    if (dragGhost_.IsValid()) document_.SetVisible(dragGhost_, false);
+    if (assetDrag_)
+    {
+        if (assetDrag_->dragging && assetDrag_->hoverHandler)
+            assetDrag_->hoverHandler({}, 0.0f, 0.0f, false);
+        assetDrag_->assetPath.clear();
+        assetDrag_->dragging = false;
+    }
+    if (dispatcher_.PointerCapture() == Slot(EditorPanelId::Assets).content)
+        dispatcher_.ReleasePointerCapture();
 }
 
 } // namespace se::ui::editor

@@ -5,6 +5,7 @@
 #include "RegisteredComponentPool.h"
 #include "ObjectHeap.h"
 #include "ResourceLayer/Environment/TODProfile.h"
+#include "ResourceLayer/Scenes/PrefabDocument.h"
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -27,6 +28,7 @@ struct EntityRecord
     std::string name;
     EntityHandle parent{};
     bool enabled = true;
+    std::optional<PrefabLink> prefabLink;
 };
 
 template<class T> class ComponentPool
@@ -80,6 +82,8 @@ public:
     bool Rename(EntityHandle entity, std::string name);
     bool SetEnabled(EntityHandle entity, bool enabled);
     bool IsEnabled(EntityHandle entity) const; // 个人状态与祖先状态的有效值。
+    const PrefabLink* GetPrefabLink(EntityHandle entity) const;
+    bool SetPrefabLink(EntityHandle entity, std::optional<PrefabLink> link);
     bool SetParent(EntityHandle entity, EntityHandle parent); // 保持局部变换，不自动分解世界矩阵。
     Mat4 GetWorldMatrix(EntityHandle entity) const;
     std::uint64_t SpatialRevision()const noexcept{return spatialRevision_;}

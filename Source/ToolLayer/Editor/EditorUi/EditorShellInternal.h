@@ -190,6 +190,16 @@ struct TabStripMetrics
 
 namespace se::ui::editor
 {
+struct EditorAssetDragState
+{
+    std::string assetPath;
+    float startX = 0.0f;
+    float startY = 0.0f;
+    bool dragging = false;
+    std::function<void(const std::string&, float, float, bool)> hoverHandler;
+    std::function<bool(const std::string&, float, float)> dropHandler;
+};
+
 struct EditorFormPanel
 {
     UiElementHandle listContent{};

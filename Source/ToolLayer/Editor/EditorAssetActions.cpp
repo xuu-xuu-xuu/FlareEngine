@@ -3,6 +3,7 @@
 #include "ResourceLayer/Assets/AssetStore.h"
 #include "ResourceLayer/Assets/Primitives.h"
 #include "ResourceLayer/Scenes/SceneSerializer.h"
+#include "ResourceLayer/Scenes/PrefabDocument.h"
 #include "FunctionLayer/GameUI/UiTree.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "ToolLayer/Tools/Project.h"
@@ -72,6 +73,7 @@ std::string Type(const fs::path& path)
     if(extension==".gltf"||extension==".glb"||extension==".fbx")return "model";
     if(extension==".png"||extension==".jpg"||extension==".jpeg")return "image";
     if(IsMaterialDocumentPath(path))return "material";
+    if(IsPrefabDocumentPath(path))return "prefab";
     if(extension==".sebin")return "shader";
     if(extension==".tod")return "tod";
     if(extension==".seenv")return "environment";
@@ -86,6 +88,7 @@ std::optional<EditorAssetDocumentKind> Kind(const fs::path& path)
     if(name.ends_with(".material.json"))return EditorAssetDocumentKind::Material;
     if(name.ends_with(".ui.json"))return EditorAssetDocumentKind::Ui;
     if(name.ends_with(".bindings.json"))return EditorAssetDocumentKind::Bindings;
+    if(name.ends_with(".prefab.json"))return EditorAssetDocumentKind::Prefab;
     return {};
 }
 std::uint64_t EntityId(const Json& value)
@@ -102,9 +105,10 @@ std::string PointerPart(std::string text)
 }
 bool ReferenceField(EditorAssetDocumentKind kind,const std::string& pointer)
 {
-    if(kind==EditorAssetDocumentKind::Scene)return pointer.ends_with("/asset")||pointer.find("/materials/")!=std::string::npos||pointer=="/environment/todProfile";
+    if(kind==EditorAssetDocumentKind::Scene)return pointer.ends_with("/asset")||pointer.find("/materials/")!=std::string::npos||pointer=="/environment/todProfile"||pointer.ends_with("/prefab/prefabId");
     if(kind==EditorAssetDocumentKind::Material)return pointer.starts_with("/textures/")||pointer=="/shader";
     if(kind==EditorAssetDocumentKind::Ui)return pointer.ends_with("/image");
+    if(kind==EditorAssetDocumentKind::Prefab)return pointer.find("/properties/")!=std::string::npos&&(pointer.ends_with("/value")||pointer.find("/value/")!=std::string::npos);
     return pointer.find("/Fields/")!=std::string::npos&&pointer.ends_with("/Value");
 }
 void References(const Json& value,EditorAssetDocumentKind kind,const std::set<AssetId>& ids,EditorAssetReference location,std::vector<EditorAssetReference>& output)
@@ -133,6 +137,8 @@ bool DocumentReferences(const EditorAssetDocument& document,bool memory,const st
         {UiTree candidate;valid=candidate.LoadJson(document.text,key);}
         else if(document.kind==EditorAssetDocumentKind::Material)
         {MaterialDocument candidate;std::vector<AssetDiagnostic> errors;valid=DeserializeMaterialDocument(document.text,candidate,errors);if(!errors.empty())key=errors.back().key;}
+        else if(document.kind==EditorAssetDocumentKind::Prefab)
+        {PrefabDocument candidate;valid=ParsePrefabDocument(document.text,candidate,key);}
         else
         {
             valid=json.is_object()&&json.value("Version",0)==1&&json.contains("Scripts")&&json["Scripts"].is_array();
@@ -427,6 +433,7 @@ bool EditorAssetActions::SyncProjectAssets(const fs::path& requested,AssetStore&
             else if(type=="material")valid=static_cast<bool>(assets.LoadMaterial(id,errors));
             else if(type=="tod")valid=static_cast<bool>(assets.LoadTODProfile(id,errors));
             else if(type=="environment")valid=static_cast<bool>(assets.LoadEnvironment(id,errors));
+            else if(type=="prefab"){PrefabDocument prefabDoc;std::string prefabErr;valid=ReadPrefabDocument(path,prefabDoc,prefabErr);if(!valid&&!prefabErr.empty())errors.push_back({prefabErr,id});}
             else if(type=="data")valid=true;
             else{ShaderArtifactSource shader;valid=assets.LoadShaderArtifact(id,shader,errors);}
             if(!valid)return Issue(diagnostics,"Assets.ProjectSyncFailed",path,errors.empty()?id:errors.back().key+": "+errors.back().detail);

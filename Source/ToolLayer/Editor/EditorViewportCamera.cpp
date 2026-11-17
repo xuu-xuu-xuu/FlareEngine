@@ -1,4 +1,5 @@
 #include "EditorViewportCamera.h"
+#include "FunctionLayer/Runtime/SceneSpatialIndex.h"
 #include "ResourceLayer/Assets/StaticModelPreparation.h"
 #include "ResourceLayer/Assets/Primitives.h"
 #include "CoreLayer/Spatial/BoundsIndex.h"
@@ -44,17 +45,26 @@ bool HitsBounds(const CameraRay& ray, const Aabb& box, double limit)
         {ray.direction.x, ray.direction.y, ray.direction.z}, limit}).has_value();
 }
 
-std::optional<double> MeshDistance(const MeshData& mesh, const CameraRay& ray, double limit)
+struct TriangleHit
+{
+    double distance = 0.0;
+    Vec3 normal{0.0f, 1.0f, 0.0f};
+};
+
+std::optional<TriangleHit> MeshDistance(const MeshData& mesh, const CameraRay& ray,
+                                        const Mat4& worldFromMesh, double limit)
 {
     const auto position = [&](std::uint32_t index) {
         const auto& p = mesh.vertices[index].position;
         return Vec3{p[0], p[1], p[2]};
     };
-    std::optional<double> nearest;
+    std::optional<TriangleHit> nearest;
     for (std::size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
     {
         const Vec3 a = position(mesh.indices[i]);
-        const Vec3 ab = position(mesh.indices[i + 1]) - a, ac = position(mesh.indices[i + 2]) - a;
+        const Vec3 b = position(mesh.indices[i + 1]);
+        const Vec3 c = position(mesh.indices[i + 2]);
+        const Vec3 ab = b - a, ac = c - a;
         const Vec3 h = Cross(ray.direction, ac);
         const double determinant = Dot(ab, h);
         if (determinant == 0) continue;
@@ -68,36 +78,61 @@ std::optional<double> MeshDistance(const MeshData& mesh, const CameraRay& ray, d
         if (t >= 0 && t <= limit)
         {
             limit = t;
-            nearest = t;
+            const Vec3 wa = TransformPoint(worldFromMesh, a);
+            const Vec3 wb = TransformPoint(worldFromMesh, b);
+            const Vec3 wc = TransformPoint(worldFromMesh, c);
+            const Vec3 cross = Cross(wb - wa, wc - wa);
+            const float lenSq = LengthSquared(cross);
+            const Vec3 normal = lenSq > 1e-12f ? (cross / std::sqrt(lenSq)) : Vec3{0.0f, 1.0f, 0.0f};
+            nearest = TriangleHit{t, normal};
         }
     }
     return nearest;
 }
 }
 
-StableEntityId PickEditorBounds(const World& world, AssetStore& assets, const CameraSnapshot& camera, float x, float y)
+std::optional<EditorSurfaceHit> IntersectEditorSceneSurface(
+    const World& world,
+    AssetStore& assets,
+    const CameraSnapshot& camera,
+    const CameraRay& ray,
+    SceneSpatialIndex* spatial)
 {
-    const auto& viewport = camera.viewport;
-    const auto ray = ViewportPointToRay(camera, {viewport.x + x * viewport.width, viewport.y + y * viewport.height});
-    if (!ray) return 0;
-    const float viewDepthPerMetre = -TransformVector(camera.view, ray->direction).z;
-    if (viewDepthPerMetre <= 0) return 0;
+    const float viewDepthPerMetre = -TransformVector(camera.view, ray.direction).z;
+    if (viewDepthPerMetre <= 0) return {};
     double nearest = (camera.lens.farPlane - camera.lens.nearPlane) / viewDepthPerMetre;
-    StableEntityId selected = 0;
+    if (!std::isfinite(nearest) || nearest <= 0) return {};
+
+    std::vector<EntityHandle> candidates;
+    if (spatial && spatial->Statistics().tracked > 0)
+    {
+        candidates = spatial->RaycastCandidates(
+            {{ray.origin.x, ray.origin.y, ray.origin.z},
+             {ray.direction.x, ray.direction.y, ray.direction.z},
+             nearest});
+    }
+    else
+    {
+        candidates = world.Entities();
+    }
+
+    std::optional<EditorSurfaceHit> hit;
     std::unordered_map<AssetId, PickModel> models;
-    for (auto entity : world.Entities())
+    for (const auto entity : candidates)
     {
         const auto* mesh = world.GetMesh(entity);
         if (!mesh || !world.IsEnabled(entity)) continue;
-        const auto modelFromWorld = Inverse(world.GetWorldMatrix(entity));
+        const Mat4 worldMatrix = world.GetWorldMatrix(entity);
+        const auto modelFromWorld = Inverse(worldMatrix);
         if (!modelFromWorld) continue;
-        const auto local = LocalRay(*ray, *modelFromWorld);
-        std::optional<double> distance;
+        const auto local = LocalRay(ray, *modelFromWorld);
+        std::optional<TriangleHit> surfaceHit;
         if (IsBuiltinMesh(mesh->meshAsset))
         {
             if (!HitsBounds(local, {{-.5f,-.5f,-.5f}, {.5f,.5f,.5f}}, nearest)) continue;
             static const MeshData cube = MakeUnitCube(), sphere = MakeUnitSphere();
-            distance = MeshDistance(mesh->meshAsset == BuiltinCubeAssetId ? cube : sphere, local, nearest);
+            surfaceHit = MeshDistance(mesh->meshAsset == BuiltinCubeAssetId ? cube : sphere,
+                                      local, worldMatrix, nearest);
         }
         else
         {
@@ -115,18 +150,36 @@ StableEntityId PickEditorBounds(const World& world, AssetStore& assets, const Ca
             {
                 const auto meshFromModel = Inverse(part.modelFromMesh);
                 if (!meshFromModel) continue;
-                const auto partDistance = MeshDistance(geometry.model->meshes[part.mesh],
-                    LocalRay(local, *meshFromModel), distance.value_or(nearest));
-                if (partDistance) distance = partDistance;
+                const auto partHit = MeshDistance(geometry.model->meshes[part.mesh],
+                    LocalRay(local, *meshFromModel), worldMatrix * part.modelFromMesh,
+                    surfaceHit ? surfaceHit->distance : nearest);
+                if (partHit) surfaceHit = partHit;
             }
         }
         const auto id = world.Get(entity)->stableId;
-        if (distance && (*distance < nearest || (*distance == nearest && (!selected || id < selected))))
+        if (surfaceHit && (surfaceHit->distance < nearest ||
+            (surfaceHit->distance == nearest && (!hit || id < hit->entity))))
         {
-            nearest = *distance;
-            selected = id;
+            nearest = surfaceHit->distance;
+            Vec3 normal = surfaceHit->normal;
+            if (Dot(normal, ray.direction) > 0.0f) normal = normal * -1.0f;
+            hit = EditorSurfaceHit{
+                id,
+                nearest,
+                ray.origin + ray.direction * static_cast<float>(nearest),
+                normal
+            };
         }
     }
-    return selected;
+    return hit;
+}
+
+StableEntityId PickEditorBounds(const World& world, AssetStore& assets, const CameraSnapshot& camera, float x, float y)
+{
+    const auto& viewport = camera.viewport;
+    const auto ray = ViewportPointToRay(camera, {viewport.x + x * viewport.width, viewport.y + y * viewport.height});
+    if (!ray) return 0;
+    const auto hit = IntersectEditorSceneSurface(world, assets, camera, *ray, nullptr);
+    return hit ? hit->entity : 0;
 }
 }

@@ -239,9 +239,19 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
     }
     const auto count = static_cast<int>(item.fields.size());
     const bool objectName = first.key == "name";
+    bool rowOverridden = false;
+    for (int i = 0; i < count; ++i) rowOverridden = rowOverridden || fields[item.fields[i]].overridden;
+    if (rowOverridden)
+    {
+        add("", CellStyle(1.0f, 2.0f, 3.0f, RowHeight - 4.0f, UiInk(flare::workspace::Focus)));
+    }
     const auto firstCell = FieldAt(inspectorWidth_, count, 0, first.axis != 0, RgbAxis(first.axis));
     if (!objectName)
-        add(first.label, CellStyle(LeftInset, 0, firstCell.labelEnd - LeftInset, RowHeight, Transparent));
+    {
+        auto labelStyle = CellStyle(LeftInset, 0, firstCell.labelEnd - LeftInset, RowHeight, Transparent);
+        if (rowOverridden) labelStyle.color = UiInk(flare::workspace::Focus);
+        add(first.label, labelStyle);
+    }
     for (int i = 0; i < count; ++i)
     {
         const auto& field = fields[item.fields[i]];
@@ -249,7 +259,7 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
         if (field.axis)
         {
             auto style = CellStyle(cell.axisStart, 0, cell.valueStart-cell.axisStart, RowHeight, Transparent);
-            style.color = UiInk(flare::Muted);
+            style.color = UiInk(field.overridden ? flare::workspace::Focus : flare::Muted);
             style.padding = {};
             add(std::string(1, field.axis), style);
         }
@@ -261,7 +271,7 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
         auto style = CellStyle(objectName ? LeftInset : cell.valueStart, 2,
             objectName ? right - LeftInset : cell.valueWidth, RowHeight - 4.0f, UiInk(flare::workspace::Field));
         style.color = UiInk(field.readOnly ? flare::Muted : flare::Heading);
-        style.borderColor = UiInk(flare::workspace::Divider);
+        style.borderColor = UiInk(field.overridden ? flare::workspace::Focus : flare::workspace::Divider);
         style.borderWidth = 1;
         if (field.type == EditorPropertyType::Color)
         {
@@ -278,10 +288,13 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
 
 void EditorShell::ActivateInspectorRow(UiInputEvent& event)
 {
-    if (event.button != 0) return;
-    if (const auto field = InspectorNumericAt(event.x,event.y); field && propertyEditHandler_)
+    if (event.button != 0 && event.button != 1) return;
+    if (event.button == 0)
     {
-        BeginInspectorDrag(*field,event);event.handled=true;return;
+        if (const auto field = InspectorNumericAt(event.x,event.y); field && propertyEditHandler_)
+        {
+            BeginInspectorDrag(*field,event);event.handled=true;return;
+        }
     }
     const auto content = layout_.Rect(InspectorContent());
     const float x = event.x - content.x;
@@ -291,6 +304,7 @@ void EditorShell::ActivateInspectorRow(UiInputEvent& event)
     std::size_t field = 0;
     if (item.header)
     {
+        if (event.button == 1) return;
         const float checkX = LeftInset + 15;
         if (item.fields.empty() || x < checkX || x >= checkX + 16)
         {
@@ -307,6 +321,7 @@ void EditorShell::ActivateInspectorRow(UiInputEvent& event)
         const auto& property = inspectorModel_.Properties()[field];
         if (property.type == EditorPropertyType::Action)
         {
+            if (event.button == 1) return;
             const float right = std::max(LeftInset, inspectorWidth_ - ScrollMargin);
             const float width = std::min(230.0f, std::max(0.0f, right - 2*LeftInset));
             if (x < (right-width)*0.5f || x >= (right+width)*0.5f) return;
@@ -320,11 +335,36 @@ void EditorShell::ActivateInspectorRow(UiInputEvent& event)
                 const auto box = FieldAt(inspectorWidth_, count, cell, property.axis != 0, RgbAxis(property.axis));
                 if (x >= box.axisStart && x < box.valueStart + box.valueWidth) break;
             }
+            if (cell == count && event.button == 1 && count > 0)
+            {
+                const auto firstBox = FieldAt(inspectorWidth_, count, 0, property.axis != 0, RgbAxis(property.axis));
+                if (x >= LeftInset && x < firstBox.labelEnd)
+                {
+                    for (int c = 0; c < count; ++c)
+                    {
+                        if (inspectorModel_.Properties()[item.fields[c]].overridden) { cell = c; break; }
+                    }
+                }
+            }
             if (cell == count) return;
             field = item.fields[cell];
         }
     }
     const auto& property = inspectorModel_.Properties()[field];
+    if (event.button == 1)
+    {
+        if (property.overridden && !property.readOnly && inspectorModel_.Target() != 0)
+        {
+            CloseMenu();
+            openMenu_ = "@inspector";
+            ShowMenu(SurfaceRoot(dock_.SurfaceFor(EditorPanelId::Inspector)), event.x, event.y, 195.0f,
+                     {{"@inspector", Text("EditorUi.PrefabRevertProperty", "Revert property override"),
+                       EditorCommandId::SetProperty, "prefab.revertProperty:" + property.key}},
+                     inspectorModel_.Target());
+            event.handled = true;
+        }
+        return;
+    }
     if (property.readOnly) return;
     if (property.type == EditorPropertyType::Color)
         OpenInspectorColor(field);

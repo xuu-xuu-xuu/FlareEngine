@@ -289,7 +289,9 @@ void RegistrationError(const std::vector<AssetDiagnostic>& diagnostics,const fs:
 
 bool AssetImportService::SupportedExtension(const std::filesystem::path& path)
 {
-    return IsModel(path)||IsImage(path)||Lower(path.extension().string())==".sebin"||Lower(path.filename().string()).ends_with(".material.json");
+    const std::string lower = Lower(path.filename().string());
+    return IsModel(path)||IsImage(path)||Lower(path.extension().string())==".sebin"
+        ||lower.ends_with(".material.json")||lower.ends_with(".prefab.json");
 }
 AssetImportPlan AssetImportService::Plan(const AssetImportRequest& request)
 {

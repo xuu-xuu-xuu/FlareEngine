@@ -1,4 +1,5 @@
 #include "ResourceLayer/Scenes/SceneSerializer.h"
+#include "ResourceLayer/Scenes/PrefabJson.h"
 #include "FunctionLayer/Runtime/ComponentMetadata.h"
 #include "ResourceLayer/PropertyJson.h"
 
@@ -109,8 +110,10 @@ bool SerializeScene(const World& world,std::string& jsonText,std::string& error)
                 Json properties=Json::object();for(const auto& field:fields)properties[field.key]=WritePropertyJson(field.value);
                 components.push_back({{"type",std::to_string(descriptor->type)},{"version",descriptor->version},{"enabled",component->Enabled()},{"properties",std::move(properties)}});
             }
-            root["entities"].push_back({{"id",std::to_string(record.stableId)},{"name",record.name},{"enabled",record.enabled},
-                {"parent",record.parent?Json(std::to_string(world.Get(record.parent)->stableId)):Json(nullptr)},{"components",std::move(components)}});
+            Json entityJson{{"id",std::to_string(record.stableId)},{"name",record.name},{"enabled",record.enabled},
+                {"parent",record.parent?Json(std::to_string(world.Get(record.parent)->stableId)):Json(nullptr)},{"components",std::move(components)}};
+            if(record.prefabLink) entityJson["prefab"]=detail::WritePrefabLinkJson(*record.prefabLink);
+            root["entities"].push_back(std::move(entityJson));
         }
         auto result=root.dump(2);if(result.size()>maxSceneBytes){error="Scene.TooLarge";return false;}
         jsonText=std::move(result);return true;
@@ -163,12 +166,18 @@ bool InstantiateScene(const SceneDocument& document,World& world,std::string& er
         for(const auto& data:root["entities"])
         {
             StableEntityId id=0,parent=0;
-            if(!OnlyKeys(data,{"id","name","enabled","parent","components"})||!data.contains("id")||!ReadId(data["id"],id)
+            if(!OnlyKeys(data,{"id","name","enabled","parent","components","prefab"})||!data.contains("id")||!ReadId(data["id"],id)
                 ||!data.contains("name")||!data["name"].is_string()||!data.contains("enabled")||!data["enabled"].is_boolean()
                 ||!data.contains("parent")||(!data["parent"].is_null()&&!ReadId(data["parent"],parent))
                 ||!data.contains("components")||!data["components"].is_array()||data["components"].size()>4096){error="Scene.InvalidData";return false;}
             const auto entity=loaded.Create(data["name"].get<std::string>(),id);
             if(!entity||!loaded.SetEnabled(entity,data["enabled"].get<bool>())){error=loaded.LastError();return false;}
+            if(data.contains("prefab")&&!data["prefab"].is_null())
+            {
+                PrefabLink link;
+                if(!detail::ReadPrefabLinkJson(data["prefab"],link,error)||!loaded.SetPrefabLink(entity,std::move(link)))
+                {if(error.empty())error=loaded.LastError();return false;}
+            }
             parents.emplace_back(id,parent);
         }
         for(const auto [id,parent]:parents)

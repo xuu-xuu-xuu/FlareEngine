@@ -49,6 +49,7 @@ World::World(const World& other)
         const auto target=Create(record->name,record->stableId);
         if(!target) throw std::runtime_error(LastError());
         SetEnabled(target,record->enabled);
+        if(record->prefabLink) SetPrefabLink(target,record->prefabLink);
     }
     for(const auto source:other.Entities())
     {
@@ -280,6 +281,23 @@ bool World::SetEnabled(EntityHandle entity,bool enabled)
     if(!enabled){slots_[entity.index].record.enabled=false;TouchSpatial(entity);}
     return DeferEntity(entity,[entity,enabled](World& world)
     {if(!world.IsAlive(entity))return world.Fail("World.InvalidEntity");world.slots_[entity.index].record.enabled=enabled;world.TouchSpatial(entity);return world.RefreshComponents();});
+}
+const PrefabLink* World::GetPrefabLink(EntityHandle entity) const
+{
+    if(!IsAlive(entity)) return nullptr;
+    const auto& link=slots_[entity.index].record.prefabLink;
+    return link?&*link:nullptr;
+}
+bool World::SetPrefabLink(EntityHandle entity,std::optional<PrefabLink> link)
+{
+    if(!IsKnown(entity)) return Fail("World.InvalidEntity");
+    if(link&&(!IsValidAssetIdString(link->prefabId)||link->localNodeId==0)) return Fail("Prefab.InvalidDocument");
+    return DeferEntity(entity,[entity,link=std::move(link)](World& world) mutable
+    {
+        if(!world.IsAlive(entity)) return world.Fail("World.InvalidEntity");
+        world.slots_[entity.index].record.prefabLink=std::move(link);
+        return true;
+    });
 }
 bool World::SetParent(EntityHandle entity,EntityHandle parent)
 {

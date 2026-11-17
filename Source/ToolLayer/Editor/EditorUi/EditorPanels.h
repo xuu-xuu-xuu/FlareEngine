@@ -70,6 +70,7 @@ struct EditorProperty
     float dragStep = 0;
     std::optional<float> dragMinimum;
     std::optional<float> dragMaximum;
+    bool overridden = false;
 
     bool operator==(const EditorProperty&) const = default;
 };

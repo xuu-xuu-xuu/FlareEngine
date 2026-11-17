@@ -1,6 +1,7 @@
 #include "SceneInspector.h"
 #include "FeatureInspector.h"
 #include "EditorSession.h"
+#include "PrefabWorkflow.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
@@ -13,6 +14,7 @@
 #include <cctype>
 #include <cmath>
 #include <sstream>
+#include <unordered_set>
 
 namespace se
 {
@@ -164,6 +166,28 @@ void AppendSceneInspector(const EditorSession& session, const AssetStore& assets
         }
         add("stableId", "EditorUi.StableId", EditorPropertyType::String, std::to_string(id),
             "EditorUi.ObjectDetails", true).readOnly = true;
+        if (const PrefabLink* prefabLink = world.GetPrefabLink(entity))
+        {
+            const std::filesystem::path prefabFile = assets.Resolve(prefabLink->prefabId);
+            const std::string prefabLabel = prefabFile.empty() ? prefabLink->prefabId : asset_io::Utf8(prefabFile.filename());
+            add("prefab.asset", "EditorUi.PrefabAsset", EditorPropertyType::String, prefabLabel,
+                "EditorUi.PrefabInstance").readOnly = true;
+            add("prefab.apply", "EditorUi.PrefabApply", EditorPropertyType::Action, {}, "EditorUi.PrefabInstance");
+            add("prefab.revert", "EditorUi.PrefabRevert", EditorPropertyType::Action, {}, "EditorUi.PrefabInstance");
+
+            std::unordered_set<std::string> overriddenKeys;
+            overriddenKeys.reserve(prefabLink->overrides.size());
+            for (const PropertyOverride& item : prefabLink->overrides) overriddenKeys.insert(item.key);
+            const std::string prefabSection = text.GetText("EditorUi.PrefabInstance");
+            for (EditorProperty& row : rows)
+            {
+                if (row.section == prefabSection || row.type == EditorPropertyType::Action) continue;
+                if (overriddenKeys.contains(CanonicalPrefabPropertyKey(row.key)))
+                {
+                    row.overridden = true;
+                }
+            }
+        }
         auto component = [&](const char* key, const char* title) {
             add(key, title, EditorPropertyType::Action, {}, "EditorUi.AddComponent", true);
         };
@@ -211,45 +235,89 @@ std::string FillSceneInspectorChoices(const EditorSession& session,AssetStore& a
     return {};
 }
 
-bool ApplySceneInspector(EditorSession& session, std::uint64_t id, const std::string& key, const std::string& value)
+bool ApplySceneInspector(EditorSession& session, std::uint64_t id, const std::string& key,
+                         const std::string& value, AssetStore* assets)
 {
     if (session.IsPlaying()) return false;
+    if (key == "prefab.revert" && assets)
+    {
+        std::string error;
+        return RevertAllOverrides(session, *assets, id, error);
+    }
+    if (key.starts_with("prefab.revertProperty:") && assets)
+    {
+        std::string error;
+        return RevertPropertyOverride(session, *assets, id, std::string_view(key).substr(22), error);
+    }
+    if (key.starts_with("prefab.")) return false;
+
+    const bool hasPrefab = [&]() {
+        const auto& w = session.EditWorld();
+        return w.GetPrefabLink(w.FindByStableId(id)) != nullptr;
+    }();
+    bool startedTransaction = false;
+    if (hasPrefab && key != "environment.todProfile" && key != "environment.preserveTime")
+    {
+        if (session.BeginEdit(key)) startedTransaction = true;
+        else if (session.LastError() != "Editor.TransactionActive") return false;
+    }
+
+    auto finish = [&](bool applied) -> bool {
+        if (applied && hasPrefab && key != "environment.todProfile" && key != "environment.preserveTime")
+        {
+            session.Apply("Prefab.TrackOverride", [&](World& edit) {
+                if (const EntityHandle target = edit.FindByStableId(id))
+                {
+                    RecordOverrideAfterPropertyEdit(edit, assets, target, key);
+                }
+                return true;
+            });
+        }
+        if (startedTransaction)
+        {
+            if (applied) return session.CommitEdit();
+            session.CancelEdit();
+            return false;
+        }
+        return applied;
+    };
+
     const auto& world = session.EditWorld();
     const auto entity = world.FindByStableId(id);
-    if(const auto result=ApplyFeatureInspector(session,id,key,value))return *result;
-    if(key=="light.castsShadow"&&(!world.GetLight(entity)||world.GetLight(entity)->type==LightType::Directional))return false;
+    if(const auto result=ApplyFeatureInspector(session,id,key,value)) return finish(*result);
+    if(key=="light.castsShadow"&&(!world.GetLight(entity)||world.GetLight(entity)->type==LightType::Directional)) return finish(false);
     if(key=="camera.primary"||key=="mesh.castsShadow"||key=="mesh.receivesShadow"||key=="light.castsShadow")
-        return (value=="true"||value=="false")&&session.SetProperty(id,key,value=="true");
+        return finish((value=="true"||value=="false")&&session.SetProperty(id,key,value=="true"));
     if(key.starts_with("mesh.material.")||key.starts_with("mesh.slot."))
     {
-        const auto* mesh=world.GetMesh(entity);if(!mesh)return false;auto next=*mesh;
-        if(key=="mesh.slot.add"){if(next.materials.size()>=256)return false;next.materials.push_back({});}
-        else if(key=="mesh.slot.remove"){if(next.materials.size()<2)return false;next.materials.pop_back();}
-        else {std::size_t slot=0;const auto raw=std::string_view(key).substr(14);const auto [end,error]=std::from_chars(raw.data(),raw.data()+raw.size(),slot);if(error!=std::errc{}||end!=raw.data()+raw.size()||slot>=next.materials.size())return false;next.materials[slot]=value;}
-        return session.SetMesh(id,next);
+        const auto* mesh=world.GetMesh(entity);if(!mesh) return finish(false);auto next=*mesh;
+        if(key=="mesh.slot.add"){if(next.materials.size()>=256) return finish(false);next.materials.push_back({});}
+        else if(key=="mesh.slot.remove"){if(next.materials.size()<2) return finish(false);next.materials.pop_back();}
+        else {std::size_t slot=0;const auto raw=std::string_view(key).substr(14);const auto [end,error]=std::from_chars(raw.data(),raw.data()+raw.size(),slot);if(error!=std::errc{}||end!=raw.data()+raw.size()||slot>=next.materials.size()) return finish(false);next.materials[slot]=value;}
+        return finish(session.SetMesh(id,next));
     }
     if (key == "name")
     {
         const bool saved = session.Rename(id, value);
         if (saved) Log(LogLevel::Info, "EditorUi.ToolkitProperty: name");
-        return saved;
+        return finish(saved);
     }
     if (key.starts_with("add."))
-        return session.Apply("EditorUi.AddComponent", [&](World& edit) {
+        return finish(session.Apply("EditorUi.AddComponent", [&](World& edit) {
             const auto target = edit.FindByStableId(id);
             if (key == "add.camera") return !edit.GetCamera(target) && edit.SetCamera(target, {});
             if (key == "add.light") return !edit.GetLight(target) && edit.SetLight(target, {});
             return key == "add.mesh" && !edit.GetMesh(target) && edit.SetMesh(target, {});
-        });
+        }));
     if (key == "mesh.asset" || key == "mesh.material")
     {
         const auto* mesh = world.GetMesh(entity);
-        if (!mesh) return false;
+        if (!mesh) return finish(false);
         auto next = *mesh;
         if (key == "mesh.asset") next.meshAsset = value;
         else if (next.materials.empty()) next.materials.push_back(value);
         else next.materials.front() = value;
-        return session.SetMesh(id, next);
+        return finish(session.SetMesh(id, next));
     }
     if (key == "environment.todProfile" || key == "environment.preserveTime")
     {
@@ -260,49 +328,49 @@ bool ApplySceneInspector(EditorSession& session, std::uint64_t id, const std::st
     }
     if (key == "light.type")
     {
-        return session.SetProperty(id, "light.kind", value);
+        return finish(session.SetProperty(id, "light.kind", value));
     }
     if (key == "light.color")
     {
         Vec3 color;std::istringstream input(value);input.imbue(std::locale::classic());
         if(!(input>>color.x>>color.y>>color.z)||(input>>std::ws,!input.eof())||!IsFinite(color)||
-            color.x<0||color.y<0||color.z<0||color.x>1||color.y>1||color.z>1)return false;
-        return session.SetProperty(id,key,color);
+            color.x<0||color.y<0||color.z<0||color.x>1||color.y>1||color.z>1) return finish(false);
+        return finish(session.SetProperty(id,key,color));
     }
     float number{};
     const auto end = value.data() + value.size();
     const auto parsed = std::from_chars(value.data(), end, number);
-    if (parsed.ec != std::errc{} || parsed.ptr != end || !std::isfinite(number)) return false;
+    if (parsed.ec != std::errc{} || parsed.ptr != end || !std::isfinite(number)) return finish(false);
     if (key == "camera.fov" || key == "camera.near" || key == "camera.far")
     {
         if (key == "camera.fov") number *= Pi / 180.0f;
         // 共用反射属性校验与撤销路径，World 再检查 near/far 的相互约束。
-        return session.SetProperty(id, key, number);
+        return finish(session.SetProperty(id, key, number));
     }
     if (key == "light.intensity" || key == "light.range")
     {
         const auto* light = world.GetLight(entity);
-        if (!light) return false;
-        if (key == "light.range" && (light->type == LightType::Directional || number < .05f || number > 10000.0f)) return false;
-        return session.SetProperty(id, key, number);
+        if (!light) return finish(false);
+        if (key == "light.range" && (light->type == LightType::Directional || number < .05f || number > 10000.0f)) return finish(false);
+        return finish(session.SetProperty(id, key, number));
     }
     if(key=="light.innerAngle"||key=="light.outerAngle")
     {
         const auto* light=world.GetLight(entity);
-        return light&&light->type==LightType::Spot&&session.SetProperty(id,key,number*Pi/180);
+        return finish(light&&light->type==LightType::Spot&&session.SetProperty(id,key,number*Pi/180));
     }
     if (key == "light.color.r" || key == "light.color.g" || key == "light.color.b")
     {
         const auto* light = world.GetLight(entity);
-        if (!light || number < 0 || number > 1) return false;
+        if (!light || number < 0 || number > 1) return finish(false);
         auto color = light->color;
         if (key.back() == 'r') color.x = number;
         else if (key.back() == 'g') color.y = number;
         else color.z = number;
-        return session.SetProperty(id, "light.color", color);
+        return finish(session.SetProperty(id, "light.color", color));
     }
     const auto* transform = world.GetTransform(entity);
-    if (!transform || key.size() < 3 || key[key.size()-2] != '.') return false;
+    if (!transform || key.size() < 3 || key[key.size()-2] != '.') return finish(false);
     auto next = *transform;
     auto angles = EulerDegrees(next.rotation);
     const auto family = std::string_view(key).substr(0, key.size()-2);
@@ -310,15 +378,15 @@ bool ApplySceneInspector(EditorSession& session, std::uint64_t id, const std::st
     if (family == "position") vector = &next.position;
     else if (family == "scale") vector = &next.scale;
     else if (family == "rotation") vector = &angles;
-    else return false;
+    else return finish(false);
     switch (key.back())
     {
     case 'x': vector->x = number; break;
     case 'y': vector->y = number; break;
     case 'z': vector->z = number; break;
-    default: return false;
+    default: return finish(false);
     }
     if (family == "rotation") next.rotation = FromEulerDegrees(angles);
-    return session.SetTransform(id, next);
+    return finish(session.SetTransform(id, next));
 }
 }

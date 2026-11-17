@@ -9,7 +9,7 @@ namespace se
 class AssetStore;
 class World;
 class UiTree;
-enum class EditorAssetDocumentKind { Scene,Material,Ui,Bindings };
+enum class EditorAssetDocumentKind { Scene,Material,Ui,Bindings,Prefab };
 struct EditorAssetDocument
 {
     EditorAssetDocumentKind kind=EditorAssetDocumentKind::Scene;

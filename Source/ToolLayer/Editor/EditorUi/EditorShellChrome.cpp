@@ -321,7 +321,7 @@ void EditorShell::BindRootInputHandlers()
                 insideDropdown = dropdown.x <= event.x && event.x < dropdown.x + dropdown.width &&
                     dropdown.y <= event.y && event.y < dropdown.y + dropdown.height;
             }
-            if (!insideDropdown && (openMenu_ == "@create" || event.y >= menuHeight_ + toolbarHeight_))
+            if (!insideDropdown && (!openMenu_.empty() && (openMenu_.front() == '@' || event.y >= menuHeight_ + toolbarHeight_)))
             {
                 CloseMenu();
             }
@@ -656,6 +656,8 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
         add("Feature.Environment", "Environment lighting", EditorCommandId::CreateEntity, "environment-settings");
         add("Feature.Body", "Physics box", EditorCommandId::CreateEntity, "physics-cube");
         add("Feature.Character", "Capsule character", EditorCommandId::CreateEntity, "character");
+        if (panel == EditorPanelId::Hierarchy && parent != 0)
+            add("EditorUi.CreatePrefab", "Create Prefab", EditorCommandId::CreateAsset, "prefab");
     }
     ShowMenu(SurfaceRoot(dock_.SurfaceFor(panel)), x, y, 190.0f, items, parent);
 }

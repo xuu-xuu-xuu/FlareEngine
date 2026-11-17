@@ -6,6 +6,7 @@
 #include "EditorSessionStore.h"
 #include "MaterialThumbnail.h"
 #include "ProjectSettingsService.h"
+#include "PrefabWorkflow.h"
 #include "SceneInspector.h"
 #include "TodInspector.h"
 #include "UiInspector.h"
@@ -13,6 +14,7 @@
 #include "CoreLayer/Log.h"
 #include "ResourceLayer/Assets/AssetIO.h"
 #include "ResourceLayer/Assets/MaterialMetadata.h"
+#include "ResourceLayer/Scenes/PrefabDocument.h"
 
 #include <array>
 #include <charconv>
@@ -207,8 +209,10 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
     const bool texture = extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
                          extension == ".bmp" || extension == ".tga";
     const bool model = extension == ".fbx" || extension == ".glb" || extension == ".gltf";
+    const bool prefab = IsPrefabDocumentPath(selected);
     std::string type = extension;
     if (model) type = ctx.text.GetText("EditorUi.AssetModel");
+    else if (prefab) type = ctx.text.GetText("EditorUi.AssetPrefab");
     else if (texture) type = ctx.text.GetText("EditorUi.AssetTexture");
     else if (extension == ".cs") type = ctx.text.GetText("EditorUi.AssetScript");
     else if (IsMaterialDocumentPath(selected)) type = ctx.text.GetText("EditorUi.DocumentMaterial");
@@ -228,6 +232,22 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
         if (!state.modelId.empty())
         {
             state.rows.push_back({"asset.addModel", ctx.text.GetText("EditorUi.AddModelToScene"),
+                                  EditorPropertyType::Action, {}, ctx.session.IsPlaying()});
+        }
+    }
+    if (prefab)
+    {
+        for (const auto& id : ctx.assets.ListIds())
+        {
+            if (ctx.assets.Resolve(id) == selected) { state.modelId = id; break; }
+        }
+        if (!state.modelId.empty())
+        {
+            PrefabDocument doc;
+            std::string prefabError;
+            if (ReadPrefabDocument(selected, doc, prefabError))
+                addDetail("asset.nodes", "EditorUi.PrefabNodes", std::to_string(doc.nodes.size()));
+            state.rows.push_back({"asset.addPrefab", ctx.text.GetText("EditorUi.InstantiatePrefab"),
                                   EditorPropertyType::Action, {}, ctx.session.IsPlaying()});
         }
     }
@@ -415,6 +435,24 @@ bool HandleAssetPropertyAction(ToolkitWorkspaceContext& ctx, const std::string& 
         if (!AddModelToScene(ctx.session, ctx.assets, state.modelId, error))
         {
             ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, error, "Editor.AssetImportFailed"));
+            return false;
+        }
+        state.assetName.clear();
+        ctx.viewportController.Action("Frame", ctx.session, ctx.assets);
+        return true;
+    }
+    if (key == "asset.addPrefab")
+    {
+        std::string error;
+        StableEntityId rootId = 0;
+        PrefabDocument doc;
+        Transform rootTransform{};
+        if (ReadPrefabDocument(ctx.assets.Resolve(state.modelId), doc, error))
+            rootTransform.scale = PrefabRootAuthoredScale(doc);
+        if (!InstantiatePrefabIntoScene(ctx.session, ctx.assets, state.modelId, rootTransform,
+                                        rootId, error, ctx.hooks))
+        {
+            ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, error, "EditorUi.DropFailed"));
             return false;
         }
         state.assetName.clear();
@@ -712,9 +750,44 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
 
     ctx.shell.SetPropertyHandler([&ctx](std::uint64_t id, std::string key, std::string value) {
         if (key == "asset.targetPath" || key == "asset.move" || key == "asset.delete" ||
-            key == "asset.addModel" || key == "asset.openScript")
+            key == "asset.addModel" || key == "asset.addPrefab" || key == "asset.openScript")
         {
             return HandleAssetPropertyAction(ctx, key, value);
+        }
+        if (key == "prefab.apply")
+        {
+            std::string error;
+            if (!ApplyInstanceToPrefab(ctx.session, ctx.assets, ctx.root, id, error, ctx.hooks))
+            {
+                ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, error, "EditorUi.SaveFailed"));
+                return false;
+            }
+            const auto msg = ctx.text.GetText("EditorUi.PrefabApplied");
+            ctx.shell.SetStatus(msg);
+            ctx.shell.AppendConsoleLine(msg);
+            return true;
+        }
+        if (key == "prefab.revert")
+        {
+            std::string error;
+            if (!RevertAllOverrides(ctx.session, ctx.assets, id, error))
+            {
+                ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, error, "EditorUi.SaveFailed"));
+                return false;
+            }
+            ctx.shell.SetStatus(ctx.text.GetText("EditorUi.PrefabReverted"));
+            return true;
+        }
+        if (key.starts_with("prefab.revertProperty:"))
+        {
+            std::string error;
+            if (!RevertPropertyOverride(ctx.session, ctx.assets, id, std::string_view(key).substr(22), error))
+            {
+                ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, error, "EditorUi.SaveFailed"));
+                return false;
+            }
+            ctx.shell.SetStatus(ctx.text.GetText("EditorUi.PrefabReverted"));
+            return true;
         }
         if (key == "preview.play" || key == "preview.time")
         {
@@ -768,7 +841,7 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
             if (!ctx.scriptWorkflow.Status().empty()) ctx.shell.SetStatus(ctx.scriptWorkflow.Status());
             return result;
         }
-        return ApplySceneInspector(ctx.session, id, key, value);
+        return ApplySceneInspector(ctx.session, id, key, value, &ctx.assets);
     });
 
     if (!ctx.host.ProjectSettingsDoc().Loaded() && !ctx.host.LoadProjectSettings(true))

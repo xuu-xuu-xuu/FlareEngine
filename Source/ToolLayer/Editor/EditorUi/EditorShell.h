@@ -21,15 +21,14 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-
 class Localization;
-
 namespace se::ui::editor
 {
 enum class EditorPropertyEditPhase { Begin, Commit, Cancel };
 struct EditorFormPanel;
 struct EditorInspectorDrag;
 struct EditorInspectorColor;
+struct EditorAssetDragState;
 
 // 编辑器 Toolkit 组合根的 CPU 侧：文档、Chrome、Dock、面板与命令。
 // 仍由 EditorApplication/EditorRenderer 提供窗口和 RHI；本类不拥有 GPU 资源。
@@ -106,6 +105,8 @@ public:
     void SetReparentHandler(std::function<bool(std::uint64_t, std::uint64_t)> handler);
     void SetAssetSelectionHandler(std::function<void(std::string)> handler);
     void SetAssetImportHandler(std::function<void()> handler);
+    void SetAssetDragHandler(std::function<void(const std::string&, float, float, bool)> handler);
+    void SetAssetDropHandler(std::function<bool(const std::string&, float, float)> handler);
     void SetViewportImage(std::string image);
     void SetGizmo(float x, float y, bool visible);
     void SetGizmoDragHandler(std::function<void(int, float, float)> handler);
@@ -405,10 +406,11 @@ private:
     std::function<void()> assetImportHandler_;
     UiElementHandle assetsImportElement_{};
     UiElementHandle assetsPreview_{};
+    void CancelAssetDrag();
     std::uint64_t dragHierarchyId_ = 0;
-    float hierarchyDragStartX_ = 0.0f;
-    float hierarchyDragStartY_ = 0.0f;
+    float hierarchyDragStartX_ = 0.0f, hierarchyDragStartY_ = 0.0f;
     bool draggingHierarchy_ = false;
+    std::unique_ptr<EditorAssetDragState> assetDrag_;
     std::unique_ptr<UiTextEdit> inspectorEdit_;
     UiElementHandle inspectorEditElement_{};
     UiElementHandle inspectorEditSelection_{};

@@ -203,4 +203,27 @@ void AppendEditorSceneGizmos(const World& world, StableEntityId selected,
     if (world.GetLight(entity) && Active(world, entity, ComponentTypes::Light))
         DrawLight(world, entity, editorCamera, lines);
 }
+
+void AppendDropPreviewGizmo(const Aabb& worldBounds, bool valid, std::vector<rhi::SceneLine>& lines)
+{
+    const Vec3 minPt = worldBounds.minimum;
+    const Vec3 maxPt = worldBounds.maximum;
+    if (!IsFinite(minPt) || !IsFinite(maxPt)) return;
+    const ui::UiColor color = valid
+        ? ui::UiColor{0.26f, 0.88f, 0.65f, 1.0f}
+        : ui::UiColor{0.92f, 0.34f, 0.30f, 1.0f};
+    const std::array<Vec3, 8> corners{{
+        {minPt.x, minPt.y, minPt.z}, {maxPt.x, minPt.y, minPt.z},
+        {maxPt.x, minPt.y, maxPt.z}, {minPt.x, minPt.y, maxPt.z},
+        {minPt.x, maxPt.y, minPt.z}, {maxPt.x, maxPt.y, minPt.z},
+        {maxPt.x, maxPt.y, maxPt.z}, {minPt.x, maxPt.y, maxPt.z}
+    }};
+    for (int i = 0; i < 4; ++i)
+    {
+        const int next = (i + 1) % 4;
+        SceneLine(lines, corners[i], corners[next], color);
+        SceneLine(lines, corners[i + 4], corners[next + 4], color);
+        SceneLine(lines, corners[i], corners[i + 4], color);
+    }
+}
 }

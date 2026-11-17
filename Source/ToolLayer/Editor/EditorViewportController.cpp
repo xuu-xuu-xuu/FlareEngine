@@ -1,5 +1,6 @@
 #include "EditorViewportController.h"
 #include "EditorSceneGizmos.h"
+#include "PrefabWorkflow.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -260,7 +261,22 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
     {
         const bool click=clickPending_&&std::hypot(mouse.x-pressedMouse_.x,mouse.y-pressedMouse_.y)<=ClickSlop;
         clickPending_=false;
-        if(gizmo_.Active())gizmo_.End(s,true);
+        if(gizmo_.Active())
+        {
+            const StableEntityId selectedId=s.Selected();
+            if(const EntityHandle h=s.EditWorld().FindByStableId(selectedId); h && s.EditWorld().GetPrefabLink(h))
+            {
+                s.Apply("Prefab.TrackOverride", [&](World& world) {
+                    const EntityHandle target=world.FindByStableId(selectedId);
+                    if(!target) return true;
+                    RecordOverrideAfterPropertyEdit(world, &assets, target, "transform.position");
+                    RecordOverrideAfterPropertyEdit(world, &assets, target, "transform.rotation");
+                    RecordOverrideAfterPropertyEdit(world, &assets, target, "transform.scale");
+                    return true;
+                });
+            }
+            gizmo_.End(s,true);
+        }
         if(click&&snapshot_&&canStart)
         {
             if(gesture_==Gesture::Fly)

@@ -10,28 +10,63 @@
 
 namespace se
 {
+bool SpawnModelEntity(World& world, AssetStore& assets, const std::string& asset,
+                      const std::string& name, const Transform& transform,
+                      StableEntityId& createdId, std::string& error)
+{
+    createdId = 0;
+    std::vector<AssetDiagnostic> diagnostics;
+    const auto model = assets.LoadModel(asset, diagnostics);
+    if (!model)
+    {
+        error = diagnostics.empty() ? "EditorUi.AnimationModelUnavailable" : diagnostics.back().key;
+        return false;
+    }
+    const std::string resolvedName = name.empty() ? asset_io::Utf8(assets.Resolve(asset).stem()) : name;
+    const EntityHandle entity = world.Create(resolvedName);
+    if (!entity || !world.SetTransform(entity, transform) || !world.SetMesh(entity, {asset, {}}))
+    {
+        error = world.LastError();
+        if (entity) { world.Destroy(entity); world.FlushCommands(); }
+        return false;
+    }
+    if (!model->joints.empty() && !model->animations.empty())
+    {
+        const auto idle = std::find_if(model->animations.begin(), model->animations.end(),
+                                       [](const auto& clip) { return clip.name == "Idle"; });
+        const auto& clip = idle == model->animations.end() ? model->animations.front() : *idle;
+        if (!AddComponent(world, entity, "actor", error) ||
+            !WriteProperty(world, entity, "actor.asset", asset, error) ||
+            !WriteProperty(world, entity, "actor.clip", clip.name, error))
+        {
+            const StableEntityId id = world.Get(entity)->stableId;
+            world.Destroy(entity);
+            world.FlushCommands();
+            world.ForgetStableId(id);
+            return false;
+        }
+    }
+    if (!world.FlushCommands())
+    {
+        error = world.LastError();
+        return false;
+    }
+    createdId = world.Get(entity)->stableId;
+    error.clear();
+    return true;
+}
+
 bool AddModelToScene(EditorSession& session, AssetStore& assets, const std::string& asset, std::string& error)
 {
     if(session.IsPlaying()){error="Editor.EditWhilePlaying";return false;}
-    std::vector<AssetDiagnostic> diagnostics;
-    const auto model=assets.LoadModel(asset,diagnostics);
-    if(!model){error=diagnostics.empty()?"EditorUi.AnimationModelUnavailable":diagnostics.back().key;return false;}
     if(!session.BeginEdit("Editor.Create")){error=session.LastError();return false;}
-    const auto id=session.Create(asset_io::Utf8(assets.Resolve(asset).stem()));
-    bool ready=id&&session.SetMesh(id,{asset,{}});
-    if(ready&&!model->joints.empty()&&!model->animations.empty())
-    {
-        const auto idle=std::find_if(model->animations.begin(),model->animations.end(),[](const auto& clip){return clip.name=="Idle";});
-        const auto& clip=idle==model->animations.end()?model->animations.front():*idle;
-        ready=session.Apply("Feature.Edit",[&](World& world){
-            const auto entity=world.FindByStableId(id);
-            return AddComponent(world,entity,"actor",error)
-                &&WriteProperty(world,entity,"actor.asset",asset,error)
-                &&WriteProperty(world,entity,"actor.clip",clip.name,error);
-        });
-    }
-    if(ready&&session.CommitEdit())return true;
-    if(error.empty())error=session.LastError();
+    StableEntityId id = 0;
+    const std::string name = asset_io::Utf8(assets.Resolve(asset).stem());
+    const bool ok = session.Apply("Editor.Create", [&](World& world) {
+        return SpawnModelEntity(world, assets, asset, name, Transform{}, id, error);
+    });
+    if (ok && session.Select(id) && session.CommitEdit()) return true;
+    if (error.empty()) error = session.LastError();
     session.CancelEdit();
     return false;
 }

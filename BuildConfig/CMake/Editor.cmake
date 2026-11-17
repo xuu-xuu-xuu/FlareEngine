@@ -62,6 +62,8 @@ add_library(EngineEditorApp STATIC
     Source/ToolLayer/Editor/TodInspector.cpp
     Source/ToolLayer/Editor/EditorFeatureTools.cpp
     Source/ToolLayer/Editor/EditorCreation.cpp
+    Source/ToolLayer/Editor/ViewportDropWorkflow.cpp
+    Source/ToolLayer/Editor/PrefabWorkflow.cpp
     Source/ToolLayer/Editor/EditorClipPreview.cpp
     Source/ToolLayer/Editor/EditorScriptWorkflow.cpp
     Source/ToolLayer/Editor/EditorPlayInput.cpp

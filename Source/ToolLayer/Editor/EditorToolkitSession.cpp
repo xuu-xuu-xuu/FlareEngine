@@ -7,6 +7,7 @@
 #include "EditorAssetActions.h"
 #include "EditorCreation.h"
 #include "EditorScriptTools.h"
+#include "PrefabWorkflow.h"
 #include "SceneInspector.h"
 #include "TodInspector.h"
 #include "UiInspector.h"
@@ -15,6 +16,8 @@
 #include "CoreLayer/Log.h"
 #include "PlatformLayer/Windows/StartupProgress.h"
 #include "ResourceLayer/Assets/AssetIO.h"
+#include "ResourceLayer/Scenes/PrefabDocument.h"
+#include "ResourceLayer/Assets/MaterialMetadata.h"
 
 #include <commdlg.h>
 #include <shellapi.h>
@@ -299,6 +302,8 @@ void SyncToolkitHierarchyAssetsAndInspector(ToolkitAppState& state)
         const std::string extension = resolved.extension().string();
         std::string type = "asset";
         if (extension == ".fbx" || extension == ".gltf" || extension == ".glb") type = "model";
+        else if (IsPrefabDocumentPath(resolved)) type = "prefab";
+        else if (IsMaterialDocumentPath(resolved)) type = "material";
         else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".tga") type = "texture";
         else if (extension == ".hlsl" || extension == ".hlsli") type = "shader";
         else if (extension == ".json") type = "data";
@@ -411,6 +416,42 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         OpenToolkitImportConfirm(state, std::move(sources));
     };
     state.shell->SetAssetImportHandler([&state]() { BrowseAndImportToolkitAsset(state); });
+    state.shell->SetAssetDragHandler([&state](const std::string& path, float x, float y, bool active) {
+        if (!active || !state.camera || state.session.IsPlaying())
+        {
+            state.dropWorkflow.ClearHover();
+            return;
+        }
+        float u = 0.0f, v = 0.0f;
+        ui::editor::ViewportNormalize({state.viewportRect.x, state.viewportRect.y,
+                                       state.viewportRect.width, state.viewportRect.height}, x, y, u, v);
+        state.dropWorkflow.BeginOrUpdateHover(path, *state.camera, {u, v},
+            state.session.EditWorld(), state.assets, &state.session.EditEnvironment().Spatial());
+    });
+    state.shell->SetAssetDropHandler([&state](const std::string& path, float x, float y) {
+        if (!state.camera || state.session.IsPlaying())
+        {
+            state.dropWorkflow.ClearHover();
+            return false;
+        }
+        float u = 0.0f, v = 0.0f;
+        ui::editor::ViewportNormalize({state.viewportRect.x, state.viewportRect.y,
+                                       state.viewportRect.width, state.viewportRect.height}, x, y, u, v);
+        std::string error;
+        StableEntityId created = 0;
+        if (!state.dropWorkflow.CommitDrop(path, *state.camera, {u, v},
+                                           state.session, state.assets, error, state.hooks, &created))
+        {
+            const std::string msg = LocalizedToolkitStatus(state.text, error, "EditorUi.DropFailed");
+            state.shell->SetStatus(msg);
+            state.shell->AppendConsoleLine(msg);
+            return false;
+        }
+        state.assetState.assetName.clear();
+        state.shell->FocusPanel(EditorPanelId::Viewport);
+        Log(LogLevel::Info, "EditorUi.ToolkitDrop: " + std::to_string(created));
+        return true;
+    });
     state.shell->SetViewportActionHandler([&state](std::string_view action) {
         state.viewportController.Action(action, state.session, state.assets);
     });
@@ -605,6 +646,29 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             state.shell->SetStatus(state.text.GetText("Editor.AssetOperationBusy"));
             return false;
         }
+        if (command.argument == "prefab")
+        {
+            const StableEntityId targetId = command.target != 0 ? command.target : state.session.Selected();
+            std::filesystem::path created;
+            AssetId createdId;
+            std::string error;
+            const bool saved = CreatePrefabFromSelection(
+                state.session, state.assets, state.root, targetId, {}, created, createdId, error, state.hooks);
+            if (saved)
+            {
+                state.pendingAsset = asset_io::Utf8(created);
+                const std::string msg = state.text.GetText("EditorUi.PrefabCreated") + ": " + asset_io::Utf8(created.filename());
+                state.shell->SetStatus(msg);
+                state.shell->AppendConsoleLine(msg);
+            }
+            else
+            {
+                const std::string msg = LocalizedToolkitStatus(state.text, error, "EditorUi.SaveFailed");
+                state.shell->SetStatus(msg);
+                state.shell->AppendConsoleLine(msg);
+            }
+            return saved;
+        }
         std::filesystem::path created;
         std::string error;
         const bool saved = CreateEditorAsset(command.argument, state.root, state.assets, created, error);
@@ -620,6 +684,19 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             state.shell->AppendConsoleLine(state.importStatus);
         }
         return saved;
+    });
+    commands.Register(EditorCommandId::SetProperty, [&state](const EditorCommand& command) {
+        if (!command.argument.starts_with("prefab.revertProperty:")) return false;
+        std::string error;
+        const StableEntityId targetId = command.target != 0 ? command.target : state.session.Selected();
+        if (!RevertPropertyOverride(state.session, state.assets, targetId,
+                                    std::string_view(command.argument).substr(22), error))
+        {
+            state.shell->SetStatus(LocalizedToolkitStatus(state.text, error, "EditorUi.SaveFailed"));
+            return false;
+        }
+        state.shell->SetStatus(state.text.GetText("EditorUi.PrefabReverted"));
+        return true;
     });
     commands.Register(EditorCommandId::Rename, [&state](const EditorCommand&) {
         return !state.assetState.inspectUi && state.shell && state.shell->BeginRename();
@@ -1123,6 +1200,7 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
     frame.editorSkyEnabled = state.viewportController.Sky();
     frame.editorGridEnabled = state.viewportController.Grid() && !state.session.IsPlaying();
     frame.editorSceneLines = state.viewportController.SceneLines();
+    if (!state.session.IsPlaying()) state.dropWorkflow.AppendPreviewLines(frame.editorSceneLines);
     frame.editorSelected = state.session.IsPlaying() ? 0 : state.session.Selected();
     if (state.loggedViewport[0] != viewportRect.x || state.loggedViewport[1] != viewportRect.y ||
         state.loggedViewport[2] != viewportRect.width || state.loggedViewport[3] != viewportRect.height)

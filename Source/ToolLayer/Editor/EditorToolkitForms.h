@@ -68,6 +68,7 @@ struct ToolkitWorkspaceContext
     std::string& exportName;
     std::string& importStatus;
     std::future<ToolkitImportResult>& importTask;
+    EditorApplicationHooks* hooks = nullptr;
 };
 
 // 将引擎诊断键（如 Editor.ExternalChange）解析为当前语言文案，未命中键表时使用本地化兜底键。

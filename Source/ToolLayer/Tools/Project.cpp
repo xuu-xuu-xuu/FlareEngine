@@ -7,6 +7,7 @@
 #include "FunctionLayer/GameUI/UiTree.h"
 #include "FunctionLayer/Physics/PhysicsWorld.h"
 #include "ResourceLayer/Scenes/SceneSerializer.h"
+#include "ResourceLayer/Scenes/PrefabDocument.h"
 #include "FunctionLayer/Runtime/TODSystem.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 #include <nlohmann/json.hpp>
@@ -139,7 +140,7 @@ bool ReadProject(const fs::path& manifest,ProjectDescription& output,std::vector
         for(const auto& asset:json.at("assets"))
         {
             ProjectAsset value{asset.at("id").get<std::string>(),asset.at("type").get<std::string>()};
-            if(!ValidAssetId(value.id)||!assetIds.insert(value.id).second||(value.type!="model"&&value.type!="image"&&value.type!="material"&&value.type!="tod"&&value.type!="shader"&&value.type!="environment"&&value.type!="data"))return Fail(diagnostics,"Project.InvalidManifest");
+            if(!ValidAssetId(value.id)||!assetIds.insert(value.id).second||(value.type!="model"&&value.type!="image"&&value.type!="material"&&value.type!="tod"&&value.type!="shader"&&value.type!="environment"&&value.type!="data"&&value.type!="prefab"))return Fail(diagnostics,"Project.InvalidManifest");
             result.assets.push_back(std::move(value));
         }
         if(json.contains("replay"))
@@ -220,6 +221,32 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             else if(asset.type=="environment")
             {if(!store.LoadEnvironment(asset.id,assetDiagnostics)){for(const auto& d:assetDiagnostics)diagnostics.push_back({d.key,d.detail});return false;}}
             else if(asset.type=="data"){} // 已验证源文件和 sidecar 存在并位于项目目录。
+            else if(asset.type=="prefab")
+            {
+                PrefabDocument prefabDoc; std::string prefabError;
+                if(!ReadPrefabDocument(source,prefabDoc,prefabError))return Fail(diagnostics,prefabError.c_str(),asset.id);
+                for(const auto& node:prefabDoc.nodes)
+                {
+                    for(const auto& comp:node.components)
+                    {
+                        for(const auto& prop:comp.properties)
+                        {
+                            if(prop.type==PropertyType::AssetId)
+                            {
+                                const auto* id=std::get_if<std::string>(&prop.value);
+                                if(!id||id->empty()||IsBuiltinMesh(*id))continue;
+                                if(!assetTypes.contains(*id))return Fail(diagnostics,"Project.MissingAsset",*id);
+                            }
+                            else if(prop.type==PropertyType::AssetList)
+                            {
+                                const auto* ids=std::get_if<std::vector<std::string>>(&prop.value);
+                                if(!ids)continue;
+                                for(const auto& id:*ids)if(!id.empty()&&!assetTypes.contains(id))return Fail(diagnostics,"Project.MissingAsset",id);
+                            }
+                        }
+                    }
+                }
+            }
             else
             {
                 const auto material=store.LoadMaterial(asset.id,assetDiagnostics);
@@ -246,6 +273,10 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             {
                 if(!IsBuiltinMesh(mesh->meshAsset)&&!assetReference(mesh->meshAsset,"model"))return Fail(diagnostics,"Project.MissingAsset",mesh->meshAsset);
                 for(const auto& material:mesh->materials)if(!assetReference(material,"material"))return Fail(diagnostics,"Project.MissingAsset",material);
+            }
+            for(const auto entity:world.Entities())if(const auto* link=world.GetPrefabLink(entity))
+            {
+                if(!link->prefabId.empty()&&!assetReference(link->prefabId,"prefab"))return Fail(diagnostics,"Project.MissingAsset",link->prefabId);
             }
             if(path==project.entryScene)
             {PhysicsWorld physics;std::map<std::uint64_t,BodyHandle> bodies;if(!BuildPhysics(project,world,physics,bodies,diagnostics))return false;}
