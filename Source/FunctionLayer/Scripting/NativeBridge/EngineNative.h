@@ -132,6 +132,10 @@ SE_API int32_t SE_CALL se_session_set_value(SE_Session session, double value) SE
 SE_API int32_t SE_CALL se_session_get_step_count(SE_Session session, uint64_t* count) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_get_input(SE_Session session, SE_InputState* input) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_get_pointer(SE_Session session, SE_PointerState* input) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_input_load_actions(SE_Session session, const char* json_utf8, uint32_t length) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_input_action_button(SE_Session session, const char* action, uint32_t length, int32_t* down, int32_t* pressed) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_input_action_axis1d(SE_Session session, const char* action, uint32_t length, float* value) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_input_action_axis2d(SE_Session session, const char* action, uint32_t length, SE_Vector2* value) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_run_window(SE_Session session, const char* locale, uint32_t length, int32_t visible, uint64_t maximum_frames) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_configure_quality(SE_Session session,const char* path,uint32_t length,int32_t show_menu) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_set_quality_profiles(SE_Session session,const char* json,uint32_t length) SE_NOEXCEPT;

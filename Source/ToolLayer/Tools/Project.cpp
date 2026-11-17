@@ -6,6 +6,7 @@
 #include "CoreLayer/Profiler.h"
 #include "FunctionLayer/GameUI/UiTree.h"
 #include "FunctionLayer/Physics/PhysicsWorld.h"
+#include "FunctionLayer/Input/InputActionAsset.h"
 #include "ResourceLayer/Scenes/SceneSerializer.h"
 #include "ResourceLayer/Scenes/PrefabDocument.h"
 #include "FunctionLayer/Runtime/TODSystem.h"
@@ -280,6 +281,14 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             }
             if(path==project.entryScene)
             {PhysicsWorld physics;std::map<std::uint64_t,BodyHandle> bodies;if(!BuildPhysics(project,world,physics,bodies,diagnostics))return false;}
+        }
+        const fs::path inputSettings=project.contentRoot/std::filesystem::path(InputActionsRelativePath);
+        if(fs::exists(inputSettings))
+        {
+            if(!FileDependency(project.root,inputSettings,files,diagnostics))return false;
+            InputActionDocument inputDoc; std::string inputError;
+            if(!ReadInputActionDocument(inputSettings,inputDoc,inputError))
+                return Fail(diagnostics,inputError.c_str(),Relative(project.root,inputSettings));
         }
         for(const auto& path:project.uiDocuments)
         {

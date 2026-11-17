@@ -126,10 +126,16 @@ add_library(EngineGameUI STATIC
 se_target(EngineGameUI)
 target_link_libraries(EngineGameUI PUBLIC EngineCore PRIVATE dwrite)
 
+add_library(EngineInput STATIC
+    Source/FunctionLayer/Input/InputActionAsset.cpp
+    Source/FunctionLayer/Input/InputActionMap.cpp)
+se_target(EngineInput)
+target_link_libraries(EngineInput PUBLIC EngineCore)
+
 add_library(EngineNative SHARED Source/FunctionLayer/Scripting/NativeBridge/EngineNative.cpp Source/FunctionLayer/Scripting/NativeBridge/WindowProfile.cpp
     Source/FunctionLayer/Scripting/NativeBridge/PlayerQualityMenu.cpp)
 se_target(EngineNative)
-target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineGameUI EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
+target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineGameUI EngineInput EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
 
 add_library(EngineApplication STATIC Source/FunctionLayer/Application/FrameData.cpp Source/FunctionLayer/Application/FeatureFrameData.cpp Source/FunctionLayer/Application/FreeCameraInput.cpp
     Source/FunctionLayer/Application/PlayerQuality.cpp)
@@ -143,6 +149,7 @@ add_library(EnginePlatform STATIC
     Source/PlatformLayer/Windows/ProcessDiagnostics.cpp
     Source/PlatformLayer/Windows/HResult.cpp
     Source/PlatformLayer/Windows/Window.cpp
+    Source/PlatformLayer/Windows/WindowsGamepad.cpp
     Source/PlatformLayer/Windows/WindowsInput.cpp
     Source/PlatformLayer/Windows/WindowsUiInput.cpp
     Source/PlatformLayer/Windows/FrameTimer.cpp
@@ -157,7 +164,7 @@ target_link_libraries(EngineSandboxHost PUBLIC EnginePlatform EngineApplication)
 
 add_library(EngineProject STATIC Source/ToolLayer/Tools/Project.cpp)
 se_target(EngineProject)
-target_link_libraries(EngineProject PUBLIC EngineRuntime EngineAssets EngineGameUI EnginePhysics EngineCore)
+target_link_libraries(EngineProject PUBLIC EngineRuntime EngineAssets EngineGameUI EnginePhysics EngineInput EngineCore)
 
 add_library(EngineProjectSession STATIC Source/ToolLayer/Editor/ProjectWorkspaceSession.cpp)
 se_target(EngineProjectSession)

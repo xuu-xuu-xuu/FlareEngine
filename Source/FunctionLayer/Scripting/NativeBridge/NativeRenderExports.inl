@@ -10,7 +10,7 @@ int32_t SE_CALL se_session_run_window(SE_Session handle, const char* locale, uin
             std::filesystem::create_directories(s->windowProfile.parent_path());
             if(!std::filesystem::create_directory(s->windowProfile))return Error(SE_INVALID_ARGUMENT,"Bridge.ProfileOutputExists");
         }
-        struct WindowGuard{Session& s;~WindowGuard(){s.windowRunning=false;s.input={};s.pointer={};}} guard{*s};
+        struct WindowGuard{Session& s;~WindowGuard(){s.windowRunning=false;s.input={};s.pointer={};s.inputActions.Reset();}} guard{*s};
         s->windowRunning=true;s->stopWindow=false;
         const bool sequence=!s->captureSequence.empty()&&s->captureSequenceCount>0;
         if(sequence&&!s->windowCapture.empty())return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
@@ -181,7 +181,7 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
         const auto resources=ResourceDirectory();
         const auto sceneFile=EditorEnvironmentPath(L"SELFENGINE_EDITOR_SCENE_FILE"),uiFile=EditorEnvironmentPath(L"SELFENGINE_EDITOR_UI_FILE");
         std::string localizationError;s->localization.Load(resources/"Localization"/(language+".txt"),localizationError);
-        struct EditorGuard{Session& s;~EditorGuard(){s.editor=nullptr;s.borrowedWorld=nullptr;s.borrowedEnvironment=nullptr;s.borrowedUi=nullptr;s.windowRunning=false;s.input={};s.pointer={};}} guard{*s};
+        struct EditorGuard{Session& s;~EditorGuard(){s.editor=nullptr;s.borrowedWorld=nullptr;s.borrowedEnvironment=nullptr;s.borrowedUi=nullptr;s.windowRunning=false;s.input={};s.pointer={};s.inputActions.Reset();}} guard{*s};
         s->windowRunning=true;s->stopWindow=false;s->pendingPlay=-1;
         bool callbackFailed=false;
         auto clearRuntime=[s]{s->scenePhysics.Clear(s->physics);for(auto body:s->physics.Bodies())s->physics.DestroyBody(body);s->bodyOwners.clear();s->characters.clear();s->physicsClock.Reset();s->contactEvents.clear();s->uiEvents.clear();s->environmentDriven=s->environmentPhysics=s->pendingEnvironmentRelease=false;s->physics.SetEnvironmentDriven(false);};
@@ -227,7 +227,23 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
         RuntimeAppearance appearanceBeforePlay;
         hooks.playStarted=[&](se::World& world,se::UiTree& ui){
             appearanceBeforePlay=s->appearance;
-            clearRuntime();s->borrowedWorld=&world;s->borrowedEnvironment=s->editor->PlayEnvironment();s->borrowedUi=&ui;
+            clearRuntime();s->inputActions.Reset();
+            if(s->assets)
+            {
+                const auto inputPath=s->assets->SourceRoot()/std::filesystem::path(se::InputActionsRelativePath);
+                std::error_code inputEc;
+                if(std::filesystem::exists(inputPath,inputEc))
+                {
+                    se::InputActionDocument inputDoc; std::string inputErr;
+                    if(!se::ReadInputActionDocument(inputPath,inputDoc,inputErr)) return false;
+                    s->inputActions.SetDocument(std::move(inputDoc));
+                }
+                else
+                {
+                    s->inputActions.SetDocument(se::DefaultInputActionDocument());
+                }
+            }
+            s->borrowedWorld=&world;s->borrowedEnvironment=s->editor->PlayEnvironment();s->borrowedUi=&ui;
             // EditorSession 的 Play 用的是自己的 Environment 实例；不在这里装蒙皮解析器，
             // 姿态系统会因为没有解析器直接返回，角色停在绑定姿态（E18）。
             s->Env().SetSkeletalResolver([s](const std::string& asset)->std::shared_ptr<const se::StaticModel>{
@@ -240,7 +256,7 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
         hooks.playStopping=[&](se::World&,se::UiTree&){
             if(s->editorCallback&&s->editorCallback(handle,1,s->editorContext)!=0)callbackFailed=true;
             s->appearance=appearanceBeforePlay;
-            clearRuntime();s->borrowedWorld=nullptr;s->borrowedEnvironment=nullptr;s->borrowedUi=nullptr;
+            clearRuntime();s->inputActions.Reset();s->borrowedWorld=nullptr;s->borrowedEnvironment=nullptr;s->borrowedUi=nullptr;
             CloseEventPublishers(handle);s->eventSubscriptions.clear();
         };
         hooks.input=[s](const InputState& input,bool keyboard,bool pointer){CaptureInput(*s,input,keyboard,pointer);};

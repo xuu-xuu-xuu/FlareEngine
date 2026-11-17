@@ -574,7 +574,9 @@ bool ParseMaterialFormValue(const PropertyDescriptor& descriptor, std::string_vi
     return ValidatePropertyValue(descriptor, output);
 }
 
-std::vector<EditorProperty> BuildProjectSettingsRows(const ProjectSettings& settings, const Localization& text)
+std::vector<EditorProperty> BuildProjectSettingsRows(const ProjectSettings& settings,
+                                                   const Localization& text,
+                                                   const std::filesystem::path& projectRoot)
 {
     std::vector<EditorProperty> rows;
     rows.push_back({"name", text.GetText("EditorUi.Name"), EditorPropertyType::String, settings.name, false});
@@ -602,6 +604,41 @@ std::vector<EditorProperty> BuildProjectSettingsRows(const ProjectSettings& sett
     }
     rows.push_back({"assets", text.GetText("EditorUi.Assets"), EditorPropertyType::String,
                     std::to_string(settings.assets.size()) + " " + text.GetText("EditorUi.Registered"), true});
+    if (!projectRoot.empty())
+    {
+        InputActionDocument inputDoc;
+        std::string inputError;
+        if (ProjectSettingsService::ReadInputActions(projectRoot, settings, inputDoc, inputError))
+        {
+            std::string moveDeadZone = "0.15";
+            std::string jumpKey = "32";
+            for (const InputActionDefinition& action : inputDoc.actions)
+            {
+                if (action.name == "Move") moveDeadZone = std::to_string(action.deadZone);
+                if (action.name == "Jump")
+                {
+                    for (const InputBinding& b : action.bindings)
+                    {
+                        if (b.device == InputDeviceKind::Keyboard) { jumpKey = std::to_string(b.keyCode); break; }
+                    }
+                }
+            }
+            rows.push_back({"input.actionsCount", text.GetText("EditorUi.InputActionsCount"), EditorPropertyType::String,
+                            std::to_string(inputDoc.actions.size()), true});
+            rows.push_back({"input.deadZone.Move", text.GetText("EditorUi.InputMoveDeadZone"), EditorPropertyType::Number,
+                            moveDeadZone, false});
+            rows.back().dragStep = 0.01f;
+            rows.back().dragMinimum = 0.0f;
+            rows.back().dragMaximum = 0.99f;
+            rows.push_back({"input.key.Jump", text.GetText("EditorUi.InputJumpKey"), EditorPropertyType::Number,
+                            jumpKey, false});
+            rows.back().dragStep = 1.0f;
+            rows.back().dragMinimum = 0.0f;
+            rows.back().dragMaximum = 255.0f;
+            rows.push_back({"input.resetDefaults", text.GetText("EditorUi.InputResetDefaults"), EditorPropertyType::Action,
+                            {}, false});
+        }
+    }
     return rows;
 }
 
@@ -855,12 +892,28 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
         else if (!ctx.host.BuildSettingsDoc().SourceExists())
             Log(LogLevel::Warning, "EditorUi.ToolkitBuildSettings: Project.BuildSettingsMissing");
     }
-    ctx.shell.SetFormProperties(EditorPanelId::ProjectSettings, BuildProjectSettingsRows(ctx.host.Project(), ctx.text));
+    ctx.shell.SetFormProperties(EditorPanelId::ProjectSettings, BuildProjectSettingsRows(ctx.host.Project(), ctx.text, ctx.root));
     ctx.shell.SetFormProperties(EditorPanelId::BuildExport, BuildBuildSettingsRows(ctx.host.Build(), ctx.exportName, ctx.text));
 
     ctx.shell.SetFormHandlers(
         EditorPanelId::ProjectSettings,
-        [&ctx](std::string key, std::string value) { return ApplyProjectSettingsField(ctx.host, key, value); },
+        [&ctx](std::string key, std::string value) {
+            if (key.starts_with("input."))
+            {
+                std::string inputError;
+                if (!ProjectSettingsService::ApplyInputActionSetting(ctx.root, ctx.host.Project(), key, value, inputError))
+                {
+                    ctx.shell.SetFormStatus(EditorPanelId::ProjectSettings,
+                        LocalizedToolkitStatus(ctx.text, inputError, "Input.InvalidDocument"));
+                    return false;
+                }
+                ctx.shell.SetFormProperties(EditorPanelId::ProjectSettings,
+                    BuildProjectSettingsRows(ctx.host.Project(), ctx.text, ctx.root));
+                ctx.shell.SetFormStatus(EditorPanelId::ProjectSettings, ctx.text.GetText("EditorUi.Saved"));
+                return true;
+            }
+            return ApplyProjectSettingsField(ctx.host, key, value);
+        },
         [&ctx]() {
             if (!ctx.host.SaveSettings(true))
             {

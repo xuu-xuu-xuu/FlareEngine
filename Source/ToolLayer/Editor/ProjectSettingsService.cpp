@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 #include <Windows.h>
 #include <algorithm>
+#include <charconv>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <set>
@@ -286,5 +288,120 @@ bool ProjectSettingsService::ValidateBuild(const std::filesystem::path& projectR
         {errorKey="Project.InvalidEntryUi";detail=settings.entryUi;return false;}
     }
     return true;
+}
+
+std::filesystem::path ProjectSettingsService::InputActionsPath(const std::filesystem::path& projectRoot,const ProjectSettings& settings)
+{
+    std::filesystem::path contentRoot;
+    if(!RelativeInside(projectRoot,settings.contentRoot,contentRoot))return {};
+    std::filesystem::path resolved;
+    if(!RelativeInside(contentRoot,std::string(InputActionsRelativePath),resolved))return {};
+    return resolved;
+}
+
+bool ProjectSettingsService::ReadInputActions(const std::filesystem::path& projectRoot,const ProjectSettings& settings,
+    InputActionDocument& output,std::string& errorKey)
+{
+    const auto path=InputActionsPath(projectRoot,settings);
+    if(path.empty()){errorKey="Project.InvalidContentRoot";return false;}
+    std::error_code ec;
+    if(!std::filesystem::exists(path,ec))
+    {
+        if(ec){errorKey="Input.ReadFailed";return false;}
+        output=DefaultInputActionDocument();
+        errorKey.clear();
+        return true;
+    }
+    return ReadInputActionDocument(path,output,errorKey);
+}
+
+bool ProjectSettingsService::WriteInputActions(const std::filesystem::path& projectRoot,const ProjectSettings& settings,
+    const InputActionDocument& document,std::string& errorKey)
+{
+    const auto path=InputActionsPath(projectRoot,settings);
+    if(path.empty()){errorKey="Project.InvalidContentRoot";return false;}
+    return WriteInputActionDocument(path,document,errorKey);
+}
+
+bool ProjectSettingsService::SetInputActionBinding(InputActionDocument& document,std::string_view actionName,
+    InputActionKind kind,float deadZone,const InputBinding& binding,std::string& errorKey)
+{
+    if(actionName.empty()||!std::isfinite(deadZone)||deadZone<0.0f||deadZone>=1.0f)
+    {errorKey="Input.InvalidDocument";return false;}
+    InputActionDocument candidate=document;
+    auto it=std::find_if(candidate.actions.begin(),candidate.actions.end(),
+        [actionName](const InputActionDefinition& a){return a.name==actionName;});
+    if(it==candidate.actions.end())
+    {
+        candidate.actions.push_back({std::string(actionName),kind,deadZone,{binding}});
+    }
+    else
+    {
+        it->kind=kind;
+        it->deadZone=deadZone;
+        auto existing=std::find_if(it->bindings.begin(),it->bindings.end(),[&](const InputBinding& b){
+            if(b.device!=binding.device)return false;
+            if(b.device==InputDeviceKind::Keyboard)return b.keyCode==binding.keyCode;
+            if(b.device==InputDeviceKind::Mouse)return b.mouseControl==binding.mouseControl;
+            return b.gamepadControl==binding.gamepadControl&&b.gamepadIndex==binding.gamepadIndex;
+        });
+        if(existing!=it->bindings.end())*existing=binding;
+        else it->bindings.push_back(binding);
+    }
+    if(!ValidateInputActionDocument(candidate,errorKey))return false;
+    document=std::move(candidate);
+    return true;
+}
+
+bool ProjectSettingsService::RemoveInputAction(InputActionDocument& document,std::string_view actionName,std::string& errorKey)
+{
+    const auto before=document.actions.size();
+    document.actions.erase(std::remove_if(document.actions.begin(),document.actions.end(),
+        [actionName](const InputActionDefinition& a){return a.name==actionName;}),document.actions.end());
+    if(document.actions.size()==before){errorKey="Input.ActionNotFound";return false;}
+    errorKey.clear();
+    return true;
+}
+
+bool ProjectSettingsService::ApplyInputActionSetting(const std::filesystem::path& projectRoot,const ProjectSettings& settings,
+    std::string_view key,const std::string& value,std::string& errorKey)
+{
+    InputActionDocument doc;
+    if(!ReadInputActions(projectRoot,settings,doc,errorKey))return false;
+    if(key=="input.resetDefaults")
+    {
+        return WriteInputActions(projectRoot,settings,DefaultInputActionDocument(),errorKey);
+    }
+    if(key.starts_with("input.deadZone."))
+    {
+        const std::string_view actionName=key.substr(15);
+        float dz=0.0f;
+        const auto [ptr,ec]=std::from_chars(value.data(),value.data()+value.size(),dz);
+        if(ec!=std::errc{}||ptr!=value.data()+value.size()||!std::isfinite(dz)||dz<0.0f||dz>=1.0f)
+        {errorKey="Input.InvalidDocument";return false;}
+        auto it=std::find_if(doc.actions.begin(),doc.actions.end(),
+            [actionName](const InputActionDefinition& a){return a.name==actionName;});
+        if(it==doc.actions.end()){errorKey="Input.ActionNotFound";return false;}
+        it->deadZone=dz;
+        return WriteInputActions(projectRoot,settings,doc,errorKey);
+    }
+    if(key.starts_with("input.key."))
+    {
+        const std::string_view actionName=key.substr(10);
+        std::uint32_t code=0;
+        const auto [ptr,ec]=std::from_chars(value.data(),value.data()+value.size(),code);
+        if(ec!=std::errc{}||ptr!=value.data()+value.size()||code>=256u)
+        {errorKey="Input.InvalidBinding";return false;}
+        auto it=std::find_if(doc.actions.begin(),doc.actions.end(),
+            [actionName](const InputActionDefinition& a){return a.name==actionName;});
+        if(it==doc.actions.end()){errorKey="Input.ActionNotFound";return false;}
+        auto kb=std::find_if(it->bindings.begin(),it->bindings.end(),
+            [](const InputBinding& b){return b.device==InputDeviceKind::Keyboard;});
+        if(kb!=it->bindings.end())kb->keyCode=code;
+        else it->bindings.push_back(InputBinding{InputDeviceKind::Keyboard,code,MouseControl::None,GamepadControl::None,0,1.0f,0.0f,1.0f});
+        return WriteInputActions(projectRoot,settings,doc,errorKey);
+    }
+    errorKey="Input.InvalidDocument";
+    return false;
 }
 }

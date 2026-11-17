@@ -2,12 +2,14 @@
 
 #include <array>
 #include <vector>
+#include "GamepadState.h"
 #include "InputEvents.h"
 
 // 保存输入状态和待消费事件，不依赖 Windows 类型或窗口生命周期。
 struct InputState
 {
     std::array<bool, 256> keysDown{};
+    std::array<GamepadState, 4> gamepads{};
     bool hasFocus = false; // 持续状态；由平台焦点消息更新，清事件不改变它。
     bool isLeftDown = false;
     std::array<bool,3> mouseButtons{};

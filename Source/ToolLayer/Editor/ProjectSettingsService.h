@@ -1,5 +1,6 @@
 #pragma once
 #include "CoreLayer/QualityProfiles.h"
+#include "FunctionLayer/Input/InputActionAsset.h"
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -50,5 +51,17 @@ public:
         std::string& errorKey,std::string& detail);
     static bool ValidateBuild(const std::filesystem::path& projectRoot,const BuildSettings& settings,
         std::string& errorKey,std::string& detail);
+
+    // 输入动作映射表（Content/Settings/Input.input.json）读写、校验与单项设置更新。
+    static std::filesystem::path InputActionsPath(const std::filesystem::path& projectRoot,const ProjectSettings& settings);
+    static bool ReadInputActions(const std::filesystem::path& projectRoot,const ProjectSettings& settings,
+        InputActionDocument& output,std::string& errorKey);
+    static bool WriteInputActions(const std::filesystem::path& projectRoot,const ProjectSettings& settings,
+        const InputActionDocument& document,std::string& errorKey);
+    static bool SetInputActionBinding(InputActionDocument& document,std::string_view actionName,
+        InputActionKind kind,float deadZone,const InputBinding& binding,std::string& errorKey);
+    static bool RemoveInputAction(InputActionDocument& document,std::string_view actionName,std::string& errorKey);
+    static bool ApplyInputActionSetting(const std::filesystem::path& projectRoot,const ProjectSettings& settings,
+        std::string_view key,const std::string& value,std::string& errorKey);
 };
 }

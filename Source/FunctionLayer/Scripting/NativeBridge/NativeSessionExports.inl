@@ -336,9 +336,20 @@ int32_t SE_CALL se_session_set_asset_root(SE_Session handle,const char* root,uin
         if(!root||!cache||rootLength==0||cacheLength==0||rootLength>32768||cacheLength>32768||!ValidUtf8(root,rootLength)||!ValidUtf8(cache,cacheLength))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidUtf8");
         std::u8string rootUtf8(rootLength,u8'\0'),cacheUtf8(cacheLength,u8'\0');
         std::memcpy(rootUtf8.data(),root,rootLength);std::memcpy(cacheUtf8.data(),cache,cacheLength);
-        auto candidate=std::make_unique<se::AssetStore>(std::filesystem::path(rootUtf8),std::filesystem::path(cacheUtf8));
+        const std::filesystem::path rootPath(rootUtf8);
+        auto candidate=std::make_unique<se::AssetStore>(rootPath,std::filesystem::path(cacheUtf8));
         std::vector<se::AssetDiagnostic> diagnostics;
         if(!candidate->Scan(diagnostics))return Error(SE_INVALID_ARGUMENT,"Bridge.AssetScanFailed");
+        se::InputActionDocument inputDoc=se::DefaultInputActionDocument();
+        const auto inputSettingsPath=rootPath/std::filesystem::path(se::InputActionsRelativePath);
+        std::error_code inputEc;
+        if(std::filesystem::exists(inputSettingsPath,inputEc))
+        {
+            std::string inputError;
+            if(!se::ReadInputActionDocument(inputSettingsPath,inputDoc,inputError))
+                return Error(SE_INVALID_ARGUMENT,inputError.empty()?"Input.InvalidDocument":inputError.c_str());
+        }
+        s->inputActions.SetDocument(std::move(inputDoc));
         s->assets=std::move(candidate);return SE_OK;});
 }
 int32_t SE_CALL se_assets_list(SE_Session handle,char* output,uint32_t capacity,uint32_t* required) noexcept

@@ -36,6 +36,14 @@ internal static unsafe partial class NativeMethods
     internal static partial int GetInput(ulong handle, out InputState input);
     [LibraryImport(Library, EntryPoint = "se_session_get_pointer")]
     internal static partial int GetPointer(ulong handle, out PointerState input);
+    [LibraryImport(Library, EntryPoint = "se_input_load_actions", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int InputLoadActions(ulong handle, string json, uint length);
+    [LibraryImport(Library, EntryPoint = "se_input_action_button", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int InputActionButton(ulong handle, string action, uint length, out int down, out int pressed);
+    [LibraryImport(Library, EntryPoint = "se_input_action_axis1d", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int InputActionAxis1D(ulong handle, string action, uint length, out float value);
+    [LibraryImport(Library, EntryPoint = "se_input_action_axis2d", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int InputActionAxis2D(ulong handle, string action, uint length, out Vector2 value);
     [LibraryImport(Library, EntryPoint = "se_session_run_window", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int RunWindow(ulong handle, string locale, uint length, int visible, ulong maximumFrames);
     [LibraryImport(Library, EntryPoint="se_session_set_window_capture", StringMarshalling=StringMarshalling.Utf8)]

@@ -21,6 +21,7 @@ public abstract class Behaviour
     public Entity Entity { get; internal set; } = null!;
     public ScriptSystem Scripts => Owner ?? throw new InvalidOperationException("Script.NotAttached");
     public ScriptInput Input => Scripts.Input;
+    public InputActions Actions => Scripts.Session.Actions;
     public virtual bool UpdateWhenPaused => false;
     public bool Enabled
     {

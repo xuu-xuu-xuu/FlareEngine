@@ -15,6 +15,7 @@
 #include "PlayerQualityMenu.h"
 #include "NativeLogicObjects.h"
 #include "PlatformLayer/InputState.h"
+#include "FunctionLayer/Input/InputActionMap.h"
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
 #include "PlatformLayer/Windows/ProcessDiagnostics.h"
@@ -77,6 +78,7 @@ struct Session
     std::vector<se::UiEvent> uiEvents;
     SE_InputState input{};
     SE_PointerState pointer{};
+    se::InputActionMap inputActions{se::DefaultInputActionDocument()};
     std::unordered_map<SE_Entity,se::CharacterController> characters;
     Localization localization;
     std::unique_ptr<se::AssetStore> assets;
@@ -289,6 +291,7 @@ void SceneServices(Session& session,SE_Session handle)
 }
 void CaptureInput(Session& session,const InputState& input,bool consumed,bool pointerConsumed)
 {
+            session.inputActions.Update(input, consumed, pointerConsumed);
             session.pointer={};session.pointer.x=input.mouseX;session.pointer.y=input.mouseY;session.pointer.consumed=pointerConsumed?1:0;
             if(!pointerConsumed)
             {
@@ -436,4 +439,5 @@ static_assert(sizeof(SE_PointerState)==28 && sizeof(SE_CharacterDesc)==20 && siz
 #include "NativeWorldExports.inl"
 #include "NativePhysicsExports.inl"
 #include "NativeUiExports.inl"
+#include "NativeInputExports.inl"
 #include "NativeLogicExports.inl"

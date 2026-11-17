@@ -313,6 +313,10 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
                 float dpi = state.input ? state.input->DpiScale() : 1.0f;
                 const auto* floatingInput = state.floatingWindows ? state.floatingWindows->GameplayInput(dpi) : nullptr;
                 InputState gameplay = floatingInput ? *floatingInput : input;
+                if (floatingInput)
+                {
+                    gameplay.gamepads = input.gamepads;
+                }
                 const ui::editor::ViewportRectF viewportMath{state.viewportRect.x, state.viewportRect.y,
                                                              state.viewportRect.width, state.viewportRect.height};
                 float mouseX = static_cast<float>(gameplay.mouseX), mouseY = static_cast<float>(gameplay.mouseY);

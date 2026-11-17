@@ -84,7 +84,8 @@ struct ToolkitWorkspaceContext
                                           PropertyValue& output);
 
 [[nodiscard]] std::vector<ui::editor::EditorProperty> BuildProjectSettingsRows(const ProjectSettings& settings,
-                                                                               const Localization& text);
+                                                                               const Localization& text,
+                                                                               const std::filesystem::path& projectRoot = {});
 
 [[nodiscard]] std::vector<ui::editor::EditorProperty> BuildBuildSettingsRows(const BuildSettings& settings,
                                                                              const std::string& exportName,

@@ -9,6 +9,7 @@
 #include "PlatformLayer/Windows/StartupProgress.h"
 #include "PlatformLayer/Windows/FrameTimer.h"
 #include "PlatformLayer/Windows/Window.h"
+#include "PlatformLayer/Windows/WindowsGamepad.h"
 #include "PlatformLayer/Windows/WindowsUiInput.h"
 #include "FunctionLayer/Application/FrameData.h"
 #include <iostream>
@@ -234,6 +235,7 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
             pumping = true;
             const bool running = PumpWindowMessages(exitCode);
             pumping = false;
+            se::PollWindowsGamepads(window.input.gamepads);
             if (!running || finished || window.closeRequested || !drawFrame()) break;
             Sleep(!window.drawable || result == RenderResult::Occluded ? 16 : 1);
         }
