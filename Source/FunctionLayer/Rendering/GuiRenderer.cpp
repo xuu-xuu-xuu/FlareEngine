@@ -6,7 +6,7 @@ namespace se
 {
 rhi::Result GuiRenderer::Configure(rhi::Device& device,rhi::CommandContext& commands,const FrameData& f,std::uint32_t width,std::uint32_t height,const std::filesystem::path& shaders)
 {
-    if(!f.editorFontPixels||f.editorFontWidth<=0||f.editorFontHeight<=0||f.editorFontWidth>8192||f.editorFontHeight>8192||f.editorFontToken!=FontToken
+    if(!GuiCompositor::ValidFontPages(f)
         ||!IsFinite(f.sceneViewport.width)||!IsFinite(f.sceneViewport.height)||f.sceneViewport.width<1||f.sceneViewport.height<1
         ||f.sceneViewport.width>8192||f.sceneViewport.height>8192
         ||!IsFinite(f.editorGui.framebufferScale.x)||!IsFinite(f.editorGui.framebufferScale.y)||f.editorGui.framebufferScale.x<=0||f.editorGui.framebufferScale.y<=0

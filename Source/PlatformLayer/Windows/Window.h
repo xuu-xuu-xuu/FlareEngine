@@ -25,6 +25,9 @@ struct WindowState
 // 独立面板与主窗口共用应用帧。尺寸消息在系统拖边循环中到达宿主线程。
 inline constexpr UINT EngineWindowDrawResizeFrame = WM_APP + 0x172;
 
+// 在主线程启动时调用一次，开启 Per-Monitor V2 DPI 感知。
+bool EnableEngineDpiAwareness();
+
 // 在主线程启动时调用一次，注册窗口类并创建、关联窗口；默认显示，检查程序可隐藏。
 // window 传引用，成功返回 true；失败记录原因并返回 false。
 bool CreateEngineWindow(WindowState& window, bool showWindow = true);

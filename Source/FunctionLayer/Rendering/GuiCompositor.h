@@ -1,8 +1,10 @@
 #pragma once
 #include "PlatformLayer/Graphics/Rhi.h"
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 namespace se
 {
 struct FrameData;
@@ -11,15 +13,29 @@ class GuiCompositor
 {
 public:
     static constexpr std::uint64_t FontToken=1,SceneToken=2,WhiteToken=3;
+    static constexpr std::uint64_t FontExtraPageBase=0x200000000ull;
+    static constexpr std::uint32_t MaxFontPages=64;
+    [[nodiscard]] static constexpr std::uint64_t FontPageToken(std::uint32_t page) noexcept
+    {
+        return page==0?FontToken:FontExtraPageBase+static_cast<std::uint64_t>(page-1);
+    }
+    [[nodiscard]] static std::optional<std::uint32_t> FontPageIndex(std::uint64_t token) noexcept;
+    [[nodiscard]] static bool ValidFontPages(const FrameData& frame) noexcept;
     rhi::Result Configure(rhi::Device& device,rhi::CommandContext& commands,const FrameData& frame,
         rhi::TextureHandle scene,std::uint32_t width,std::uint32_t height,const std::filesystem::path& shaders);
-    void Clear(){font_.reset();composite_.reset();white_.reset();pipeline_.reset();images_.clear();imageSizes_.clear();fontWidth_=fontHeight_=width_=height_=0;fontRevision_=0;}
+    void Clear(){fontPages_.clear();composite_.reset();white_.reset();pipeline_.reset();images_.clear();imageSizes_.clear();width_=height_=0;}
 private:
-    rhi::Texture font_,composite_,white_;
+    struct FontPageTexture
+    {
+        rhi::Texture texture;
+        std::uint32_t width=0,height=0;
+        std::uint64_t revision=0;
+    };
+    std::vector<FontPageTexture> fontPages_;
+    rhi::Texture composite_,white_;
     std::unordered_map<std::uint64_t, rhi::Texture> images_;
     std::unordered_map<std::uint64_t, std::pair<std::uint32_t, std::uint32_t>> imageSizes_;
     rhi::Pipeline pipeline_;
-    std::uint32_t fontWidth_=0,fontHeight_=0,width_=0,height_=0;
-    std::uint64_t fontRevision_=0;
+    std::uint32_t width_=0,height_=0;
 };
 }

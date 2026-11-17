@@ -1,4 +1,4 @@
-param([string]$Project='Resources/Templates/EmptyGame/project.json',[string]$Name='',[string]$ScriptProject='',[string]$ScriptType='',[string]$Bindings='',[string]$BuildSettings='',[string]$EntryUi='',[ValidateSet('zh-CN','en-US')][string]$Locale='zh-CN',[string]$EvidenceDirectory='',[string]$OutputDirectory='',[switch]$SkipLease,[switch]$SkipSmoke)
+﻿param([string]$Project='Resources/Templates/EmptyGame/project.json',[string]$Name='',[string]$ScriptProject='',[string]$ScriptType='',[string]$Bindings='',[string]$BuildSettings='',[string]$EntryUi='',[ValidateSet('zh-CN','en-US')][string]$Locale='zh-CN',[string]$EvidenceDirectory='',[string]$OutputDirectory='',[switch]$SkipLease,[switch]$SkipSmoke)
 if([Console]::IsOutputRedirected){[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}
 $ErrorActionPreference='Stop'
 $workspace=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -198,7 +198,7 @@ try {
             Copy-Item -LiteralPath $notice.FullName -Destination $noticeTarget -Force
         }
     }
-    foreach($license in @(@('ufbx','LICENSE'),@('cgltf','LICENSE'),@('nlohmann','LICENSE.MIT'),@('imgui','LICENSE.txt'))){$directory=Join-Path $stage ('ThirdParty/'+$license[0]);New-Item -ItemType Directory -Path $directory -Force | Out-Null;Copy-Item -LiteralPath (Join-Path $workspace ('ThirdParty/'+$license[0]+'/'+$license[1])) -Destination $directory}
+    foreach($license in @(@('ufbx','LICENSE'),@('cgltf','LICENSE'),@('nlohmann','LICENSE.MIT'))){$directory=Join-Path $stage ('ThirdParty/'+$license[0]);New-Item -ItemType Directory -Path $directory -Force | Out-Null;Copy-Item -LiteralPath (Join-Path $workspace ('ThirdParty/'+$license[0]+'/'+$license[1])) -Destination $directory}
     if(Test-Path -LiteralPath (Join-Path $workspace 'ThirdParty/README.md') -PathType Leaf){
         Copy-Item -LiteralPath (Join-Path $workspace 'ThirdParty/README.md') -Destination (Join-Path $stage 'ThirdParty/README.md')
     }

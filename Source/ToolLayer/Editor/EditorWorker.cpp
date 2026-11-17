@@ -3,7 +3,6 @@
 #include "ProjectWorkspaceSession.h"
 #include "EditorApplication.h"
 #include "EditorSession.h"
-#include "ImGuiEditor.h"
 #include "EditorProcessRunner.h"
 #if defined(FLARE_LOCAL_VALIDATION)
 #include "EditorSmokeDriver.h"
@@ -290,7 +289,6 @@ int RunNativeEditorWorker(const EditorWorkerOptions& options)
     EditorRenderer renderer;
     if(!options.capture.empty())renderer.SetCaptureOutput(options.capture,options.frames?options.frames:30);
     EditorApplicationHooks hooks;
-    hooks.editorUi=options.editorUi;
     hooks.initialize=[&](EditorSession& editor,UiTree&){
         if(!options.scene.empty())
         {

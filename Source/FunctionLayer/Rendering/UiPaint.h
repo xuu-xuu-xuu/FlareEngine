@@ -113,6 +113,8 @@ struct UiGeometryOptions
 {
     std::uint64_t whiteTexture = 1;
     std::uint64_t fontPageBase = 2;
+    std::uint64_t fontExtraPageBase = 0; // 若非 0，则 glyph.page >= 1 使用 fontExtraPageBase + (glyph.page - 1)。
+    std::uint32_t maxFontPages = 64;
     float whiteU = 0.0f;
     float whiteV = 0.0f;
     float whiteWidth = 1.0f;

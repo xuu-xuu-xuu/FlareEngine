@@ -1,9 +1,21 @@
 #pragma once
 #include <cstdint>
 #include <filesystem>
+#include <string>
 
 namespace se
 {
+struct EditorFileStamp
+{
+    std::uintmax_t size = 0;
+    std::filesystem::file_time_type modified{};
+    std::string digest;
+    bool valid = false;
+};
+
+void RecordEditorFileStamp(EditorFileStamp& stamp, const std::filesystem::path& path);
+[[nodiscard]] bool EditorFileStampChanged(const EditorFileStamp& stamp, const std::filesystem::path& path);
+
 // 只观察显式文档路径的 mtime/size；不轮询目录、不监听整个项目。
 class ExternalChangeMonitor
 {

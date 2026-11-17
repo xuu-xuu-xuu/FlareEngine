@@ -1,1979 +1,439 @@
 #include "EditorApplication.h"
-#include "EditorFloatingWindows.h"
-#include "EditorWindowStyle.h"
-#include "ImGuiEditor.h"
-#include "AssetImportService.h"
-#include "EditorAssetActions.h"
-#include "EditorCreation.h"
-#include "EditorClipPreview.h"
-#include <charconv>
-#include "EditorScriptWorkflow.h"
-#include "SceneInspector.h"
-#include "EditorFeatureTools.h"
-#include "UiInspector.h"
-#include "TodInspector.h"
-#include "FunctionLayer/Physics/ScenePhysics.h"
-#include "EditorScriptTools.h"
-#include <future>
-#include "FunctionLayer/Rendering/UiPaint.h"
-#include "ToolLayer/Editor/EditorUi/EditorInputAdapter.h"
-#include "ToolLayer/Editor/EditorUi/EditorViewportMath.h"
-#include "ToolLayer/Editor/EditorUi/EditorShell.h"
-#include "ToolLayer/Editor/ProjectSettingsService.h"
-#include "ToolLayer/Editor/MaterialThumbnail.h"
-#include "ToolLayer/Editor/ExternalChangeMonitor.h"
-#include "ToolLayer/Editor/BuildRestartRequest.h"
-#include "ToolLayer/Editor/RecoveryApply.h"
-#include "ResourceLayer/Assets/MaterialMetadata.h"
-#include "PlatformLayer/Windows/UiDirectWriteTextService.h"
+#include "EditorToolkitSession.h"
 #include "EditorSessionStore.h"
-#include "EditorSession.h"
+#include "ToolLayer/Editor/EditorUi/EditorViewportMath.h"
+#include "ResourceLayer/Assets/AssetIO.h"
+#include "ToolLayer/Tools/Project.h"
+#include "PlatformLayer/Windows/ExecutablePath.h"
+#include "PlatformLayer/Windows/StartupProgress.h"
+#include "FunctionLayer/Application/SandboxApp.h"
+#include "CoreLayer/Log.h"
 #if defined(FLARE_LOCAL_VALIDATION)
 #include "EditorSmokeDriver.h"
 #endif
-#include "ToolLayer/Tools/Project.h"
+
 #include <Windows.h>
-#include <commdlg.h>
-#include "WindowsEditorInput.h"
-#include "EditorPlayInput.h"
-#include "ImGuiGeometry.h"
-#include "EditorViewportCamera.h"
-#include "EditorViewportController.h"
-#include "FunctionLayer/Application/FrameData.h"
-#include "FunctionLayer/Application/SandboxApp.h"
-#include "PlatformLayer/Windows/ExecutablePath.h"
-#include "CoreLayer/Log.h"
-#include "PlatformLayer/Windows/StartupProgress.h"
-#include "FunctionLayer/Rendering/Renderer.h"
-#include "ResourceLayer/Assets/AssetIO.h"
-#include <cmath>
 #include <chrono>
-#include <fstream>
-#include <iostream>
-#include <iterator>
+#include <cmath>
+#include <filesystem>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace se
 {
-struct ToolkitSceneImageProvider final : ui::UiImageProvider
-{
-    std::unordered_map<std::string,ui::UiImageInfo> images;
-    bool Resolve(std::string_view image, ui::UiImageInfo& info) const override
-    {
-        if (image == "scene")
-        {
-            info.textureToken = 2;
-            return true;
-        }
-        const auto found = images.find(std::string(image));
-        if (found == images.end()) return false;
-        info = found->second;
-        return true;
-    }
-};
-using ui::editor::EditorCommand;
-using ui::editor::EditorCommandId;
-using ui::editor::EditorInputAdapter;
-using ui::editor::EditorPanelFromName;
-using ui::editor::EditorPanelId;
-using ui::editor::EditorShell;
 namespace
 {
-std::string PropertyText(const PropertyValue& value)
+bool SameProject(const std::string& stored, const std::filesystem::path& root)
 {
-    if(const auto* v=std::get_if<bool>(&value))return *v?"true":"false";
-    if(const auto* v=std::get_if<float>(&value))return std::to_string(*v);
-    if(const auto* v=std::get_if<Vec3>(&value))return std::to_string(v->x)+", "+std::to_string(v->y)+", "+std::to_string(v->z);
-    if(const auto* v=std::get_if<Vec4>(&value))return std::to_string(v->x)+", "+std::to_string(v->y)+", "+std::to_string(v->z)+", "+std::to_string(v->w);
-    if(const auto* v=std::get_if<Quat>(&value))return std::to_string(v->x)+", "+std::to_string(v->y)+", "+std::to_string(v->z)+", "+std::to_string(v->w);
-    if(const auto* v=std::get_if<std::string>(&value))return *v;
-    if(const auto* v=std::get_if<PropertyEntityReference>(&value))return std::to_string(v->stableId);
-    if(const auto* v=std::get_if<std::vector<std::string>>(&value))
-    {
-        std::string text;
-        for(std::size_t index=0;index<v->size();++index)
-        {
-            if(index)text+=", ";
-            text+=(*v)[index];
-        }
-        return text;
-    }
-    return {};
+    std::error_code error;
+    const auto canonical = std::filesystem::weakly_canonical(root, error);
+    if (error) return false;
+    return stored == asset_io::Utf8(canonical);
 }
 
-bool ParseFloatList(std::string_view text,float* values,std::size_t count)
+std::filesystem::path ResolveResourceDirectory(const std::filesystem::path& root,
+                                               const EditorApplicationHooks* hooks)
 {
-    std::string normalized(text);
-    for(char& ch:normalized)if(ch==',')ch=' ';
-    std::istringstream stream(normalized);
-    for(std::size_t index=0;index<count;++index)if(!(stream>>values[index]))return false;
+    auto directory = root / "Resources";
+    if (hooks && !hooks->resourceDirectory.empty()) directory = hooks->resourceDirectory;
+    if (!std::filesystem::is_directory(directory / "Localization"))
+        directory = GetExecutableDirectory() / "Resources";
+    return directory;
+}
+
+bool LoadEditorLocalization(const std::filesystem::path& resourceDirectory,
+                            const std::string& locale,
+                            Localization& text)
+{
+    std::string error;
+    if (!text.Load(resourceDirectory / "Localization" / (locale + ".txt"), error))
+    {
+        Log(LogLevel::Warning, "Language " + locale + ": " + error);
+        if (locale != "en-US") text.Load(resourceDirectory / "Localization" / "en-US.txt", error);
+    }
     return true;
 }
 
-bool ParsePropertyValue(const PropertyDescriptor& descriptor,std::string_view text,PropertyValue& output)
+bool ResolveAssetsRoot(const std::filesystem::path& root,
+                       const Localization& text,
+                       std::filesystem::path& assetsRoot)
 {
-    try
+    assetsRoot = std::filesystem::is_directory(root / "Content") ? root / "Content"
+        : std::filesystem::is_directory(root / "Assets") ? root / "Assets"
+        : std::filesystem::is_directory(root / "Resources") ? root / "Resources" : root;
+    if (!std::filesystem::exists(root / "project.json")) return true;
+    ProjectDescription project;
+    std::vector<ProjectDiagnostic> failures;
+    if (!ReadProject(root / "project.json", project, failures))
     {
-        switch(descriptor.type)
-        {
-        case PropertyType::Boolean:
-        {
-            const bool value=text=="true"||text=="1";
-            output=value;
-            break;
-        }
-        case PropertyType::Number:
-            output=std::stof(std::string(text));
-            break;
-        case PropertyType::Vector3:
-        {
-            float values[3]{};
-            if(!ParseFloatList(text,values,3))return false;
-            output=Vec3{values[0],values[1],values[2]};
-            break;
-        }
-        case PropertyType::Vector4:
-        {
-            float values[4]{};
-            if(!ParseFloatList(text,values,4))return false;
-            output=Vec4{values[0],values[1],values[2],values[3]};
-            break;
-        }
-        case PropertyType::Quaternion:
-        {
-            float values[4]{};
-            if(!ParseFloatList(text,values,4))return false;
-            output=Quat{values[0],values[1],values[2],values[3]};
-            break;
-        }
-        case PropertyType::AssetList:
-        {
-            std::vector<std::string> values;
-            std::string item;
-            std::istringstream stream{std::string(text)};
-            while(std::getline(stream,item,','))
-            {
-                while(!item.empty()&&(item.front()==' '||item.front()=='\t'))item.erase(item.begin());
-                while(!item.empty()&&(item.back()==' '||item.back()=='\t'))item.pop_back();
-                if(!item.empty())values.push_back(item);
-            }
-            output=std::move(values);
-            break;
-        }
-        case PropertyType::EntityReference:
-            output=PropertyEntityReference{std::stoull(std::string(text))};
-            break;
-        case PropertyType::AssetId:
-        case PropertyType::Text:
-            output=std::string(text);
-            break;
-        }
-    }
-    catch(...)
-    {
+        for (const auto& failure : failures) Log(LogLevel::Error, text.GetText(failure.key) + ": " + failure.detail);
         return false;
     }
-    return ValidatePropertyValue(descriptor,output);
+    assetsRoot = project.contentRoot;
+    return true;
 }
 
-std::vector<ui::editor::EditorProperty> MaterialRows(const ImGuiEditor& frontend,const Localization& text)
+void ConfigureSessionAndWorkspace(ToolkitAppState& state,
+                                  const std::string& locale,
+                                  bool hidden,
+                                  const EditorPreferences& loadedPreferences,
+                                  bool hasRestoredSession,
+                                  const EditorSessionSnapshot& restoredSession)
 {
-    std::vector<ui::editor::EditorProperty> rows;
-    if(!frontend.MaterialReadyForToolkit())return rows;
-    for(const PropertyDescriptor& descriptor:MaterialProperties())
+    state.session.SetTODResolver([&state](const std::string& id, std::string& error) {
+        std::vector<AssetDiagnostic> failures;
+        auto profile = state.assets.LoadTODProfile(id, failures);
+        if (!profile) error = failures.empty() ? "TOD.ResolveFailed" : failures.back().key;
+        return profile;
+    });
+    const bool managedDefaultScene = GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_FILE", nullptr, 0) > 0 &&
+        GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_EXPLICIT", nullptr, 0) == 0;
+    if (hasRestoredSession && (state.session.Path().empty() || managedDefaultScene) && !restoredSession.documents.empty())
     {
-        PropertyValue value;
-        std::string error;
-        if(!ReadMaterialProperty(frontend.MaterialForToolkit(),descriptor.key,value,error))continue;
-        ui::editor::EditorPropertyType type=ui::editor::EditorPropertyType::String;
-        if(descriptor.type==PropertyType::Number)type=ui::editor::EditorPropertyType::Number;
-        else if(descriptor.type==PropertyType::Boolean)type=ui::editor::EditorPropertyType::Boolean;
-        else if(descriptor.type==PropertyType::AssetId)type=ui::editor::EditorPropertyType::Asset;
-        else if(descriptor.type==PropertyType::Vector3||descriptor.type==PropertyType::Vector4)type=ui::editor::EditorPropertyType::Color;
-        const std::string label=descriptor.labelKey.empty()?std::string(descriptor.key):text.GetText(descriptor.labelKey);
-        rows.push_back({std::string(descriptor.key),label,type,PropertyText(value),!descriptor.editable});
+        for (const auto& document : restoredSession.documents)
+        {
+            if (!document.ends_with(".scene.json")) continue;
+            const auto requested = asset_io::FromUtf8(document);
+            const auto path = requested.is_absolute() ? requested : state.root / requested;
+            if (!asset_io::Within(state.root, path) || !state.session.Open(path, true))
+                Log(LogLevel::Warning, "Editor.SessionDocumentMissing");
+            break;
+        }
     }
-    return rows;
-}
+    state.session.SetPlayCallbacks(
+        [&state](World& world) {
+            state.authoredScenePhysics.Clear(state.authoredPhysics);
+            state.session.PlayEnvironment()->SetSkeletalResolver([&state](const std::string& asset) {
+                std::vector<AssetDiagnostic> diagnostics;
+                return state.assets.LoadModel(asset, diagnostics);
+            });
+            if (!state.hooks || !state.hooks->update)
+            {
+                state.session.PlayEnvironment()->SetPhysicsService([&state](double seconds) {
+                    return state.authoredScenePhysics.Step(*state.session.PlayWorld(),
+                        state.authoredPhysics, static_cast<float>(seconds));
+                });
+            }
+            state.playUi = std::make_unique<UiTree>(state.ui);
+            state.playUi->CancelInput();
+            if (state.playInput) state.playInput->Attach(state.playUi.get());
+            return !state.hooks || !state.hooks->playStarted || state.hooks->playStarted(world, *state.playUi);
+        },
+        [&state](World& world) {
+            state.authoredScenePhysics.Clear(state.authoredPhysics);
+            if (state.playInput) state.playInput->Attach(nullptr);
+            struct ClearUi { std::unique_ptr<UiTree>& value; ~ClearUi() { value.reset(); } } clearUi{state.playUi};
+            if (state.hooks && state.hooks->playStopping && state.playUi) state.hooks->playStopping(world, *state.playUi);
+        });
 
-bool SameProject(const std::string& stored,const std::filesystem::path& root)
-{
-    std::error_code error;
-    const auto canonical=std::filesystem::weakly_canonical(root,error);
-    if(error)return false;
-    return stored==asset_io::Utf8(canonical);
+    if (hasRestoredSession)
+    {
+        if (std::isfinite(restoredSession.cameraX) && std::isfinite(restoredSession.cameraY) &&
+            std::isfinite(restoredSession.cameraZ) && std::isfinite(restoredSession.cameraYaw) &&
+            std::isfinite(restoredSession.cameraPitch))
+        {
+            state.editorCamera.state.position = {restoredSession.cameraX, restoredSession.cameraY, restoredSession.cameraZ};
+            state.editorCamera.state.yaw = restoredSession.cameraYaw;
+            state.editorCamera.state.pitch = restoredSession.cameraPitch;
+        }
+        if (!restoredSession.selection.empty()) state.session.Select(restoredSession.selection.front());
+    }
+
+    state.playInput = std::make_unique<EditorPlayInput>(
+        [&state](UiPoint point) {
+            if (!state.shell) return false;
+            const float dpi = state.input ? state.input->DpiScale() : 1.0f;
+            const auto hit = ui::UiHitTest(state.shell->Document(), state.shell->Layout())
+                .Hit(state.shell->CurrentInputRoot(), point.x / dpi, point.y / dpi).target;
+            return hit == state.shell->ViewportPanel();
+        },
+        [&state]() { if (state.shell) state.shell->FocusPanel(ui::editor::EditorPanelId::Viewport); },
+        [&state]() {
+            return state.shell && (state.shell->CloseModalOpen() || state.shell->ConfirmOpen() ||
+                                   state.shell->MenuOpen() || state.shell->ColorPickerOpen());
+        });
+
+    if (state.hooks) state.host.SetExternalDocuments(state.hooks->externalDocuments);
+    state.host.SetProjectRoot(state.root);
+    EditorPreferences preferences = loadedPreferences;
+    preferences.language = locale;
+    state.host.ConfigurePreferences(preferences, EditorSessionStore::UserDataDirectory(),
+        [&state](const std::string& language) {
+            std::string failure;
+            return state.text.Load(state.resourceDirectory / "Localization" / (language + ".txt"), failure);
+        });
+    state.host.SetDocumentPaths(state.assetsRoot / "Scenes" / "Untitled.scene.json",
+                                state.assetsRoot / "UI" / "Untitled.ui.json");
+    if (state.hooks && state.hooks->configure) state.hooks->configure(state.host);
+    if (hasRestoredSession)
+    {
+        state.restoredContext = state.host.RestoreSessionDocuments(restoredSession.documents, state.assets,
+                                                                   state.ui, restoredSession.activeDocument);
+    }
+    state.host.ConfigureRecovery(state.crashDirectory, !state.safeMode && !hidden);
+    state.host.ConfigureBuildControl();
+    state.observedSession = CaptureEditorSessionSnapshot(state.root, state.session, state.editorCamera, state.host);
+    state.persistedSession = hasRestoredSession ? restoredSession : EditorSessionSnapshot{};
+    state.sessionChangedAt = std::chrono::steady_clock::now();
 }
-EditorSessionSnapshot CaptureEditorSession(const std::filesystem::path& root,
-    const EditorSession& session,const EditorViewportCamera& camera,const ImGuiEditor& frontend)
-{
-    EditorSessionSnapshot snapshot;
-    std::error_code error;
-    const auto canonical=std::filesystem::weakly_canonical(root,error);
-    if(error)return snapshot;
-    snapshot.project=asset_io::Utf8(canonical);
-    snapshot.documents=frontend.SessionDocuments(session);
-    snapshot.activeDocument=frontend.SessionActiveDocument(session);
-    if(session.Selected())snapshot.selection.push_back(session.Selected());
-    snapshot.cameraX=camera.state.position.x;snapshot.cameraY=camera.state.position.y;snapshot.cameraZ=camera.state.position.z;
-    snapshot.cameraYaw=camera.state.yaw;snapshot.cameraPitch=camera.state.pitch;
-    snapshot.layoutVersion=1;
-    return snapshot;
-}
-}
-int RunEditorApp(Renderer& renderer,const std::string& locale,const std::filesystem::path& requestedRoot,
-    bool hidden,std::uint64_t maximumFrames,EditorApplicationHooks* hooks)
+} // namespace
+
+int RunEditorApp(Renderer& renderer, const std::string& locale, const std::filesystem::path& requestedRoot,
+                 bool hidden, std::uint64_t maximumFrames, EditorApplicationHooks* hooks)
 {
     struct CrashMarkerGuard
     {
-        std::filesystem::path directory;bool active=false;
-        ~CrashMarkerGuard(){if(active){std::string error;EditorSessionStore::ClearCrashMarker(directory,error);}}
+        std::filesystem::path directory;
+        bool active = false;
+        ~CrashMarkerGuard()
+        {
+            if (active) { std::string error; EditorSessionStore::ClearCrashMarker(directory, error); }
+        }
     } crashGuard;
+
     try
     {
-        const auto root=std::filesystem::weakly_canonical(requestedRoot);
+        const auto root = std::filesystem::weakly_canonical(requestedRoot);
+        if (!std::filesystem::is_directory(root)) { Log(LogLevel::Error, "EditorUi.InvalidProject"); return 1; }
 #if defined(FLARE_LOCAL_VALIDATION)
-        auto smoke=EditorSmokeDriver::FromEnvironment(root);
+        auto smoke = EditorSmokeDriver::FromEnvironment(root);
 #endif
-        const bool toolkit=hooks&&hooks->editorUi=="toolkit";
-        std::unique_ptr<EditorShell> toolkitShell;
-        std::unique_ptr<EditorFeatureTools> featureTools;
-        std::unique_ptr<EditorInputAdapter> toolkitInput;
-        std::unique_ptr<EditorFloatingWindows> floatingWindows;
-        bool toolkitGameplayLogged=false;
-        bool toolkitCloseApproved=false;
-        std::optional<CameraSnapshot> toolkitCamera;
-        ui::UiRect toolkitViewportRect;
-        std::unique_ptr<UiDirectWriteTextService> toolkitText;
-        std::vector<unsigned char> toolkitFontPixels;
-        int toolkitFontWidth=0,toolkitFontHeight=0;
-        std::uint64_t toolkitFontRevision=0;
-        ProjectSettings toolkitProjectSettings;
-        BuildSettings toolkitBuildSettings;
-        bool toolkitExportBusy=false;
-        bool toolkitExportStarted=false;
-        bool toolkitExportFinished=false;
-        std::string toolkitExportName="GameExport";
-        bool toolkitDpiOverride=false;
-        bool toolkitAutoExport=false;
-        bool toolkitAutoExportStarted=false;
-        bool toolkitAutoExportFlow=false;
-        int toolkitAutoExportFlowPhase=0;
-        bool toolkitAutoCancelRequested=false;
-        std::uint64_t toolkitAutoExportStart=0;
-        int toolkitAutoCancelMs=0;
-        std::function<bool()> toolkitAutoExportFn;
-        std::shared_ptr<const ImageData> toolkitPreviewImage;
-        std::string toolkitPreviewImageKey;
-        std::uint64_t toolkitPreviewToken=0;
-        std::unordered_map<std::string,ui::UiImageInfo> toolkitImageInfos;
-        ExternalChangeMonitor toolkitExternalChange;
-        std::string toolkitPendingAsset;
-        std::string inspectedAssetName;
-        AssetId inspectedModel;
-        EditorClipPreview clipPreview;
-        HWND nativeMoveWindow=nullptr;
-        std::vector<ui::editor::EditorProperty> inspectedAssetRows;
-        struct ToolkitImportResult
-        {
-            bool success=false;
-            std::string key,detail;
-            std::filesystem::path primary;
-        };
-        std::future<ToolkitImportResult> toolkitImportTask;
-        std::string toolkitImportStatus;
-        std::filesystem::path toolkitUiPath;
-        std::function<bool()> toolkitExportAction;
-        bool toolkitProjectDirty=false, toolkitBuildDirty=false, toolkitUiDirty=false;
-        bool toolkitInspectUi=false;
-        bool toolkitEditTod=false;
-        if(!std::filesystem::is_directory(root)){Log(LogLevel::Error,"EditorUi.InvalidProject");return 1;}
-        crashGuard.directory=EditorSessionStore::ProjectDirectory(root);
-        EditorSessionStore::CrashMarker previous;std::string startupError;
-        const auto startup=EditorSessionStore::InspectStartup(crashGuard.directory,previous,startupError);
-        if(startup==EditorSessionStore::StartupState::ActiveInstance){Log(LogLevel::Warning,"Editor.AnotherInstance");return 1;}
-        if(startup==EditorSessionStore::StartupState::UncleanExit)Log(LogLevel::Warning,"Editor.UncleanExit");
+        crashGuard.directory = EditorSessionStore::ProjectDirectory(root);
+        EditorSessionStore::CrashMarker previous;
+        std::string startupError;
+        const auto startup = EditorSessionStore::InspectStartup(crashGuard.directory, previous, startupError);
+        if (startup == EditorSessionStore::StartupState::ActiveInstance) { Log(LogLevel::Warning, "Editor.AnotherInstance"); return 1; }
+        if (startup == EditorSessionStore::StartupState::UncleanExit) Log(LogLevel::Warning, "Editor.UncleanExit");
         std::string cleanupError;
-        if(!EditorSessionStore::CleanupAbandonedCandidates(crashGuard.directory,cleanupError))Log(LogLevel::Warning,cleanupError);
-        EditorSessionStore::CrashMarker marker;marker.processId=GetCurrentProcessId();marker.processCreation=EditorSessionStore::CurrentProcessCreation();
-        std::string markerError;crashGuard.active=EditorSessionStore::WriteCrashMarker(crashGuard.directory,marker,markerError);
-        if(!crashGuard.active)Log(LogLevel::Warning,markerError);
-        const bool safeMode=GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SAFE_MODE",nullptr,0)>0;
-        EditorPreferences preferences;std::string preferencesError;
-        EditorSessionStore::LoadPreferences(EditorSessionStore::UserDataDirectory(),preferences,preferencesError);
-        auto resourceDirectory=root/"Resources";
-        if(hooks&&!hooks->resourceDirectory.empty())resourceDirectory=hooks->resourceDirectory;
-        if(!std::filesystem::is_directory(resourceDirectory/"Localization"))resourceDirectory=GetExecutableDirectory()/"Resources";
-        Localization text;std::string error;
-        if(!text.Load(resourceDirectory/"Localization"/(locale+".txt"),error))
-        {
-            Log(LogLevel::Warning,"Language "+locale+": "+error);
-            if(locale!="en-US")text.Load(resourceDirectory/"Localization"/"en-US.txt",error);
-        }
-        auto assetsRoot=std::filesystem::is_directory(root/"Content")?root/"Content"
-            :std::filesystem::is_directory(root/"Assets")?root/"Assets"
-            :std::filesystem::is_directory(root/"Resources")?root/"Resources":root;
-        if(std::filesystem::exists(root/"project.json"))
-        {
-            ProjectDescription project;std::vector<ProjectDiagnostic> failures;
-            if(!ReadProject(root/"project.json",project,failures))
-            {
-                for(const auto& failure:failures)Log(LogLevel::Error,text.GetText(failure.key)+": "+failure.detail);
-                return 1;
-            }
-            assetsRoot=project.contentRoot;
-        }
-        AssetStore assets(assetsRoot,root/"out"/"Cache"/"Assets");
-        if(!ReportStartup(StartupStage::Assets))return 1;
+        if (!EditorSessionStore::CleanupAbandonedCandidates(crashGuard.directory, cleanupError)) Log(LogLevel::Warning, cleanupError);
+        EditorSessionStore::CrashMarker marker;
+        marker.processId = GetCurrentProcessId();
+        marker.processCreation = EditorSessionStore::CurrentProcessCreation();
+        std::string markerError;
+        crashGuard.active = EditorSessionStore::WriteCrashMarker(crashGuard.directory, marker, markerError);
+        if (!crashGuard.active) Log(LogLevel::Warning, markerError);
+
+        const bool safeMode = GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SAFE_MODE", nullptr, 0) > 0;
+        EditorPreferences preferences;
+        std::string preferencesError;
+        EditorSessionStore::LoadPreferences(EditorSessionStore::UserDataDirectory(), preferences, preferencesError);
+
+        const auto resourceDirectory = ResolveResourceDirectory(root, hooks);
+        Localization text;
+        LoadEditorLocalization(resourceDirectory, locale, text);
+        std::filesystem::path assetsRoot;
+        if (!ResolveAssetsRoot(root, text, assetsRoot)) return 1;
+        if (!ReportStartup(StartupStage::Assets)) return 1;
+
+        ToolkitAppState state(root, assetsRoot, root / "out" / "Cache" / "Assets", hooks, std::move(text));
+        state.resourceDirectory = resourceDirectory;
+        state.crashDirectory = crashGuard.directory;
+        state.safeMode = safeMode;
+        state.hidden = hidden;
+
         std::vector<AssetDiagnostic> diagnostics;
-        if(!assets.Scan(diagnostics))
+        if (!state.assets.Scan(diagnostics))
         {
-            for(const auto& diagnostic:diagnostics)Log(LogLevel::Error,text.GetText(diagnostic.key)+": "+diagnostic.detail);
+            for (const auto& diagnostic : diagnostics)
+                Log(LogLevel::Error, state.text.GetText(diagnostic.key) + ": " + diagnostic.detail);
             return 1;
         }
-        Log(LogLevel::Info,"EditorUi.Assets: "+std::to_string(assets.ListIds().size()));
-        EditorSession session;
-        session.SetTODResolver([&assets](const std::string& id,std::string& error){
-            std::vector<AssetDiagnostic> failures;auto profile=assets.LoadTODProfile(id,failures);
-            if(!profile)error=failures.empty()?"TOD.ResolveFailed":failures.back().key;return profile;
-        });
-        EditorSessionSnapshot restoredSession;std::string sessionError;
-        const bool hasRestoredSession=!safeMode&&EditorSessionStore::LoadSession(crashGuard.directory,restoredSession,sessionError)
-            &&SameProject(restoredSession.project,root);
-        UiTree ui;
-        std::unique_ptr<UiTree> playUi;
-        std::unique_ptr<EditorPlayInput> playInput;
-        PhysicsWorld authoredPhysics;
-        ScenePhysics authoredScenePhysics;
-        // guard 在 ui 之后析构之前执行，确保脚本停止回调可继续访问实际运行 UI。
-        struct PlayLifetime { EditorSession& session; ~PlayLifetime(){session.StopPlay();session.SetPlayCallbacks({},{});} } playLifetime{session};
-        if(!ReportStartup(StartupStage::Scene))return 1;
-        if(hooks&&hooks->initialize&&!hooks->initialize(session,ui))return 1;
-        // 产品入口由 EditorWorker 负责缺失/空场景的内存默认；测试夹具可继续使用空会话。
-        // 没有显式场景参数时，恢复上次会话的活动场景；缺失文件只警告，不创建空文件。
-        const bool managedDefaultScene=GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_FILE",nullptr,0)>0
-            &&GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_EXPLICIT",nullptr,0)==0;
-        if(hasRestoredSession&&(session.Path().empty()||managedDefaultScene)&&!restoredSession.documents.empty())
+        Log(LogLevel::Info, "EditorUi.Assets: " + std::to_string(state.assets.ListIds().size()));
+
+        EditorSessionSnapshot restoredSession;
+        std::string sessionError;
+        const bool hasRestoredSession = !safeMode &&
+            EditorSessionStore::LoadSession(crashGuard.directory, restoredSession, sessionError) &&
+            SameProject(restoredSession.project, root);
+        if (!ReportStartup(StartupStage::Scene)) return 1;
+        if (hooks && hooks->initialize && !hooks->initialize(state.session, state.ui)) return 1;
+        ConfigureSessionAndWorkspace(state, locale, hidden, preferences, hasRestoredSession, restoredSession);
+
+        struct PlayLifetime
         {
-            for(const auto& document:restoredSession.documents)if(document.ends_with(".scene.json"))
-            {
-                const auto requested=asset_io::FromUtf8(document);const auto path=requested.is_absolute()?requested:root/requested;
-                if(!asset_io::Within(root,path)||!session.Open(path,true))Log(LogLevel::Warning,"Editor.SessionDocumentMissing");
-                break;
-            }
-        }
-        session.SetPlayCallbacks([&](World& world){
-            authoredScenePhysics.Clear(authoredPhysics);
-            session.PlayEnvironment()->SetSkeletalResolver([&assets](const std::string& asset){
-                std::vector<AssetDiagnostic> diagnostics;
-                return assets.LoadModel(asset,diagnostics);
-            });
-            if(!hooks||!hooks->update)
-                session.PlayEnvironment()->SetPhysicsService([&](double seconds){return authoredScenePhysics.Step(*session.PlayWorld(),authoredPhysics,static_cast<float>(seconds));});
-            playUi=std::make_unique<UiTree>(ui);
-            playUi->CancelInput();
-            if(playInput)playInput->Attach(playUi.get());
-            return !hooks||!hooks->playStarted||hooks->playStarted(world,*playUi);
-        },[&](World& world){
-            authoredScenePhysics.Clear(authoredPhysics);
-            if(playInput)playInput->Attach(nullptr);
-            struct ClearUi{std::unique_ptr<UiTree>& value;~ClearUi(){value.reset();}} clearUi{playUi};
-            if(hooks&&hooks->playStopping&&playUi)hooks->playStopping(world,*playUi);
-        });
-        ImGuiEditor frontend;
-        EditorScriptWorkflow scriptWorkflow(root,hooks,text);
-        frontend.SetAuxiliaryPanels(false);
-        frontend.SetLayoutPath(safeMode?std::filesystem::path{}:crashGuard.directory/"layout.json");
-        frontend.SetDockLayoutPath(safeMode?std::filesystem::path{}:crashGuard.directory/"editor-dock.ini");
-        frontend.SetUiScale(preferences.uiScale);
-        EditorViewportCamera editorCamera;
-        EditorViewportController viewportController(editorCamera);
-        if(hasRestoredSession)
-        {
-            if(std::isfinite(restoredSession.cameraX)&&std::isfinite(restoredSession.cameraY)&&std::isfinite(restoredSession.cameraZ)
-                &&std::isfinite(restoredSession.cameraYaw)&&std::isfinite(restoredSession.cameraPitch))
-            {
-                editorCamera.state.position={restoredSession.cameraX,restoredSession.cameraY,restoredSession.cameraZ};
-                editorCamera.state.yaw=restoredSession.cameraYaw;editorCamera.state.pitch=restoredSession.cameraPitch;
-            }
-            if(!restoredSession.selection.empty())session.Select(restoredSession.selection.front());
-        }
-        std::uint64_t editorFrame=0;
-        bool navigating=false,navigationCancelled=false;
-        playInput=std::make_unique<EditorPlayInput>(frontend.Context());
-        if(hooks){frontend.SetScriptInspector(hooks->inspector);frontend.SetExternalDocuments(hooks->externalDocuments);}
-        frontend.SetProjectRoot(root);
-        preferences.language=locale;
-        frontend.ConfigurePreferences(preferences,EditorSessionStore::UserDataDirectory(),[&](const std::string& language){
-            std::string failure;return text.Load(resourceDirectory/"Localization"/(language+".txt"),failure);
-        });
-        frontend.SetDocumentPaths(assetsRoot/"Scenes"/"Untitled.scene.json",assetsRoot/"UI"/"Untitled.ui.json");
-        if(hooks&&hooks->configure)hooks->configure(frontend);
-        if(hasRestoredSession)frontend.RestoreSessionDocuments(restoredSession.documents,assets,ui,restoredSession.activeDocument);
-        frontend.ConfigureRecovery(crashGuard.directory,!safeMode&&!hidden);
-        frontend.ConfigureBuildControl();
-        auto observedSession=CaptureEditorSession(root,session,editorCamera,frontend);
-        auto persistedSession=hasRestoredSession?restoredSession:EditorSessionSnapshot{};
-        auto sessionChangedAt=std::chrono::steady_clock::now();
-        const auto persistSession=[&](bool force){
-            const auto current=CaptureEditorSession(root,session,editorCamera,frontend);const auto now=std::chrono::steady_clock::now();
-            if(current!=observedSession){observedSession=current;sessionChangedAt=now;}
-            if(current!=persistedSession&&(force||now-sessionChangedAt>=std::chrono::seconds(1)))
-            {std::string failure;if(EditorSessionStore::SaveSession(crashGuard.directory,current,failure))persistedSession=current;else{Log(LogLevel::Warning,failure);sessionChangedAt=now;}}
-        };
-        wchar_t windowsDirectory[MAX_PATH]{};
-        bool fontLoaded=false;
-        const auto length=GetWindowsDirectoryW(windowsDirectory,MAX_PATH);
-        if(length>0&&length<MAX_PATH)
-        {
-            const auto fonts=std::filesystem::path(windowsDirectory)/"Fonts";
-            for(const auto* name:{L"msyh.ttc",L"msyh.ttf",L"simhei.ttf"})
-                if(std::filesystem::is_regular_file(fonts/name)&&frontend.LoadFont(fonts/name))
-                {fontLoaded=true;break;}
-        }
-        if(!fontLoaded)Log(LogLevel::Warning,text.GetText("EditorUi.FontLoadFailed"));
-        // 固定图集由通用 GUI 后端首次上传；ImGui 不持有 native 描述符。
-        const unsigned char* fontPixels=nullptr;int fontWidth=0,fontHeight=0;
-        frontend.FontAtlasRgba(fontPixels,fontWidth,fontHeight);
-        frontend.SetFontTexture(1); // 仅 CPU token，renderer 映射为自己的真实 GPU 资源。
-        std::unique_ptr<WindowsEditorInput> platform;
-        HWND hostWindow=nullptr;
+            EditorSession& session;
+            ~PlayLifetime() { session.StopPlay(); session.SetPlayCallbacks({}, {}); }
+        } playLifetime{state.session};
+
+        std::unique_ptr<ToolkitWorkspaceContext> workspaceContext;
         ApplicationServices services;
-        services.resourceDirectory=resourceDirectory;
-        services.maximumFrames=maximumFrames;
-        services.initialWidth=1280;services.initialHeight=760;
-        services.liveWindowResize=true;
-        services.minimumClientWidthDip=320;services.minimumClientHeightDip=240;
-        // 不设置 services.ui：设计用 UI 文档由 ImGui 画布编辑，不重复路由到游戏 UI。
-        services.windowOpened=[&](HWND window){
-            if(!ReportStartup(StartupStage::Interface))return false;
-            SetWindowTextW(window,asset_io::FromUtf8(text.GetText("Editor.WindowTitle")).c_str());
-            flare::StyleTitleBar(window);
-            hostWindow=window;
-            if(toolkit)
+        services.resourceDirectory = resourceDirectory;
+        services.maximumFrames = maximumFrames;
+        services.initialWidth = 1280;
+        services.initialHeight = 760;
+        services.liveWindowResize = true;
+        services.minimumClientWidthDip = 320;
+        services.minimumClientHeightDip = 240;
+
+        services.messageHandler = [&state](HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+            return HandleToolkitWindowMessage(state, window, message, wParam, lParam);
+        };
+        services.windowOpened = [&state, &workspaceContext, &services, hidden](HWND window) {
+            if (!InitializeToolkitWindowUi(state, window)) return false;
+            state.floatingWindows = std::make_unique<EditorFloatingWindows>(window, *state.shell, state.text,
+                state.resourceDirectory,
+                [&services](HWND target, UINT message, WPARAM w, LPARAM l) { return services.messageHandler(target, message, w, l); },
+                !hidden);
+            workspaceContext = std::make_unique<ToolkitWorkspaceContext>(ToolkitWorkspaceContext{
+                state.root, state.assetsRoot, state.assets, state.session, state.host, state.ui,
+                state.scriptWorkflow, state.clipPreview, state.viewportController, state.externalChange,
+                state.text, *state.shell, state.featureTools.get(), state.assetState,
+                state.exportName, state.importStatus, state.importTask});
+            BindToolkitImportAndCommands(state, *workspaceContext);
+            BindToolkitWorkspaceForms(*workspaceContext, state.exportAction);
+            FinalizeToolkitWindowUi(state);
+            return true;
+        };
+        services.windowClosing = [&state]() {
+            state.playInput->Deactivate(state.hostWindow);
+            state.closeApproved = state.shell && state.shell->CloseApproved();
+            Log(LogLevel::Info, "EditorUi.ToolkitClosing");
+            state.viewportController.Blur(state.session);
+            state.featureTools.reset();
+            state.floatingWindows.reset();
+            state.input.reset();
+            state.shell.reset();
+            state.fontService.reset();
+            state.fontPages.clear();
+            state.hostWindow = nullptr;
+        };
+        services.captureKeyboard = []() { return false; };
+        services.capturePointer = []() { return false; };
+        services.input = [&state](const InputState& input, bool keyboard, bool pointer) {
+            if (state.session.IsPlaying() && !state.gameplayLogged)
             {
-                toolkitText=std::make_unique<UiDirectWriteTextService>(L"Segoe UI");
-                toolkitShell=std::make_unique<EditorShell>(toolkitText.get());
-                toolkitShell->SetLocalization(&text);
-                if(!toolkitShell->Initialize(1280.0f,760.0f))
+                bool hasGameplayInput = !input.pointerEvents.empty();
+                for (bool down : input.keysDown) hasGameplayInput = hasGameplayInput || down;
+                if (hasGameplayInput) { state.gameplayLogged = true; Log(LogLevel::Info, "EditorUi.ToolkitGameplayInput"); }
+            }
+            if (state.hooks && state.hooks->input && state.session.IsPlaying())
+            {
+                float dpi = state.input ? state.input->DpiScale() : 1.0f;
+                const auto* floatingInput = state.floatingWindows ? state.floatingWindows->GameplayInput(dpi) : nullptr;
+                InputState gameplay = floatingInput ? *floatingInput : input;
+                const ui::editor::ViewportRectF viewportMath{state.viewportRect.x, state.viewportRect.y,
+                                                             state.viewportRect.width, state.viewportRect.height};
+                float mouseX = static_cast<float>(gameplay.mouseX), mouseY = static_cast<float>(gameplay.mouseY);
+                ui::editor::ViewportOffsetPlayInput(viewportMath, dpi, mouseX, mouseY);
+                gameplay.mouseX = static_cast<int>(std::lround(mouseX));
+                gameplay.mouseY = static_cast<int>(std::lround(mouseY));
+                for (auto& event : gameplay.pointerEvents)
                 {
-                    Log(LogLevel::Error,"EditorUi.ToolkitInitFailed");
-                    toolkitShell.reset();
-                    return false;
+                    float ex = static_cast<float>(event.x), ey = static_cast<float>(event.y);
+                    ui::editor::ViewportOffsetPlayInput(viewportMath, dpi, ex, ey);
+                    event.x = static_cast<int>(std::lround(ex));
+                    event.y = static_cast<int>(std::lround(ey));
                 }
-                toolkitShell->SetSelectionHandler([&session,&inspectedAssetName,&toolkitInspectUi,&toolkitShell](std::uint64_t id){
-                    if(toolkitInspectUi)toolkitShell->CancelPropertyInteraction();
-                    toolkitInspectUi=false;
-                    inspectedAssetName.clear();
-                    session.Select(id);
-                    Log(LogLevel::Info,"EditorUi.ToolkitSelection: "+std::to_string(id));
-                });
-                toolkitShell->SetViewportImage("scene");
-                toolkitShell->SetLayoutPath(safeMode?std::filesystem::path{}:crashGuard.directory/".editor-ui.json");
+                state.hooks->input(gameplay, keyboard, pointer);
+            }
+            state.playInput->EndFrame();
+        };
+        services.runEnvironmentFrame = [&state](double seconds) {
+            if (state.featureTools) state.featureTools->Poll();
+            if (state.floatingWindows && !state.nativeMoveWindow)
+            {
+                state.viewportController.Update(seconds, state.session, state.assets);
+                const bool uiCaptured = state.shell && state.shell->Dispatcher().PointerCapture().IsValid();
+                if (!state.nativeMoveWindow && !state.viewportController.Captured() && !uiCaptured &&
+                    (GetCapture() == state.hostWindow || state.floatingWindows->Owns(GetCapture())))
                 {
-                    ProjectDescription description;
-                    std::vector<ProjectDiagnostic> projectDiagnostics;
-                    if(ReadProject(root/"project.json",description,projectDiagnostics)&&!description.uiDocuments.empty())
-                    {
-                        const auto& uiPath=description.uiDocuments.front();
-                        std::ifstream input(uiPath,std::ios::binary);
-                        if(input)
-                        {
-                            const std::string json{std::istreambuf_iterator<char>(input),std::istreambuf_iterator<char>()};
-                            std::string uiError;
-                            if(ui.LoadJson(json,uiError))
-                            {
-                                toolkitUiPath=uiPath;
-                                Log(LogLevel::Info,"EditorUi.ToolkitUi: loaded "+asset_io::Utf8(uiPath));
-                            }
-                            else
-                            {
-                                Log(LogLevel::Warning,"EditorUi.ToolkitUi: "+uiError);
-                            }
-                        }
-                    }
+                    ReleaseCapture();
                 }
-                toolkitShell->SetDesignerHandlers(
-                    [&frontend,&ui,&toolkitShell,&text,&toolkitInspectUi,&inspectedAssetName](float x,float y){
-                        toolkitInspectUi=true;inspectedAssetName.clear();
-                        const UiId hit=frontend.UiCanvas().Hit(ui,{x,y});
-                        frontend.SelectUiForToolkit(hit);
-                        if(!hit)return;
-                        if(!frontend.BeginUiCanvasDragForToolkit(ui,hit,{x,y}))
-                            toolkitShell->SetStatus(text.GetText("EditorUi.DesignerDragFailed"));
-                    },
-                    [&frontend,&ui,&toolkitUiDirty](float x,float y){
-                        if(frontend.UiCanvas().Active()&&frontend.UpdateUiCanvasDragForToolkit(ui,{x,y}))
-                            toolkitUiDirty=true;
-                    },
-                    [&frontend,&ui,&toolkitUiPath,&toolkitUiDirty,&toolkitShell,&text](float,float){
-                        if(!frontend.UiCanvas().Active())return;
-                        if(frontend.EndUiCanvasDragForToolkit(ui,true))
-                        {
-                            toolkitUiDirty=true;
-                            if(!toolkitUiPath.empty())
-                            {
-                                const std::string json=ui.SaveJson();
-                                std::ofstream output(toolkitUiPath,std::ios::binary|std::ios::trunc);
-                                output<<json;
-                                if(output)
-                                {
-                                    toolkitUiDirty=false;
-                                    frontend.MarkUiSavedForToolkit(ui,toolkitUiPath);
-                                    Log(LogLevel::Info,"EditorUi.ToolkitUi: saved "+asset_io::Utf8(toolkitUiPath));
-                                }
-                                else
-                                {
-                                    toolkitShell->SetStatus(text.GetText("EditorUi.SaveFailed"));
-                                }
-                            }
-                            else
-                            {
-                                toolkitShell->SetStatus(text.GetText("EditorUi.SaveFailed"));
-                            }
-                        }
-                    });
-                toolkitShell->SetAssetSelectionHandler([&assets,&frontend,&toolkitShell,&text,&scriptWorkflow,&root,
-                    &inspectedAssetName,&inspectedAssetRows,&inspectedModel,&clipPreview,&session,&featureTools,&toolkitInspectUi,
-                    &toolkitPreviewImage,&toolkitPreviewImageKey,&toolkitPreviewToken,&toolkitImageInfos](std::string path){
-                    Log(LogLevel::Info,"EditorUi.ToolkitAsset: "+path);
-                    if(toolkitInspectUi)toolkitShell->CancelPropertyInteraction();
-                    toolkitInspectUi=false;
-                    if(featureTools)featureTools->SelectSource(path);
-                    const std::filesystem::path selected=asset_io::FromUtf8(path);
-                    inspectedAssetName=asset_io::Utf8(selected.filename());
-                    inspectedAssetRows.clear();
-                    inspectedModel.clear();
-                    clipPreview.Clear();
-                    const auto addDetail=[&](const char* key,const char* label,std::string value){
-                        inspectedAssetRows.push_back({key,text.GetText(label),ui::editor::EditorPropertyType::String,
-                                                      std::move(value),true});
-                    };
-                    auto extension=asset_io::Utf8(selected.extension());
-                    for(char& ch:extension)if(ch>='A'&&ch<='Z')ch=static_cast<char>(ch-'A'+'a');
-                    const bool texture=extension==".png"||extension==".jpg"||extension==".jpeg"||
-                                       extension==".bmp"||extension==".tga";
-                    const bool model=extension==".fbx"||extension==".glb"||extension==".gltf";
-                    std::string type=extension;
-                    if(model)type=text.GetText("EditorUi.AssetModel");
-                    else if(texture)type=text.GetText("EditorUi.AssetTexture");
-                    else if(extension==".cs")type=text.GetText("EditorUi.AssetScript");
-                    else if(IsMaterialDocumentPath(selected))type=text.GetText("EditorUi.DocumentMaterial");
-                    addDetail("asset.name","EditorUi.Name",inspectedAssetName);
-                    addDetail("asset.type","Editor.AssetType",type);
-                    addDetail("asset.path","EditorUi.SourcePath",asset_io::Utf8(selected.lexically_relative(root)));
-                    std::error_code sizeError;
-                    const auto bytes=std::filesystem::file_size(selected,sizeError);
-                    if(!sizeError) addDetail("asset.size","EditorUi.Size",std::to_string(bytes)+" B");
-                    if(model){
-                        for(const auto& id:assets.ListIds())if(assets.Resolve(id)==selected){inspectedModel=id;break;}
-                        if(!inspectedModel.empty())inspectedAssetRows.push_back({"asset.addModel",text.GetText("EditorUi.AddModelToScene"),
-                            ui::editor::EditorPropertyType::Action,{},session.IsPlaying()});
-                    }
-                    if(extension==".cs") inspectedAssetRows.push_back({"asset.openScript",text.GetText("Editor.ScriptOpenSource"),
-                        ui::editor::EditorPropertyType::Action,{},false});
-                    scriptWorkflow.SelectSource(selected);
-                    toolkitShell->SetAssetsPreviewText(inspectedAssetName);
-                    toolkitShell->SetAssetPreviewImage({},0.0f,0.0f);
-                    toolkitImageInfos.clear();
-                    toolkitPreviewImage.reset();
-                    toolkitPreviewImageKey.clear();
-                    toolkitPreviewToken=0;
-                    if(!IsMaterialDocumentPath(selected))
+            }
+            if (state.host.TimeOfDayPreview().Ready() && !state.host.TimeOfDayPreview().Advance(seconds)) return false;
+            if (state.hooks && state.hooks->frame && !state.hooks->frame(state.session, seconds)) return false;
+            state.host.UpdateRecovery(state.session, &state.ui,
+                !state.shell || state.shell->Dispatcher().PointerCapture().IsValid() || state.shell->TextFieldFocused());
+            state.ui.Update(seconds);
+            if (state.session.IsPlaying() && state.playUi)
+            {
+                if (state.session.ConsumePlayStep())
+                {
+                    if (state.hooks && state.hooks->singleStep)
                     {
-                        if(texture)
-                        {
-                            for(const AssetId& id:assets.ListIds())
-                            {
-                                std::error_code error;
-                                if(!std::filesystem::equivalent(assets.Resolve(id),selected,error)||error)continue;
-                                std::vector<AssetDiagnostic> imageDiagnostics;
-                                auto image=assets.LoadTextureImage(id,imageDiagnostics);
-                                if(!image||image->width==0||image->height==0)break;
-                                addDetail("asset.dimensions","EditorUi.ImageDimensions",
-                                          std::to_string(image->width)+" × "+std::to_string(image->height));
-                                const std::size_t hash=std::hash<std::string>{}(path);
-                                toolkitPreviewToken=0x100000000ull|(static_cast<std::uint64_t>(hash)&0xffffffffull);
-                                toolkitPreviewImage=std::move(image);
-                                toolkitPreviewImageKey=path;
-                                toolkitImageInfos[path]={toolkitPreviewToken,static_cast<float>(toolkitPreviewImage->width),
-                                    static_cast<float>(toolkitPreviewImage->height)};
-                                toolkitShell->SetAssetPreviewImage(path,static_cast<float>(toolkitPreviewImage->width),
-                                    static_cast<float>(toolkitPreviewImage->height));
-                                Log(LogLevel::Info,"EditorUi.ToolkitAssetPreview: "+path);
-                                break;
-                            }
-                        }
-                        return;
-                    }
-                    std::string materialError;
-                    if(frontend.OpenMaterialForToolkit(assets,selected,false,materialError))
-                    {
-                        toolkitShell->SetFormProperties(EditorPanelId::Material,MaterialRows(frontend,text));
-                        toolkitShell->SetFormStatus(EditorPanelId::Material,"Opened "+path);
-                        toolkitShell->FocusPanel(EditorPanelId::Material);
-                        std::string summary=text.GetText("EditorUi.MaterialPreview")+": "+path;
-                        for(const char* key:{"baseColor","metallic","roughness"})
-                        {
-                            PropertyValue value;
-                            if(ReadMaterialProperty(frontend.MaterialForToolkit(),key,value,materialError))
-                                summary+=std::string(" | ")+key+"="+PropertyText(value);
-                        }
-                        toolkitShell->SetAssetsPreviewText(std::move(summary));
-                        Vec4 baseColor{0.8f, 0.8f, 0.8f, 1.0f};
-                        float metallic = 0.0f, roughness = 0.5f;
-                        PropertyValue value;
-                        if(ReadMaterialProperty(frontend.MaterialForToolkit(),"baseColor",value,materialError))
-                            if(const auto* color=std::get_if<Vec4>(&value))baseColor=*color;
-                        if(ReadMaterialProperty(frontend.MaterialForToolkit(),"metallic",value,materialError))
-                            if(const auto* number=std::get_if<float>(&value))metallic=*number;
-                        if(ReadMaterialProperty(frontend.MaterialForToolkit(),"roughness",value,materialError))
-                            if(const auto* number=std::get_if<float>(&value))roughness=*number;
-                        const MaterialThumbnail thumbnail=RenderMaterialThumbnail(baseColor,metallic,roughness,64);
-                        auto image=std::make_shared<ImageData>();
-                        image->width=thumbnail.width;image->height=thumbnail.height;image->rgba8=thumbnail.rgba8;
-                        const std::string imageKey="material:"+path;
-                        const std::size_t hash=std::hash<std::string>{}(imageKey);
-                        toolkitPreviewToken=0x100000000ull|(static_cast<std::uint64_t>(hash)&0xffffffffull);
-                        toolkitPreviewImage=std::move(image);
-                        toolkitPreviewImageKey=imageKey;
-                        toolkitImageInfos[imageKey]={toolkitPreviewToken,static_cast<float>(toolkitPreviewImage->width),
-                            static_cast<float>(toolkitPreviewImage->height)};
-                        toolkitShell->SetAssetPreviewImage(imageKey,static_cast<float>(toolkitPreviewImage->width),
-                            static_cast<float>(toolkitPreviewImage->height));
-                        Log(LogLevel::Info,"EditorUi.ToolkitMaterial: opened "+path);
+                        if (!state.hooks->singleStep(*state.session.PlayWorld(), *state.playUi)) return false;
                     }
                     else
                     {
-                        toolkitShell->SetFormStatus(EditorPanelId::Material,
-                            materialError.empty()?"Open material failed":materialError);
-                        toolkitShell->FocusPanel(EditorPanelId::Material);
-                        Log(LogLevel::Warning,"EditorUi.ToolkitMaterial: failed "+materialError);
-                    }
-                });
-                const auto toolkitImport=[&](){
-                    const auto report=[&](const char* key,const std::string& detail={}){
-                        toolkitImportStatus=text.GetText(key)+(detail.empty()?std::string{}:": "+detail);
-                        toolkitShell->SetStatus(toolkitImportStatus);
-                        toolkitShell->SetAssetsPreviewText(toolkitImportStatus);
-                        toolkitShell->AppendConsoleLine(toolkitImportStatus);
-                    };
-                    if(toolkitImportTask.valid()||frontend.AssetOperationBusy()||frontend.ExportBusy())
-                    {report("Editor.AssetOperationBusy");return false;}
-                    if(session.IsPlaying()){report("Editor.EditWhilePlaying");return false;}
-                    std::filesystem::path source;
-                    if(hooks&&hooks->chooseAssetImportSource)source=hooks->chooseAssetImportSource();
-                    else
-                    {
-                        wchar_t file[32768]{};
-                        OPENFILENAMEW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=hostWindow;
-                        dialog.lpstrFilter=L"Assets\0*.fbx;*.gltf;*.glb;*.png;*.jpg;*.jpeg;*.material.json;*.sebin\0All files\0*.*\0";
-                        dialog.lpstrFile=file;dialog.nMaxFile=static_cast<DWORD>(std::size(file));
-                        const std::wstring initial=assets.SourceRoot().wstring();dialog.lpstrInitialDir=initial.c_str();
-                        dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;
-                        if(!GetOpenFileNameW(&dialog))
-                        {
-                            const DWORD error=CommDlgExtendedError();
-                            if(error)report("Editor.AssetImportFailed",std::to_string(error));
-                            return false;
-                        }
-                        source=file;
-                    }
-                    if(source.empty())return false;
-                    report("Editor.AssetImporting",asset_io::Utf8(source.filename()));
-                    const AssetImportRequest request{{source},assets.SourceRoot(),{}};
-                    // 工作线程只使用自有 Store；实时索引和 UI 在完成后由主线程更新。
-                    toolkitImportTask=std::async(std::launch::async,[request,cache=root/"out"/"Cache"/"Assets"]{
-                        ToolkitImportResult result;
-                        const auto plan=AssetImportService::Plan(request);
-                        if(!plan.valid)
-                        {
-                            result.key=plan.errorKey;result.detail=plan.detail;
-                            if(!plan.diagnostics.empty())
-                            {result.key=plan.diagnostics.front().key;result.detail=plan.diagnostics.front().detail;}
-                            return result;
-                        }
-                        for(const auto& file:plan.files)if(file.primary){result.primary=file.target;break;}
-                        AssetStore worker(plan.contentRoot,cache);
-                        std::vector<AssetId> imported;
-                        result.success=AssetImportService::ExecuteRegistered(plan,worker,imported,result.key,result.detail);
-                        if(result.success)result.detail=std::to_string(imported.size())+" | "+asset_io::Utf8(result.primary);
-                        return result;
-                    });
-                    return true;
-                };
-                toolkitShell->SetAssetImportHandler([toolkitImport](){toolkitImport();});
-                toolkitShell->SetViewportActionHandler([&](std::string_view action){viewportController.Action(action,session,assets);});
-                toolkitShell->SetReparentHandler([&session](std::uint64_t id,std::uint64_t parent){
-                    if(!session.BeginEdit("Reparent"))return false;
-                    if(!session.SetParent(id,parent)){session.CancelEdit();return false;}
-                    const bool committed=session.CommitEdit();
-                    if(committed)Log(LogLevel::Info,"EditorUi.ToolkitReparent: "+std::to_string(id)+" -> "+std::to_string(parent));
-                    return committed;
-                });
-                toolkitShell->SetPropertyEditHandler([&session,&frontend,&ui,&toolkitUiDirty,&toolkitInspectUi](std::uint64_t, ui::editor::EditorPropertyEditPhase phase) {
-                    using enum ui::editor::EditorPropertyEditPhase;
-                    if(toolkitInspectUi)
-                    {if(session.IsPlaying())return false;if(phase==Begin)frontend.BeginUiEditForToolkit(ui);else{frontend.EndUiEditForToolkit(ui,phase==Commit);toolkitUiDirty=frontend.UiDirtyForToolkit(ui);}return true;}
-                    if (phase == Begin){const bool result=session.BeginEdit("EditorUi.PropertyDrag");if(result)frontend.TimeOfDayPreview().BeginEdit();return result;}
-                    const auto tod=frontend.TimeOfDayPreview().EndEdit(phase==Commit);
-                    const auto scene=phase == Commit ? session.CommitEdit() : session.CancelEdit();return tod||scene;
-                });
-                toolkitShell->SetPropertyChoices([&](std::uint64_t id,ui::editor::EditorProperty& field){
-                    return FillSceneInspectorChoices(session,assets,text,id,field);
-                });
-                toolkitShell->SetPropertyHandler([&session,&assets,&scriptWorkflow,&frontend,&toolkitShell,&ui,&toolkitUiDirty,&toolkitEditTod,&text,
-                    &inspectedModel,&inspectedAssetName,&viewportController,&clipPreview](std::uint64_t id,std::string key,std::string value){
-                    if(key=="asset.addModel"){
-                        std::string error;
-                        if(!AddModelToScene(session,assets,inspectedModel,error)){toolkitShell->SetStatus(text.GetText(error));return false;}
-                        inspectedAssetName.clear();
-                        viewportController.Action("Frame",session,assets);
-                        return true;
-                    }
-                    if(key=="preview.play"||key=="preview.time"){
-                        std::string error;
-                        if(!clipPreview.Select(session,assets,id,error)){toolkitShell->SetStatus(text.GetText(error));return false;}
-                        if(key=="preview.play")clipPreview.Toggle();
-                        else{
-                            double seconds=0;
-                            auto [end,status]=std::from_chars(value.data(),value.data()+value.size(),seconds);
-                            if(status!=std::errc{}||end!=value.data()+value.size()||!std::isfinite(seconds)||seconds<0)return false;
-                            clipPreview.Seek(seconds);
-                        }
-                        return true;
-                    }
-                    toolkitEditTod=key.starts_with("tod.");
-                    if(toolkitEditTod){if(key=="tod.open"&&frontend.TimeOfDayPreview().Dirty()){toolkitShell->SetStatus(text.GetText("EditorUi.SaveFirst"));return false;}const auto result=ApplyTodInspector(frontend.TimeOfDayPreview(),assets,session,key,value);if(!result)toolkitShell->SetStatus(text.GetText(frontend.TimeOfDayPreview().LastError()));return result;}
-                    if(key.starts_with("ui."))
-                    {
-                        if(session.IsPlaying())return false;UiId selected=id;
-                        const bool result=frontend.EditUiForToolkit(ui,[&](UiTree& tree){return ApplyUiInspector(tree,selected,key,value,selected);});
-                        if(result){frontend.SelectUiForToolkit(selected);toolkitUiDirty=frontend.UiDirtyForToolkit(ui);}return result;
-                    }
-                    if(key=="asset.openScript")
-                    {
-                        CodeEditorSettings settings;
-                        settings.executable=asset_io::FromUtf8(frontend.Preferences().externalEditor);
-                        const bool opened=scriptWorkflow.OpenSelected(settings);
-                        if(!opened)toolkitShell->SetStatus(scriptWorkflow.Status());
-                        return opened;
-                    }
-                    if(key.starts_with("script."))
-                    {
-                        CodeEditorSettings settings;settings.executable=asset_io::FromUtf8(frontend.Preferences().externalEditor);
-                        const bool result=scriptWorkflow.Apply(id,session.IsPlaying(),key,value,settings);
-                        if(!scriptWorkflow.Status().empty())toolkitShell->SetStatus(scriptWorkflow.Status());
-                        return result;
-                    }
-                    return ApplySceneInspector(session, id, key, value);
-                });
-                {
-                    auto& commands=toolkitShell->Commands();
-                    const auto saveScene=[&session,&assetsRoot,&toolkitExternalChange](){
-                        const std::filesystem::path path=session.Path().empty()
-                            ?assetsRoot/"Scenes"/"Untitled.scene.json":session.Path();
-                        const bool saved=session.Save(path);
-                        if(saved)toolkitExternalChange.Reset(session.Path());
-                        return saved;
-                    };
-                    const auto saveAll=[&frontend,&assets,&session,saveScene,&root,&toolkitShell,&scriptWorkflow,
-                        &toolkitProjectSettings,&toolkitBuildSettings,&toolkitProjectDirty,&toolkitBuildDirty,
-                        &toolkitUiDirty,&toolkitUiPath,&ui](){
-                        if(!scriptWorkflow.Save()){toolkitShell->SetStatus(scriptWorkflow.Status());return false;}
-                        if(frontend.TimeOfDayPreview().Dirty()&&!frontend.TimeOfDayPreview().Save())return false;
-                        if(frontend.MaterialDirtyForToolkit())
-                        {
-                            std::string error;
-                            if(!frontend.SaveMaterialForToolkit(assets,error)){Log(LogLevel::Warning,"EditorUi.ToolkitSaveMaterial: "+error);return false;}
-                        }
-                        if(toolkitProjectDirty)
-                        {
-                            std::string error;
-                            if(!ProjectSettingsService::WriteProject(root/"project.json",toolkitProjectSettings,error))
-                            {
-                                toolkitShell->SetFormStatus(EditorPanelId::ProjectSettings,error);return false;
-                            }
-                            toolkitProjectDirty=false;
-                        }
-                        if(toolkitBuildDirty)
-                        {
-                            std::string error;
-                            if(!ProjectSettingsService::WriteBuild(root/"build.json",toolkitBuildSettings,error))
-                            {
-                                toolkitShell->SetFormStatus(EditorPanelId::BuildExport,error);return false;
-                            }
-                            toolkitBuildDirty=false;
-                        }
-                        if(toolkitUiDirty)
-                        {
-                            if(toolkitUiPath.empty()||!std::filesystem::is_regular_file(toolkitUiPath))
-                            {
-                                toolkitShell->SetStatus("UI document path is unavailable");
-                                return false;
-                            }
-                            const std::string json=ui.SaveJson();
-                            std::ofstream output(toolkitUiPath,std::ios::binary|std::ios::trunc);
-                            output<<json;
-                            if(!output){toolkitShell->SetStatus("UI document save failed");return false;}
-                            toolkitUiDirty=false;
-                            frontend.MarkUiSavedForToolkit(ui,toolkitUiPath);
-                        }
-                        return !session.Dirty()||saveScene();
-                    };
-                    commands.Register(EditorCommandId::Save,[saveAll](const EditorCommand&){return saveAll();});
-                    commands.Register(EditorCommandId::SaveAll,[saveAll](const EditorCommand&){return saveAll();});
-                    commands.Register(EditorCommandId::Open,[&session,&toolkitShell,&text,&toolkitExternalChange](const EditorCommand&){
-                        if(session.Dirty())
-                        {
-                            toolkitShell->SetStatus(text.GetText("EditorUi.SaveFirst"));
-                            return false;
-                        }
-                        wchar_t file[MAX_PATH]{};
-                        OPENFILENAMEW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=GetActiveWindow();
-                        dialog.lpstrFilter=L"Flare Scene\0*.scene.json\0All Files\0*.*\0";
-                        dialog.lpstrFile=file;dialog.nMaxFile=MAX_PATH;dialog.lpstrDefExt=L"scene.json";
-                        dialog.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST;
-                        if(!GetOpenFileNameW(&dialog))return true;
-                        if(!session.Open(file,true)){toolkitShell->SetStatus(session.LastError());return false;}
-                        toolkitExternalChange.Reset(session.Path());
-                        Log(LogLevel::Info,"EditorUi.ToolkitScene: opened");
-                        return true;
-                    });
-                    commands.Register(EditorCommandId::NewScene,[&session,&toolkitShell,&text,&toolkitExternalChange](const EditorCommand&){
-                        if(session.Dirty())
-                        {
-                            toolkitShell->SetStatus(text.GetText("EditorUi.SaveFirst"));
-                            return false;
-                        }
-                        std::string error;
-                        if(!session.NewDefaultScene(error)){toolkitShell->SetStatus(error);return false;}
-                        toolkitExternalChange.Reset(session.Path());
-                        Log(LogLevel::Info,"EditorUi.ToolkitScene: new");
-                        return true;
-                    });
-                    commands.Register(EditorCommandId::SaveAs,[&session,&toolkitShell,&toolkitExternalChange](const EditorCommand&){
-                        wchar_t file[MAX_PATH]{};
-                        OPENFILENAMEW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=GetActiveWindow();
-                        dialog.lpstrFilter=L"Flare Scene\0*.scene.json\0All Files\0*.*\0";
-                        dialog.lpstrFile=file;dialog.nMaxFile=MAX_PATH;dialog.lpstrDefExt=L"scene.json";
-                        if(!session.Path().empty())wcsncpy_s(file,session.Path().c_str(),_TRUNCATE);
-                        dialog.Flags=OFN_OVERWRITEPROMPT|OFN_PATHMUSTEXIST;
-                        if(!GetSaveFileNameW(&dialog))return true;
-                        if(!session.Save(file)){toolkitShell->SetStatus(session.LastError());return false;}
-                        toolkitExternalChange.Reset(session.Path());
-                        Log(LogLevel::Info,"EditorUi.ToolkitScene: saved-as");
-                        return true;
-                    });
-                    toolkitExportAction=[&frontend,&toolkitShell,&text,&toolkitExportStarted,&toolkitExportFinished,&toolkitExportName,saveAll](){
-                        if(frontend.ExportBusy())
-                        {
-                            frontend.RequestCancelExport();
-                            Log(LogLevel::Info,"EditorUi.ToolkitExport: cancel");
-                            toolkitShell->SetFormStatus(EditorPanelId::BuildExport,text.GetText("EditorUi.CancellingExport"));
-                            return true;
-                        }
-                        if(!saveAll())
-                        {
-                            toolkitShell->SetFormStatus(EditorPanelId::BuildExport,text.GetText("EditorUi.SaveFailed"));
-                            return false;
-                        }
-                        std::string error;
-                        toolkitExportStarted=false;
-                        toolkitExportFinished=false;
-                        const std::string base=toolkitExportName.empty()?"GameExport":toolkitExportName;
-                        const auto packageExists=[&base](const std::string& candidate){
-                            const auto packages=std::filesystem::current_path()/"packages";
-                            return std::filesystem::exists(packages/candidate)||
-                                std::filesystem::exists(std::filesystem::current_path()/".cache"/"packages"/candidate)||
-                                std::filesystem::exists(std::filesystem::current_path()/"out"/"packages"/candidate);
-                        };
-                        std::string exportName=base;
-                        for(int suffix=2;packageExists(exportName)&&suffix<1000;++suffix)
-                            exportName=base+"-"+std::to_string(suffix);
-                        if(!frontend.StartExport(exportName,error))
-                        {
-                            toolkitShell->SetFormStatus(EditorPanelId::BuildExport,error);
-                            return false;
-                        }
-                        toolkitShell->SetFormStatus(EditorPanelId::BuildExport,text.GetText("EditorUi.ExportStarted"));
-                        toolkitExportStarted=true;
-                        Log(LogLevel::Info,"EditorUi.ToolkitExport: start");
-                        return true;
-                    };
-                    commands.Register(EditorCommandId::Export,[&toolkitExportAction](const EditorCommand&){return toolkitExportAction();});
-                    commands.Register(EditorCommandId::Build,[&saveAll,&toolkitShell,&text,&hostWindow](const EditorCommand&){
-                        wchar_t requestPath[MAX_PATH]{};
-                        const DWORD length=GetEnvironmentVariableW(L"SELFENGINE_EDITOR_RESTART_REQUEST",requestPath,MAX_PATH);
-                        if(length==0||length>=MAX_PATH)
-                        {
-                            toolkitShell->SetStatus(text.GetText("EditorUi.BuildControlUnavailable"));
-                            return false;
-                        }
-                        if(!saveAll())
-                        {
-                            toolkitShell->SetStatus(text.GetText("EditorUi.SaveFailed"));
-                            return false;
-                        }
-                        std::string error;
-                        if(!WriteBuildRestartRequest(requestPath,error))
-                        {
-                            toolkitShell->SetStatus(error);
-                            return false;
-                        }
-                        toolkitShell->SetStatus(text.GetText("EditorUi.BuildRestart"));
-                        Log(LogLevel::Info,"EditorUi.ToolkitBuild: restart requested");
-                        if(hostWindow)PostMessageW(hostWindow,WM_CLOSE,0,0);
-                        return true;
-                    });
-                    commands.Register(EditorCommandId::Undo,[&](const EditorCommand&){if(toolkitInspectUi&&!session.IsPlaying()){const auto result=frontend.UiUndoForToolkit(ui);toolkitUiDirty=frontend.UiDirtyForToolkit(ui);return result;}if(toolkitEditTod&&!session.IsPlaying())return frontend.TimeOfDayPreview().Undo();return session.Undo();});
-                    commands.Register(EditorCommandId::Redo,[&](const EditorCommand&){if(toolkitInspectUi&&!session.IsPlaying()){const auto result=frontend.UiUndoForToolkit(ui,true);toolkitUiDirty=frontend.UiDirtyForToolkit(ui);return result;}if(toolkitEditTod&&!session.IsPlaying())return frontend.TimeOfDayPreview().Redo();return session.Redo();});
-                    commands.Register(EditorCommandId::Play,[&session,&toolkitGameplayLogged,&toolkitImportTask](const EditorCommand&){
-                        if(session.IsPlaying()){session.StopPlay();Log(LogLevel::Info,"EditorUi.ToolkitPlay: stop");return true;}
-                        if(toolkitImportTask.valid())return false;
-                        std::string reason;
-                        if(!session.ValidatePlay(reason)){Log(LogLevel::Warning,"EditorUi.ToolkitPlay: "+reason);return false;}
-                        if(!session.StartPlay()){Log(LogLevel::Warning,"EditorUi.ToolkitPlay: "+session.LastError());return false;}
-                        session.SetPlayPaused(false);toolkitGameplayLogged=false;
-                        Log(LogLevel::Info,"EditorUi.ToolkitPlay: start");return true;
-                    });
-                    commands.Register(EditorCommandId::Pause,[&session](const EditorCommand&){
-                        if(!session.IsPlaying())return false;
-                        const bool paused=session.PlayPaused();
-                        if(!session.SetPlayPaused(!paused))return false;
-                        Log(LogLevel::Info,paused?"EditorUi.ToolkitPlay: resume":"EditorUi.ToolkitPlay: pause");
-                        return true;
-                    });
-                    commands.Register(EditorCommandId::Step,[&session](const EditorCommand&){
-                        if(!session.IsPlaying()||!session.PlayPaused())return false;
-                        session.RequestPlayStep();return true;
-                    });
-                    commands.Register(EditorCommandId::Stop,[&session](const EditorCommand&){
-                        if(!session.IsPlaying())return false;
-                        session.StopPlay();Log(LogLevel::Info,"EditorUi.ToolkitPlay: stop");return true;
-                    });
-                    commands.Register(EditorCommandId::Delete,[&](const EditorCommand&){
-                        if(toolkitInspectUi&&!session.IsPlaying())
-                        {UiId selected=frontend.SelectedUi();const bool result=frontend.EditUiForToolkit(ui,[&](UiTree& tree){return ApplyUiInspector(tree,selected,"ui.delete",{},selected);});if(result){frontend.SelectUiForToolkit(selected);toolkitUiDirty=frontend.UiDirtyForToolkit(ui);}return result;}
-                        return inspectedAssetName.empty()&&session.Selected()&&session.Delete(session.Selected());
-                    });
-                    commands.Register(EditorCommandId::Duplicate,[&](const EditorCommand&){
-                        if(toolkitInspectUi)return false;
-                        return inspectedAssetName.empty()&&session.Selected()&&session.Duplicate(session.Selected())!=0;
-                    });
-                    commands.Register(EditorCommandId::Import,[toolkitImport](const EditorCommand&){return toolkitImport();});
-                    commands.Register(EditorCommandId::CreateEntity,[&](const EditorCommand& command){
-                        if(!CreateEditorObject(session,command.argument,command.target,&text))return false;
-                        inspectedAssetName.clear();
-                        Log(LogLevel::Info,"EditorUi.ToolkitCreated: "+command.argument+" "+std::to_string(session.Selected()));
-                        return true;
-                    });
-                    commands.Register(EditorCommandId::CreateAsset,[&](const EditorCommand& command){
-                        if(session.IsPlaying() || toolkitImportTask.valid() || frontend.AssetOperationBusy() || frontend.ExportBusy())
-                        {toolkitShell->SetStatus(text.GetText("Editor.AssetOperationBusy"));return false;}
-                        std::filesystem::path created;
-                        std::string error;
-                        const bool saved=CreateEditorAsset(command.argument,root,assets,created,error);
-                        if(!created.empty())
-                        {
-                            scriptWorkflow.RefreshSources();
-                            toolkitPendingAsset=asset_io::Utf8(created);
-                        }
-                        if(!saved)
-                        {
-                            toolkitImportStatus=text.GetText(error);
-                            toolkitShell->SetStatus(toolkitImportStatus);
-                            toolkitShell->AppendConsoleLine(toolkitImportStatus);
-                        }
-                        return saved;
-                    });
-                    commands.Register(EditorCommandId::Rename,[&toolkitShell,&toolkitInspectUi](const EditorCommand&){
-                        if(toolkitInspectUi)return false;
-                        return toolkitShell&&toolkitShell->BeginRename();
-                    });
-                    commands.Register(EditorCommandId::TogglePanel,[&toolkitShell,&toolkitInspectUi](const EditorCommand& command){
-                        if(command.argument=="ui-designer")toolkitInspectUi=true;
-                        se::ui::editor::EditorPanelId panel=se::ui::editor::EditorPanelId::None;
-                        if(!se::ui::editor::EditorPanelFromName(command.argument,panel))return false;
-                        Log(LogLevel::Info,"EditorUi.ToolkitPanel: "+command.argument);
-                        toolkitShell->TogglePanel(panel);return true;
-                    });
-                    commands.Register(EditorCommandId::FocusViewport,[&toolkitShell](const EditorCommand&){
-                        toolkitShell->FocusPanel(EditorPanelId::Viewport);return true;
-                    });
-                    commands.Register(EditorCommandId::OpenSettings,[&toolkitShell](const EditorCommand&){
-                        Log(LogLevel::Info,"EditorUi.ToolkitPanel: project-settings");
-                        toolkitShell->TogglePanel(EditorPanelId::ProjectSettings);return true;
-                    });
-                }
-                {
-                    std::string settingsError;
-                    if(!ProjectSettingsService::ReadProject(root/"project.json",toolkitProjectSettings,settingsError))
-                        Log(LogLevel::Warning,"EditorUi.ToolkitProjectSettings: "+settingsError);
-                    if(!ProjectSettingsService::ReadBuild(root/"build.json",toolkitBuildSettings,settingsError))
-                        Log(LogLevel::Warning,"EditorUi.ToolkitBuildSettings: "+settingsError);
-                    const auto projectRows=[&toolkitProjectSettings,&text](){
-                        std::vector<ui::editor::EditorProperty> rows;
-                        rows.push_back({"name",text.GetText("EditorUi.Name"),ui::editor::EditorPropertyType::String,toolkitProjectSettings.name,false});
-                        rows.push_back({"contentRoot",text.GetText("EditorUi.ContentRoot"),ui::editor::EditorPropertyType::String,toolkitProjectSettings.contentRoot,false});
-                        rows.push_back({"entryScene",text.GetText("EditorUi.EntryScene"),ui::editor::EditorPropertyType::String,toolkitProjectSettings.entryScene,false});
-                        rows.push_back({"showPlayerQualityMenu",text.GetText("PlayerQuality.ShowMenu"),ui::editor::EditorPropertyType::Boolean,toolkitProjectSettings.showPlayerQualityMenu?"true":"false",false});
-                        rows.push_back({"playerSettingsId",text.GetText("PlayerQuality.GameId"),ui::editor::EditorPropertyType::String,toolkitProjectSettings.playerSettingsId,false});
-                        for(size_t i=0;i<toolkitProjectSettings.qualityProfiles.size();++i){
-                            const auto& profile=toolkitProjectSettings.qualityProfiles[i];
-                            const std::string prefix=std::string("quality.")+PlayerQualityIds[i+1]+".";
-                            const auto label=text.GetText(std::array{"PlayerQuality.Performance","PlayerQuality.Balanced","PlayerQuality.High"}[i])+" · ";
-                            rows.push_back({prefix+"sampling",label+text.GetText("PlayerQuality.Sampling"),ui::editor::EditorPropertyType::Combo,QualitySamplingIds[static_cast<size_t>(profile.sampling)],false});
-                            for(const auto* method:QualitySamplingIds){rows.back().options.push_back(method);rows.back().optionLabels.push_back(text.GetText(std::string("PlayerQuality.Sampling.")+method));}
-                            rows.push_back({prefix+"shadows",label+text.GetText("PlayerQuality.AllowShadows"),ui::editor::EditorPropertyType::Boolean,profile.allowShadows?"true":"false",false});
-                            rows.push_back({prefix+"bloom",label+text.GetText("PlayerQuality.AllowBloom"),ui::editor::EditorPropertyType::Boolean,profile.allowBloom?"true":"false",false});}
-                        rows.push_back({"assets",text.GetText("EditorUi.Assets"),ui::editor::EditorPropertyType::String,
-                            std::to_string(toolkitProjectSettings.assets.size())+" "+text.GetText("EditorUi.Registered"),true});
-                        return rows;
-                    };
-                    const auto buildRows=[&toolkitBuildSettings,&toolkitExportName,&text](){
-                        std::vector<ui::editor::EditorProperty> rows;
-                        rows.push_back({"exportName",text.GetText("EditorUi.ExportName"),ui::editor::EditorPropertyType::String,toolkitExportName,false});
-                        using ui::editor::EditorPropertyType;
-                        rows.push_back({"recordVideo",text.GetText("EditorUi.RecordVideo"),EditorPropertyType::Boolean,
-                            toolkitBuildSettings.recordVideo?"true":"false"});
-                        rows.push_back({"videoResolution",text.GetText("EditorUi.VideoResolution"),EditorPropertyType::Combo,
-                            toolkitBuildSettings.videoResolution,false,{"640x360","1280x720","1920x1080"}});
-                        rows.push_back({"videoFps",text.GetText("EditorUi.VideoFps"),EditorPropertyType::Combo,
-                            std::to_string(toolkitBuildSettings.videoFps),false,{"24","30","60"}});
-                        rows.push_back({"videoSeconds",text.GetText("EditorUi.VideoSeconds"),EditorPropertyType::Number,
-                            std::to_string(toolkitBuildSettings.videoSeconds)});
-                        rows.push_back({"openOutput",text.GetText("EditorUi.ExportOpenOutput"),EditorPropertyType::Action,{}});
-                        rows.push_back({"scriptsProject",text.GetText("EditorUi.ScriptsProject"),ui::editor::EditorPropertyType::String,toolkitBuildSettings.scriptsProject,false});
-                        rows.push_back({"scriptType",text.GetText("EditorUi.ScriptType"),ui::editor::EditorPropertyType::String,toolkitBuildSettings.scriptType,false});
-                        rows.push_back({"bindings",text.GetText("EditorUi.Bindings"),ui::editor::EditorPropertyType::String,toolkitBuildSettings.bindings,false});
-                        rows.push_back({"entryUi",text.GetText("EditorUi.EntryUi"),ui::editor::EditorPropertyType::String,toolkitBuildSettings.entryUi,false});
-                        return rows;
-                    };
-                    toolkitShell->SetFormProperties(EditorPanelId::ProjectSettings,projectRows());
-                    toolkitShell->SetFormProperties(EditorPanelId::BuildExport,buildRows());
-                    toolkitShell->SetFormHandlers(EditorPanelId::ProjectSettings,
-                        [&toolkitProjectSettings,&toolkitProjectDirty](std::string key,std::string value){
-                            if(key=="name")toolkitProjectSettings.name=value;
-                            else if(key=="contentRoot")toolkitProjectSettings.contentRoot=value;
-                            else if(key=="entryScene")toolkitProjectSettings.entryScene=value;
-                            else if(key=="showPlayerQualityMenu"&&(value=="true"||value=="false"))toolkitProjectSettings.showPlayerQualityMenu=value=="true";
-                            else if(key=="playerSettingsId")toolkitProjectSettings.playerSettingsId=value;
-                            else if(key.starts_with("quality.")){
-                                bool found=false;
-                                for(size_t i=0;i<toolkitProjectSettings.qualityProfiles.size();++i){
-                                    const std::string prefix=std::string("quality.")+PlayerQualityIds[i+1]+".";
-                                    if(!key.starts_with(prefix))continue;
-                                    auto& p=toolkitProjectSettings.qualityProfiles[i];const auto field=key.substr(prefix.size());
-                                    if(field=="sampling"){auto method=ParseQualitySampling(value);if(!method)return false;p.sampling=*method;}
-                                    else if((field=="shadows"||field=="bloom")&&(value=="true"||value=="false"))
-                                        (field=="shadows"?p.allowShadows:p.allowBloom)=value=="true";
-                                    else return false;found=true;break;}
-                                if(!found)return false;}
-                            else return false;
-                            toolkitProjectDirty=true;
-                            return true;
-                        },
-                        [&toolkitProjectSettings,&toolkitShell,&root,&toolkitProjectDirty,&text](){
-                            std::string error;
-                            if(!ProjectSettingsService::WriteProject(root/"project.json",toolkitProjectSettings,error))
-                            {
-                                toolkitShell->SetFormStatus(EditorPanelId::ProjectSettings,error);
-                                return false;
-                            }
-                            toolkitProjectDirty=false;
-                            toolkitShell->SetFormStatus(EditorPanelId::ProjectSettings,text.GetText("EditorUi.Saved"));
-                            Log(LogLevel::Info,"EditorUi.ToolkitProjectSettings: saved");
-                            return true;
-                        });
-                    toolkitShell->SetFormHandlers(EditorPanelId::BuildExport,
-                        [&toolkitBuildSettings,&toolkitBuildDirty,&toolkitExportName,&frontend,&toolkitShell,&text](std::string key,std::string value){
-                            if(key=="openOutput"){
-                                const auto output=frontend.ExportSnapshot().outputPackage;
-                                if(output.empty()||!std::filesystem::is_directory(output)){toolkitShell->SetFormStatus(EditorPanelId::BuildExport,text.GetText("EditorUi.ExportFirst"));return false;}
-                                if(std::filesystem::is_regular_file(output/"clip.mp4"))frontend.OpenInExplorer(output/"clip.mp4",true);
-                                else frontend.OpenInExplorer(output);
-                                return true;
-                            }
-                            if(key=="exportName")
-                            {
-                                if(value.empty()||value.size()>128)return false;
-                                toolkitExportName=std::move(value);
-                                return true;
-                            }
-                            if(key=="recordVideo")toolkitBuildSettings.recordVideo=value=="true";
-                            else if(key=="videoResolution")toolkitBuildSettings.videoResolution=value;
-                            else if(key=="videoFps"||key=="videoSeconds"){
-                                int n=0;auto [end,status]=std::from_chars(value.data(),value.data()+value.size(),n);
-                                if(status!=std::errc{}||end!=value.data()+value.size()||n<1)return false;
-                                if(key=="videoFps"){
-                                    if((n!=24&&n!=30&&n!=60)||toolkitBuildSettings.videoSeconds>100000/n)return false;
-                                    toolkitBuildSettings.videoFps=n;
-                                }else{
-                                    if(n>100000/toolkitBuildSettings.videoFps)return false;
-                                    toolkitBuildSettings.videoSeconds=n;
-                                }
-                            }
-                            else if(key=="scriptsProject")toolkitBuildSettings.scriptsProject=value;
-                            else if(key=="scriptType")toolkitBuildSettings.scriptType=value;
-                            else if(key=="bindings")toolkitBuildSettings.bindings=value;
-                            else if(key=="entryUi")toolkitBuildSettings.entryUi=value;
-                            else return false;
-                            toolkitBuildDirty=true;
-                            return true;
-                        },
-                        [&toolkitBuildSettings,&toolkitShell,&root,&toolkitBuildDirty,&text](){
-                            std::string error;
-                            if(!ProjectSettingsService::WriteBuild(root/"build.json",toolkitBuildSettings,error))
-                            {
-                                toolkitShell->SetFormStatus(EditorPanelId::BuildExport,error);
-                                return false;
-                            }
-                            toolkitBuildDirty=false;
-                            toolkitShell->SetFormStatus(EditorPanelId::BuildExport,text.GetText("EditorUi.Saved"));
-                            Log(LogLevel::Info,"EditorUi.ToolkitBuildSettings: saved");
-                            return true;
-                        });
-                    toolkitShell->SetFormAction(EditorPanelId::BuildExport,text.GetText("EditorUi.Export"),[&toolkitExportAction](){
-                        return toolkitExportAction ? toolkitExportAction() : false;
-                    });
-                    toolkitShell->SetFormStatus(EditorPanelId::Material,text.GetText("EditorUi.SelectMaterial"));
-                    toolkitShell->SetFormHandlers(EditorPanelId::Material,
-                        [&frontend](std::string key,std::string value){
-                            const PropertyDescriptor* descriptor=FindMaterialProperty(key);
-                            if(!descriptor)return false;
-                            PropertyValue parsed;
-                            if(!ParsePropertyValue(*descriptor,value,parsed))return false;
-                            const bool applied=frontend.SetMaterialPropertyForToolkit(key,parsed);
-                            if(applied)Log(LogLevel::Info,"EditorUi.ToolkitMaterial: property "+key);
-                            return applied;
-                        },
-                        [&frontend,&assets,&toolkitShell,&text](){
-                            std::string error;
-                            if(!frontend.SaveMaterialForToolkit(assets,error))
-                            {
-                                toolkitShell->SetFormStatus(EditorPanelId::Material,
-                                    error.empty()?"Save material failed":error);
-                                return false;
-                            }
-                            toolkitShell->SetFormProperties(EditorPanelId::Material,MaterialRows(frontend,text));
-                            toolkitShell->SetFormStatus(EditorPanelId::Material,text.GetText("EditorUi.Saved"));
-                            Log(LogLevel::Info,"EditorUi.ToolkitMaterial: saved");
-                            return true;
-                        });
-                    const auto preferencesRows=[&preferences,&text](){
-                        std::vector<ui::editor::EditorProperty> rows;
-                        rows.push_back({"language",text.GetText("EditorUi.Language"),ui::editor::EditorPropertyType::Combo,preferences.language,false,{"zh-CN","en-US"}});
-                        rows.push_back({"uiScale",text.GetText("EditorUi.UiScale"),ui::editor::EditorPropertyType::Number,std::to_string(preferences.uiScale),false});
-                        rows.push_back({"externalEditor",text.GetText("EditorUi.ExternalEditor"),ui::editor::EditorPropertyType::String,preferences.externalEditor,false});
-                        rows.push_back({"colorLut",text.GetText("EditorUi.ColorLut"),ui::editor::EditorPropertyType::String,preferences.colorLut,false});
-                        rows.push_back({"restoreLastProject",text.GetText("EditorUi.RestoreLastProject"),ui::editor::EditorPropertyType::Boolean,preferences.restoreLastProject?"true":"false",false});
-                        rows.push_back({"recentProjects",text.GetText("EditorUi.RecentProjects"),ui::editor::EditorPropertyType::String,
-                            std::to_string(preferences.recentProjects.size()),true});
-                        return rows;
-                    };
-                    toolkitShell->SetFormProperties(EditorPanelId::Preferences,preferencesRows());
-                    toolkitShell->SetFormHandlers(EditorPanelId::Preferences,
-                        [&preferences](std::string key,std::string value){
-                            if(key=="language")preferences.language=value;
-                            else if(key=="uiScale")
-                            {
-                                try{const float scale=std::stof(value);if(!std::isfinite(scale)||scale<0.5f||scale>2.0f)return false;preferences.uiScale=scale;}
-                                catch(...){return false;}
-                            }
-                            else if(key=="externalEditor")preferences.externalEditor=value;
-                            else if(key=="colorLut")preferences.colorLut=value;
-                            else if(key=="restoreLastProject")preferences.restoreLastProject=(value=="true");
-                            else return false;
-                            return true;
-                        },
-                        [&preferences,&toolkitShell,&text](){
-                            std::string error;
-                            if(!EditorSessionStore::SavePreferences(EditorSessionStore::UserDataDirectory(),preferences,error))
-                            {
-                                toolkitShell->SetFormStatus(EditorPanelId::Preferences,error.empty()?text.GetText("EditorUi.SaveFailed"):error);
-                                return false;
-                            }
-                            toolkitShell->SetFormStatus(EditorPanelId::Preferences,
-                                text.GetText("EditorUi.Saved")+" ("+text.GetText("EditorUi.RestartToApply")+")");
-                            Log(LogLevel::Info,"EditorUi.ToolkitPreferences: saved");
-                            return true;
-                        });
-                    toolkitShell->SetPanelText(EditorPanelId::About,text.GetText("EditorUi.AboutText"));
-                    toolkitShell->SetPanelText(EditorPanelId::Diagnostics,
-                        text.GetText("EditorUi.DiagnosticsTitle")+"\n"+
-                        "Project: "+asset_io::Utf8(root)+"\n"+
-                        "Scene: "+(session.Path().empty()?std::string("-"):asset_io::Utf8(session.Path()))+"\n"+
-                        "DPI: "+std::to_string(GetDpiForWindow(window))+"\n"+
-                        "UI scale: "+std::to_string(preferences.uiScale)+"\n"+
-                        "UI: se::ui toolkit");
-                }
-                {
-                    wchar_t openPanel[64]{};
-                    if(GetEnvironmentVariableW(L"SELFENGINE_EDITOR_OPEN_PANEL",openPanel,64)>0)
-                    {
-                        const std::string name=asset_io::Utf8(openPanel);
-                        se::ui::editor::EditorPanelId panel=se::ui::editor::EditorPanelId::None;
-                        if(se::ui::editor::EditorPanelFromName(name,panel))toolkitShell->FocusPanel(panel);
-                    }
-                    wchar_t openAsset[512]{};
-                    if(GetEnvironmentVariableW(L"SELFENGINE_EDITOR_OPEN_ASSET",openAsset,512)>0)
-                        toolkitPendingAsset=asset_io::Utf8(openAsset);
-                    wchar_t autoExport[8]{};
-                    toolkitAutoExport=GetEnvironmentVariableW(L"SELFENGINE_EDITOR_AUTO_EXPORT",autoExport,8)>0;
-                    wchar_t autoFlow[8]{};
-                    toolkitAutoExportFlow=GetEnvironmentVariableW(L"SELFENGINE_EDITOR_AUTO_EXPORT_FLOW",autoFlow,8)>0;
-                    wchar_t autoCancel[16]{};
-                    if(GetEnvironmentVariableW(L"SELFENGINE_EDITOR_AUTO_EXPORT_CANCEL_MS",autoCancel,16)>0)
-                        toolkitAutoCancelMs=std::atoi(asset_io::Utf8(autoCancel).c_str());
-                }
-                const UINT dpi=GetDpiForWindow(window);
-                float uiScale=dpi?static_cast<float>(dpi)/96.0f:1.0f;
-                wchar_t dpiOverride[16]{};
-                if(GetEnvironmentVariableW(L"SELFENGINE_TEST_DPI_SCALE",dpiOverride,16)>0)
-                {
-                    const float parsed=static_cast<float>(std::atof(asset_io::Utf8(dpiOverride).c_str()));
-                    if(parsed>0.5f&&parsed<4.0f){uiScale=parsed;toolkitDpiOverride=true;}
-                }
-                toolkitInput=std::make_unique<EditorInputAdapter>(uiScale);
-                toolkitInput->SetWindow(window);
-                floatingWindows=std::make_unique<EditorFloatingWindows>(window,*toolkitShell,text,resourceDirectory,
-                    [&](HWND target,UINT message,WPARAM w,LPARAM l){return services.messageHandler(target,message,w,l);},!hidden);
-                {
-                    std::string recoveryError;
-                    auto recoveryGroups=EditorSessionStore::ListRecoveryGroups(crashGuard.directory,root,recoveryError);
-                    if(!recoveryGroups.empty())
-                    {
-                        auto groups=std::make_shared<std::vector<RecoveryGroup>>(std::move(recoveryGroups));
-                        const auto directory=crashGuard.directory;
-                        const auto discardAll=[groups,directory](){
-                            for(const RecoveryGroup& group:*groups)
-                            {
-                                std::string error;
-                                EditorSessionStore::DiscardRecoveryGroup(directory,group.id,error);
-                            }
-                        };
-                        const auto recover=[&session,&toolkitShell,&text,&toolkitExternalChange,groups,directory,discardAll](){
-                            std::string recoveryResult;
-                            const bool opened=ApplyRecoveryScene(groups->front(),directory,session,recoveryResult);
-                            if(opened)toolkitExternalChange.Reset(session.Path());
-                            discardAll();
-                            toolkitShell->SetStatus(opened?text.GetText("EditorUi.RecoveryOpened"):
-                                text.GetText("EditorUi.RecoveryFailed"));
-                            Log(LogLevel::Info,opened?"EditorUi.ToolkitRecovery: opened":"EditorUi.ToolkitRecovery: failed");
-                        };
-                        toolkitShell->ShowConfirm(text.GetText("EditorUi.RecoveryTitle"),
-                            text.GetText("EditorUi.RecoveryMessage")+" ("+std::to_string(groups->size())+")",
-                            text.GetText("EditorUi.Recover"),text.GetText("EditorUi.DiscardChanges"),
-                            text.GetText("EditorUi.Cancel"),recover,[discardAll](){discardAll();});
+                        state.playUi->Update(state.session.PlayFixedStep());
+                        if (!state.session.StepPlayFrame()) return false;
                     }
                 }
-                if(toolkitAutoExport&&toolkitExportAction)toolkitAutoExportFn=toolkitExportAction;
-                frontend.MarkUiSavedForToolkit(ui,toolkitUiPath);
-                featureTools=std::make_unique<EditorFeatureTools>(root,assets,session,text);featureTools->Attach(*toolkitShell);
-                Log(LogLevel::Info,"EditorUi.ToolkitHostReady");
-                return true;
+                else if (state.hooks && state.hooks->update)
+                {
+                    if (!state.hooks->update(*state.session.PlayWorld(), *state.playUi, seconds)) return false;
+                }
+                else
+                {
+                    if (!state.session.PlayPaused()) state.playUi->Update(seconds);
+                    if (!state.session.PlayEnvironment()->RunFrame(seconds)) return false;
+                }
+                state.session.CompletePlayFrame();
             }
-            platform=std::make_unique<WindowsEditorInput>(window,frontend);
-            if(!platform->Ready()){Log(LogLevel::Error,text.GetText(platform->LastError()));return false;}
-            Log(LogLevel::Info,text.GetText("EditorUi.HostReady"));return true;
+            return true;
         };
-        services.windowClosing=[&]{
-            playInput->Deactivate(hostWindow);
-            if(toolkit){toolkitCloseApproved=toolkitShell&&toolkitShell->CloseApproved();Log(LogLevel::Info,"EditorUi.ToolkitClosing");viewportController.Blur(session);featureTools.reset();floatingWindows.reset();toolkitInput.reset();toolkitShell.reset();toolkitText.reset();toolkitFontPixels.clear();}
-            else{frontend.CancelInteractions(session,&ui);platform.reset();}
-            hostWindow=nullptr;
-        };
-        services.messageHandler=[&](HWND window,UINT message,WPARAM wParam,LPARAM lParam){
-            if(toolkit)
-            {
-                auto* windowInput=window==hostWindow?toolkitInput.get():(floatingWindows?floatingWindows->Input(window):nullptr);
-                if(message==WM_ENTERSIZEMOVE)
-                {
-                    nativeMoveWindow=window;
-                    viewportController.Blur(session);
-                    if(toolkitShell)toolkitShell->Dispatcher().ReleasePointerCapture();
-                    return std::optional<LRESULT>{};
-                }
-                if(message==WM_EXITSIZEMOVE)
-                {
-                    if(nativeMoveWindow==window)nativeMoveWindow=nullptr;
-                    return std::optional<LRESULT>{};
-                }
-                if(message==WM_SYSKEYDOWN&&wParam==VK_F4)return std::optional<LRESULT>{};
-                if(message==WM_CLOSE)
-                {
-                    // 自动化/隐藏运行没有可交互的模态，直接按宿主退出；交互窗口才走关闭保护。
-                    if(hidden||maximumFrames>0)return std::optional<LRESULT>{};
-                    if(!toolkitShell||toolkitShell->CloseApproved())return std::optional<LRESULT>{};
-                    toolkitShell->SetDirty(session.Dirty()||frontend.MaterialDirtyForToolkit()||toolkitProjectDirty||toolkitBuildDirty||toolkitUiDirty||frontend.TimeOfDayPreview().Dirty());
-                    if(toolkitShell->RequestClose())return std::optional<LRESULT>{0};
-                    return std::optional<LRESULT>{};
-                }
-                if(message==WM_DPICHANGED)
-                {
-                    const UINT dpi=HIWORD(wParam);
-                    Log(LogLevel::Info,"EditorUi.ToolkitDpi: "+std::to_string(dpi));
-                    if(windowInput&&dpi)windowInput->SetDpiScale(static_cast<float>(dpi)/96.0f);
-                    if(lParam)
-                    {
-                        const auto& bounds=*reinterpret_cast<const RECT*>(lParam);
-                        SetWindowPos(window,nullptr,bounds.left,bounds.top,bounds.right-bounds.left,
-                            bounds.bottom-bounds.top,SWP_NOZORDER|SWP_NOACTIVATE);
-                    }
-                    return std::optional<LRESULT>{0};
-                }
-                if (message == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT && toolkitShell && windowInput)
-                {
-                    POINT cursor{};
-                    if (GetCursorPos(&cursor) && ScreenToClient(window, &cursor))
-                    {
-                        if (floatingWindows) floatingWindows->SelectSurface(window);
-                        const float scale = windowInput->DpiScale();
-                        if (auto axis = toolkitShell->SplitterCursorAt(cursor.x / scale, cursor.y / scale))
-                        {
-                            SetCursor(LoadCursor(nullptr, *axis == ui::editor::DockAxis::Horizontal ? IDC_SIZEWE : IDC_SIZENS));
-                            return std::optional<LRESULT>{TRUE};
-                        }
-                        if (toolkitShell->InspectorNumericCursorAt(cursor.x / scale, cursor.y / scale))
-                        {
-                            SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
-                            return std::optional<LRESULT>{TRUE};
-                        }
-                    }
-                }
-                if(message==WM_MOUSEWHEEL)
-                {
-                    POINT point{static_cast<short>(LOWORD(lParam)),static_cast<short>(HIWORD(lParam))};
-                    ScreenToClient(window,&point);
-                    lParam=MAKELPARAM(point.x,point.y);
-                }
-                HWND targetWindow=window;
-                if(floatingWindows)
-                {
-                    targetWindow=floatingWindows->RoutePointer(window,message,lParam);
-                    floatingWindows->SelectSurface(targetWindow);
-                    if(targetWindow&&targetWindow!=window)
-                        windowInput=targetWindow==hostWindow?toolkitInput.get():floatingWindows->Input(targetWindow);
-                }
-                ui::UiInputEvent event;
-                if(windowInput&&toolkitShell)windowInput->SetTextInputActive(toolkitShell->TextFieldFocused());
-                if(windowInput&&windowInput->Translate(message,wParam,lParam,event))
-                {
-                    if(!toolkitShell)return std::optional<LRESULT>{};
-                    const bool lostFocus=event.type==ui::UiEventType::FocusLost;
-                    const bool lostCapture=event.type==ui::UiEventType::PointerCaptureLost;
-                    if(lostFocus||lostCapture)
-                    {
-                        if(lostFocus)toolkitShell->CancelPropertyInteraction();
-                        // 主动松开捕获不等于失焦；保留视口焦点，随后 QWER 仍应切换工具。
-                        if(lostFocus||viewportController.Captured())viewportController.Blur(session);
-                        auto& dispatcher=toolkitShell->Dispatcher();
-                        event.target=dispatcher.PointerCapture();
-                        if(!event.target.IsValid())event.target=dispatcher.Focus();
-                        dispatcher.Dispatch(event);
-                        dispatcher.ReleasePointerCapture();
-                        if(lostFocus)dispatcher.ClearFocus();
-                        if(!nativeMoveWindow&&GetCapture()==window)ReleaseCapture();
-                        return std::optional<LRESULT>{};
-                    }
-                    const bool modal=toolkitShell->CloseModalOpen()||toolkitShell->ConfirmOpen()||toolkitShell->MenuOpen()||toolkitShell->ColorPickerOpen();
-                    const auto hit=ui::UiHitTest(toolkitShell->Document(),toolkitShell->Layout()).Hit(
-                        toolkitShell->CurrentInputRoot(),event.x,event.y).target;
-                    const bool onViewport=hit==toolkitShell->ViewportPanel();
-                    const bool key=event.type==ui::UiEventType::KeyDown||event.type==ui::UiEventType::KeyUp;
-                    const bool blocked=modal||(key&&toolkitShell->TextFieldFocused());
-                    if(!blocked && onViewport && event.type==ui::UiEventType::PointerDown && event.button==0 && !event.alt)
-                        inspectedAssetName.clear();
-                    if((key||event.type==ui::UiEventType::TextInput)&&GetEnvironmentVariableW(L"SELFENGINE_EDITOR_TRACE_VIEWPORT",nullptr,0))
-                    {
-                        Log(LogLevel::Info,text.GetText("EditorUi.ViewportInputTrace")+": message="+std::to_string(message)
-                            +", raw="+std::to_string(wParam)+", key="+std::to_string(event.key)+", char="+std::to_string(event.codepoint)
-                            +", ctrl="+std::to_string(event.control)+", alt="+std::to_string(event.alt)+", blocked="+std::to_string(blocked));
-                        std::cout<<std::flush;
-                    }
-                    if(blocked)viewportController.Blur(session);
-                    if(event.type==ui::UiEventType::PointerDown&&!viewportController.Captured())
-                    {
-                        if(!onViewport)viewportController.Blur(session);
-                        else if(!modal)toolkitShell->Dispatcher().ClearFocus();
-                    }
-                    bool handled=false;
-                    const bool captured=viewportController.Captured();
-                    if(!blocked&&(captured||key))handled=viewportController.Handle(event,session,assets,onViewport);
-                    if(!handled&&!captured&&event.type==ui::UiEventType::KeyDown)
-                        handled=toolkitShell->RouteShortcut(event,blocked);
-                    if(!handled&&!captured)
-                    {
-                        toolkitShell->Dispatcher().Dispatch(event);
-                        if(!blocked&&!event.handled)
-                        {
-                            handled=viewportController.Handle(event,session,assets,onViewport);
-                            if(viewportController.Captured())
-                                toolkitShell->Dispatcher().ReleasePointerCapture();
-                        }
-                    }
-                    if(const auto point=viewportController.TakeContextClick())
-                        toolkitShell->OpenCreateMenu(ui::editor::EditorPanelId::Viewport,point->x,point->y);
-                    if(event.type==ui::UiEventType::PointerDown&&GetEnvironmentVariableW(L"SELFENGINE_EDITOR_TRACE_VIEWPORT",nullptr,0))
-                    {
-                        const auto hitRect=toolkitShell->Layout().Rect(hit);
-                        Log(LogLevel::Info,text.GetText("EditorUi.ViewportInputTrace")+": x="+std::to_string(event.x)+", y="+std::to_string(event.y)
-                            +", viewport="+std::to_string(onViewport)+", blocked="+std::to_string(blocked)+", ui="+std::to_string(event.handled)
-                            +", hit="+std::to_string(hitRect.x)+","+std::to_string(hitRect.y)+","+std::to_string(hitRect.width)+","+std::to_string(hitRect.height)
-                            +", selected="+std::to_string(session.Selected())+", tool="+std::to_string(viewportController.Tool()));
-                    }
-                    const bool pointerCaptured=viewportController.Captured() ||
-                        toolkitShell->Dispatcher().PointerCapture().IsValid();
-                    if(!nativeMoveWindow)
-                    {
-                        if(pointerCaptured&&GetCapture()!=window)SetCapture(window);
-                        else if(!pointerCaptured&&GetCapture()==window)ReleaseCapture();
-                    }
-                    windowInput->SetTextInputActive(toolkitShell->TextFieldFocused());
-                    return std::optional<LRESULT>{0};
-                }
-                return std::optional<LRESULT>{};
-            }
-            if(message==WM_CLOSE&&!frontend.CloseApproved()){frontend.RequestClose();return std::optional<LRESULT>{0};}
-            const auto routed=playInput->Process(window,message,wParam,lParam);
-            const auto editorResult=routed.forwardEditor&&platform?platform->Process(window,message,wParam,lParam):std::optional<LRESULT>{};
-            return routed.handled?routed.handled:editorResult;
-        };
-        services.captureKeyboard=[&]{if(toolkit)return false;return frontend.FileDialogActive()||(session.IsPlaying()?playInput->KeyboardConsumed():platform&&platform->WantsKeyboard());};
-        services.capturePointer=[&]{if(toolkit)return false;return frontend.FileDialogActive()||(session.IsPlaying()?playInput->PointerConsumed():platform&&platform->WantsMouse());};
-        services.input=[&](const InputState& input,bool keyboard,bool pointer){
-            if(toolkit)
-            {
-                if(session.IsPlaying()&&!toolkitGameplayLogged)
-                {
-                    bool hasGameplayInput=!input.pointerEvents.empty();
-                    for(bool down:input.keysDown)hasGameplayInput=hasGameplayInput||down;
-                    if(hasGameplayInput){toolkitGameplayLogged=true;Log(LogLevel::Info,"EditorUi.ToolkitGameplayInput");}
-                }
-                if(hooks&&hooks->input&&session.IsPlaying())
-                {
-                    float dpi=toolkitInput?toolkitInput->DpiScale():1.0f;
-                    const auto* floatingInput=floatingWindows?floatingWindows->GameplayInput(dpi):nullptr;
-                    InputState gameplay=floatingInput?*floatingInput:input;
-                    const ui::editor::ViewportRectF viewportMath{toolkitViewportRect.x,toolkitViewportRect.y,toolkitViewportRect.width,toolkitViewportRect.height};
-                    float mouseX=static_cast<float>(gameplay.mouseX),mouseY=static_cast<float>(gameplay.mouseY);
-                    ui::editor::ViewportOffsetPlayInput(viewportMath,dpi,mouseX,mouseY);
-                    gameplay.mouseX=static_cast<int>(std::lround(mouseX));gameplay.mouseY=static_cast<int>(std::lround(mouseY));
-                    for(auto& event:gameplay.pointerEvents){float ex=static_cast<float>(event.x),ey=static_cast<float>(event.y);ui::editor::ViewportOffsetPlayInput(viewportMath,dpi,ex,ey);event.x=static_cast<int>(std::lround(ex));event.y=static_cast<int>(std::lround(ey));}
-                    hooks->input(gameplay,keyboard,pointer);
-                }
-                playInput->EndFrame();
-                return;
-            }
-            if(hooks&&hooks->input&&session.IsPlaying()&&!frontend.FileDialogActive())hooks->input(playInput->GameplayInput(input),keyboard,pointer);
-            playInput->EndFrame();
-        };
-        services.runEnvironmentFrame=[&](double seconds){
-            if(featureTools)featureTools->Poll();
-            if(toolkit)
-            {
-                viewportController.Update(seconds,session,assets);
-                const bool uiCaptured=toolkitShell&&toolkitShell->Dispatcher().PointerCapture().IsValid();
-                // 系统拖动标题栏和外沿时也持有鼠标捕获，实时帧必须让它持续到松手。
-                if(!nativeMoveWindow&&!viewportController.Captured()&&!uiCaptured&&
-                    (GetCapture()==hostWindow||(floatingWindows&&floatingWindows->Owns(GetCapture()))))ReleaseCapture();
-            }
-            if(frontend.TimeOfDayPreview().Ready()&&!frontend.TimeOfDayPreview().Advance(seconds))return false;
-            if(hooks&&hooks->frame&&!hooks->frame(session,seconds))return false;
-            // 恢复快照属于文档服务，两套前端都必须推进；编辑手势中不捕获半成品。
-            if(toolkit&&toolkitShell&&!toolkitShell->Dispatcher().PointerCapture().IsValid()&&!toolkitShell->TextFieldFocused())
-                frontend.UpdateRecovery(session,&ui);
-            ui.Update(seconds);
-            if(frontend.FileDialogActive())return true;
-            if(session.IsPlaying()&&playUi)
-            {
-                // 外部运行宿主统一推进脚本/物理/UI，避免同一 Play UI 计时两次。
-                if(session.ConsumePlayStep())
-                {
-                    if(hooks&&hooks->singleStep)
-                    {if(!hooks->singleStep(*session.PlayWorld(),*playUi))return false;}
-                    else
-                    {playUi->Update(session.PlayFixedStep());if(!session.StepPlayFrame())return false;}
-                }
-                else if(hooks&&hooks->update){if(!hooks->update(*session.PlayWorld(),*playUi,seconds))return false;}
-                else {if(!session.PlayPaused())playUi->Update(seconds);if(!session.PlayEnvironment()->RunFrame(seconds))return false;}
-                session.CompletePlayFrame();
-            }
-            return toolkit || (platform&&platform->Ready());
-        };
-        services.extract=[&](FrameData& frame){
-            if(toolkit)
-            {
-                if(!toolkitShell||!hostWindow)throw std::runtime_error("EditorUi.ToolkitNotReady");
-                if(hooks&&hooks->operationFrame)hooks->operationFrame(frontend,session);
-                if(toolkitImportTask.valid()&&toolkitImportTask.wait_for(std::chrono::seconds(0))==std::future_status::ready)
-                {
-                    ToolkitImportResult result;
-                    try{result=toolkitImportTask.get();}
-                    catch(const std::exception& failure){result.key="Editor.AssetImportFailed";result.detail=failure.what();}
-                    if(result.success)
-                    {
-                        std::vector<AssetDiagnostic> failures;
-                        if(!assets.Scan(failures))
-                        {
-                            result.success=false;result.key="Assets.ScanFailed";
-                            if(!failures.empty()){result.key=failures.front().key;result.detail=failures.front().detail;}
-                        }
-                        else
-                        {
-                            toolkitPendingAsset=asset_io::Utf8(result.primary);
-                            std::vector<EditorAssetIssue> issues;
-                            if(!EditorAssetActions::SyncProjectAssets(root,assets,issues))
-                                for(const auto& issue:issues)
-                                {
-                                    const auto message=text.GetText(issue.key)+": "+issue.detail;
-                                    toolkitShell->AppendConsoleLine(message);Log(LogLevel::Warning,message);
-                                }
-                        }
-                    }
-                    if(result.key.empty())result.key=result.success?"Editor.AssetImportSucceeded":"Editor.AssetImportFailed";
-                    toolkitImportStatus=text.GetText(result.key)+(result.detail.empty()?std::string{}:": "+result.detail);
-                    toolkitShell->SetAssetsPreviewText(toolkitImportStatus);
-                    toolkitShell->AppendConsoleLine(toolkitImportStatus);
-                    Log(result.success?LogLevel::Info:LogLevel::Warning,toolkitImportStatus);
-                    toolkitShell->FocusPanel(EditorPanelId::Assets);
-                }
+        services.extract = [&state](FrameData& frame) {
 #if defined(FLARE_LOCAL_VALIDATION)
-                if(smoke.Enabled())
+            // 由 EditorApplication 主提取前先推进自动化烟测命令，保持单线程时序。
+#endif
+            ExtractToolkitFrameData(state, frame);
+        };
+#if defined(FLARE_LOCAL_VALIDATION)
+        if (smoke.Enabled())
+        {
+            services.extract = [&state, &smoke](FrameData& frame) {
+                if (state.shell)
                 {
-                    // 两套壳共用同一个验收驱动；toolkit 必须执行自己的生产命令总线。
-                    smoke.OperationFrame(frontend,session,[&](std::string_view id){
-                        std::optional<EditorCommandId> command;
-                        if(id=="editor.play")
+                    smoke.OperationFrame(state.host, state.session, [&state](std::string_view id) {
+                        std::optional<ui::editor::EditorCommandId> command;
+                        if (id == "editor.play")
                         {
                             std::string reason;
-                            if(!session.ValidatePlay(reason))return EditorCommandOutcome::Rejected(reason);
-                            command=EditorCommandId::Play;
+                            if (!state.session.ValidatePlay(reason)) return EditorCommandOutcome::Rejected(reason);
+                            command = ui::editor::EditorCommandId::Play;
                         }
-                        else if(id=="editor.pause"||id=="editor.resume")
+                        else if (id == "editor.pause" || id == "editor.resume")
                         {
-                            if(!session.IsPlaying())return EditorCommandOutcome::Rejected("Editor.PlaybackInvalidState");
-                            if(session.PlayPaused()==(id=="editor.pause"))return EditorCommandOutcome::Succeeded();
-                            command=EditorCommandId::Pause;
+                            if (!state.session.IsPlaying()) return EditorCommandOutcome::Rejected("Editor.PlaybackInvalidState");
+                            if (state.session.PlayPaused() == (id == "editor.pause")) return EditorCommandOutcome::Succeeded();
+                            command = ui::editor::EditorCommandId::Pause;
                         }
-                        else if(id=="editor.step")command=EditorCommandId::Step;
-                        else if(id=="editor.stop")command=EditorCommandId::Stop;
-                        else if(id=="editor.save-all")command=EditorCommandId::SaveAll;
-                        else if(id=="editor.compile")command=EditorCommandId::Build;
-                        if(!command)return EditorCommandOutcome::Rejected("Editor.CommandUnknown",std::string(id));
-                        return toolkitShell->Commands().Execute({*command,{}})?EditorCommandOutcome::Succeeded():
-                            EditorCommandOutcome::Failed("Editor.PlaybackInvalidState");
-                    },[&]{PostMessageW(hostWindow,WM_CLOSE,0,0);});
+                        else if (id == "editor.step") command = ui::editor::EditorCommandId::Step;
+                        else if (id == "editor.stop") command = ui::editor::EditorCommandId::Stop;
+                        else if (id == "editor.save-all") command = ui::editor::EditorCommandId::SaveAll;
+                        else if (id == "editor.compile") command = ui::editor::EditorCommandId::Build;
+                        if (!command) return EditorCommandOutcome::Rejected("Editor.CommandUnknown", std::string(id));
+                        return state.shell->Commands().Execute({*command, {}}) ? EditorCommandOutcome::Succeeded()
+                            : EditorCommandOutcome::Failed("Editor.PlaybackInvalidState");
+                    }, [&state]() { PostMessageW(state.hostWindow, WM_CLOSE, 0, 0); });
                 }
-#endif
-                static bool toolkitExtractLogged=false;
-                if(!toolkitExtractLogged)
-                {
-                    toolkitExtractLogged=true;
-                    Log(LogLevel::Info,"EditorUi.ToolkitExtract");
-                }
-                if(toolkitAutoExportFn&&!toolkitAutoExportStarted)
-                {
-                    toolkitAutoExportStarted=true;
-                    toolkitAutoExportStart=GetTickCount64();
-                    toolkitAutoExportFn();
-                }
-                RECT client{};
-                GetClientRect(hostWindow,&client);
-                const float width=static_cast<float>(client.right-client.left);
-                const float height=static_cast<float>(client.bottom-client.top);
-                const float dpi=toolkitInput?toolkitInput->DpiScale():1.0f;
-                toolkitShell->SetDpiScale(dpi);
-                toolkitShell->Resize(width,height);
-                if(floatingWindows&&!floatingWindows->Synchronize())throw std::runtime_error(text.GetText("EditorUi.FloatingWindowFailed"));
-                float framebufferScaleX=dpi,framebufferScaleY=dpi;
-                if(toolkitDpiOverride&&toolkitShell->Width()>0.0f&&toolkitShell->Height()>0.0f)
-                {
-                    framebufferScaleX=width/toolkitShell->Width();
-                    framebufferScaleY=height/toolkitShell->Height();
-                }
-                toolkitText->SetRasterScale(framebufferScaleY);
-                toolkitShell->Frame();
-                {
-                    std::vector<ui::editor::EditorHierarchyNode> hierarchy;
-                    const World& editWorld=session.EditWorld();
-                    for(const EditorHierarchyItem& item:BuildEditorHierarchy(editWorld))
-                    {
-                        ui::editor::EditorHierarchyNode node;
-                        node.id=item.id;node.parent=item.parent;node.depth=item.depth;
-                        node.hasChildren=item.hasChildren;node.expanded=true;
-                        if(const EntityRecord* record=editWorld.Get(editWorld.FindByStableId(item.id)))node.label=record->name;
-                        else node.label="Entity "+std::to_string(item.id);
-                        hierarchy.push_back(std::move(node));
-                    }
-                    toolkitShell->SetHierarchy(std::move(hierarchy));
-                    std::vector<ui::editor::EditorAssetEntry> entries;
-                    for(const AssetId& id:assets.ListIds())
-                    {
-                        const std::filesystem::path resolved=assets.Resolve(id);
-                        const std::string extension=resolved.extension().string();
-                        std::string type="asset";
-                        if(extension==".fbx"||extension==".gltf"||extension==".glb")type="model";
-                        else if(extension==".png"||extension==".jpg"||extension==".jpeg"||extension==".tga")type="texture";
-                        else if(extension==".hlsl"||extension==".hlsli")type="shader";
-                        else if(extension==".json")type="data";
-                        entries.push_back({asset_io::Utf8(resolved),type});
-                    }
-                    for(const auto& source:scriptWorkflow.Sources())entries.push_back({asset_io::Utf8(source),"C#"});
-                    std::string pendingAssetPath;
-                    if(!toolkitPendingAsset.empty())
-                    {
-                        for(const ui::editor::EditorAssetEntry& entry:entries)
-                        {
-                            if(entry.path.find(toolkitPendingAsset)!=std::string::npos)
-                            {
-                                pendingAssetPath=entry.path;
-                                toolkitPendingAsset.clear();
-                                break;
-                            }
-                        }
-                    }
-                    toolkitShell->SetAssets(std::move(entries));
-                    if(!pendingAssetPath.empty())toolkitShell->SelectAsset(pendingAssetPath);
-                    std::vector<ui::editor::EditorProperty> properties;
-                    std::string inspectorLabel=text.GetText("EditorUi.NoSelection");
-                    const StableEntityId selected=session.Selected();
-                    if (const auto* record = editWorld.Get(editWorld.FindByStableId(selected)))
-                        inspectorLabel = record->name;
-                    if(toolkitShell->ActivePanel()==EditorPanelId::Hierarchy||toolkitShell->ActivePanel()==EditorPanelId::Viewport)toolkitInspectUi=false;
-                    if(toolkitInspectUi)
-                        toolkitShell->SetInspector(frontend.SelectedUi(),text.GetText("EditorUi.UiDesigner"),UiInspectorRows(ui,frontend.SelectedUi(),text,session.IsPlaying()));
-                    else if(!inspectedAssetName.empty())
-                        toolkitShell->SetInspector(0, inspectedAssetName, inspectedAssetRows);
-                    else
-                    {
-                        AppendSceneInspector(session, assets, text, selected, properties);
-                        const auto clip=std::find_if(properties.begin(),properties.end(),[](const auto& p){return p.key=="actor.clip";});
-                        if(clip!=properties.end()&&!session.IsPlaying()){
-                            using ui::editor::EditorProperty;
-                            using ui::editor::EditorPropertyType;
-                            const bool active=clipPreview.Target()==selected;
-                            const bool running=active&&clipPreview.Playing();
-                            const auto group=clip->section;
-                            EditorProperty play{"preview.play",text.GetText(running?"EditorUi.PauseClip":"EditorUi.PlayClip"),EditorPropertyType::Action,{},false,{},group};
-                            EditorProperty time{"preview.time",text.GetText("EditorUi.ClipTime"),EditorPropertyType::Number,
-                                std::to_string(active?std::round(clipPreview.Time()*10.)/10.:0.),false,{},group};
-                            properties.insert(std::next(clip),{std::move(play),std::move(time)});
-                        }
-                        AppendTodInspector(frontend.TimeOfDayPreview(),text,session.IsPlaying(),properties);
-                        scriptWorkflow.AppendRows(selected, session.IsPlaying(), properties);
-                        toolkitShell->SetInspector(selected, inspectorLabel, std::move(properties));
-                    }
-                }
-                {
-                    const ui::UiRect designerContent=toolkitShell->Layout().Rect(toolkitShell->UiDesignerContent());
-                    if(designerContent.width>2.0f&&designerContent.height>2.0f)
-                    {
-                        frontend.UiCanvas().Prepare(ui,{designerContent.x,designerContent.y,designerContent.width,designerContent.height});
-                        std::vector<ui::editor::EditorDesignerNode> designerNodes;
-                        for(const UiVisual& visual:frontend.UiCanvas().Visuals(ui))
-                        {
-                            ui::editor::EditorDesignerNode node;
-                            node.id=visual.id;
-                            node.rect={visual.rectangle.x,visual.rectangle.y,visual.rectangle.width,visual.rectangle.height};
-                            node.text=visual.text;
-                            node.color=ui::UiColor{visual.color.r,visual.color.g,visual.color.b,visual.color.a};
-                            node.selected=visual.id==frontend.SelectedUi();
-                            node.visible=true;
-                            designerNodes.push_back(std::move(node));
-                        }
-                        toolkitShell->SetDesignerNodes(std::move(designerNodes));
-                    }
-                }
-                if(toolkitInput)
-                {
-                    const ui::UiElementHandle focus=toolkitShell->Dispatcher().Focus();
-                    if(focus.IsValid())
-                    {
-                        const ui::UiRect rect=toolkitShell->Layout().Rect(focus);
-                        const auto surface=toolkitShell->SurfaceForElement(focus);
-                        auto* input=surface&&floatingWindows?floatingWindows->Input(floatingWindows->Window(surface)):toolkitInput.get();
-                        if(input)input->SetImeCandidateAnchor({rect.x,rect.y,rect.width,rect.height});
-                    }
-                }
-                toolkitShell->SetStatus(session.IsPlaying()
-                    ?text.GetText(session.PlayPaused()?"EditorUi.Paused":"EditorUi.Running")
-                    :!toolkitImportStatus.empty()?toolkitImportStatus
-                    :text.GetText(viewportController.LastError().empty()?"EditorUi.Ready":viewportController.LastError()));
-                if(toolkitExternalChange.Path()!=session.Path())toolkitExternalChange.Reset(session.Path());
-                if(!toolkitShell->ConfirmOpen()&&toolkitExternalChange.Poll())
-                {
-                    const auto changedPath=toolkitExternalChange.Path();
-                    toolkitExternalChange.Consume();
-                    toolkitShell->ShowConfirm(text.GetText("EditorUi.ExternalChangedTitle"),
-                        text.GetText("EditorUi.ExternalChangedMessage")+": "+asset_io::Utf8(changedPath),
-                        text.GetText("EditorUi.Reload"),text.GetText("EditorUi.Keep"),
-                        text.GetText("EditorUi.Cancel"),
-                        [&session,&toolkitShell,&toolkitExternalChange,&text,changedPath](){
-                            if(session.Dirty())
-                            {
-                                toolkitShell->SetStatus(text.GetText("EditorUi.SaveFirst"));
-                                return;
-                            }
-                            if(session.Open(changedPath,true))
-                            {
-                                toolkitExternalChange.Reset(session.Path());
-                                toolkitShell->SetStatus(text.GetText("EditorUi.Reloaded"));
-                            }
-                            else toolkitShell->SetStatus(session.LastError());
-                        },
-                        [&toolkitShell,&text](){toolkitShell->SetStatus(text.GetText("EditorUi.Keep"));});
-                }
-                toolkitShell->SetDirty(session.Dirty()||frontend.MaterialDirtyForToolkit()||toolkitProjectDirty||toolkitBuildDirty||toolkitUiDirty||frontend.TimeOfDayPreview().Dirty());
-                frontend.PollExportJob(text);
-                const bool exportBusy=frontend.ExportBusy();
-                if(toolkitAutoCancelMs>0&&exportBusy&&!toolkitAutoCancelRequested&&
-                    GetTickCount64()-toolkitAutoExportStart>=static_cast<std::uint64_t>(toolkitAutoCancelMs))
-                {
-                    frontend.RequestCancelExport();
-                    toolkitAutoCancelRequested=true;
-                    Log(LogLevel::Info,"EditorUi.ToolkitExport: auto-cancel");
-                }
-                if(exportBusy!=toolkitExportBusy)
-                {
-                    toolkitExportBusy=exportBusy;
-                    toolkitShell->SetFormActionLabel(EditorPanelId::BuildExport,
-                        exportBusy?text.GetText("EditorUi.Cancel"):text.GetText("EditorUi.Export"));
-                }
-                if(exportBusy)
-                {
-                    const auto progress=frontend.ExportSnapshot();
-                    if(!progress.report.stage.empty())toolkitShell->SetFormStatus(EditorPanelId::BuildExport,text.GetText(progress.report.stage));
-                }
-                else
-                {
-                    const auto snapshot=frontend.ExportSnapshot();
-                    if(snapshot.finished&&!toolkitExportFinished)
-                    {
-                        std::string exportStatus=snapshot.cancelled?text.GetText("EditorUi.ExportCancelled"):
-                            snapshot.report.state==ExportOperationState::Succeeded?text.GetText("EditorUi.ExportSucceeded"):
-                            text.GetText("EditorUi.ExportFailed");
-                        if(!snapshot.cancelled&&snapshot.report.state!=ExportOperationState::Succeeded&&
-                            !snapshot.report.diagnosticKey.empty())exportStatus+=": "+snapshot.report.diagnosticKey;
-                        if(!snapshot.outputPackage.empty())exportStatus+="  "+asset_io::Utf8(snapshot.outputPackage);
-                        toolkitShell->SetFormStatus(EditorPanelId::BuildExport,exportStatus);
-                        if(toolkitExportStarted&&!toolkitExportFinished)
-                        {
-                            toolkitExportFinished=true;
-                            Log(LogLevel::Info,std::string("EditorUi.ToolkitExport: finished ")+
-                                (snapshot.cancelled?"cancelled":snapshot.report.state==ExportOperationState::Succeeded?"succeeded":"failed")+
-                                (snapshot.report.diagnosticKey.empty()?"":(" "+snapshot.report.diagnosticKey)));
-                        }
-                        if(toolkitAutoExportFlow&&toolkitAutoExportFlowPhase==0&&snapshot.cancelled&&snapshot.finished)
-                        {
-                            toolkitAutoExportFlowPhase=1;
-                            toolkitAutoCancelMs=0;
-                            toolkitAutoCancelRequested=false;
-                            toolkitExportStarted=false;
-                            toolkitExportFinished=false;
-                            if(toolkitAutoExportFn)toolkitAutoExportFn();
-                        }
-                        else toolkitExportFinished=true;
-                    }
-                }
-                if(toolkitShell->ConsumeCloseRequest())PostMessageW(hostWindow,WM_CLOSE,0,0);
-                if(session.IsPlaying())
-                {
-                    clipPreview.Clear();
-                    BuildFrameData(*session.PlayEnvironment(),playUi.get(),nullptr,frame);
-                }
-                else
-                {
-                    BuildFrameData(session.EditWorld(),nullptr,nullptr,frame);
-                    clipPreview.Update(session,frame);
-                }
-                if(session.IsPlaying()&&playUi&&hooks&&hooks->extract)hooks->extract(*session.PlayWorld(),*playUi,frame);
-                else if(viewportController.Gizmos())
-                {
-                    const auto& world=session.IsPlaying()?*session.PlayWorld():session.EditWorld();
-                    if(!session.IsPlaying())authoredScenePhysics.Synchronize(world,authoredPhysics);
-                    frame.debugLines=authoredPhysics.DebugLines();const auto lines=authoredScenePhysics.CharacterLines();frame.debugLines.insert(frame.debugLines.end(),lines.begin(),lines.end());
-                }
-                if(session.IsPlaying()&&session.PlayEnvironment()->TimeOfDay().Profile())frame.timeOfDay=session.PlayEnvironment()->Snapshot();
-                if(!session.IsPlaying()&&frontend.TimeOfDayPreview().Ready())frame.timeOfDay=frontend.TimeOfDayPreview().Snapshot();
-                const ui::UiRect viewportRect=toolkitShell->Layout().Rect(toolkitShell->ViewportPanel());
-                viewportController.Prepare(session,assets,viewportRect,++editorFrame);
-                toolkitCamera=viewportController.Camera();toolkitViewportRect=viewportRect;
-                toolkitShell->SetViewportState(viewportController.Tool(),viewportController.Local(),viewportController.Center(),
-                    viewportController.Sky(),viewportController.Grid(),viewportController.Gizmos(),session.IsPlaying(),session.PlayPaused());
-                toolkitShell->Frame();
-
-                if(hooks&&hooks->toolkitDrawn)hooks->toolkitDrawn(*toolkitShell,session);
-                ui::UiDisplayList display;
-                ui::UiPaintStats paint;
-                ui::UiPainter painter(toolkitShell->Document(),toolkitShell->Layout());
-                if(!painter.Build(toolkitShell->Root(),display,paint))throw std::runtime_error("EditorUi.ToolkitPaintFailed");
-                // 在场景图像之后插入辅助绘制，后续菜单/模态仍覆盖它。
-                for(auto it=display.commands.begin();it!=display.commands.end();++it)
-                    if(it->kind==ui::UiPaintCommandKind::Image&&it->image=="scene")
-                    {display.commands.insert(it+1,viewportController.Overlay().commands.begin(),viewportController.Overlay().commands.end());break;}
-                GuiGeometry geometry;
-                ui::UiGeometryStats geometryStats;
-                std::vector<std::string> errors;
-                ui::UiGeometryOptions options;
-                options.whiteTexture=3;
-                options.fontPageBase=1;
-                options.textPixelScale={framebufferScaleX,framebufferScaleY};
-                options.whiteU=0.0f;options.whiteV=0.0f;options.whiteWidth=1.0f;options.whiteHeight=1.0f;
-                ToolkitSceneImageProvider imageProvider;imageProvider.images=toolkitImageInfos;
-                if(featureTools&&featureTools->Preview())imageProvider.images["feature-preview"]={featureTools->PreviewToken(),static_cast<float>(featureTools->Preview()->width),static_cast<float>(featureTools->Preview()->height)};
-                if(!ui::UiGeometryBuilder{}.Build(display,&toolkitShell->TextService(),&imageProvider,options,geometry,geometryStats,errors))
-                {
-                    std::string detail="EditorUi.ToolkitGeometryFailed";
-                    for(const auto& error:errors)detail+=" "+error;
-                    if(toolkitText&&!toolkitText->LastError().empty())detail+=" "+toolkitText->LastError();
-                    throw std::runtime_error(detail);
-                }
-                if(!toolkitText||!toolkitText->FontAtlas(toolkitFontPixels,toolkitFontWidth,toolkitFontHeight,toolkitFontRevision))
-                    throw std::runtime_error("EditorUi.ToolkitFontAtlasFailed");
-                geometry.framebufferScale={framebufferScaleX,framebufferScaleY};
-                frame.editorGui=std::move(geometry);
-                frame.editorGuiEnabled=true;
-                if(featureTools&&featureTools->Preview())
-                {const auto& image=*featureTools->Preview();frame.editorUiImages.push_back({featureTools->PreviewToken(),image.width,image.height,image.rgba8.data(),image.rgba8.size()});}
-                if(toolkitPreviewImage&&!toolkitPreviewImageKey.empty()&&toolkitPreviewToken!=0)
-                {
-                    frame.editorUiImages.push_back({toolkitPreviewToken,toolkitPreviewImage->width,
-                        toolkitPreviewImage->height,toolkitPreviewImage->rgba8.data(),toolkitPreviewImage->rgba8.size()});
-                }
-                frame.editorDrawData=nullptr;
-                frame.editorFontPixels=toolkitFontPixels.empty()?nullptr:toolkitFontPixels.data();
-                frame.editorFontWidth=toolkitFontWidth;frame.editorFontHeight=toolkitFontHeight;frame.editorFontToken=1;
-                frame.editorFontRevision=toolkitFontRevision;
-                frame.assets=&assets;
-                frame.sceneViewport={viewportRect.x,viewportRect.y,viewportRect.width,viewportRect.height};
-                frame.editorCamera=viewportController.Camera();
-                frame.editorSkyEnabled=viewportController.Sky();
-                frame.editorGridEnabled=viewportController.Grid()&&!session.IsPlaying();
-                frame.editorSceneLines=viewportController.SceneLines();
-                frame.editorSelected=session.IsPlaying()?0:session.Selected();
-                {
-                    static float loggedViewport[4]={-1.0f,-1.0f,-1.0f,-1.0f};
-                    if(loggedViewport[0]!=viewportRect.x||loggedViewport[1]!=viewportRect.y||loggedViewport[2]!=viewportRect.width||loggedViewport[3]!=viewportRect.height)
-                    {
-                        loggedViewport[0]=viewportRect.x;loggedViewport[1]=viewportRect.y;
-                        loggedViewport[2]=viewportRect.width;loggedViewport[3]=viewportRect.height;
-                        Log(LogLevel::Info,"EditorUi.ToolkitViewport: "+std::to_string(viewportRect.x)+","+std::to_string(viewportRect.y)+","+std::to_string(viewportRect.width)+","+std::to_string(viewportRect.height));
-                    }
-                }
-                playInput->SetViewport(hostWindow,{viewportRect.x*dpi,viewportRect.y*dpi,viewportRect.width*dpi,viewportRect.height*dpi});
-                if(floatingWindows&&hooks&&hooks->floatingDrawn)hooks->floatingDrawn(*floatingWindows,frame);
-                if(floatingWindows&&!floatingWindows->Render(frame,imageProvider,viewportController.Overlay()))
-                    throw std::runtime_error(text.GetText("EditorUi.FloatingRenderFailed"));
-                return;
-            }
-            if(!platform||!platform->PrepareFrame())throw std::runtime_error("EditorUi.PlatformInitFailed");
-            EditorInputFrame input;input.usePlatformInput=true;
-            const auto renderView=renderer.QueryEditorView();
-            EditorViewport viewport;viewport.hasCamera=renderView.hasCamera;viewport.viewProjection.values=renderView.viewProjection;
-            viewport.colorTexture=static_cast<ImTextureID>(renderView.colorTextureToken);viewport.pick=renderView.pick;
-            std::optional<CameraSnapshot> currentCamera;
-            viewport.prepare=[&](EditorRect rect,bool canNavigate,EditorViewport& view){
-                {
-                    static float logged[4]={-1.0f,-1.0f,-1.0f,-1.0f};
-                    if(logged[0]!=rect.x||logged[1]!=rect.y||logged[2]!=rect.width||logged[3]!=rect.height)
-                    {
-                        logged[0]=rect.x;logged[1]=rect.y;logged[2]=rect.width;logged[3]=rect.height;
-                        Log(LogLevel::Info,"EditorUi.ImguiViewport: "+std::to_string(rect.x)+","+std::to_string(rect.y)+","+std::to_string(rect.width)+","+std::to_string(rect.height));
-                    }
-                }
-                const CameraViewport area{0,0,rect.width,rect.height};
-                if(!session.IsPlaying())
-                {
-                    auto& io=ImGui::GetIO();const auto mouse=io.MousePos;
-                    const bool inside=mouse.x>=rect.x&&mouse.y>=rect.y&&mouse.x<rect.x+rect.width&&mouse.y<rect.y+rect.height;
-                    const bool rightDown=ImGui::IsMouseDown(ImGuiMouseButton_Right);
-                    if(!rightDown)navigationCancelled=false;
-                    if(ImGui::IsKeyPressed(ImGuiKey_Escape,false)||io.AppFocusLost||(navigating&&(io.WantTextInput||ImGui::IsAnyItemActive())))navigationCancelled=true;
-                    const bool navigate=canNavigate&&inside&&ImGui::IsWindowHovered()&&!io.AppFocusLost&&!io.WantTextInput&&!ImGui::IsAnyItemActive()&&rightDown&&!navigationCancelled;
-                    if(navigate)
-                    {
-                        const auto down=[](ImGuiKey key){return ImGui::IsKeyDown(key)?1.0f:0.0f;};
-                        editorCamera.Update({{down(ImGuiKey_D)-down(ImGuiKey_A),down(ImGuiKey_E)-down(ImGuiKey_Q),down(ImGuiKey_W)-down(ImGuiKey_S)},
-                            navigating?Vec2{io.MouseDelta.x,io.MouseDelta.y}:Vec2{},io.KeyShift},io.DeltaTime);
-                    }
-                    navigating=navigate;
-                    currentCamera=editorCamera.Snapshot(area,++editorFrame);
-                    if(currentCamera)view.pick=[&,camera=*currentCamera](float x,float y){
-                        const StableEntityId picked=PickEditorBounds(session.EditWorld(),assets,camera,x,y);
-                        if(picked)Log(LogLevel::Info,"EditorUi.ImguiPick: "+std::to_string(picked));
-                        return picked;
-                    };
-                }
-                else
-                {
-                    navigating=false;navigationCancelled=false;
-                    FrameData play;BuildFrameData(*session.PlayEnvironment(),nullptr,nullptr,play);
-                    currentCamera=SelectCamera(play.cameras,area,++editorFrame).snapshot;
-                }
-                view.hasCamera=currentCamera.has_value();view.camera=currentCamera;if(currentCamera)view.viewProjection=currentCamera->viewProjection;
+                ExtractToolkitFrameData(state, frame);
             };
-            if(hooks&&hooks->operationFrame)hooks->operationFrame(frontend,session);
-#if defined(FLARE_LOCAL_VALIDATION)
-            smoke.OperationFrame(frontend,session);
-#endif
-            const auto result=frontend.Draw(session,assets,text,input,viewport,&ui);
-            persistSession(false);
-            if(frontend.CloseApproved())PostMessageW(hostWindow,WM_CLOSE,0,0);
-            if(hooks&&hooks->drawn)hooks->drawn(frontend.Context(),result);
-            playInput->SetViewport(hostWindow,{result.viewport.x,result.viewport.y,result.viewport.width,result.viewport.height});
-            // Play 时必须用播放环境的快照：蒙皮调色板在 Environment 的姿态系统里，
-            // 只传 World 会得到空调色板，角色停在绑定姿态（E18）。
-            if(session.IsPlaying())BuildFrameData(*session.PlayEnvironment(),playUi.get(),nullptr,frame);
-            else BuildFrameData(session.EditWorld(),nullptr,nullptr,frame);
-            if(session.IsPlaying()&&session.PlayEnvironment()->TimeOfDay().Profile())frame.timeOfDay=session.PlayEnvironment()->Snapshot();
-            if(!session.IsPlaying()&&frontend.TimeOfDayPreview().Ready())frame.timeOfDay=frontend.TimeOfDayPreview().Snapshot();
-            if(result.uiCanvas)
-            {
-                frame.meshes.clear();frame.cameras.clear();frame.cameraBinding.reset();frame.lights.clear();frame.debugLines.clear();frame.ui=result.uiPreview;
-                navigating=false;navigationCancelled=false;currentCamera.reset();
-            }
-            if(session.IsPlaying()&&playUi&&hooks&&hooks->extract)hooks->extract(*session.PlayWorld(),*playUi,frame);
-            frame.assets=&assets;
-            frame.sceneViewport={result.viewport.x,result.viewport.y,result.viewport.width,result.viewport.height};
-            frame.editorDrawData=result.drawData;
-            frame.editorFontPixels=fontPixels;
-            frame.editorFontWidth=fontWidth;frame.editorFontHeight=fontHeight;frame.editorFontToken=1;
-            if(!result.drawData||!CopyImGuiGeometry(*result.drawData,frame.editorGui))throw std::runtime_error("EditorUi.DrawDataInvalid");
-            frame.editorGuiEnabled=true;
-            // G15：编辑器 LUT 选择随帧到达 BasicLit 渲染器；路径不变时由渲染器自行热重载。
-            frame.colorLutPath=frontend.ColorLutPath();
-            if(!session.IsPlaying()&&!result.uiCanvas)frame.editorCamera=currentCamera;
-            if(!session.IsPlaying()&&!result.uiCanvas)frame.materialPreview=frontend.CurrentMaterialPreview();
-        };
-        // RunSandboxApp 先 Shutdown renderer，再 windowClosing 释放平台，最后才返回此栈释放 context。
-        WindowsEditorInput::EnableDpiAwareness();
-        if(hooks&&hooks->startPlaying&&!session.StartPlay())return 1;
-        const int result=RunSandboxApp(locale,renderer,!hidden,&services);
-        if(toolkit)Log(LogLevel::Info,std::string("EditorUi.ToolkitResult: ")+std::to_string(result));
-        if(toolkit)Log(LogLevel::Info,"EditorUi.ToolkitBeforePersist");
-        session.StopPlay();
-        if(hooks&&hooks->closing)hooks->closing(session,ui);
-        persistSession(true);
-        if(toolkit)Log(LogLevel::Info,"EditorUi.ToolkitPersisted");
-        frontend.FinishRecovery(result==0&&(toolkit?toolkitCloseApproved:frontend.CloseApproved()));
-        if(toolkit){
-#if defined(FLARE_LOCAL_VALIDATION)
-            return smoke.FinalResult(result);
-#else
-            return result;
-#endif
         }
-        if(result==0&&frontend.CloseApproved()&&!frontend.PublishRestartRequest())return 1;
+#endif
+
+        EnableEngineDpiAwareness();
+        if (hooks && hooks->startPlaying && !state.session.StartPlay()) return 1;
+        const int result = RunSandboxApp(locale, renderer, !hidden, &services);
+        Log(LogLevel::Info, std::string("EditorUi.ToolkitResult: ") + std::to_string(result));
+        state.session.StopPlay();
+        if (hooks && hooks->closing) hooks->closing(state.session, state.ui);
+        PersistToolkitSession(state, true);
+        Log(LogLevel::Info, "EditorUi.ToolkitPersisted");
+        state.host.FinishRecovery(result == 0 && state.closeApproved);
+        if (result == 0 && !state.host.PublishRestartRequest(state.closeApproved)) return 1;
 #if defined(FLARE_LOCAL_VALIDATION)
         return smoke.FinalResult(result);
 #else
         return result;
 #endif
     }
-    catch(const std::exception& exception)
-    {Log(LogLevel::Error,std::string("EditorUi.StartFailed: ")+exception.what());return 1;}
+    catch (const std::exception& exception)
+    {
+        Log(LogLevel::Error, std::string("EditorUi.StartFailed: ") + exception.what());
+        return 1;
+    }
 }
-}
+} // namespace se

@@ -176,6 +176,22 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 }
 }
 
+#include <shellscalingapi.h>
+
+bool EnableEngineDpiAwareness()
+{
+    if (SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+    {
+        return true;
+    }
+    const DWORD error = GetLastError();
+    if (error == ERROR_ACCESS_DENIED)
+    {
+        return true; // 进程已由清单或外层宿主设置 DPI 感知。
+    }
+    return SetProcessDPIAware() != FALSE;
+}
+
 bool CreateEngineWindow(WindowState& window, bool showWindow)
 {
 	// 取得程序模块句柄；nullptr 表示当前 exe 模块。

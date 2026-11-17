@@ -1,40 +1,61 @@
 #pragma once
-#include "PlatformLayer/Windows/WindowsUiInput.h"
+
 #include "PlatformLayer/InputState.h"
-#include <imgui/imgui.h>
+#include "PlatformLayer/Windows/WindowsUiInput.h"
+
+#include <array>
+#include <functional>
 #include <memory>
+#include <optional>
 
 namespace se
 {
 struct EditorInputRoute
 {
-    bool forwardEditor=true;
+    bool forwardEditor = true;
     std::optional<LRESULT> handled;
 };
-// 使用最近完成帧的 ImGui 窗口层级命中，阻止覆盖面板/弹窗后的 Play UI 接收点击。
+
+// 将 Play 视口窗口内的输入安全转交给游戏 UI 与 Gameplay，并尊重遮挡判断。
 class EditorPlayInput
 {
 public:
-    explicit EditorPlayInput(ImGuiContext* context):context_(context){}
-    void Attach(UiTree* ui); // Stop 前先 Attach(nullptr)，此方法不访问 ImGui context。
-    void SetViewport(HWND window,UiRect viewport);
-    EditorInputRoute Process(HWND window,UINT message,WPARAM wParam,LPARAM lParam);
-    bool Active() const noexcept {return active_;}
-    bool KeyboardConsumed() const;
-    bool PointerConsumed() const;
-    InputState GameplayInput(const InputState& source) const;
+    using OverlayHitPredicate = std::function<bool(UiPoint)>;
+
+    explicit EditorPlayInput(OverlayHitPredicate viewportOwnsPoint = {},
+                             std::function<void()> onViewportActivated = {},
+                             std::function<bool()> viewportBlocked = {})
+        : ownsPoint_(std::move(viewportOwnsPoint))
+        , onActivated_(std::move(onViewportActivated))
+        , blocked_(std::move(viewportBlocked))
+    {
+    }
+
+    void Attach(UiTree* ui);
+    void SetViewport(HWND window, UiRect viewport);
+    EditorInputRoute Process(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+    [[nodiscard]] bool Active() const noexcept { return active_; }
+    [[nodiscard]] bool KeyboardConsumed() const;
+    [[nodiscard]] bool PointerConsumed() const;
+    [[nodiscard]] InputState GameplayInput(const InputState& source) const;
     void EndFrame();
-    void Deactivate(HWND window=nullptr);
+    void Deactivate(HWND window = nullptr);
+
 private:
     bool OwnsPoint(UiPoint point) const;
     bool Held() const;
-    ImGuiContext* context_=nullptr;
-    UiTree* ui_=nullptr;
+
+    OverlayHitPredicate ownsPoint_;
+    std::function<void()> onActivated_;
+    std::function<bool()> blocked_;
+    UiTree* ui_ = nullptr;
     std::unique_ptr<WindowsUiInput> input_;
     UiRect viewport_{};
     UiPoint pointer_{};
-    std::array<bool,3> held_{};
-    bool active_=false,over_=false;
-    HWND window_=nullptr;
+    std::array<bool, 3> held_{};
+    bool active_ = false;
+    bool over_ = false;
+    HWND window_ = nullptr;
 };
-}
+
+} // namespace se

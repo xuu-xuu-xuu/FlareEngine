@@ -1,4 +1,4 @@
-function Write-EngineJson([string]$Path,$Value){[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 24)+"`n",[Text.UTF8Encoding]::new($false))}
+﻿function Write-EngineJson([string]$Path,$Value){[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 24)+"`n",[Text.UTF8Encoding]::new($false))}
 if($PSVersionTable.PSVersion.Major -le 5){
     # 从 PowerShell 7 的 .NET 子进程启动时可能继承其模块路径，显式使用本宿主的 Utility。
     Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1') -Force -ErrorAction Stop
@@ -11,7 +11,8 @@ function Get-EngineSourceIdentity([string]$ProjectRoot){
     if($LASTEXITCODE -ne 0){throw 'Cannot enumerate engine source inputs.'}
     foreach($relative in @($candidates | Sort-Object -Unique)){
         if($relative -match '^(Source|Resources|Scripts|ThirdParty|BuildConfig/CMake)/' -and $relative -notmatch '/(bin|obj|__pycache__|\.cache)/' -and [IO.Path]::GetExtension($relative) -notin @('.pyc','.pyo','.md')){
-            $inputPaths.Add((Join-Path $ProjectRoot $relative))
+            $full=Join-Path $ProjectRoot $relative
+            if(Test-Path -LiteralPath $full -PathType Leaf){$inputPaths.Add($full)}
         }
     }
     foreach($name in @('CMakeLists.txt','CMakePresets.json')){$inputPaths.Add((Join-Path $ProjectRoot $name))}

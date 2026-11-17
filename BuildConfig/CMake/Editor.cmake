@@ -6,21 +6,17 @@ add_library(EngineEditorUi STATIC
     Source/ToolLayer/Editor/EditorUi/EditorChrome.cpp
     Source/ToolLayer/Editor/EditorUi/EditorInputAdapter.cpp
     Source/ToolLayer/Editor/EditorUi/EditorShell.cpp
+    Source/ToolLayer/Editor/EditorUi/EditorShellChrome.cpp
+    Source/ToolLayer/Editor/EditorUi/EditorShellDock.cpp
+    Source/ToolLayer/Editor/EditorUi/EditorShellForms.cpp
+    Source/ToolLayer/Editor/EditorUi/EditorShellModals.cpp
+    Source/ToolLayer/Editor/EditorUi/EditorShellPanels.cpp
+    Source/ToolLayer/Editor/EditorUi/EditorDesignerSurface.cpp
     Source/ToolLayer/Editor/EditorUi/EditorInspector.cpp
     Source/ToolLayer/Editor/EditorUi/EditorColorPicker.cpp
     Source/ToolLayer/Editor/EditorUi/EditorPanels.cpp)
 se_target(EngineEditorUi)
 target_link_libraries(EngineEditorUi PUBLIC EngineUiCore EngineUiWidgets EngineCore PRIVATE user32 imm32)
-
-add_library(imgui STATIC
-    ThirdParty/imgui/imgui.cpp
-    ThirdParty/imgui/imgui_draw.cpp
-    ThirdParty/imgui/imgui_tables.cpp
-    ThirdParty/imgui/imgui_widgets.cpp
-    ThirdParty/imgui/backends/imgui_impl_win32.cpp)
-target_include_directories(imgui PUBLIC ThirdParty/imgui)
-target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)
-target_link_libraries(imgui PRIVATE user32 gdi32 dwmapi imm32)
 
 add_library(EngineEditor STATIC
     Source/ToolLayer/Editor/MaterialThumbnail.cpp
@@ -28,8 +24,6 @@ add_library(EngineEditor STATIC
     Source/ToolLayer/Editor/BuildRestartRequest.cpp
     Source/ToolLayer/Editor/RecoveryApply.cpp
     Source/ToolLayer/Editor/EditorSession.cpp
-    Source/ToolLayer/Editor/ImGuiEditor.cpp
-    Source/ToolLayer/Editor/WindowsEditorInput.cpp
     Source/ToolLayer/Editor/EditorLayout.cpp
     Source/ToolLayer/Editor/EditorCommand.cpp
     Source/ToolLayer/Editor/AssetImportService.cpp
@@ -42,30 +36,26 @@ add_library(EngineEditor STATIC
     Source/ToolLayer/Editor/EditorProcessRunner.cpp
     Source/ToolLayer/Editor/TODPreview.cpp
     Source/ToolLayer/Editor/ExternalProcessBroker.cpp
-    Source/ToolLayer/Editor/ImGuiEditorRecovery.cpp
-    Source/ToolLayer/Editor/ImGuiEditorBuildControl.cpp
     Source/ToolLayer/Editor/EditorAssetActions.cpp
     Source/ToolLayer/Editor/EditorScriptTools.cpp
-    Source/ToolLayer/Editor/ImGuiEditorAssets.cpp
     Source/ToolLayer/Editor/EditorSettingsDocuments.cpp
-    Source/ToolLayer/Editor/ImGuiGeometry.cpp
     Source/ToolLayer/Editor/EditorViewportCamera.cpp
     Source/ToolLayer/Editor/EditorGizmo.cpp
-    Source/ToolLayer/Editor/PropertyWidgets.cpp
     Source/ToolLayer/Editor/MaterialEditSession.cpp
     Source/ToolLayer/Editor/SceneFileWorkflow.cpp
-    Source/ToolLayer/Editor/EditorPanelRegistry.cpp
     Source/ToolLayer/Editor/SceneDefaults.cpp
-    Source/ToolLayer/Editor/EditorTheme.cpp
-    Source/ToolLayer/Editor/EditorDockLayout.cpp
-    Source/ToolLayer/Editor/ImGuiEditorDocking.cpp
+    Source/ToolLayer/Editor/UiDocumentWorkflow.cpp
+    Source/ToolLayer/Editor/EditorMaterialWorkflow.cpp
+    Source/ToolLayer/Editor/EditorWorkspaceHost.cpp
     Source/ToolLayer/Editor/UICanvasEditor.cpp)
 se_target(EngineEditor)
-target_link_libraries(EngineEditor PUBLIC EngineRuntime EngineScenePhysics EngineAssets EngineGameUI imgui EnginePlatform EngineProjectSession EngineColorGrading)
+target_link_libraries(EngineEditor PUBLIC EngineRuntime EngineScenePhysics EngineAssets EngineGameUI EnginePlatform EngineProjectSession EngineColorGrading)
 target_link_libraries(EngineEditor PRIVATE comdlg32 shell32)
 
 add_library(EngineEditorApp STATIC
     Source/ToolLayer/Editor/EditorApplication.cpp
+    Source/ToolLayer/Editor/EditorToolkitForms.cpp
+    Source/ToolLayer/Editor/EditorToolkitSession.cpp
     Source/ToolLayer/Editor/SceneInspector.cpp
     Source/ToolLayer/Editor/FeatureInspector.cpp
     Source/ToolLayer/Editor/UiInspector.cpp

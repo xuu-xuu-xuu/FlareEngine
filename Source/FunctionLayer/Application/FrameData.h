@@ -13,7 +13,6 @@
 #include <optional>
 
 struct InputState;
-struct ImDrawData;
 namespace se
 {
 class AssetStore;
@@ -55,11 +54,15 @@ struct FrameData
     bool referenceUiOverlays=false; // 仅旧后处理基准使用固定矩形路径，普通控件使用 GameUIRenderer。
     std::vector<DebugLine> debugLines;
     UiRect sceneViewport{}; // 编辑器内场景区域；Play UI 使用其宽高，原点位于场景纹理左上。
-    const ImDrawData* editorDrawData = nullptr; // 仅本次Render有效；所有权属于编辑器context。
-    const unsigned char* editorFontPixels = nullptr; // 借用 RGBA8，渲染器自行上传。
-    int editorFontWidth = 0, editorFontHeight = 0;
-    std::uint64_t editorFontToken = 1; // CPU 资源标识，绝不是 D3D12 描述符。
-    std::uint64_t editorFontRevision = 0; // 图集内容修订；变化时渲染器必须重传字体纹理。
+    struct UiFontPage
+    {
+        const unsigned char* rgba8 = nullptr; // 借用 RGBA8，渲染器按页增量上传。
+        int width = 0;
+        int height = 0;
+        std::uint64_t token = 0;
+        std::uint64_t revision = 0;
+    };
+    std::vector<UiFontPage> editorFontPages;
     struct UiImageSource
     {
         std::uint64_t token = 0;

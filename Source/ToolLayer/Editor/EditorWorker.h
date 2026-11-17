@@ -13,7 +13,6 @@ struct EditorWorkerOptions
     std::filesystem::path scene;
     std::filesystem::path capture;
     std::string locale="zh-CN";
-    std::string editorUi="toolkit";
     std::uint64_t frames=0;
     bool hidden=false;
     bool demo=false;

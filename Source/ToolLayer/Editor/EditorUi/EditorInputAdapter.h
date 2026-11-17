@@ -36,6 +36,7 @@ private:
     HWND window_ = nullptr;
     bool compositionActive_ = false;
     bool textInputActive_ = false;
+    char16_t highSurrogate_ = 0;
     std::string composition_;
     UiImeCandidateAnchor candidateAnchor_{};
 };

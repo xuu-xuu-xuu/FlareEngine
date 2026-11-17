@@ -1,46 +1,53 @@
 #pragma once
+
 #include <cstdint>
 #include <filesystem>
-#include <string>
 #include <functional>
+#include <string>
 #include "EditorExternalDocuments.h"
 
 class Renderer;
 struct InputState;
-struct ImGuiContext;
+
 namespace se
 {
-class World;class UiTree;class EditorSession;class ImGuiEditor;class EditorFloatingWindows;struct FrameData;struct EditorFrameResult;
-namespace ui::editor { class EditorShell; }
+class World;
+class UiTree;
+class EditorSession;
+class EditorWorkspaceHost;
+class EditorFloatingWindows;
+struct FrameData;
+namespace ui::editor
+{
+class EditorShell;
+}
+
 struct EditorApplicationHooks
 {
     std::filesystem::path resourceDirectory;
-    std::function<bool(EditorSession&,UiTree&)> initialize;
-    std::function<void(ImGuiEditor&)> configure;
-    std::function<bool(World&,UiTree&)> playStarted;
-    std::function<void(World&,UiTree&)> playStopping;
-    std::function<bool(World&,UiTree&,double)> update;
-    std::function<bool(World&,UiTree&)> singleStep;
-    std::function<bool(EditorSession&,double)> frame;
-    std::function<void(const InputState&,bool,bool)> input;
-    std::function<void(World&,UiTree&,FrameData&)> extract;
-    std::function<void(std::uint64_t,bool)> inspector;
-    std::function<bool(std::uint64_t,std::string&,std::string&)> scriptQuery;
-    std::function<bool(std::uint64_t,const std::string&,std::string&)> scriptApply;
+    std::function<bool(EditorSession&, UiTree&)> initialize;
+    std::function<void(EditorWorkspaceHost&)> configure;
+    std::function<bool(World&, UiTree&)> playStarted;
+    std::function<void(World&, UiTree&)> playStopping;
+    std::function<bool(World&, UiTree&, double)> update;
+    std::function<bool(World&, UiTree&)> singleStep;
+    std::function<bool(EditorSession&, double)> frame;
+    std::function<void(const InputState&, bool, bool)> input;
+    std::function<void(World&, UiTree&, FrameData&)> extract;
+    std::function<bool(std::uint64_t, std::string&, std::string&)> scriptQuery;
+    std::function<bool(std::uint64_t, const std::string&, std::string&)> scriptApply;
     EditorExternalDocuments externalDocuments;
-    // 每帧绘制前的 Tool 内部观察口；自检入口用它驱动真实导出面板状态机，不参与正常编辑流程。
-    std::function<void(ImGuiEditor&,EditorSession&)> operationFrame;
-    std::function<void(EditorSession&,UiTree&)> closing;
-    std::function<void(ImGuiContext*,const EditorFrameResult&)> drawn; // 本帧 UI 观察端口；不得保留借用数据。
-    // 原生选文件与 toolkit 帧的内部验证端口；正常入口使用系统对话框。
+    std::function<void(EditorWorkspaceHost&, EditorSession&)> operationFrame;
+    std::function<void(EditorSession&, UiTree&)> closing;
     std::function<std::filesystem::path()> chooseAssetImportSource;
-    std::function<void(ui::editor::EditorShell&,EditorSession&)> toolkitDrawn;
-    std::function<void(EditorFloatingWindows&,const FrameData&)> floatingDrawn; // 本帧辅助表面观察，不保留借用数据。
-    bool startPlaying=false;
-    std::string editorUi="toolkit";
+    std::function<void(ui::editor::EditorShell&, EditorSession&)> toolkitDrawn;
+    std::function<void(EditorFloatingWindows&, const FrameData&)> floatingDrawn;
+    bool startPlaying = false;
 };
-// 通过公共窗口宿主驱动编辑器；Tool 复制 ImGui 数据，渲染器消费自有 GUI 几何。
+
+// 通过公共窗口宿主驱动编辑器；EditorUi 仅输出抽象列表，渲染器消费自有 GUI 几何。
 int RunEditorApp(Renderer& renderer, const std::string& locale,
     const std::filesystem::path& projectRoot, bool hidden = false, std::uint64_t maximumFrames = 0,
     EditorApplicationHooks* hooks = nullptr);
-}
+
+} // namespace se

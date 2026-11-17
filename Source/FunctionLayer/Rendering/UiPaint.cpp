@@ -547,13 +547,15 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
             ++stats.textRuns;
             for (const UiGlyphQuad& glyph : glyphs)
             {
-                // v1 只上传第一张图集页；多页 token 会与 scene/white token 冲突，必须先拒绝。
-                if (glyph.page != 0)
+                if (glyph.page >= options.maxFontPages)
                 {
                     context.Reject("UI.PaintFontPageUnsupported");
                     continue;
                 }
-                const std::uint64_t texture = options.fontPageBase + glyph.page;
+                const std::uint64_t texture =
+                    (glyph.page == 0 || options.fontExtraPageBase == 0)
+                        ? (options.fontPageBase + static_cast<std::uint64_t>(glyph.page))
+                        : (options.fontExtraPageBase + static_cast<std::uint64_t>(glyph.page - 1));
                 if (texture == 0)
                 {
                     context.Reject("UI.PaintInvalidTextureToken");
@@ -579,7 +581,28 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
                 break;
             }
             ++stats.images;
-            context.AppendQuad(command.rect, {0.0f, 0.0f, 1.0f, 1.0f}, command.color, info.textureToken, clip);
+            UiRect dst = command.rect;
+            UiRect imgClip = clip;
+            if (options.textPixelScale.x > 0.0f && options.textPixelScale.y > 0.0f)
+            {
+                const float sx = options.textPixelScale.x;
+                const float sy = options.textPixelScale.y;
+                dst.x = static_cast<float>(std::lround(dst.x * sx)) / sx;
+                dst.y = static_cast<float>(std::lround(dst.y * sy)) / sy;
+                dst.width = static_cast<float>(std::max<long>(1L, std::lround(dst.width * sx))) / sx;
+                dst.height = static_cast<float>(std::max<long>(1L, std::lround(dst.height * sy))) / sy;
+                if (std::abs(imgClip.x - command.rect.x) < 1e-4f && std::abs(imgClip.width - command.rect.width) < 1e-4f)
+                {
+                    imgClip.x = dst.x;
+                    imgClip.width = dst.width;
+                }
+                if (std::abs(imgClip.y - command.rect.y) < 1e-4f && std::abs(imgClip.height - command.rect.height) < 1e-4f)
+                {
+                    imgClip.y = dst.y;
+                    imgClip.height = dst.height;
+                }
+            }
+            context.AppendQuad(dst, {0.0f, 0.0f, 1.0f, 1.0f}, command.color, info.textureToken, imgClip);
             break;
         }
         case UiPaintCommandKind::Line:

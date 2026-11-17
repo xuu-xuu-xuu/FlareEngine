@@ -2,11 +2,32 @@
 #include "FunctionLayer/Application/FrameData.h"
 namespace se
 {
+namespace
+{
+bool ValidPageEntry(const FrameData::UiFontPage& page,std::uint32_t index) noexcept
+{
+    return page.rgba8&&page.width>0&&page.height>0&&page.width<=8192&&page.height<=8192
+        &&page.token==GuiCompositor::FontPageToken(index);
+}
+}
+std::optional<std::uint32_t> GuiCompositor::FontPageIndex(std::uint64_t token) noexcept
+{
+    if(token==FontToken)return 0u;
+    if(token>=FontExtraPageBase&&token<FontExtraPageBase+(MaxFontPages-1))
+        return static_cast<std::uint32_t>((token-FontExtraPageBase)+1);
+    return std::nullopt;
+}
+bool GuiCompositor::ValidFontPages(const FrameData& f) noexcept
+{
+    if(f.editorFontPages.empty()||f.editorFontPages.size()>MaxFontPages)return false;
+    for(std::size_t i=0;i<f.editorFontPages.size();++i)
+        if(!ValidPageEntry(f.editorFontPages[i],static_cast<std::uint32_t>(i)))return false;
+    return true;
+}
 rhi::Result GuiCompositor::Configure(rhi::Device& device,rhi::CommandContext& commands,const FrameData& f,
     rhi::TextureHandle scene,std::uint32_t width,std::uint32_t height,const std::filesystem::path& shaders)
 {
-    if(!f.editorFontPixels||f.editorFontWidth<=0||f.editorFontHeight<=0||f.editorFontWidth>8192||f.editorFontHeight>8192
-        ||f.editorFontToken!=FontToken||!scene||!width||!height
+    if(!ValidFontPages(f)||!scene||!width||!height
         ||!IsFinite(f.editorGui.framebufferScale.x)||!IsFinite(f.editorGui.framebufferScale.y)
         ||f.editorGui.framebufferScale.x<=0||f.editorGui.framebufferScale.y<=0)return {rhi::Error::InvalidArgument};
     if(!pipeline_)
@@ -15,12 +36,21 @@ rhi::Result GuiCompositor::Configure(rhi::Device& device,rhi::CommandContext& co
         p.colorFormat=rhi::ColorFormat::Rgba8Srgb;p.blend=rhi::BlendMode::Alpha;
         auto result=device.CreatePipeline(p,pipeline_);if(!result)return result;
     }
-    if(!font_||fontWidth_!=static_cast<unsigned>(f.editorFontWidth)||fontHeight_!=static_cast<unsigned>(f.editorFontHeight)
-        ||fontRevision_!=f.editorFontRevision)
+    const std::size_t pageCount=f.editorFontPages.size();
+    fontPages_.resize(pageCount);
+    for(std::size_t i=0;i<pageCount;++i)
     {
-        rhi::Texture next;auto result=device.CreateTexture({static_cast<unsigned>(f.editorFontWidth),static_cast<unsigned>(f.editorFontHeight),1,1,rhi::TextureFormat::Rgba8,"GuiFont"},
-            {f.editorFontPixels,size_t(f.editorFontWidth)*f.editorFontHeight*4},next);if(!result)return result;
-        font_=std::move(next);fontWidth_=f.editorFontWidth;fontHeight_=f.editorFontHeight;fontRevision_=f.editorFontRevision;
+        const auto& page=f.editorFontPages[i];
+        auto& slot=fontPages_[i];
+        const auto pageWidth=static_cast<unsigned>(page.width),pageHeight=static_cast<unsigned>(page.height);
+        if(!slot.texture||slot.width!=pageWidth||slot.height!=pageHeight||slot.revision!=page.revision)
+        {
+            rhi::Texture next;
+            auto result=device.CreateTexture({pageWidth,pageHeight,1,1,rhi::TextureFormat::Rgba8,"GuiFont"},
+                {page.rgba8,static_cast<std::size_t>(pageWidth)*pageHeight*4},next);
+            if(!result)return result;
+            slot.texture=std::move(next);slot.width=pageWidth;slot.height=pageHeight;slot.revision=page.revision;
+        }
     }
     if(!white_)
     {
@@ -29,7 +59,7 @@ rhi::Result GuiCompositor::Configure(rhi::Device& device,rhi::CommandContext& co
     }
     for(const FrameData::UiImageSource& image : f.editorUiImages)
     {
-        if(image.token==0||image.token==FontToken||image.token==SceneToken||image.token==WhiteToken||
+        if(image.token==0||image.token==SceneToken||image.token==WhiteToken||FontPageIndex(image.token).has_value()||
             image.width==0||image.height==0||image.width>8192||image.height>8192||!image.rgba8||
             image.bytes!=static_cast<std::size_t>(image.width)*image.height*4)return {rhi::Error::InvalidArgument};
         const auto size=imageSizes_.find(image.token);
@@ -48,9 +78,9 @@ rhi::Result GuiCompositor::Configure(rhi::Device& device,rhi::CommandContext& co
     std::vector<rhi::TextureHandle> textures;textures.reserve(f.editorGui.commands.size());
     for(const auto& command:f.editorGui.commands)
     {
-        if(command.texture==FontToken)textures.push_back(*font_);
-        else if(command.texture==SceneToken)textures.push_back(scene);
+        if(command.texture==SceneToken)textures.push_back(scene);
         else if(command.texture==WhiteToken)textures.push_back(*white_);
+        else if(const auto page=FontPageIndex(command.texture);page&&*page<fontPages_.size())textures.push_back(*fontPages_[*page].texture);
         else if(const auto image=images_.find(command.texture);image!=images_.end())textures.push_back(*image->second);
         else return {rhi::Error::InvalidHandle};
     }

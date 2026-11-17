@@ -780,13 +780,13 @@ bool ParseEditorLaunchOptions(int argc,wchar_t** argv,EditorLaunchOptions& optio
         }
         else if(argument==L"--editor-ui")
         {
-            if(!next(value)){error="--editor-ui requires imgui or toolkit";return false;}
-            if(value==L"imgui")options.editorUi="imgui";else if(value==L"toolkit")options.editorUi="toolkit";else{error="--editor-ui accepts imgui or toolkit";return false;}
+            if(!next(value)){error="--editor-ui requires toolkit";return false;}
+            if(value==L"toolkit")options.editorUi="toolkit";else{error="--editor-ui only accepts toolkit";return false;}
         }
         else if(argument.rfind(L"--editor-ui=",0)==0)
         {
             const std::wstring inlineValue=argument.substr(12);
-            if(inlineValue==L"imgui")options.editorUi="imgui";else if(inlineValue==L"toolkit")options.editorUi="toolkit";else{error="--editor-ui accepts imgui or toolkit";return false;}
+            if(inlineValue==L"toolkit")options.editorUi="toolkit";else{error="--editor-ui only accepts toolkit";return false;}
         }
         else if(argument==L"--safe-mode")options.safeMode=true;
         else if(argument==L"--worker")options.worker=true;

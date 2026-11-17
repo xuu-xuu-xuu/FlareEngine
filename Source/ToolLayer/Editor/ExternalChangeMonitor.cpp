@@ -1,9 +1,60 @@
 #include "ExternalChangeMonitor.h"
+#include "ResourceLayer/Assets/AssetIO.h"
 
 #include <system_error>
+#include <vector>
 
 namespace se
 {
+void RecordEditorFileStamp(EditorFileStamp& stamp, const std::filesystem::path& path)
+{
+    stamp = {};
+    if (path.empty())
+    {
+        return;
+    }
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    if (error)
+    {
+        return;
+    }
+    const auto modified = std::filesystem::last_write_time(path, error);
+    if (error)
+    {
+        return;
+    }
+    stamp.size = size;
+    stamp.modified = modified;
+    stamp.valid = true;
+    std::vector<std::uint8_t> bytes;
+    if (asset_io::Read(path, bytes))
+    {
+        stamp.digest = asset_io::Hash(bytes);
+    }
+}
+
+bool EditorFileStampChanged(const EditorFileStamp& stamp, const std::filesystem::path& path)
+{
+    if (!stamp.valid || path.empty())
+    {
+        return false;
+    }
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    if (error)
+    {
+        return true;
+    }
+    const auto modified = std::filesystem::last_write_time(path, error);
+    if (error || size != stamp.size || modified != stamp.modified)
+    {
+        return true;
+    }
+    std::vector<std::uint8_t> bytes;
+    return !asset_io::Read(path, bytes) || (!stamp.digest.empty() && asset_io::Hash(bytes) != stamp.digest);
+}
+
 void ExternalChangeMonitor::Reset(const std::filesystem::path& path)
 {
     path_ = path;

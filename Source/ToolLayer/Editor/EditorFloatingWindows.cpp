@@ -1,4 +1,5 @@
 #include "EditorFloatingWindows.h"
+#include "EditorUiAtlas.h"
 #include "EditorWindowStyle.h"
 #include "FunctionLayer/Rendering/SandboxRenderer.h"
 #include "PlatformLayer/Windows/AppBranding.h"
@@ -47,7 +48,7 @@ struct EditorFloatingWindows::Entry
     InputState rawInput;
     UiDirectWriteTextService text{L"Segoe UI"};
     std::unique_ptr<SandboxRenderer> renderer;
-    std::vector<unsigned char> font;
+    std::vector<UiDirectWriteTextService::FontPageRgba> fontPages;
     std::uint64_t frame=0;
     ULONGLONG lastTick=0;
 };
@@ -131,16 +132,14 @@ bool EditorFloatingWindows::Render(const FrameData& base,ui::UiImageProvider& im
                 if(it->kind==ui::UiPaintCommandKind::Image&&it->image=="scene")
                 {display.commands.insert(it+1,overlay.commands.begin(),overlay.commands.end());break;}
         FrameData data=base;ui::UiGeometryStats geometryStats;std::vector<std::string> errors;
-        ui::UiGeometryOptions options;options.whiteTexture=3;options.fontPageBase=1;options.textPixelScale={dpi,dpi};
+        ui::UiGeometryOptions options=MakeEditorUiGeometryOptions({dpi,dpi});
         if(!ui::UiGeometryBuilder{}.Build(display,&entry->text,&images,options,data.editorGui,geometryStats,errors))
         {
             for(const auto& error:errors)Log(LogLevel::Error,"EditorUi.ToolkitGeometryFailed "+error);
             if(!entry->text.LastError().empty())Log(LogLevel::Error,entry->text.LastError());
             return false;
         }
-        int width=0,height=0;std::uint64_t revision=0;
-        if(!entry->text.FontAtlas(entry->font,width,height,revision))return false;
-        data.editorFontPixels=entry->font.data();data.editorFontWidth=width;data.editorFontHeight=height;data.editorFontRevision=revision;
+        if(!AttachEditorFontPages(entry->text,entry->fontPages,data))return false;
         data.editorGui.framebufferScale={dpi,dpi};
         if(!entry->scene)data.sceneViewport={0,0,1,1};
         const auto now=GetTickCount64();const double seconds=entry->lastTick?std::min(.25,(now-entry->lastTick)/1000.0):1.0/60;entry->lastTick=now;

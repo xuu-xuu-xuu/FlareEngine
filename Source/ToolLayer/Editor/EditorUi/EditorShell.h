@@ -27,6 +27,9 @@ class Localization;
 namespace se::ui::editor
 {
 enum class EditorPropertyEditPhase { Begin, Commit, Cancel };
+struct EditorFormPanel;
+struct EditorInspectorDrag;
+struct EditorInspectorColor;
 
 // 编辑器 Toolkit 组合根的 CPU 侧：文档、Chrome、Dock、面板与命令。
 // 仍由 EditorApplication/EditorRenderer 提供窗口和 RHI；本类不拥有 GPU 资源。
@@ -142,17 +145,23 @@ public:
     [[nodiscard]] UiElementHandle FormSaveButton(EditorPanelId panel) const noexcept;
     [[nodiscard]] UiElementHandle FormActionButton(EditorPanelId panel) const noexcept;
     [[nodiscard]] UiElementHandle FormListContent(EditorPanelId panel) const noexcept;
+    [[nodiscard]] UiElementHandle ViewportToolButton(std::size_t index) const noexcept { return index < viewportToolButtons_.size() ? viewportToolButtons_[index] : UiElementHandle{}; }
+    [[nodiscard]] UiRect InspectorFieldRect(std::string_view key) const;
     [[nodiscard]] UiElementHandle PanelContent(EditorPanelId panel) const noexcept;
     [[nodiscard]] UiElementHandle ScrollThumb(EditorPanelId panel) const noexcept;
     // 通用确认框（恢复/外部变更等），与关闭保护模态独立。
     void ShowConfirm(std::string title, std::string message, std::string primaryLabel,
                      std::string secondaryLabel, std::string cancelLabel,
-                     std::function<void()> onPrimary, std::function<void()> onSecondary);
+                     std::function<void()> onPrimary, std::function<void()> onSecondary,
+                     bool primaryEnabled = true);
     [[nodiscard]] bool ConfirmOpen() const noexcept { return confirmOpen_; }
     [[nodiscard]] UiElementHandle ConfirmDialog() const noexcept { return confirmDialog_; }
+    [[nodiscard]] UiElementHandle ConfirmPrimaryButton() const noexcept { return confirmPrimary_; }
+    [[nodiscard]] UiElementHandle ConfirmSecondaryButton() const noexcept { return confirmSecondary_; }
+    [[nodiscard]] UiElementHandle ConfirmCancelButton() const noexcept { return confirmCancel_; }
     [[nodiscard]] UiElementHandle AssetsPreview() const noexcept { return assetsPreview_; }
     [[nodiscard]] UiElementHandle AssetsPreviewImage() const noexcept { return assetsPreviewImageElement_; }
-    [[nodiscard]] UiElementHandle FormComboPopup(EditorPanelId panel) const noexcept { return Form(panel).comboPopup; }
+    [[nodiscard]] UiElementHandle FormComboPopup(EditorPanelId panel) const noexcept;
     [[nodiscard]] UiElementHandle FormComboOption(EditorPanelId panel, std::size_t index) const noexcept;
 
     // UI Designer：节点矩形相对 Designer 内容；手势回调使用窗口逻辑坐标。
@@ -168,6 +177,9 @@ public:
     [[nodiscard]] bool CloseApproved() const noexcept;
     [[nodiscard]] bool CloseModalOpen() const noexcept;
     [[nodiscard]] UiElementHandle CloseModalDialog() const noexcept;
+    [[nodiscard]] UiElementHandle CloseModalSaveButton() const noexcept { return modalSave_; }
+    [[nodiscard]] UiElementHandle CloseModalDiscardButton() const noexcept { return modalDiscard_; }
+    [[nodiscard]] UiElementHandle CloseModalCancelButton() const noexcept { return modalCancel_; }
     [[nodiscard]] bool ConsumeCloseRequest() noexcept;
     [[nodiscard]] bool TextFieldFocused() const noexcept;
     bool RouteShortcut(const UiInputEvent& event, bool textFieldFocused);
@@ -241,30 +253,9 @@ private:
         float total = 0.0f;
     };
 
-    struct FormPanel
-    {
-        UiElementHandle listContent{};
-        UiElementHandle editElement{};
-        UiElementHandle saveButton{};
-        UiElementHandle actionButton{};
-        UiElementHandle statusLabel{};
-        std::unique_ptr<UiListView> list;
-        std::unique_ptr<UiTextEdit> edit;
-        std::vector<EditorProperty> properties;
-        std::string editingKey;
-        std::function<bool(std::string, std::string)> commit;
-        std::function<bool()> save;
-        std::function<bool()> action;
-        std::string actionLabel;
-        std::string status;
-        UiElementHandle preview{};
-        std::string previewImage;
-        float previewAspect=1;
-        bool managedStatus=false;
-        UiElementHandle comboPopup{};
-        std::vector<UiElementHandle> comboOptions;
-        int comboRow = -1;
-    };
+    using FormPanel = EditorFormPanel;
+    using InspectorDrag = EditorInspectorDrag;
+    using InspectorColor = EditorInspectorColor;
 
     static constexpr std::size_t kPanelCount = 14;
 
@@ -303,6 +294,8 @@ private:
     void BuildDesignerPanel(PanelSlot& slot);
     void RefreshDesignerNodes();
     void BuildChrome();
+    void BindRootInputHandlers();
+    void RegisterDefaultShortcuts();
     void UpdateTransport();
     void BuildChromeMenus();
     void RefreshStatus();
@@ -363,7 +356,7 @@ private:
     std::function<void(std::string_view)> viewportAction_;
     std::vector<SplitHandle> splitHandles_;
     std::vector<UiElementHandle> pendingDestroy_;
-    std::array<FormPanel, 5> forms_{};
+    std::array<std::unique_ptr<FormPanel>, 5> forms_{};
     std::string assetsPreviewText_;
     std::string assetsPreviewImage_;
     UiElementHandle assetsPreviewImageElement_{};
@@ -405,31 +398,7 @@ private:
     std::function<bool(std::uint64_t, std::string, std::string)> propertyHandler_;
     std::function<std::string(std::uint64_t,EditorProperty&)> propertyChoices_;
     std::function<bool(std::uint64_t, EditorPropertyEditPhase)> propertyEditHandler_;
-    struct InspectorDrag
-    {
-        EditorProperty field;
-        std::uint64_t target = 0;
-        std::uint32_t surface = 0;
-        double original = 0, value = 0, applied = 0;
-        float startX = 0, lastX = 0;
-        bool active = false;
-    };
-    std::optional<InspectorDrag> inspectorDrag_;
-    struct InspectorColor
-    {
-        std::uint64_t target = 0;
-        std::uint32_t surface = 0;
-        std::string key;
-        UiColor original{}, current{};
-        float hue = 0, saturation = 0, value = 0, paintedHue = -1;
-        int dragging = 0;
-        UiRect anchor{};
-        UiElementHandle backdrop{}, panel{}, square{}, hueBar{}, cursor{}, cursorInner{}, hueCursor{}, title{};
-        UiElementHandle previous{}, preview{}, previousLabel{}, previewLabel{}, apply{}, cancel{};
-        std::vector<UiElementHandle> tiles, hues;
-        std::array<UiElementHandle,3> channels{}, channelLabels{}, channelSelections{};
-        std::array<std::unique_ptr<UiTextEdit>,3> editors;
-    };
+    std::unique_ptr<InspectorDrag> inspectorDrag_;
     std::unique_ptr<InspectorColor> inspectorColor_;
     std::function<bool(std::uint64_t, std::uint64_t)> reparentHandler_;
     std::function<void(std::string)> assetSelectionHandler_;

@@ -1,4 +1,5 @@
 #include "ToolLayer/Editor/EditorUi/EditorShell.h"
+#include "ToolLayer/Editor/EditorUi/EditorShellInternal.h"
 #include "ToolLayer/Editor/EditorUi/EditorInk.h"
 #include "CoreLayer/Utf.h"
 
@@ -537,7 +538,7 @@ std::optional<std::size_t> EditorShell::InspectorNumericAt(float x,float y) cons
 }
 
 bool EditorShell::InspectorNumericCursorAt(float x,float y) const
-{return inspectorDrag_.has_value() || (propertyEditHandler_ && InspectorNumericAt(x,y).has_value());}
+{return inspectorDrag_ != nullptr || (propertyEditHandler_ && InspectorNumericAt(x,y).has_value());}
 
 void EditorShell::BeginInspectorDrag(std::size_t index,const UiInputEvent& event)
 {
@@ -547,7 +548,7 @@ void EditorShell::BeginInspectorDrag(std::size_t index,const UiInputEvent& event
     if(parsed.ec!=std::errc{}||parsed.ptr!=end||!std::isfinite(value))return;
     EndInspectorEdit(true);dispatcher_.ClearFocus();
     value=static_cast<float>(value);
-    inspectorDrag_=InspectorDrag{field,inspectorModel_.Target(),inputSurface_,value,value,value,event.x,event.x,false};
+    inspectorDrag_=std::make_unique<EditorInspectorDrag>(EditorInspectorDrag{field,inspectorModel_.Target(),inputSurface_,value,value,value,event.x,event.x,false});
     // 持久表面根持有捕获，属性变化导致虚拟行重建时不打断拖动。
     dispatcher_.SetPointerCapture(SurfaceRoot(inputSurface_));
 }
@@ -609,5 +610,40 @@ bool EditorShell::BeginRename()
     inspectorList_->SetScrollOffset(0.0f);
     inspectorList_->Sync();
     return BeginInspectorEdit(static_cast<std::size_t>(name - fields.begin()));
+}
+
+UiRect EditorShell::InspectorFieldRect(std::string_view key) const
+{
+    if (!inspectorList_) return {};
+    const auto content = layout_.Rect(InspectorContent());
+    if (content.width <= 1.0f || content.height <= 1.0f) return {};
+    const auto& fields = inspectorModel_.Properties();
+    for (std::size_t row = 0; row < inspectorRows_.size(); ++row)
+    {
+        const auto& item = inspectorRows_[row];
+        if (item.header) continue;
+        for (std::size_t i = 0; i < item.fields.size(); ++i)
+        {
+            const auto& field = fields[item.fields[i]];
+            if (field.key != key) continue;
+            const float y = content.y + static_cast<float>(row) * RowHeight - inspectorList_->Offset();
+            if (y < content.y || y + RowHeight > content.y + content.height) return {};
+            if (field.type == EditorPropertyType::Action)
+            {
+                const float right = std::max(LeftInset, inspectorWidth_ - ScrollMargin);
+                const float width = std::min(230.0f, std::max(0.0f, right - 2.0f * LeftInset));
+                return {content.x + (right - width) * 0.5f, y + 2.0f, width, RowHeight - 4.0f};
+            }
+            if (field.key == "name")
+            {
+                const float right = std::max(LeftInset, inspectorWidth_ - ScrollMargin);
+                return {content.x + LeftInset, y + 2.0f, std::max(0.0f, right - LeftInset), RowHeight - 4.0f};
+            }
+            const auto cell = FieldAt(inspectorWidth_, static_cast<int>(item.fields.size()), static_cast<int>(i),
+                                      field.axis != 0, RgbAxis(field.axis));
+            return {content.x + cell.valueStart, y + 2.0f, cell.valueWidth, RowHeight - 4.0f};
+        }
+    }
+    return {};
 }
 }

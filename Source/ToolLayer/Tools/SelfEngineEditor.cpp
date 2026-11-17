@@ -94,7 +94,6 @@ int RunEditor(int argc,wchar_t** argv)
         worker.scene=options.scene;
         worker.capture=options.capture;
         worker.locale=options.locale;
-        worker.editorUi=options.editorUi;
         worker.frames=options.frames;
         worker.hidden=options.hidden;
         worker.demo=options.demo;

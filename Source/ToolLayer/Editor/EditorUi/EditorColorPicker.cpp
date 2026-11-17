@@ -1,4 +1,5 @@
 #include "EditorShell.h"
+#include "EditorShellInternal.h"
 #include "EditorInk.h"
 #include "CoreLayer/Utf.h"
 #include <algorithm>

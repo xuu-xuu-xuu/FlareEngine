@@ -165,14 +165,50 @@ bool EditorInputAdapter::Translate(UINT message, WPARAM wparam, LPARAM lparam, U
         event.alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
         return true;
     case WM_CHAR:
+    {
         // 组合期间由 WM_IME_COMPOSITION 提交正文，避免重复插入组合串。
         if (compositionActive_)
+        {
+            highSurrogate_ = 0;
+            return false;
+        }
+        const auto unit = static_cast<std::uint32_t>(wparam) & 0xFFFFu;
+        if (unit >= 0xD800u && unit <= 0xDBFFu)
+        {
+            highSurrogate_ = static_cast<char16_t>(unit);
+            return false;
+        }
+        std::uint32_t codepoint = unit;
+        if (unit >= 0xDC00u && unit <= 0xDFFFu)
+        {
+            if (highSurrogate_ == 0)
+            {
+                return false;
+            }
+            codepoint = 0x10000u + (((static_cast<std::uint32_t>(highSurrogate_) - 0xD800u) << 10u) | (unit - 0xDC00u));
+            highSurrogate_ = 0;
+        }
+        else
+        {
+            highSurrogate_ = 0;
+        }
+        event.type = UiEventType::TextInput;
+        event.codepoint = codepoint;
+        return true;
+    }
+    case WM_UNICHAR:
+    {
+        highSurrogate_ = 0;
+        const auto codepoint = static_cast<std::uint32_t>(wparam);
+        if (compositionActive_ || codepoint == UNICODE_NOCHAR || codepoint > 0x10FFFFu ||
+            (codepoint >= 0xD800u && codepoint <= 0xDFFFu))
         {
             return false;
         }
         event.type = UiEventType::TextInput;
-        event.codepoint = static_cast<std::uint32_t>(wparam);
+        event.codepoint = codepoint;
         return true;
+    }
     case WM_IME_CHAR:
         // 有窗口上下文时以 GCS_RESULTSTR 为准；WM_IME_CHAR 只作为无 IME 上下文的回退。
         if (window_ != nullptr)

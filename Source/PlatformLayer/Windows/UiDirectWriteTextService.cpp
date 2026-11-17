@@ -312,6 +312,23 @@ bool UiDirectWriteTextService::LayoutGlyphs(std::string_view text,
     return true;
 }
 
+namespace
+{
+void ExpandFontPageToRgba(const FontPage& page, std::vector<unsigned char>& rgba, int& width, int& height)
+{
+    width = static_cast<int>(page.width);
+    height = static_cast<int>(page.height);
+    rgba.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
+    for (std::size_t index = 0; index < page.alpha.size() && index * 4 + 3 < rgba.size(); ++index)
+    {
+        rgba[index * 4] = 255;
+        rgba[index * 4 + 1] = 255;
+        rgba[index * 4 + 2] = 255;
+        rgba[index * 4 + 3] = page.alpha[index];
+    }
+}
+} // namespace
+
 bool UiDirectWriteTextService::FontAtlas(std::vector<unsigned char>& rgba, int& width, int& height, std::uint64_t& revision) const
 {
     const std::vector<FontPage>& pages = impl_->fontCache.Pages();
@@ -320,16 +337,38 @@ bool UiDirectWriteTextService::FontAtlas(std::vector<unsigned char>& rgba, int& 
         return false;
     }
     const FontPage& page = pages.front();
-    width = static_cast<int>(page.width);
-    height = static_cast<int>(page.height);
     revision = impl_->atlasRevisionBase + page.revision;
-    rgba.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
-    for (std::size_t index = 0; index < page.alpha.size() && index * 4 + 3 < rgba.size(); ++index)
+    ExpandFontPageToRgba(page, rgba, width, height);
+    return true;
+}
+
+bool UiDirectWriteTextService::FontPages(std::vector<FontPageRgba>& output) const
+{
+    const std::vector<FontPage>& pages = impl_->fontCache.Pages();
+    if (pages.empty() || pages.front().alpha.empty())
     {
-        rgba[index * 4] = 255;
-        rgba[index * 4 + 1] = 255;
-        rgba[index * 4 + 2] = 255;
-        rgba[index * 4 + 3] = page.alpha[index];
+        output.clear();
+        return false;
+    }
+    output.resize(pages.size());
+    for (std::size_t index = 0; index < pages.size(); ++index)
+    {
+        const FontPage& page = pages[index];
+        if (page.width == 0 || page.height == 0 || page.alpha.empty())
+        {
+            output.clear();
+            return false;
+        }
+        const std::uint64_t revision = impl_->atlasRevisionBase + page.revision;
+        const std::size_t expectedBytes = static_cast<std::size_t>(page.width) * static_cast<std::size_t>(page.height) * 4;
+        FontPageRgba& target = output[index];
+        if (target.revision == revision && target.width == static_cast<int>(page.width) &&
+            target.height == static_cast<int>(page.height) && target.rgba.size() == expectedBytes)
+        {
+            continue;
+        }
+        ExpandFontPageToRgba(page, target.rgba, target.width, target.height);
+        target.revision = revision;
     }
     return true;
 }
@@ -354,9 +393,11 @@ bool UiDirectWriteTextService::SetRasterScale(float pixelsPerDip)
     {
         impl_->rasterScale=pixelsPerDip;
         ClearCache();
-        // 跨 DPI 后旧像素密度不再使用；保留它们会使中文界面最终进入未上传的第二页。
+        // 跨 DPI 后旧像素密度不再使用；以所有页最大修订号推进基线，避免任何页命中旧纹理。
         const auto& pages=impl_->fontCache.Pages();
-        impl_->atlasRevisionBase+=pages.empty()?1:pages.front().revision+1;
+        std::uint64_t maxRevision=0;
+        for(const FontPage& page:pages)maxRevision=std::max(maxRevision,page.revision);
+        impl_->atlasRevisionBase+=maxRevision+1;
         impl_->fontCache.ClearAtlas();
         impl_->lastError.clear();
     }
