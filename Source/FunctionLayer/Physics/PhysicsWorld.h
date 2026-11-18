@@ -2,6 +2,8 @@
 
 #include "CoreLayer/Math/Bounds.h"
 #include "CoreLayer/FixedStepClock.h"
+#include "FunctionLayer/Physics/CollisionShapes.h"
+#include "FunctionLayer/Physics/TriggerTracker.h"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -10,26 +12,6 @@
 
 namespace se
 {
-struct BodyHandle
-{
-    std::uint32_t index=UINT32_MAX,generation=0;
-    explicit operator bool() const {return index!=UINT32_MAX && generation!=0;}
-    std::uint64_t Pack() const {return (std::uint64_t{generation}<<32)|index;}
-    bool operator==(const BodyHandle&) const = default;
-};
-struct BoxShape {Vec3 center{};Vec3 halfExtents{0.5f,0.5f,0.5f};Quat rotation{};};
-struct ContactPoint {Vec3 position{};float penetration=0;std::uint64_t feature=0;};
-enum class ContactKind {Face,Edge};
-struct ContactManifold
-{
-    Vec3 normal{};std::vector<ContactPoint> points;
-    // 沿 normal 移动 B 至所选轴刚好分离的距离；逐点 penetration 用于求解。
-    float separationDistance=0;
-    ContactKind kind=ContactKind::Face;
-};
-Aabb ComputeAabb(const BoxShape& box);
-std::optional<ContactManifold> CollideBoxes(const BoxShape& a,const BoxShape& b,float margin=0.005f);
-
 struct BodyDesc
 {
     BoxShape shape;
@@ -38,6 +20,9 @@ struct BodyDesc
     float linearDamping=0.02f,angularDamping=0.05f;
     std::uint32_t layer=1,mask=UINT32_MAX;
     std::uint64_t entityStableId=0; // 交给 Runtime/脚本解析，物理不拥有实体。
+    ColliderShapeKind shapeKind=ColliderShapeKind::Box;
+    float radius=0.5f;   // shapeKind == Sphere 时生效；中心位于 shape.center。
+    bool isTrigger=false; // 为 true 时仅记录 TriggerPairEvent，不生成接触冲量。
 };
 struct BodyState
 {
@@ -78,15 +63,18 @@ public:
     bool ApplyForce(BodyHandle body,Vec3 force,Vec3 worldPoint);
     bool ApplyImpulse(BodyHandle body,Vec3 impulse,Vec3 worldPoint);
     bool Teleport(BodyHandle body,Vec3 position,Quat rotation,bool clearVelocity=true);
+    bool SetTrigger(BodyHandle body,bool isTrigger);
+    void ResetTriggers() noexcept {triggerTracker_.Clear();}
     bool Step(float seconds=1.0f/60.0f);
     void SetEnvironmentDriven(bool enabled)noexcept{environmentDriven_=enabled;clock_.ClearRemainder();}
     bool StepFromEnvironment(float seconds);
     std::size_t Advance(double frameSeconds);
     double DroppedSeconds() const {return clock_.DroppedSeconds();}
-    std::optional<RayHit> Raycast(Vec3 origin,Vec3 direction,float maxDistance,std::uint32_t mask=UINT32_MAX) const;
+    std::optional<RayHit> Raycast(Vec3 origin,Vec3 direction,float maxDistance,std::uint32_t mask=UINT32_MAX,bool includeTriggers=false) const;
     const std::vector<PhysicsContact>& Contacts() const {return contacts_;}
     const std::vector<BodyPair>& Candidates() const {return candidates_;} // 借用至下一 Step/Destroy/Teleport/World 移动。
     const std::vector<ContactEvent>& Events() const {return events_;}
+    const std::vector<TriggerPairEvent>& TriggerEvents() const noexcept {return triggerTracker_.Events();}
     std::vector<DebugLine> DebugLines() const;
     const PhysicsStatistics& Statistics() const {return statistics_;}
     const std::string& LastError() const {return error_;}
@@ -106,6 +94,7 @@ private:
     std::vector<PhysicsContact> contacts_;
     std::vector<BodyPair> candidates_;
     std::vector<ContactEvent> events_;
+    TriggerTracker triggerTracker_;
     PhysicsStatistics statistics_;
     FixedStepClock clock_;
     bool environmentDriven_=false,environmentStep_=false;

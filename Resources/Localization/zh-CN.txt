@@ -1751,3 +1751,10 @@ EditorUi.InputActionsCount=输入动作数量
 EditorUi.InputMoveDeadZone=移动摇杆死区
 EditorUi.InputJumpKey=跳跃主按键 (VK)
 EditorUi.InputResetDefaults=重置默认输入映射
+Feature.Collider=碰撞体与触发器
+Feature.Collider.Shape=碰撞形状（0=盒 1=球）
+Feature.Collider.HalfExtents=盒形半尺寸（米）
+Feature.Collider.Radius=球体半径（米）
+Feature.Collider.IsTrigger=是否为触发器
+EditorUi.CreatePhysicsSphere=物理球体
+EditorUi.CreateTriggerBox=触发盒区域

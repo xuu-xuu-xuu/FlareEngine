@@ -236,8 +236,10 @@ int32_t SE_CALL se_scene_import(SE_Session handle, const char* text, uint32_t le
         events.GetPublisher().Post(4,1,state,se::EventPhase::NextFrame);
         session->scenePhysics.Clear(session->physics);
         for (auto body:session->physics.Bodies()) session->physics.DestroyBody(body);
+        session->physics.ResetTriggers();
+        session->characterTriggerTracker.Clear();
         session->bodyOwners.clear();
-        session->contactEvents.clear(); session->physicsClock.Reset();
+        session->contactEvents.clear(); session->triggerEvents.clear(); session->physicsClock.Reset();
         session->characters.clear();
         return SE_OK;
     });

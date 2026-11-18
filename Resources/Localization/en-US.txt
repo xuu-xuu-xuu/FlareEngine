@@ -1751,3 +1751,10 @@ EditorUi.InputActionsCount=Input Actions
 EditorUi.InputMoveDeadZone=Move Stick Dead Zone
 EditorUi.InputJumpKey=Jump Primary Key (VK)
 EditorUi.InputResetDefaults=Reset Default Input Actions
+Feature.Collider=Collider and trigger
+Feature.Collider.Shape=Collider shape (0=Box 1=Sphere)
+Feature.Collider.HalfExtents=Box half extents (metres)
+Feature.Collider.Radius=Sphere radius (metres)
+Feature.Collider.IsTrigger=Is trigger
+EditorUi.CreatePhysicsSphere=Physics sphere
+EditorUi.CreateTriggerBox=Trigger box

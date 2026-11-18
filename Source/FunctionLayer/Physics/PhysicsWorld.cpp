@@ -13,144 +13,72 @@ namespace
 {
 std::atomic<std::uint64_t> nextBodyGeneration{1};
 float Component(Vec3 value,int axis) {return axis==0?value.x:axis==1?value.y:value.z;}
-std::array<Vec3,3> Axes(const BoxShape& box)
-{return {Rotate(box.rotation,{1,0,0}),Rotate(box.rotation,{0,1,0}),Rotate(box.rotation,{0,0,1})};}
 Vec3 LocalPoint(const BoxShape& box,Vec3 point) {return Rotate(Conjugate(box.rotation),point-box.center);}
-Vec3 Support(const BoxShape& box,Vec3 direction)
-{
-    const auto axes=Axes(box);Vec3 result=box.center;
-    for(int i=0;i<3;++i)result+=axes[i]*(Dot(axes[i],direction)>=0?Component(box.halfExtents,i):-Component(box.halfExtents,i));
-    return result;
-}
 bool Overlap(const Aabb& a,const Aabb& b,float margin)
 {
     return a.minimum.x<=b.maximum.x+margin && a.maximum.x+margin>=b.minimum.x
         && a.minimum.y<=b.maximum.y+margin && a.maximum.y+margin>=b.minimum.y
         && a.minimum.z<=b.maximum.z+margin && a.maximum.z+margin>=b.minimum.z;
 }
-std::uint64_t Feature(std::uint64_t a,std::uint64_t b,std::uint64_t plane)
+SphereShape SphereOf(const BodyDesc& description) noexcept
 {
-    if(a>b)std::swap(a,b);
-    std::uint64_t hash=14695981039346656037ull;
-    for(const auto value:{a,b,plane})for(unsigned shift=0;shift<64;shift+=8)
-    {hash^=(value>>shift)&255;hash*=1099511628211ull;}
-    return hash;
+    return {description.shape.center, description.radius};
 }
-struct ClipVertex {Vec3 position;std::uint64_t feature;};
-std::vector<ClipVertex> Clip(const std::vector<ClipVertex>& polygon,Vec3 center,Vec3 normal,float distance,std::uint64_t plane)
+bool ValidBodyShape(const BodyDesc& description) noexcept
 {
-    std::vector<ClipVertex> result;if(polygon.empty())return result;
-    auto previous=polygon.back();float previousDistance=Dot(previous.position-center,normal)-distance;
-    for(const auto current:polygon)
+    if (!IsFinite(description.shape.center) || !IsFinite(description.shape.rotation) ||
+        !IsFinite(LengthSquared(description.shape.rotation)) || LengthSquared(description.shape.rotation) <= 1e-10f)
     {
-        const float currentDistance=Dot(current.position-center,normal)-distance;
-        if((currentDistance<=0)!=(previousDistance<=0))
-            result.push_back({previous.position+(current.position-previous.position)*(previousDistance/(previousDistance-currentDistance)),Feature(previous.feature,current.feature,plane)});
-        if(currentDistance<=0)result.push_back(current);
-        previous=current;previousDistance=currentDistance;
+        return false;
     }
-    return result;
-}
-std::pair<Vec3,Vec3> ClosestSegments(Vec3 p1,Vec3 q1,Vec3 p2,Vec3 q2)
-{
-    const Vec3 d1=q1-p1,d2=q2-p2,r=p1-p2;const float a=Dot(d1,d1),e=Dot(d2,d2),f=Dot(d2,r);
-    float s=0,t=0;
-    if(a<=1e-10f && e<=1e-10f)return {p1,p2};
-    if(a<=1e-10f)t=std::clamp(f/e,0.0f,1.0f);
-    else
+    if (description.shapeKind == ColliderShapeKind::Sphere)
     {
-        const float c=Dot(d1,r);
-        if(e<=1e-10f)s=std::clamp(-c/a,0.0f,1.0f);
-        else
-        {
-            const float b=Dot(d1,d2),denominator=a*e-b*b;
-            if(denominator>1e-10f)s=std::clamp((b*f-c*e)/denominator,0.0f,1.0f);
-            t=(b*s+f)/e;
-            if(t<0){t=0;s=std::clamp(-c/a,0.0f,1.0f);}
-            else if(t>1){t=1;s=std::clamp((b-c)/a,0.0f,1.0f);}
-        }
+        return ValidSphereShape(SphereOf(description));
     }
-    return {p1+d1*s,p2+d2*t};
-}
-bool ValidShape(const BoxShape& shape)
-{
-    return IsFinite(shape.center)&&IsFinite(shape.halfExtents)&&IsFinite(shape.rotation)
-        && IsFinite(LengthSquared(shape.rotation))&&LengthSquared(shape.rotation)>1e-10f && shape.halfExtents.x>0.001f
-        && shape.halfExtents.y>0.001f && shape.halfExtents.z>0.001f;
-}
-}
-
-Aabb ComputeAabb(const BoxShape& box)
-{
-    const auto axes=Axes(box);Vec3 radius;
-    for(int i=0;i<3;++i)
-    {const float h=Component(box.halfExtents,i);radius+={std::abs(axes[i].x)*h,std::abs(axes[i].y)*h,std::abs(axes[i].z)*h};}
-    return {box.center-radius,box.center+radius};
-}
-
-std::optional<ContactManifold> CollideBoxes(const BoxShape& a,const BoxShape& b,float margin)
-{
-    if(!ValidShape(a)||!ValidShape(b)||!IsFinite(margin)||margin<0)return std::nullopt;
-    const auto ax=Axes(a),bx=Axes(b);const Vec3 delta=b.center-a.center;
-    float minimum=std::numeric_limits<float>::max();int selected=-1;Vec3 normal;
-    for(int axisIndex=0;axisIndex<15;++axisIndex)
+    if (description.shapeKind == ColliderShapeKind::Box)
     {
-        Vec3 axis=axisIndex<3?ax[axisIndex]:axisIndex<6?bx[axisIndex-3]:Cross(ax[(axisIndex-6)/3],bx[(axisIndex-6)%3]);
-        const float length=Length(axis);if(length<1e-5f)continue;axis=axis/length;
-        float ra=0,rb=0;for(int i=0;i<3;++i){ra+=Component(a.halfExtents,i)*std::abs(Dot(ax[i],axis));rb+=Component(b.halfExtents,i)*std::abs(Dot(bx[i],axis));}
-        const float penetration=ra+rb-std::abs(Dot(delta,axis));if(penetration < -margin)return std::nullopt;
-        // 近似相等时保留面轴，提高连续接触的稳定性。
-        if(selected<0 || penetration < minimum-(axisIndex>=6?0.001f:0.00001f))
-        {minimum=penetration;selected=axisIndex;normal=Dot(delta,axis)>=0?axis:-axis;}
+        return ValidBoxShape(description.shape);
     }
-    ContactManifold result;result.normal=normal;result.separationDistance=std::max(minimum,0.0f);
-    if(selected<6)
+    return false;
+}
+Aabb ComputeBodyAabb(const BodyDesc& description)
+{
+    return description.shapeKind == ColliderShapeKind::Sphere
+        ? ComputeAabb(SphereOf(description))
+        : ComputeAabb(description.shape);
+}
+std::optional<ContactManifold> CollideBodyShapes(const BodyDesc& a, const BodyDesc& b, float margin)
+{
+    if (a.shapeKind == ColliderShapeKind::Sphere && b.shapeKind == ColliderShapeKind::Sphere)
     {
-        const bool referenceA=selected<3;
-        const auto& reference=referenceA?a:b;const auto& incident=referenceA?b:a;
-        const auto referenceAxes=referenceA?ax:bx,incidentAxes=referenceA?bx:ax;
-        const int referenceAxis=selected%3;const Vec3 referenceNormal=referenceA?normal:-normal;
-        const Vec3 center=reference.center+referenceNormal*Component(reference.halfExtents,referenceAxis);
-        int incidentAxis=0;for(int i=1;i<3;++i)if(std::abs(Dot(incidentAxes[i],referenceNormal))>std::abs(Dot(incidentAxes[incidentAxis],referenceNormal)))incidentAxis=i;
-        const float sign=Dot(incidentAxes[incidentAxis],referenceNormal)>0?-1.0f:1.0f;
-        const Vec3 incidentCenter=incident.center+incidentAxes[incidentAxis]*(sign*Component(incident.halfExtents,incidentAxis));
-        const int u=(incidentAxis+1)%3,v=(incidentAxis+2)%3;
-        const Vec3 sideU=incidentAxes[u]*Component(incident.halfExtents,u),sideV=incidentAxes[v]*Component(incident.halfExtents,v);
-        const auto faceFeature=Feature(static_cast<std::uint64_t>(selected*2+(Dot(referenceNormal,referenceAxes[referenceAxis])>0)),
-            static_cast<std::uint64_t>(16+incidentAxis*2+(sign>0)),32);
-        std::vector<ClipVertex> polygon{{incidentCenter-sideU-sideV,Feature(faceFeature,0,64)},
-            {incidentCenter+sideU-sideV,Feature(faceFeature,1,64)},{incidentCenter+sideU+sideV,Feature(faceFeature,2,64)},
-            {incidentCenter-sideU+sideV,Feature(faceFeature,3,64)}};
-        for(int i=0;i<3;++i)if(i!=referenceAxis)
-        {polygon=Clip(polygon,center,referenceAxes[i],Component(reference.halfExtents,i),static_cast<std::uint64_t>(i*2));
-            polygon=Clip(polygon,center,-referenceAxes[i],Component(reference.halfExtents,i),static_cast<std::uint64_t>(i*2+1));}
-        std::vector<ContactPoint> points;
-        for(std::size_t i=0;i<polygon.size();++i)
-        {
-            const float depth=Dot(center-polygon[i].position,referenceNormal);
-            if(depth>=-margin)points.push_back({polygon[i].position+referenceNormal*(depth*0.5f),std::max(depth,0.0f),polygon[i].feature});
-        }
-        if(points.size()<=4)result.points=std::move(points);
-        else for(std::size_t i=0;i<4;++i)result.points.push_back(points[i*points.size()/4]);
+        return CollideSpheres(SphereOf(a), SphereOf(b), margin);
     }
-    else
+    if (a.shapeKind == ColliderShapeKind::Sphere && b.shapeKind == ColliderShapeKind::Box)
     {
-        result.kind=ContactKind::Edge;
-        const int ai=(selected-6)/3,bi=(selected-6)%3;
-        Vec3 ac=a.center,bc=b.center;std::uint64_t sideBits=0;
-        for(int i=0;i<3;++i)
-        {
-            if(i!=ai&&Dot(ax[i],normal)>=0)sideBits|=std::uint64_t{1}<<i;
-            if(i!=bi&&Dot(bx[i],normal)>=0)sideBits|=std::uint64_t{1}<<(i+3);
-            if(i!=ai)ac+=ax[i]*(Dot(ax[i],normal)>=0?Component(a.halfExtents,i):-Component(a.halfExtents,i));
-            if(i!=bi)bc+=bx[i]*(Dot(bx[i],normal)>=0?-Component(b.halfExtents,i):Component(b.halfExtents,i));
-        }
-        const auto points=ClosestSegments(ac-ax[ai]*Component(a.halfExtents,ai),ac+ax[ai]*Component(a.halfExtents,ai),
-            bc-bx[bi]*Component(b.halfExtents,bi),bc+bx[bi]*Component(b.halfExtents,bi));
-        result.points.push_back({(points.first+points.second)*0.5f,std::max(minimum,0.0f),Feature(static_cast<std::uint64_t>(selected),sideBits,128)});
+        return CollideSphereBox(SphereOf(a), b.shape, margin);
     }
-    if(result.points.empty())result.points.push_back({(Support(a,normal)+Support(b,-normal))*0.5f,std::max(minimum,0.0f),0});
-    return result;
+    if (a.shapeKind == ColliderShapeKind::Box && b.shapeKind == ColliderShapeKind::Sphere)
+    {
+        return CollideBoxSphere(a.shape, SphereOf(b), margin);
+    }
+    return CollideBoxes(a.shape, b.shape, margin);
+}
+void AppendSphereWireframe(std::vector<DebugLine>& lines, Vec3 center, Quat rotation, float radius, Vec3 color)
+{
+    constexpr unsigned kSegments = 16;
+    for (unsigned i = 0; i < kSegments; ++i)
+    {
+        const float a = 2.0f * Pi * static_cast<float>(i) / static_cast<float>(kSegments);
+        const float b = 2.0f * Pi * static_cast<float>(i + 1) / static_cast<float>(kSegments);
+        const float ca = std::cos(a) * radius;
+        const float sa = std::sin(a) * radius;
+        const float cb = std::cos(b) * radius;
+        const float sb = std::sin(b) * radius;
+        lines.push_back({center + Rotate(rotation, {ca, sa, 0.0f}), center + Rotate(rotation, {cb, sb, 0.0f}), color});
+        lines.push_back({center + Rotate(rotation, {ca, 0.0f, sa}), center + Rotate(rotation, {cb, 0.0f, sb}), color});
+        lines.push_back({center + Rotate(rotation, {0.0f, ca, sa}), center + Rotate(rotation, {0.0f, cb, sb}), color});
+    }
+}
 }
 
 bool PhysicsWorld::Fail(const char* key) const {error_=key;return false;}
@@ -160,15 +88,24 @@ std::vector<BodyHandle> PhysicsWorld::Bodies() const
 {std::vector<BodyHandle> result;for(std::size_t i=0;i<bodies_.size();++i)if(bodies_[i].alive)result.push_back({static_cast<std::uint32_t>(i),bodies_[i].generation});return result;}
 BodyHandle PhysicsWorld::CreateBody(const BodyDesc& description)
 {
-    if(!ValidShape(description.shape)||!IsFinite(description.mass)||description.mass<0
+    if(!ValidBodyShape(description)||!IsFinite(description.mass)||description.mass<0
         ||!IsFinite(description.friction)||description.friction<0||!IsFinite(description.restitution)||description.restitution<0||description.restitution>1
         ||!IsFinite(description.linearDamping)||description.linearDamping<0||!IsFinite(description.angularDamping)||description.angularDamping<0)
     {Fail("Physics.InvalidBody");return {};}
     Vec3 inverseInertia{};float inverseMass=0;
     if(description.mass>0)
     {
-        inverseMass=1/description.mass;const auto h=description.shape.halfExtents;
-        inverseInertia={3/(description.mass*(h.y*h.y+h.z*h.z)),3/(description.mass*(h.x*h.x+h.z*h.z)),3/(description.mass*(h.x*h.x+h.y*h.y))};
+        inverseMass=1/description.mass;
+        if (description.shapeKind == ColliderShapeKind::Sphere)
+        {
+            const float inv = 2.5f / (description.mass * description.radius * description.radius);
+            inverseInertia = {inv, inv, inv};
+        }
+        else
+        {
+            const auto h=description.shape.halfExtents;
+            inverseInertia={3/(description.mass*(h.y*h.y+h.z*h.z)),3/(description.mass*(h.x*h.x+h.z*h.z)),3/(description.mass*(h.x*h.x+h.y*h.y))};
+        }
         if(!IsFinite(inverseMass)||!IsFinite(inverseInertia)){Fail("Physics.InvalidBody");return {};}
     }
     const auto generation=nextBodyGeneration.fetch_add(1);if(generation>UINT32_MAX){Fail("Physics.HandleExhausted");return {};}
@@ -236,12 +173,25 @@ bool PhysicsWorld::Teleport(BodyHandle body,Vec3 position,Quat rotation,bool cle
     return true;
 }
 
+bool PhysicsWorld::SetTrigger(BodyHandle body,bool isTrigger)
+{
+    if(!IsAlive(body))return Fail("Physics.InvalidBodyHandle");
+    auto& value=bodies_[body.index];
+    if(value.state.description.isTrigger==isTrigger)return true;
+    value.state.description.isTrigger=isTrigger;
+    for(auto& candidate:bodies_)if(candidate.alive&&candidate.inverseMass>0)Wake(candidate);
+    std::erase_if(cache_,[&](const auto& entry){return entry.first.a==body.Pack()||entry.first.b==body.Pack();});
+    std::erase_if(contacts_,[&](const auto& contact){return contact.a==body||contact.b==body;});
+    return true;
+}
+
 bool PhysicsWorld::Step(float seconds)
 {
     if(environmentDriven_&&!environmentStep_)return Fail("Physics.ClockOwned");
     if(!IsFinite(seconds)||seconds<=0||seconds>0.1f||!IsFinite(gravity)||velocityIterations==0||velocityIterations>64)return Fail("Physics.InvalidStep");
     struct Constraint {BodyHandle a,b;PairKey key;Vec3 point,normal,t1,t2,localA,localB;float massN=0,massT1=0,massT2=0,bias=0,friction=0,normalImpulse=0,tangent1=0,tangent2=0;std::uint64_t feature=0;};
     std::vector<Constraint> constraints;contacts_.clear();candidates_.clear();events_.clear();statistics_={};
+    std::vector<TriggerOverlap> triggerOverlaps;
     for(auto& body:bodies_)if(body.alive&&body.inverseMass>0)
     {
         if(!body.state.sleeping)
@@ -255,20 +205,33 @@ bool PhysicsWorld::Step(float seconds)
     }
     const auto handles=Bodies();std::vector<bool> touching(bodies_.size(),false);
     std::unordered_set<PairKey,PairHash> currentPairs;
-    std::vector<Aabb> bounds;bounds.reserve(handles.size());for(const auto handle:handles)bounds.push_back(ComputeAabb(bodies_[handle.index].state.description.shape));
+    std::vector<Aabb> bounds;bounds.reserve(handles.size());for(const auto handle:handles)bounds.push_back(ComputeBodyAabb(bodies_[handle.index].state.description));
     statistics_.aabbUpdates=bounds.size();
     for(std::size_t i=0;i<handles.size();++i)for(std::size_t j=i+1;j<handles.size();++j)
     {
         auto& a=bodies_[handles[i].index];auto& b=bodies_[handles[j].index];
         const auto& ad=a.state.description;const auto& bd=b.state.description;
-        if((a.inverseMass==0&&b.inverseMass==0)||!(ad.mask&bd.layer)||!(bd.mask&ad.layer))continue;
-        ++statistics_.aabbTests;if(Overlap(bounds[i],bounds[j],0.005f))candidates_.push_back({handles[i],handles[j]});
+        const bool isTriggerPair=ad.isTrigger||bd.isTrigger;
+        if((!isTriggerPair&&a.inverseMass==0&&b.inverseMass==0)||!(ad.mask&bd.layer)||!(bd.mask&ad.layer))continue;
+        ++statistics_.aabbTests;if(Overlap(bounds[i],bounds[j],isTriggerPair?0.0f:0.005f))candidates_.push_back({handles[i],handles[j]});
     }
     statistics_.candidates=candidates_.size();
     for(const auto pair:candidates_)
     {
         auto& a=bodies_[pair.a.index];auto& b=bodies_[pair.b.index];const auto& ad=a.state.description;const auto& bd=b.state.description;
-        auto collision=CollideBoxes(ad.shape,bd.shape);if(!collision)continue;
+        if(ad.isTrigger||bd.isTrigger)
+        {
+            const auto overlap=CollideBodyShapes(ad,bd,0.0f);
+            if(overlap&&overlap->separationDistance>1e-5f)
+            {
+                if(ad.isTrigger&&!bd.isTrigger)triggerOverlaps.push_back({pair.a,pair.b,ad.entityStableId,bd.entityStableId});
+                else if(!ad.isTrigger&&bd.isTrigger)triggerOverlaps.push_back({pair.b,pair.a,bd.entityStableId,ad.entityStableId});
+                else if(pair.a.Pack()<=pair.b.Pack())triggerOverlaps.push_back({pair.a,pair.b,ad.entityStableId,bd.entityStableId});
+                else triggerOverlaps.push_back({pair.b,pair.a,bd.entityStableId,ad.entityStableId});
+            }
+            continue;
+        }
+        auto collision=CollideBodyShapes(ad,bd,0.005f);if(!collision)continue;
         const PairKey key{pair.a.Pack(),pair.b.Pack()};currentPairs.insert(key);
         touching[pair.a.index]=touching[pair.b.index]=true;
         if(!cache_.contains(key))events_.push_back({pair.a,pair.b,ad.entityStableId,bd.entityStableId,true,false});
@@ -335,6 +298,7 @@ bool PhysicsWorld::Step(float seconds)
         events_.push_back({a,b,IsAlive(a)?bodies_[a.index].state.description.entityStableId:0,IsAlive(b)?bodies_[b.index].state.description.entityStableId:0,false,true});
     }
     cache_.clear();for(const auto& c:constraints)cache_[c.key].push_back({c.localA,c.localB,c.normal,c.t1*c.tangent1+c.t2*c.tangent2,c.normalImpulse,c.feature});
+    triggerTracker_.Update(triggerOverlaps);
     for(std::size_t i=0;i<bodies_.size();++i)
     {
         auto& body=bodies_[i];if(!body.alive||body.inverseMass==0)continue;
@@ -368,14 +332,33 @@ std::size_t PhysicsWorld::Advance(double frameSeconds)
     return clock_.Advance(frameSeconds,[this](double step){if(!Step(static_cast<float>(step)))throw std::runtime_error(error_);});
 }
 
-std::optional<RayHit> PhysicsWorld::Raycast(Vec3 origin,Vec3 direction,float maxDistance,std::uint32_t mask) const
+std::optional<RayHit> PhysicsWorld::Raycast(Vec3 origin,Vec3 direction,float maxDistance,std::uint32_t mask,bool includeTriggers) const
 {
     if(!IsFinite(origin)||!IsFinite(direction)||!IsFinite(maxDistance)||maxDistance<0
         ||!IsFinite(LengthSquared(direction))||LengthSquared(direction)<1e-10f)return std::nullopt;
     direction=Normalize(direction);std::optional<RayHit> closest;
     for(const auto handle:Bodies())
     {
-        const auto& description=GetBody(handle)->description;if(!(mask&description.layer))continue;
+        const auto& description=GetBody(handle)->description;
+        if(!(mask&description.layer)||(!includeTriggers&&description.isTrigger))continue;
+        if(description.shapeKind==ColliderShapeKind::Sphere)
+        {
+            const Vec3 m=origin-description.shape.center;
+            const float b=Dot(m,direction);
+            const float c=Dot(m,m)-description.radius*description.radius;
+            if(c>0.0f&&b>0.0f)continue;
+            const float discr=b*b-c;
+            if(discr<0.0f)continue;
+            const float sqrtDiscr=std::sqrt(discr);
+            float distance=-b-sqrtDiscr;
+            if(distance<0.0f)distance=-b+sqrtDiscr;
+            const Vec3 point=origin+direction*distance;
+            const Vec3 offset=point-description.shape.center;
+            const Vec3 normal=LengthSquared(offset)>1e-10f?Normalize(offset):-direction;
+            if(IsFinite(distance)&&distance>=0.0f&&distance<=maxDistance&&IsFinite(point)&&(!closest||distance<closest->distance))
+                closest=RayHit{handle,description.entityStableId,distance,point,normal};
+            continue;
+        }
         const auto& box=description.shape;const Vec3 local=LocalPoint(box,origin),ray=Rotate(Conjugate(box.rotation),direction);
         float enter=-std::numeric_limits<float>::infinity(),exit=std::numeric_limits<float>::infinity();Vec3 enterNormal{},exitNormal{};bool hit=true;
         for(int axis=0;axis<3;++axis)
@@ -401,9 +384,17 @@ std::vector<DebugLine> PhysicsWorld::DebugLines() const
     std::vector<DebugLine> lines;
     for(const auto handle:Bodies())
     {
-        const auto& body=*GetBody(handle);const auto& box=body.description.shape;std::array<Vec3,8> vertices;
+        const auto& body=*GetBody(handle);const auto& box=body.description.shape;
+        const Vec3 color=body.description.isTrigger
+            ?Vec3{0.1f,0.9f,1.0f}
+            :(body.description.mass==0?Vec3{0.5f,0.5f,0.5f}:body.sleeping?Vec3{0.2f,0.4f,1}:Vec3{0.2f,1,0.2f});
+        if(body.description.shapeKind==ColliderShapeKind::Sphere)
+        {
+            AppendSphereWireframe(lines,box.center,box.rotation,body.description.radius,color);
+            continue;
+        }
+        std::array<Vec3,8> vertices;
         for(unsigned i=0;i<8;++i)vertices[i]=box.center+Rotate(box.rotation,{(i&1)?box.halfExtents.x:-box.halfExtents.x,(i&2)?box.halfExtents.y:-box.halfExtents.y,(i&4)?box.halfExtents.z:-box.halfExtents.z});
-        const Vec3 color=body.description.mass==0?Vec3{0.5f,0.5f,0.5f}:body.sleeping?Vec3{0.2f,0.4f,1}:Vec3{0.2f,1,0.2f};
         for(unsigned i=0;i<8;++i)for(unsigned bit=1;bit<=4;bit*=2)if(!(i&bit))lines.push_back({vertices[i],vertices[i|bit],color});
     }
     for(const auto& contact:contacts_)for(const auto& point:contact.manifold.points)

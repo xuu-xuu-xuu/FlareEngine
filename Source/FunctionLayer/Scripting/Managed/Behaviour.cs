@@ -35,6 +35,8 @@ public abstract class Behaviour
     public virtual void OnPostTick(double deltaSeconds) { }
     public virtual void OnFixedUpdate(double deltaSeconds) { }
     public virtual void OnFixedPostUpdate(double deltaSeconds) { }
+    public virtual void OnTriggerEnter(ulong otherEntityId) { }
+    public virtual void OnTriggerExit(ulong otherEntityId) { }
     public virtual void OnDisable() { }
     public virtual void OnDestroy() { }
     protected void DestroySelf() => Scripts.Destroy(Entity);

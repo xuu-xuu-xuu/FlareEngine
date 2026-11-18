@@ -7,6 +7,8 @@ public sealed class ScriptSystem : IDisposable
         internal readonly Behaviour Value = value;
         internal readonly ScriptComponentBinding Native=native;
         internal readonly SceneHandle Scene=scene;
+        internal readonly bool HasTriggerEnter=value.GetType().GetMethod(nameof(Behaviour.OnTriggerEnter),[typeof(ulong)])!.DeclaringType!=typeof(Behaviour);
+        internal readonly bool HasTriggerExit=value.GetType().GetMethod(nameof(Behaviour.OnTriggerExit),[typeof(ulong)])!.DeclaringType!=typeof(Behaviour);
         internal bool Created;
         internal bool Active;
         internal bool Faulted;
@@ -168,13 +170,45 @@ public sealed class ScriptSystem : IDisposable
         if(phase is EnvironmentPhase.PreTick or EnvironmentPhase.Tick or EnvironmentPhase.PostTick){RefreshActivation();Input=frameInput;}
         if(phase is EnvironmentPhase.FixedPreTick or EnvironmentPhase.FixedPostTick){RefreshActivation();Input=fixedInput;}
         if(phase==EnvironmentPhase.AfterPhysics&&SimulatePhysics)
+        {
             foreach(var contact in Session.Physics.DrainContacts())Events.Publish(contact,EventPhase.AfterPhysics);
+            DispatchTriggers(Session.Physics.DrainTriggers());
+        }
         if(phase==EnvironmentPhase.FixedEnd){fixedInput=fixedInput.WithoutEdges();Input=frameInput;}
         if(phase==EnvironmentPhase.FrameEnd)
         {
             frameInput=frameInput.WithoutEdges();Input=frameInput;UpdateClockDiagnostics();
         }
         SweepDead();FlushMutations();
+    }
+    private void DispatchTriggers(IReadOnlyList<PhysicsTrigger> triggers)
+    {
+        if(triggers.Count==0)return;
+        var snapshot=entries.ToArray();
+        foreach(var trigger in triggers)
+        {
+            if(!running||disposed)break;
+            Events.Publish(trigger,EventPhase.AfterPhysics);
+            if(!running||disposed)break;
+            var triggerId=trigger.TriggerEntity.StableId;
+            var otherId=trigger.OtherEntity.StableId;
+            foreach(var entry in snapshot)
+            {
+                if(!running||disposed)break;
+                if(trigger.Entered?!entry.HasTriggerEnter:!entry.HasTriggerExit)continue;
+                if(!CanRun(entry.Value))continue;
+                var entityId=entry.Value.Entity.StableId;
+                ulong argument;
+                if(entityId==triggerId)argument=otherId;
+                else if(entityId==otherId)argument=triggerId;
+                else continue;
+                Action callback=trigger.Entered
+                    ?()=>entry.Value.OnTriggerEnter(argument)
+                    :()=>entry.Value.OnTriggerExit(argument);
+                InvokeEvent(entry.Value,callback,trigger.Entered?nameof(Behaviour.OnTriggerEnter):nameof(Behaviour.OnTriggerExit));
+                FlushMutations();
+            }
+        }
     }
     private void UpdateClockDiagnostics()
     {
@@ -190,7 +224,7 @@ public sealed class ScriptSystem : IDisposable
         var type=entry.Value.GetType();
         void Register(string method,TickPhase phase,bool paused=false)
         {
-            if(type.GetMethod(method)!.DeclaringType==typeof(Behaviour))return;
+            if(type.GetMethod(method,[typeof(double)])!.DeclaringType==typeof(Behaviour))return;
             var token=Session.Invoke(handle=>{EngineSession.Check(NativeMethods.ComponentTickRegister(handle,entry.Native.Handle,(uint)phase,phase is TickPhase.FixedPreTick or TickPhase.FixedPostTick?1:0,paused?1:0,out var task));return task;});
             entry.Ticks.Add(phase,token);
         }

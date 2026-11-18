@@ -73,20 +73,20 @@ bool AddModelToScene(EditorSession& session, AssetStore& assets, const std::stri
 
 bool CreateEditorObject(EditorSession& session, std::string_view kind, StableEntityId parent,const Localization* text)
 {
-    const bool mesh = kind == "cube" || kind == "sphere" ||kind=="physics-cube";
+    const bool mesh = kind == "cube" || kind == "sphere" || kind == "physics-cube" || kind == "physics-sphere";
     const bool light=kind=="light"||kind=="point-light"||kind=="spot-light";
-    const auto feature=kind=="render-settings"?"render":kind=="environment-settings"?"environmentmap":kind=="rectangle-light"?"rectangle":kind=="physics-cube"?"body":kind=="character"?"character":"";
+    const auto feature=kind=="render-settings"?"render":kind=="environment-settings"?"environmentmap":kind=="rectangle-light"?"rectangle":(kind=="physics-cube"||kind=="physics-sphere")?"body":kind=="trigger-box"?"collider":kind=="character"?"character":"";
     if (!mesh && kind != "empty" && kind != "camera" && !light&&!*feature) return false;
     if (!session.BeginEdit("Editor.Create")) return false;
     const char* name = kind == "cube" ? "Cube" : kind == "sphere" ? "Sphere" :
                        kind == "light" ? "Directional Light" : kind == "camera" ? "Camera" : "GameObject";
     const auto* descriptor=FindComponentDescriptor(feature);
-    const char* localLabel=kind=="point-light"?"EditorUi.LightPoint":kind=="spot-light"?"EditorUi.LightSpot":nullptr;
+    const char* localLabel=kind=="point-light"?"EditorUi.LightPoint":kind=="spot-light"?"EditorUi.LightSpot":kind=="physics-sphere"?"EditorUi.CreatePhysicsSphere":kind=="trigger-box"?"EditorUi.CreateTriggerBox":nullptr;
     const auto id = session.Create(localLabel?(text?text->GetText(localLabel):std::string(kind)):
         descriptor?(text?text->GetText(std::string(descriptor->labelKey)):std::string(descriptor->key)):name, parent);
     bool ready = id != 0;
     if (ready && mesh)
-        ready = session.SetMesh(id, {kind == "sphere" ? BuiltinSphereAssetId : BuiltinCubeAssetId, {}});
+        ready = session.SetMesh(id, {(kind == "sphere" || kind == "physics-sphere") ? BuiltinSphereAssetId : BuiltinCubeAssetId, {}});
     if (ready && (kind == "camera" || light))
         ready = session.Apply("Editor.Create", [&](World& world) {
             const auto entity = world.FindByStableId(id);
@@ -97,7 +97,16 @@ bool CreateEditorObject(EditorSession& session, std::string_view kind, StableEnt
             component.castsShadow=component.type!=LightType::Directional;
             return world.SetLight(entity,component);
         });
-    if(ready&&*feature)ready=session.Apply("Feature.Edit",[&](World& world){std::string error;return AddComponent(world,world.FindByStableId(id),feature,error);});
+    if(ready&&*feature)ready=session.Apply("Feature.Edit",[&](World& world){
+        std::string error;
+        const auto target=world.FindByStableId(id);
+        if(!AddComponent(world,target,feature,error))return false;
+        if(kind=="physics-sphere")
+            return AddComponent(world,target,"collider",error)&&WriteProperty(world,target,"collider.shape",1.0f,error);
+        if(kind=="trigger-box")
+            return WriteProperty(world,target,"collider.isTrigger",true,error);
+        return true;
+    });
     if (ready && session.CommitEdit()) return true;
     session.CancelEdit();
     return false;

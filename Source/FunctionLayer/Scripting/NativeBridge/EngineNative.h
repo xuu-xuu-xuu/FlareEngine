@@ -37,6 +37,13 @@ typedef struct SE_BoxBodyDesc {
     float mass, friction, restitution;
     uint32_t layer, mask;
 } SE_BoxBodyDesc;
+typedef struct SE_SphereBodyDesc {
+    float radius;
+    float mass, friction, restitution;
+    uint32_t layer, mask;
+    int32_t is_trigger;
+    uint32_t reserved;
+} SE_SphereBodyDesc;
 typedef struct SE_RayHit {
     SE_Body body;
     uint64_t entity_stable_id;
@@ -48,6 +55,11 @@ typedef struct SE_ContactEvent {
     uint64_t entity_a, entity_b;
     int32_t began, ended;
 } SE_ContactEvent;
+typedef struct SE_TriggerEvent {
+    uint64_t trigger_entity, other_entity;
+    int32_t entered;
+    uint32_t reserved;
+} SE_TriggerEvent;
 typedef struct SE_UiStyle {
     float anchor_min_x,anchor_min_y,anchor_max_x,anchor_max_y,pivot_x,pivot_y;
     float offset_x,offset_y,width,height,padding,spacing;
@@ -209,6 +221,9 @@ SE_API int32_t SE_CALL se_scene_create_entity(SE_Session session,uint64_t scene,
 SE_API int32_t SE_CALL se_scene_callback_scope(SE_Session session,uint64_t scene,uint64_t* previous) SE_NOEXCEPT;
 // 每实体最多一个 box body，只允许根实体；物理拥有位置/旋转写权，移动必须使用 teleport。
 SE_API int32_t SE_CALL se_body_create(SE_Session session, SE_Entity entity, const SE_BoxBodyDesc* description, SE_Body* body) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_body_create_sphere(SE_Session session, SE_Entity entity, const SE_SphereBodyDesc* description, SE_Body* body) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_body_set_trigger(SE_Session session, SE_Body body, int32_t is_trigger) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_body_is_trigger(SE_Session session, SE_Body body, int32_t* is_trigger) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_body_find(SE_Session session, SE_Entity entity, SE_Body* body) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_character_component_state(SE_Session session, SE_Entity entity, SE_CharacterState* state) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_body_destroy(SE_Session session, SE_Body body) SE_NOEXCEPT;
@@ -223,6 +238,7 @@ SE_API int32_t SE_CALL se_physics_advance(SE_Session session, double delta_secon
 SE_API int32_t SE_CALL se_physics_raycast(SE_Session session, SE_Vector3 origin, SE_Vector3 direction, float distance, uint32_t mask, SE_RayHit* hit, int32_t* found) SE_NOEXCEPT;
 // 查询数量不会消费事件；缓冲区足够时一次复制并清空，回调由托管层在步骤结束后分发。
 SE_API int32_t SE_CALL se_physics_drain_contacts(SE_Session session, SE_ContactEvent* buffer, uint32_t capacity, uint32_t* required) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_physics_drain_triggers(SE_Session session, SE_TriggerEvent* buffer, uint32_t capacity, uint32_t* required) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_character_create(SE_Session session, SE_Entity entity, const SE_CharacterDesc* description) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_character_move(SE_Session session, SE_Entity entity, SE_Vector3 direction, int32_t jump, float seconds, SE_CharacterState* state) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_character_teleport(SE_Session session, SE_Entity entity, SE_Vector3 position) SE_NOEXCEPT;

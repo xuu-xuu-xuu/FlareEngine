@@ -655,6 +655,8 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
         add("Feature.Render", "Scene rendering settings", EditorCommandId::CreateEntity, "render-settings");
         add("Feature.Environment", "Environment lighting", EditorCommandId::CreateEntity, "environment-settings");
         add("Feature.Body", "Physics box", EditorCommandId::CreateEntity, "physics-cube");
+        add("EditorUi.CreatePhysicsSphere", "Physics sphere", EditorCommandId::CreateEntity, "physics-sphere");
+        add("EditorUi.CreateTriggerBox", "Trigger box", EditorCommandId::CreateEntity, "trigger-box");
         add("Feature.Character", "Capsule character", EditorCommandId::CreateEntity, "character");
         if (panel == EditorPanelId::Hierarchy && parent != 0)
             add("EditorUi.CreatePrefab", "Create Prefab", EditorCommandId::CreateAsset, "prefab");

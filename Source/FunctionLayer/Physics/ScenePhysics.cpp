@@ -1,6 +1,8 @@
 #include "ScenePhysics.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "CoreLayer/Math/TransformDecomposition.h"
+#include <algorithm>
+#include <cmath>
 #include <unordered_set>
 
 namespace se
@@ -15,6 +17,7 @@ bool SameProperties(const std::vector<PropertyValue>& first,const std::vector<Pr
         if(first[i].index()!=second[i].index())return false;
         if(const auto* number=std::get_if<float>(&first[i])){if(*number!=std::get<float>(second[i]))return false;}
         else if(const auto* vector=std::get_if<Vec3>(&first[i])){if(LengthSquared(*vector-std::get<Vec3>(second[i]))!=0)return false;}
+        else if(const auto* flag=std::get_if<bool>(&first[i])){if(*flag!=std::get<bool>(second[i]))return false;}
         else return false;
     }
     return true;
@@ -46,23 +49,57 @@ bool ScenePhysics::Synchronize(const World& world,PhysicsWorld& physics)
     {
         if(!world.IsEnabled(entity))continue;const auto id=world.Get(entity)->stableId;
         const auto* component=world.GetRegisteredComponent<PhysicsBodyComponent>(world.FindComponent(entity,PhysicsBodyComponent::TypeId));
+        const auto* collider=world.GetRegisteredComponent<ColliderSettingsComponent>(world.FindComponent(entity,ColliderSettingsComponent::TypeId));
+        const bool hasBody=component&&component->Enabled();
+        const bool hasCollider=collider&&collider->Enabled();
         Transform transform;if(!WorldTransform(world,entity,transform))continue;
-        if(component&&component->Enabled())
+        if(hasBody||hasCollider)
         {
             wanted.insert(id);auto existing=bodies_.find(id);
-            if(existing!=bodies_.end()&&(!physics.IsAlive(existing->second.handle)||!SameProperties(existing->second.properties,component->values)||LengthSquared(existing->second.scale-transform.scale)!=0))
+            const std::vector<PropertyValue> emptyProps;
+            const auto& bodyVals=hasBody?component->values:emptyProps;
+            const auto& colliderVals=hasCollider?collider->values:emptyProps;
+            const bool stale=existing!=bodies_.end()&&(!physics.IsAlive(existing->second.handle)
+                ||existing->second.hasBody!=hasBody||existing->second.hasCollider!=hasCollider
+                ||!SameProperties(existing->second.bodyProperties,bodyVals)
+                ||!SameProperties(existing->second.colliderProperties,colliderVals)
+                ||LengthSquared(existing->second.scale-transform.scale)!=0);
+            if(stale)
             {if(physics.IsAlive(existing->second.handle))physics.DestroyBody(existing->second.handle);bodies_.erase(existing);existing=bodies_.end();}
             if(existing==bodies_.end())
             {
                 bool external=false;for(auto body:physics.Bodies())if(physics.GetBody(body)->description.entityStableId==id){external=true;break;}
                 if(!external)
                 {
-                    BodyDesc description;const auto extents=std::get<Vec3>(component->values[0]);
-                    description.shape={transform.position,{extents.x*std::abs(transform.scale.x),extents.y*std::abs(transform.scale.y),extents.z*std::abs(transform.scale.z)},transform.rotation};
-                    description.mass=std::get<float>(component->values[1]);description.friction=std::get<float>(component->values[2]);
-                    description.restitution=std::get<float>(component->values[3]);description.linearDamping=std::get<float>(component->values[4]);description.angularDamping=std::get<float>(component->values[5]);description.entityStableId=id;
+                    BodyDesc description;
+                    const Vec3 absScale{std::abs(transform.scale.x),std::abs(transform.scale.y),std::abs(transform.scale.z)};
+                    if(hasBody)
+                    {
+                        const auto extents=std::get<Vec3>(component->values[0]);
+                        description.shape={transform.position,{extents.x*absScale.x,extents.y*absScale.y,extents.z*absScale.z},transform.rotation};
+                        description.mass=std::get<float>(component->values[1]);description.friction=std::get<float>(component->values[2]);
+                        description.restitution=std::get<float>(component->values[3]);description.linearDamping=std::get<float>(component->values[4]);
+                        description.angularDamping=std::get<float>(component->values[5]);
+                    }
+                    else
+                    {
+                        description.mass=0.0f;
+                    }
+                    if(hasCollider)
+                    {
+                        const int shapeCode=static_cast<int>(std::lround(std::get<float>(collider->values[0])));
+                        description.shapeKind=shapeCode==1?ColliderShapeKind::Sphere:ColliderShapeKind::Box;
+                        const auto extents=std::get<Vec3>(collider->values[1]);
+                        description.shape.center=transform.position;
+                        description.shape.rotation=transform.rotation;
+                        description.shape.halfExtents={extents.x*absScale.x,extents.y*absScale.y,extents.z*absScale.z};
+                        const float maxScale=std::max({absScale.x,absScale.y,absScale.z});
+                        description.radius=std::get<float>(collider->values[2])*maxScale;
+                        description.isTrigger=std::get<bool>(collider->values[3]);
+                    }
+                    description.entityStableId=id;
                     const auto handle=physics.CreateBody(description);if(!handle)return false;
-                    bodies_.emplace(id,Body{handle,component->values,transform.scale});
+                    bodies_.emplace(id,Body{handle,hasBody,hasCollider,bodyVals,colliderVals,transform.scale});
                 }
             }
             else if(const auto* state=physics.GetBody(existing->second.handle))
@@ -125,7 +162,9 @@ bool ValidateScenePhysics(const World& world,std::string& error)
     error.clear();for(auto entity:world.Entities())
     {
         if(!world.IsEnabled(entity))continue;
-        if(!world.FindComponent(entity,PhysicsBodyComponent::TypeId)&&!world.FindComponent(entity,CharacterSettingsComponent::TypeId))continue;
+        if(!world.FindComponent(entity,PhysicsBodyComponent::TypeId)
+            &&!world.FindComponent(entity,CharacterSettingsComponent::TypeId)
+            &&!world.FindComponent(entity,ColliderSettingsComponent::TypeId))continue;
         Transform transform;if(!WorldTransform(world,entity,transform)){error="Feature.Physics.InvalidTransform";return false;}
         if(std::abs(transform.scale.x)<.0001f||std::abs(transform.scale.y)<.0001f||std::abs(transform.scale.z)<.0001f){error="Feature.Physics.InvalidTransform";return false;}
     }

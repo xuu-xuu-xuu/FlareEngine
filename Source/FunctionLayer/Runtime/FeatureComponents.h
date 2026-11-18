@@ -17,6 +17,7 @@ using EnvironmentSettingsComponent=FeatureComponent<0x464C0004>;
 // W03：角色的动画资产与播放状态。姿态本身是逐帧派生数据，不写入场景。
 using ActorSettingsComponent=FeatureComponent<0x464C0005>;
 using RectangleLightComponent=FeatureComponent<0x464C0006>;
+using ColliderSettingsComponent=FeatureComponent<0x464C0007>;
 
 void CompleteRenderProperties(std::vector<ComponentProperty>& properties);
 void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors);

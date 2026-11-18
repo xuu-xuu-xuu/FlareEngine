@@ -72,6 +72,8 @@ struct Session
     bool physicsDebugDraw=true;
     se::FixedStepClock physicsClock;
     std::vector<SE_ContactEvent> contactEvents;
+    std::vector<SE_TriggerEvent> triggerEvents;
+    se::TriggerTracker characterTriggerTracker;
     se::UiTree ui;
     se::UiTree* borrowedUi=nullptr;
     se::UiTree& UiRef() { return borrowedUi?*borrowedUi:ui; }
@@ -286,6 +288,7 @@ void SceneServices(Session& session,SE_Session handle)
         }
         std::erase_if(session.characters,[&](const auto& item){return std::find_if(members.begin(),members.end(),[&](auto entity){return entity.Pack()==item.first;})!=members.end();});
         std::erase_if(session.contactEvents,[&](const auto& event){return std::any_of(members.begin(),members.end(),[&](auto entity){const auto* record=session.WorldRef().Get(entity);return record&&(record->stableId==event.entity_a||record->stableId==event.entity_b);});});
+        std::erase_if(session.triggerEvents,[&](const auto& event){return std::any_of(members.begin(),members.end(),[&](auto entity){const auto* record=session.WorldRef().Get(entity);return record&&(record->stableId==event.trigger_entity||record->stableId==event.other_entity);});});
         if(failed)throw std::runtime_error("Scene.CallbackFailed");
     });
 }
@@ -341,6 +344,36 @@ int32_t PhysicsStep(Session& session, double dt)
         !session.scenePhysics.AdvanceCharacters(session.WorldRef(),session.physics,static_cast<float>(dt)))return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
     for (const auto& event:session.physics.Events())
         session.contactEvents.push_back({event.entityA,event.entityB,event.began?1:0,event.ended?1:0});
+    for (const auto& event:session.physics.TriggerEvents())
+        session.triggerEvents.push_back({event.triggerEntity,event.otherEntity,event.entered?1:0,0});
+
+    std::vector<se::TriggerOverlap> characterOverlaps;
+    const auto collectCharacterTriggers=[&](se::StableEntityId charStableId,const se::CharacterController& character)
+    {
+        if(!charStableId)return;
+        const se::BodyHandle syntheticChar{static_cast<std::uint32_t>(charStableId),static_cast<std::uint32_t>(charStableId>>32)};
+        for(const auto body:session.physics.Bodies())
+        {
+            const auto* state=session.physics.GetBody(body);
+            if(!state||!state->description.isTrigger||!state->description.entityStableId)continue;
+            const auto& desc=state->description;
+            const auto contact=desc.shapeKind==se::ColliderShapeKind::Sphere
+                ?se::CollideCapsuleSphere(character.position,character.segmentHalfHeight,character.radius,{desc.shape.center,desc.radius})
+                :se::CollideCapsuleBox(character.position,character.segmentHalfHeight,character.radius,desc.shape);
+            if(contact&&contact->depth>1e-5f)
+                characterOverlaps.push_back({body,syntheticChar,desc.entityStableId,charStableId});
+        }
+    };
+    for(const auto& [packedEntity,character]:session.characters)
+    {
+        const auto* record=session.WorldRef().Get(se::EntityHandle::FromPacked(packedEntity));
+        if(record)collectCharacterTriggers(record->stableId,character);
+    }
+    for(const auto& [charStableId,character]:session.scenePhysics.Characters())
+        collectCharacterTriggers(charStableId,character);
+    session.characterTriggerTracker.Update(characterOverlaps);
+    for(const auto& event:session.characterTriggerTracker.Events())
+        session.triggerEvents.push_back({event.triggerEntity,event.otherEntity,event.entered?1:0,0});
     return SE_OK;
 }
 int32_t EnvironmentCallback(Session& session,SE_Session handle,std::uint64_t component,std::uint32_t phase,const se::TickContext& context)
@@ -430,8 +463,8 @@ static_assert(sizeof(SE_EventHeader)==88&&sizeof(SE_EventStats)==104);
 static_assert(sizeof(SE_BodyState)==72);
 static_assert(sizeof(SE_AbiInfo) == 16);
 static_assert(sizeof(SE_ModelInfo)==16);
-static_assert(sizeof(SE_Vector3)==12 && sizeof(SE_BoxBodyDesc)==32 && sizeof(SE_RayHit)==48);
-static_assert(sizeof(SE_ContactEvent)==24 && sizeof(SE_UiStyle)==56 && sizeof(SE_InputState)==772);
+static_assert(sizeof(SE_Vector3)==12 && sizeof(SE_BoxBodyDesc)==32 && sizeof(SE_SphereBodyDesc)==32 && sizeof(SE_RayHit)==48);
+static_assert(sizeof(SE_ContactEvent)==24 && sizeof(SE_TriggerEvent)==24 && sizeof(SE_UiStyle)==56 && sizeof(SE_InputState)==772);
 static_assert(sizeof(SE_PointerState)==28 && sizeof(SE_CharacterDesc)==20 && sizeof(SE_CharacterState)==20);
 
 #include "NativeSessionExports.inl"

@@ -111,17 +111,36 @@ const std::array environment{
     P{"environmentmap.asset","Feature.Environment.Asset",PropertyType::AssetId,std::string{}},
     P{"environmentmap.intensity","Feature.Environment.Intensity",PropertyType::Number,1.f,0.f,100.f},
     P{"environmentmap.yaw","Feature.Environment.Yaw",PropertyType::Number,0.f,-360.f,360.f}};
+const std::array collider{
+    P{"collider.shape","Feature.Collider.Shape",PropertyType::Number,0.f,0.f,1.f},
+    P{"collider.halfExtentsMeters","Feature.Collider.HalfExtents",PropertyType::Vector3,Vec3{.5f,.5f,.5f},.001f,10000.f},
+    P{"collider.radiusMeters","Feature.Collider.Radius",PropertyType::Number,.5f,.001f,10000.f},
+    P{"collider.isTrigger","Feature.Collider.IsTrigger",PropertyType::Boolean,false}};
 
-bool ValidCascadeProperty(std::size_t index,const PropertyValue& value,std::string& error)
+template<class T> bool ValidFeatureProperty(std::size_t index,const PropertyValue& value,std::string& error)
 {
-    if(index>=rendering.size())return false;
-    const auto key=rendering[index].key;
-    if(key!="render.cascadeCount"&&key!="render.cascadeResolution"&&key!="render.shadowFilterDebug")return true;
-    const auto* number=std::get_if<float>(&value);
-    if(!number||!std::isfinite(*number)||std::floor(*number)!=*number)
-    {error="Metadata.InvalidValue";return false;}
-    if(key=="render.cascadeResolution"&&*number!=256&&*number!=512&&*number!=1024&&*number!=1536&&*number!=2048&&*number!=4096)
-    {error="Metadata.InvalidValue";return false;}return true;
+    if constexpr(T::TypeId==RenderSettingsComponent::TypeId)
+    {
+        if(index>=rendering.size())return false;
+        const auto key=rendering[index].key;
+        if(key!="render.cascadeCount"&&key!="render.cascadeResolution"&&key!="render.shadowFilterDebug")return true;
+        const auto* number=std::get_if<float>(&value);
+        if(!number||!std::isfinite(*number)||std::floor(*number)!=*number)
+        {error="Metadata.InvalidValue";return false;}
+        if(key=="render.cascadeResolution"&&*number!=256&&*number!=512&&*number!=1024&&*number!=1536&&*number!=2048&&*number!=4096)
+        {error="Metadata.InvalidValue";return false;}
+    }
+    else if constexpr(T::TypeId==ColliderSettingsComponent::TypeId)
+    {
+        if(index>=collider.size())return false;
+        if(collider[index].key=="collider.shape")
+        {
+            const auto* number=std::get_if<float>(&value);
+            if(!number||!std::isfinite(*number)||std::floor(*number)!=*number||(*number!=0.f&&*number!=1.f))
+            {error="Metadata.InvalidValue";return false;}
+        }
+    }
+    return true;
 }
 template<class T> bool Read(const World& world,ComponentHandle handle,std::size_t index,PropertyValue& value,std::string& error)
 {
@@ -133,7 +152,7 @@ template<class T> bool Write(World& world,ComponentHandle handle,std::size_t ind
 {
     const auto* component=world.GetRegisteredComponent<T>(handle);
     if(!component||index>=component->values.size()){error="Metadata.InvalidValue";return false;}
-    if constexpr(T::TypeId==RenderSettingsComponent::TypeId)if(!ValidCascadeProperty(index,value,error))return false;
+    if(!ValidFeatureProperty<T>(index,value,error))return false;
     auto next=*component;
     if constexpr(T::TypeId==RenderSettingsComponent::TypeId)
     {
@@ -150,12 +169,15 @@ template<class T> bool Write(World& world,ComponentHandle handle,std::size_t ind
 }
 template<class T> ComponentHandle Create(World& world,EntityHandle entity,std::span<const PropertyValue> values,bool enabled,std::string& error)
 {
-    if constexpr(T::TypeId==RenderSettingsComponent::TypeId)
-        for(std::size_t index=0;index<values.size();++index)if(!ValidCascadeProperty(index,values[index],error))return {};
-    if constexpr(T::TypeId==PhysicsBodyComponent::TypeId||T::TypeId==CharacterSettingsComponent::TypeId)
+    for(std::size_t index=0;index<values.size();++index)if(!ValidFeatureProperty<T>(index,values[index],error))return {};
+    if constexpr(T::TypeId==PhysicsBodyComponent::TypeId||T::TypeId==ColliderSettingsComponent::TypeId)
     {
-        const auto other=T::TypeId==PhysicsBodyComponent::TypeId?CharacterSettingsComponent::TypeId:PhysicsBodyComponent::TypeId;
-        if(world.FindComponent(entity,other)){error="Feature.Physics.Exclusive";return {};}
+        if(world.FindComponent(entity,CharacterSettingsComponent::TypeId)){error="Feature.Physics.Exclusive";return {};}
+    }
+    else if constexpr(T::TypeId==CharacterSettingsComponent::TypeId)
+    {
+        if(world.FindComponent(entity,PhysicsBodyComponent::TypeId)||world.FindComponent(entity,ColliderSettingsComponent::TypeId))
+        {error="Feature.Physics.Exclusive";return {};}
     }
     T component;component.values.assign(values.begin(),values.end());
     const auto result=world.AttachRegisteredComponent(entity,component,enabled);
@@ -190,8 +212,9 @@ void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors)
     descriptors.push_back(Descriptor<EnvironmentSettingsComponent>("environmentmap","Feature.Environment",environment));
     descriptors.push_back(Descriptor<ActorSettingsComponent>("actor","Feature.Actor",actor));
     descriptors.push_back(Descriptor<RectangleLightComponent>("rectangle","Feature.Rectangle",rectangleLight));
+    descriptors.push_back(Descriptor<ColliderSettingsComponent>("collider","Feature.Collider",collider));
 }
-bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=RectangleLightComponent::TypeId;}
+bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=ColliderSettingsComponent::TypeId;}
 ComponentHandle SceneFeature(const World& world,ComponentTypeId type,bool* authored)
 {
     if(authored)*authored=false;

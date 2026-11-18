@@ -20,10 +20,19 @@ public:
     bool MoveCharacter(World&,PhysicsWorld&,StableEntityId,Vec3,bool,float);
     bool AdvanceCharacters(World&,PhysicsWorld&,float);
     const CharacterController* Character(StableEntityId id)const {const auto it=characters_.find(id);return it==characters_.end()?nullptr:&it->second;}
+    const std::unordered_map<StableEntityId,CharacterController>& Characters()const noexcept {return characters_;}
     bool TeleportCharacter(World&,StableEntityId,Vec3);
     bool Step(World&,PhysicsWorld&,float);
 private:
-    struct Body {BodyHandle handle;std::vector<PropertyValue> properties;Vec3 scale;};
+    struct Body
+    {
+        BodyHandle handle;
+        bool hasBody=false;
+        bool hasCollider=false;
+        std::vector<PropertyValue> bodyProperties;
+        std::vector<PropertyValue> colliderProperties;
+        Vec3 scale;
+    };
     std::unordered_map<StableEntityId,Body> bodies_;
     std::unordered_map<StableEntityId,CharacterController> characters_;
     std::unordered_set<StableEntityId> movedCharacters_;

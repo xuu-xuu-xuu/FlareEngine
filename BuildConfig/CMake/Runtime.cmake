@@ -65,7 +65,11 @@ add_library(EngineRuntime STATIC
 se_target(EngineRuntime)
 target_link_libraries(EngineRuntime PUBLIC EngineCore EngineEnvironmentAssets)
 
-add_library(EnginePhysics STATIC Source/FunctionLayer/Physics/PhysicsWorld.cpp Source/FunctionLayer/Physics/CharacterController.cpp)
+add_library(EnginePhysics STATIC
+    Source/FunctionLayer/Physics/CollisionShapes.cpp
+    Source/FunctionLayer/Physics/TriggerTracker.cpp
+    Source/FunctionLayer/Physics/PhysicsWorld.cpp
+    Source/FunctionLayer/Physics/CharacterController.cpp)
 se_target(EnginePhysics)
 target_link_libraries(EnginePhysics PUBLIC EngineCore)
 
