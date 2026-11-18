@@ -1,5 +1,6 @@
 #include "EditorSession.h"
 #include "FunctionLayer/Audio/SceneAudio.h"
+#include "FunctionLayer/Navigation/SceneNavigation.h"
 #include "FunctionLayer/Physics/ScenePhysics.h"
 #include "FunctionLayer/Runtime/ComponentMetadata.h"
 #include "CoreLayer/Math/TransformDecomposition.h"
@@ -267,6 +268,7 @@ bool EditorSession::ValidatePlay(std::string& reasonKey) const
     reasonKey.clear();
     if(!ValidateScenePhysics(edit_,reasonKey))return false;
     if(!ValidateSceneAudio(edit_,reasonKey))return false;
+    if(!ValidateSceneNavigation(edit_,reasonKey))return false;
     if(play_||transaction_||startingPlay_||stoppingPlay_){reasonKey="Editor.TransactionActive";return false;}
     bool hasCamera=false;
     for(const auto entity:edit_.Entities())

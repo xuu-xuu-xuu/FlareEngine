@@ -24,6 +24,7 @@ public abstract class Behaviour
     public InputActions Actions => Scripts.Session.Actions;
     public Audio Audio => Scripts.Session.Audio;
     public Particles Particles => Scripts.Session.Particles;
+    public Navigation Navigation => Scripts.Session.Navigation;
     public virtual bool UpdateWhenPaused => false;
     public bool Enabled
     {

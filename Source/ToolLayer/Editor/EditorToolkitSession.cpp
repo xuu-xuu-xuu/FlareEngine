@@ -312,7 +312,14 @@ void SyncToolkitHierarchyAssetsAndInspector(ToolkitAppState& state)
         else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".tga") type = "texture";
         else if (extension == ".wav" || extension == ".ogg") type = "audio";
         else if (extension == ".hlsl" || extension == ".hlsli") type = "shader";
-        else if (extension == ".json") type = "data";
+        else if (extension == ".json" || extension == ".senav" || extension == ".selod"
+            || extension == ".sehlod" || extension == ".semeshlet" || extension == ".seimp"
+            || extension == ".sebc" || extension == ".ppm" || extension == ".sesh"
+            || extension == ".sedp" || extension == ".sebrdf" || extension == ".seltc"
+            || extension == ".sesheen" || extension == ".seskin")
+        {
+            type = "data";
+        }
         entries.push_back({asset_io::Utf8(resolved), type});
     }
     for (const auto& source : state.scriptWorkflow.Sources()) entries.push_back({asset_io::Utf8(source), "C#"});
@@ -679,6 +686,54 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
                 state.shell->AppendConsoleLine(msg);
             }
             return saved;
+        }
+        if (command.argument == "navmesh")
+        {
+            const auto outPath = state.assetsRoot / L"Navigation" / L"scene.senav";
+            std::string bakeError;
+            const bool started = state.navigationBake.StartBake(
+                state.session.EditWorld(),
+                state.assets,
+                outPath,
+                NavBakeSettings{},
+                [&state](const NavigationBakeResult& result) {
+                    if (!result.success)
+                    {
+                        const std::string msg = LocalizedToolkitStatus(
+                            state.text, result.errorKey, "Navigation.BakeFailed");
+                        if (state.shell)
+                        {
+                            state.shell->SetStatus(msg);
+                            state.shell->AppendConsoleLine(msg);
+                        }
+                        return;
+                    }
+                    std::vector<EditorAssetIssue> issues;
+                    EditorAssetActions::SyncProjectAssets(state.root, state.assets, issues);
+                    if (!state.session.IsPlaying() && !result.assetId.empty()
+                        && NavigationBakeService::HasUnassignedNavAgent(state.session.EditWorld()))
+                    {
+                        state.session.Apply("Navigation.BakeScene", [&result](World& world) {
+                            return NavigationBakeService::MountBakedNavMeshToWorld(world, result.assetId) > 0u;
+                        });
+                    }
+                    state.pendingAsset = asset_io::Utf8(result.outputPath);
+                    const std::string msg = state.text.GetText("Navigation.BakeSucceeded")
+                        + ": " + asset_io::Utf8(result.outputPath.filename());
+                    if (state.shell)
+                    {
+                        state.shell->SetStatus(msg);
+                        state.shell->AppendConsoleLine(msg);
+                    }
+                },
+                bakeError);
+            if (!started)
+            {
+                const std::string msg = LocalizedToolkitStatus(state.text, bakeError, "Navigation.BakeFailed");
+                state.shell->SetStatus(msg);
+                state.shell->AppendConsoleLine(msg);
+            }
+            return started;
         }
         std::filesystem::path created;
         std::string error;
@@ -1123,6 +1178,7 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
     }
     else
     {
+        if (state.sceneNavigation.TrackedAgentCount() > 0) state.sceneNavigation.Clear();
         if (state.sceneParticles.TrackedEmitterCount() > 0) state.sceneParticles.Clear();
         if (state.sceneAudio.TrackedSourceCount() > 0)
         {

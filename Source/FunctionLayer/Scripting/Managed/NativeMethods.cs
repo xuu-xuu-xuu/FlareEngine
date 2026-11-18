@@ -168,6 +168,37 @@ internal static unsafe partial class NativeMethods
     internal static partial int ParticlesActiveCount(ulong session, ulong entity, out uint count);
     [LibraryImport(Library, EntryPoint = "se_particles_emitter_count")]
     internal static partial int ParticlesEmitterCount(ulong session, out uint count);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NavPathInfo
+    {
+        internal int Status;
+        internal uint WaypointCount;
+        internal float TotalLengthMeters;
+    }
+
+    [LibraryImport(Library, EntryPoint = "se_nav_find_path", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int NavFindPath(
+        ulong session,
+        string navAssetId,
+        uint navAssetLength,
+        Vector3 start,
+        Vector3 goal,
+        Vector3* outWaypoints,
+        uint maxWaypoints,
+        out NavPathInfo info);
+
+    [LibraryImport(Library, EntryPoint = "se_nav_set_destination")]
+    internal static partial int NavSetDestination(ulong session, ulong entity, Vector3 target);
+
+    [LibraryImport(Library, EntryPoint = "se_nav_stop_agent")]
+    internal static partial int NavStopAgent(ulong session, ulong entity);
+
+    [LibraryImport(Library, EntryPoint = "se_nav_remaining_distance")]
+    internal static partial int NavRemainingDistance(ulong session, ulong entity, out float meters);
+
+    [LibraryImport(Library, EntryPoint = "se_nav_agent_status")]
+    internal static partial int NavAgentStatus(ulong session, ulong entity, out int status);
 }
 
 internal sealed class NativeSessionHandle : SafeHandle

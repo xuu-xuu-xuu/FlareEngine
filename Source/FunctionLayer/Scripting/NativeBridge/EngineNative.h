@@ -291,7 +291,25 @@ SE_API int32_t SE_CALL se_particles_emit_burst(SE_Session session, SE_Entity ent
 SE_API int32_t SE_CALL se_particles_set_playing(SE_Session session, SE_Entity entity, int32_t playing) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_particles_clear(SE_Session session, SE_Entity entity) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_particles_active_count(SE_Session session, SE_Entity entity, uint32_t* count) SE_NOEXCEPT;
+typedef struct SE_NavPathInfo {
+    int32_t status;
+    uint32_t waypoint_count;
+    float total_length_meters;
+} SE_NavPathInfo;
 SE_API int32_t SE_CALL se_particles_emitter_count(SE_Session session, uint32_t* count) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_nav_find_path(
+    SE_Session session,
+    const char* nav_asset_id,
+    uint32_t nav_asset_length,
+    SE_Vector3 start,
+    SE_Vector3 goal,
+    SE_Vector3* out_waypoints,
+    uint32_t max_waypoints,
+    SE_NavPathInfo* out_info) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_nav_set_destination(SE_Session session, SE_Entity entity, SE_Vector3 target) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_nav_stop_agent(SE_Session session, SE_Entity entity) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_nav_remaining_distance(SE_Session session, SE_Entity entity, float* out_meters) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_nav_agent_status(SE_Session session, SE_Entity entity, int32_t* out_status) SE_NOEXCEPT;
 
 #ifdef __cplusplus
 }

@@ -21,6 +21,7 @@ using ColliderSettingsComponent=FeatureComponent<0x464C0007>;
 using AudioListenerComponent=FeatureComponent<0x464C0008>;
 using AudioSourceComponent=FeatureComponent<0x464C0009>;
 using ParticleEmitterComponent=FeatureComponent<0x464C000A>;
+using NavigationAgentComponent=FeatureComponent<0x464C000B>;
 
 void CompleteRenderProperties(std::vector<ComponentProperty>& properties);
 void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors);

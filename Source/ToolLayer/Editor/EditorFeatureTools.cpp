@@ -19,6 +19,8 @@
 #include "ResourceLayer/Assets/StaticModelPreparation.h"
 #include "FunctionLayer/Rendering/Atmosphere.h"
 #include "FunctionLayer/Rendering/Reflection.h"
+#include "FunctionLayer/Navigation/NavMeshBaker.h"
+#include "FunctionLayer/Navigation/SceneNavigation.h"
 #include <Windows.h>
 #include <shellapi.h>
 #include <charconv>
@@ -33,7 +35,7 @@ namespace
 {
 using namespace ui::editor;
 std::vector<std::string> Operations(std::string_view family)
-{return family=="geometry"?std::vector<std::string>{"lod","hlod","meshlets","impostor","vertices"}:family=="images"?std::vector<std::string>{"environment","bc1","bc4","bc5","shader"}:std::vector<std::string>{"atmosphere","fog","probes","ssr","occlusion"};}
+{return family=="geometry"?std::vector<std::string>{"lod","hlod","meshlets","impostor","vertices","navmesh"}:family=="images"?std::vector<std::string>{"environment","bc1","bc4","bc5","shader"}:std::vector<std::string>{"atmosphere","fog","probes","ssr","occlusion"};}
 std::shared_ptr<const StaticModel> Model(AssetStore& assets,const AssetId& id,std::vector<AssetDiagnostic>& diagnostics)
 {
     if(!IsBuiltinMesh(id))return assets.LoadModel(id,diagnostics);
@@ -164,6 +166,19 @@ FeatureToolResult ExecuteFeatureTool(const FeatureToolInput& input,const std::at
                 if(!ok){error="Feature.Tools.ShaderFailed";result.detail=process.output;break;}
             }
         }
+        else if(input.operation=="navmesh")
+        {
+            NavBakeSettings settings;
+            settings.cellSizeMeters=std::clamp(input.amount,0.05f,2.0f);
+            NavMeshData navMesh;
+            std::vector<std::uint8_t> bytes;
+            ok=BakeNavMesh(input.navVertices,input.navIndices,settings,navMesh,error)&&navMesh.Serialize(bytes);
+            if(ok&&!cancel)
+            {
+                ok=asset_io::WriteAtomic(file("scene.senav"),bytes);
+                result.detail=std::to_string(navMesh.Polygons().size())+" polygons";
+            }
+        }
         else
         {result.preview=ReferencePreview(input,cancel);ok=static_cast<bool>(result.preview);}
         if(result.preview&&ok&&!cancel)ok=WritePpmImage(file("preview.ppm"),result.preview->width,result.preview->height,result.preview->rgba8,diagnostics);
@@ -226,7 +241,8 @@ bool EditorFeatureTools::Start()
     input.source=assets_.Resolve(source_);if(input.source.empty())input.source=asset_io::FromUtf8(source_);if(!input.source.empty()&&input.source.is_relative())input.source=root_/input.source;
     std::vector<AssetDiagnostic> diagnostics;
     AssetId sourceId=source_;for(const auto& id:assets_.ListIds())if(asset_io::Within(assets_.SourceRoot(),input.source)&&assets_.Resolve(id).lexically_normal()==input.source.lexically_normal()){sourceId=id;break;}
-    if(family_=="geometry"&&operation_!="hlod")input.model=Model(assets_,sourceId,diagnostics);
+    if(family_=="geometry"&&operation_!="hlod"&&operation_!="navmesh")input.model=Model(assets_,sourceId,diagnostics);
+    if(operation_=="navmesh")CollectNavigationSceneGeometry(session_.EditWorld(),&assets_,input.navVertices,input.navIndices);
     if(operation_.starts_with("bc"))input.image=assets_.LoadTextureImage(sourceId,diagnostics);
     if(operation_=="hlod")for(auto entity:session_.EditWorld().Entities())if(const auto* mesh=session_.EditWorld().GetMesh(entity))
     {auto model=Model(assets_,mesh->meshAsset,diagnostics);if(model&&session_.EditWorld().IsEnabled(entity))input.instances.push_back({std::move(model),session_.EditWorld().GetWorldMatrix(entity),mesh->materials});}

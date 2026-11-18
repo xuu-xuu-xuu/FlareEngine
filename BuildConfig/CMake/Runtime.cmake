@@ -165,10 +165,21 @@ add_library(EngineSceneParticles STATIC Source/FunctionLayer/Particles/ScenePart
 se_target(EngineSceneParticles)
 target_link_libraries(EngineSceneParticles PUBLIC EngineRuntime EngineParticles)
 
+add_library(EngineNavigation STATIC
+    Source/FunctionLayer/Navigation/NavMeshData.cpp
+    Source/FunctionLayer/Navigation/NavMeshBaker.cpp
+    Source/FunctionLayer/Navigation/NavPathfinder.cpp)
+se_target(EngineNavigation)
+target_link_libraries(EngineNavigation PUBLIC EngineCore)
+
+add_library(EngineSceneNavigation STATIC Source/FunctionLayer/Navigation/SceneNavigation.cpp)
+se_target(EngineSceneNavigation)
+target_link_libraries(EngineSceneNavigation PUBLIC EngineRuntime EngineNavigation EngineScenePhysics EngineAssets)
+
 add_library(EngineNative SHARED Source/FunctionLayer/Scripting/NativeBridge/EngineNative.cpp Source/FunctionLayer/Scripting/NativeBridge/WindowProfile.cpp
     Source/FunctionLayer/Scripting/NativeBridge/PlayerQualityMenu.cpp)
 se_target(EngineNative)
-target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineAudio EngineSceneAudio EngineParticles EngineSceneParticles EngineGameUI EngineInput EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
+target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineAudio EngineSceneAudio EngineParticles EngineSceneParticles EngineNavigation EngineSceneNavigation EngineGameUI EngineInput EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
 
 add_library(EngineApplication STATIC Source/FunctionLayer/Application/FrameData.cpp Source/FunctionLayer/Application/FeatureFrameData.cpp Source/FunctionLayer/Application/FreeCameraInput.cpp
     Source/FunctionLayer/Application/PlayerQuality.cpp)
@@ -198,7 +209,7 @@ target_link_libraries(EngineSandboxHost PUBLIC EnginePlatform EngineApplication)
 
 add_library(EngineProject STATIC Source/ToolLayer/Tools/Project.cpp)
 se_target(EngineProject)
-target_link_libraries(EngineProject PUBLIC EngineRuntime EngineAssets EngineGameUI EnginePhysics EngineInput EngineCore)
+target_link_libraries(EngineProject PUBLIC EngineRuntime EngineAssets EngineGameUI EnginePhysics EngineInput EngineNavigation EngineCore)
 
 add_library(EngineProjectSession STATIC Source/ToolLayer/Editor/ProjectWorkspaceSession.cpp)
 se_target(EngineProjectSession)

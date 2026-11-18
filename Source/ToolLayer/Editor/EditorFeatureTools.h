@@ -24,6 +24,8 @@ struct FeatureToolInput
     std::shared_ptr<const ImageData> image;
     struct Instance {std::shared_ptr<const StaticModel> model;Mat4 world;std::vector<AssetId> materials;};
     std::vector<Instance> instances;
+    std::vector<Vec3> navVertices;
+    std::vector<std::uint32_t> navIndices;
 };
 // 算法工作可独立验证；只读快照跨线程，UI/AssetStore 的修改仅在 Poll 中执行。
 FeatureToolResult ExecuteFeatureTool(const FeatureToolInput&,const std::atomic<bool>& cancel);

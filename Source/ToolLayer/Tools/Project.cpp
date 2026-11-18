@@ -9,6 +9,7 @@
 #include "FunctionLayer/Input/InputActionAsset.h"
 #include "ResourceLayer/Scenes/SceneSerializer.h"
 #include "ResourceLayer/Scenes/PrefabDocument.h"
+#include "FunctionLayer/Navigation/NavMeshData.h"
 #include "FunctionLayer/Runtime/TODSystem.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 #include <nlohmann/json.hpp>
@@ -223,7 +224,15 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             {if(!store.LoadEnvironment(asset.id,assetDiagnostics)){for(const auto& d:assetDiagnostics)diagnostics.push_back({d.key,d.detail});return false;}}
             else if(asset.type=="audio")
             {if(!store.LoadAudioClip(asset.id,assetDiagnostics)){for(const auto& d:assetDiagnostics)diagnostics.push_back({d.key,d.detail});return false;}}
-            else if(asset.type=="data"){} // 已验证源文件和 sidecar 存在并位于项目目录。
+            else if(asset.type=="data")
+            {
+                if(source.extension()==".senav")
+                {
+                    std::vector<std::uint8_t> navBytes; std::string navError; NavMeshData navData;
+                    if(!asset_io::Read(source,navBytes))return Fail(diagnostics,"Assets.ReadFailed",asset.id);
+                    if(!NavMeshData::Deserialize(navBytes,navData,navError))return Fail(diagnostics,navError.c_str(),asset.id);
+                }
+            }
             else if(asset.type=="prefab")
             {
                 PrefabDocument prefabDoc; std::string prefabError;
@@ -273,6 +282,8 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             {const auto id=std::get<std::string>(FeatureValue(world,entity,"render.diffuseProbe"));if(!assetReference(id,"data"))return Fail(diagnostics,"Project.MissingAsset",id);}
             for(const auto entity:world.Entities())if(world.FindComponent(entity,AudioSourceComponent::TypeId))
             {const auto id=std::get<std::string>(FeatureValue(world,entity,"audio.clip"));if(!assetReference(id,"audio"))return Fail(diagnostics,"Project.MissingAsset",id);}
+            for(const auto entity:world.Entities())if(world.FindComponent(entity,NavigationAgentComponent::TypeId))
+            {const auto id=std::get<std::string>(FeatureValue(world,entity,"navagent.asset"));if(!assetReference(id,"data"))return Fail(diagnostics,"Project.MissingAsset",id);}
             if(!assetReference(world.EnvironmentSettings().todProfile,"tod"))return Fail(diagnostics,"Project.MissingAsset",world.EnvironmentSettings().todProfile);
             for(const auto entity:world.Entities())if(const auto* mesh=world.GetMesh(entity))
             {

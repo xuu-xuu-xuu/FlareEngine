@@ -245,6 +245,7 @@ int32_t SE_CALL se_scene_import(SE_Session handle, const char* text, uint32_t le
         session->audio.StopAll();
         session->audio.SetPaused(false);
         session->sceneParticles.Clear();
+        session->sceneNavigation.Clear();
         return SE_OK;
     });
 }

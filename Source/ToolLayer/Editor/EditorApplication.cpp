@@ -104,6 +104,7 @@ void ConfigureSessionAndWorkspace(ToolkitAppState& state,
     }
     state.session.SetPlayCallbacks(
         [&state](World& world) {
+            state.sceneNavigation.Clear();
             state.authoredScenePhysics.Clear(state.authoredPhysics);
             state.session.PlayEnvironment()->SetSkeletalResolver([&state](const std::string& asset) {
                 std::vector<AssetDiagnostic> diagnostics;
@@ -112,8 +113,15 @@ void ConfigureSessionAndWorkspace(ToolkitAppState& state,
             if (!state.hooks || !state.hooks->update)
             {
                 state.session.PlayEnvironment()->SetPhysicsService([&state](double seconds) {
-                    return state.authoredScenePhysics.Step(*state.session.PlayWorld(),
-                        state.authoredPhysics, static_cast<float>(seconds));
+                    if (!state.session.PlayWorld()) return false;
+                    auto& playWorld = *state.session.PlayWorld();
+                    const float dt = static_cast<float>(seconds);
+                    if (!state.authoredScenePhysics.Synchronize(playWorld, state.authoredPhysics)) return false;
+                    if (!state.authoredPhysics.Step(dt)) return false;
+                    if (!state.authoredScenePhysics.ApplyTransforms(playWorld, state.authoredPhysics)) return false;
+                    state.sceneNavigation.StepAgents(
+                        playWorld, state.authoredPhysics, state.authoredScenePhysics, &state.assets, dt);
+                    return state.authoredScenePhysics.AdvanceCharacters(playWorld, state.authoredPhysics, dt);
                 });
             }
             state.playUi = std::make_unique<UiTree>(state.ui);
@@ -122,6 +130,7 @@ void ConfigureSessionAndWorkspace(ToolkitAppState& state,
             return !state.hooks || !state.hooks->playStarted || state.hooks->playStarted(world, *state.playUi);
         },
         [&state](World& world) {
+            state.sceneNavigation.Clear();
             state.authoredScenePhysics.Clear(state.authoredPhysics);
             if (state.playInput) state.playInput->Attach(nullptr);
             struct ClearUi { std::unique_ptr<UiTree>& value; ~ClearUi() { value.reset(); } } clearUi{state.playUi};
@@ -288,6 +297,8 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
         };
         services.windowClosing = [&state]() {
             state.playInput->Deactivate(state.hostWindow);
+            state.navigationBake.CancelAndWait();
+            state.sceneNavigation.Clear();
             state.sceneParticles.Clear();
             state.sceneAudio.Clear(state.audio);
             state.audio.StopAll();
@@ -340,6 +351,7 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
         };
         services.runEnvironmentFrame = [&state](double seconds) {
             if (state.featureTools) state.featureTools->Poll();
+            state.navigationBake.Poll();
             if (state.floatingWindows && !state.nativeMoveWindow)
             {
                 state.viewportController.Update(seconds, state.session, state.assets);

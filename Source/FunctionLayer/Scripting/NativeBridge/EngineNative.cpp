@@ -8,6 +8,7 @@
 #include "FunctionLayer/Audio/AudioWorld.h"
 #include "FunctionLayer/Audio/SceneAudio.h"
 #include "FunctionLayer/Particles/SceneParticles.h"
+#include "FunctionLayer/Navigation/SceneNavigation.h"
 #include "PlatformLayer/Windows/XAudio2Backend.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "FunctionLayer/GameUI/UiTree.h"
@@ -76,6 +77,7 @@ struct Session
     }
     ~Session()
     {
+        sceneNavigation.Clear();
         sceneParticles.Clear();
         sceneAudio.Clear(audio);
         audio.Shutdown();
@@ -99,6 +101,7 @@ struct Session
     se::AudioWorld audio;
     se::SceneAudio sceneAudio;
     se::SceneParticles sceneParticles;
+    se::SceneNavigation sceneNavigation;
     std::unordered_map<std::uint64_t,se::EntityHandle> bodyOwners;
     bool physicsDebugDraw=true;
     se::FixedStepClock physicsClock;
@@ -327,8 +330,16 @@ void SceneServices(Session& session,SE_Session handle)
         std::erase_if(session.characters,[&](const auto& item){return std::find_if(members.begin(),members.end(),[&](auto entity){return entity.Pack()==item.first;})!=members.end();});
         std::erase_if(session.contactEvents,[&](const auto& event){return std::any_of(members.begin(),members.end(),[&](auto entity){const auto* record=session.WorldRef().Get(entity);return record&&(record->stableId==event.entity_a||record->stableId==event.entity_b);});});
         std::erase_if(session.triggerEvents,[&](const auto& event){return std::any_of(members.begin(),members.end(),[&](auto entity){const auto* record=session.WorldRef().Get(entity);return record&&(record->stableId==event.trigger_entity||record->stableId==event.other_entity);});});
-        for(const auto id:invalidated)session.sceneParticles.RemoveEmitter(id);
-        for(const auto entity:members)if(const auto* record=session.WorldRef().Get(entity))session.sceneParticles.RemoveEmitter(record->stableId);
+        for(const auto id:invalidated)
+        {
+            session.sceneParticles.RemoveEmitter(id);
+            session.sceneNavigation.RemoveAgent(id);
+        }
+        for(const auto entity:members)if(const auto* record=session.WorldRef().Get(entity))
+        {
+            session.sceneParticles.RemoveEmitter(record->stableId);
+            session.sceneNavigation.RemoveAgent(record->stableId);
+        }
         if(failed)throw std::runtime_error("Scene.CallbackFailed");
     });
 }
@@ -380,8 +391,9 @@ int32_t PhysicsStep(Session& session, double dt)
             if (!session.WorldRef().SetTransform(entity,transform)) return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
         }
     }
-    if(!session.scenePhysics.ApplyTransforms(session.WorldRef(),session.physics)||
-        !session.scenePhysics.AdvanceCharacters(session.WorldRef(),session.physics,static_cast<float>(dt)))return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
+    if(!session.scenePhysics.ApplyTransforms(session.WorldRef(),session.physics))return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
+    session.sceneNavigation.StepAgents(session.WorldRef(),session.physics,session.scenePhysics,session.assets.get(),static_cast<float>(dt));
+    if(!session.scenePhysics.AdvanceCharacters(session.WorldRef(),session.physics,static_cast<float>(dt)))return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
     for (const auto& event:session.physics.Events())
         session.contactEvents.push_back({event.entityA,event.entityB,event.began?1:0,event.ended?1:0});
     for (const auto& event:session.physics.TriggerEvents())
@@ -520,6 +532,7 @@ static_assert(sizeof(SE_Vector3)==12 && sizeof(SE_BoxBodyDesc)==32 && sizeof(SE_
 static_assert(sizeof(SE_ContactEvent)==24 && sizeof(SE_TriggerEvent)==24 && sizeof(SE_UiStyle)==56 && sizeof(SE_InputState)==772);
 static_assert(sizeof(SE_PointerState)==28 && sizeof(SE_CharacterDesc)==20 && sizeof(SE_CharacterState)==20);
 static_assert(sizeof(SE_AudioPlayDesc)==40);
+static_assert(sizeof(SE_NavPathInfo)==12);
 
 #include "NativeSessionExports.inl"
 #include "NativeRenderExports.inl"
@@ -529,4 +542,5 @@ static_assert(sizeof(SE_AudioPlayDesc)==40);
 #include "NativeInputExports.inl"
 #include "NativeAudioExports.inl"
 #include "NativeParticlesExports.inl"
+#include "NativeNavigationExports.inl"
 #include "NativeLogicExports.inl"

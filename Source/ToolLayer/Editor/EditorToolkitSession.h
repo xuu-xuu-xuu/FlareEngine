@@ -8,8 +8,10 @@
 #include "ToolLayer/Editor/EditorViewportCamera.h"
 #include "ToolLayer/Editor/EditorUi/EditorInputAdapter.h"
 #include "FunctionLayer/Audio/SceneAudio.h"
+#include "FunctionLayer/Navigation/SceneNavigation.h"
 #include "FunctionLayer/Particles/SceneParticles.h"
 #include "FunctionLayer/Physics/ScenePhysics.h"
+#include "ToolLayer/Editor/NavigationBakeService.h"
 #include "PlatformLayer/Windows/XAudio2Backend.h"
 #include "PlatformLayer/Windows/UiDirectWriteTextService.h"
 #include "PlatformLayer/Windows/Window.h"
@@ -63,6 +65,8 @@ struct ToolkitAppState
     AudioWorld audio;
     SceneAudio sceneAudio;
     SceneParticles sceneParticles;
+    SceneNavigation sceneNavigation;
+    NavigationBakeService navigationBake;
     EditorWorkspaceHost host;
     EditorScriptWorkflow scriptWorkflow;
     EditorViewportCamera editorCamera;
@@ -131,6 +135,7 @@ struct ToolkitAppState
     }
     ~ToolkitAppState()
     {
+        sceneNavigation.Clear();
         sceneParticles.Clear();
         sceneAudio.Clear(audio);
         audio.Shutdown();

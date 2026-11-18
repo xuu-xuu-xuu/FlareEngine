@@ -45,6 +45,11 @@ se_target(DiffuseProbeCooker)
 target_link_libraries(DiffuseProbeCooker PRIVATE EngineDiffuseProbes EngineProject)
 add_dependencies(DiffuseProbeCooker CopyLocalizationResources)
 
+add_executable(NavigationCooker Source/ToolLayer/Tools/NavigationCooker.cpp)
+se_target(NavigationCooker)
+target_link_libraries(NavigationCooker PRIVATE EngineSceneNavigation EngineProject EnginePlatform)
+add_dependencies(NavigationCooker CopyLocalizationResources)
+
 set(environment_outputs "${CMAKE_BINARY_DIR}/Resources/Environments")
 foreach(environment_kind soft contrast)
     add_custom_command(OUTPUT "${environment_outputs}/${environment_kind}.stamp"

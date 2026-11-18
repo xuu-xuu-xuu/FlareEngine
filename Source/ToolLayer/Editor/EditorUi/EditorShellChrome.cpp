@@ -639,6 +639,7 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
         add("EditorUi.NewMaterial", "New material", EditorCommandId::CreateAsset, "material");
         add("EditorUi.CreateScriptAsset", "Create C# script", EditorCommandId::CreateAsset, "script");
         add("Feature.Tod.Create", "Create day cycle", EditorCommandId::CreateAsset, "tod");
+        add("Navigation.BakeScene", "Bake scene NavMesh", EditorCommandId::CreateAsset, "navmesh");
         add("EditorUi.Import", "Import", EditorCommandId::Import, "");
         add("Feature.Tools", "Asset and reference tools", EditorCommandId::TogglePanel, "asset-tools");
     }
@@ -661,6 +662,7 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
         add("EditorUi.CreateAudioSource", "Audio source", EditorCommandId::CreateEntity, "audio-source");
         add("Feature.AudioListener", "Audio listener", EditorCommandId::CreateEntity, "audio-listener");
         add("Feature.ParticleEmitter", "Particle emitter", EditorCommandId::CreateEntity, "particle-emitter");
+        add("Feature.NavigationAgent", "Navigation agent", EditorCommandId::CreateEntity, "nav-agent");
         if (panel == EditorPanelId::Hierarchy && parent != 0)
             add("EditorUi.CreatePrefab", "Create Prefab", EditorCommandId::CreateAsset, "prefab");
     }

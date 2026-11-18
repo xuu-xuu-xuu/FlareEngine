@@ -129,6 +129,13 @@ const std::array emitter{
     P{"emitter.maxParticles","Feature.Particle.MaxParticles",PropertyType::Number,256.f,1.f,16384.f},
     P{"emitter.seed","Feature.Particle.Seed",PropertyType::Number,1.f,1.f,2147483647.f},
     P{"emitter.softFactor","Feature.Particle.SoftFactor",PropertyType::Number,1.5f,.5f,8.f}};
+const std::array navigationAgent{
+    P{"navagent.asset","Feature.NavAgent.Asset",PropertyType::AssetId,std::string{}},
+    P{"navagent.speed","Feature.NavAgent.Speed",PropertyType::Number,3.5f,0.f,100.f},
+    P{"navagent.stoppingDistance","Feature.NavAgent.StoppingDistance",PropertyType::Number,.2f,.01f,50.f},
+    P{"navagent.autoRepath","Feature.NavAgent.AutoRepath",PropertyType::Boolean,true},
+    P{"navagent.hasTarget","Feature.NavAgent.HasTarget",PropertyType::Boolean,false},
+    P{"navagent.target","Feature.NavAgent.Target",PropertyType::Vector3,Vec3{0.f,0.f,0.f},-100000.f,100000.f}};
 const std::array environment{
     P{"environmentmap.asset","Feature.Environment.Asset",PropertyType::AssetId,std::string{}},
     P{"environmentmap.intensity","Feature.Environment.Intensity",PropertyType::Number,1.f,0.f,100.f},
@@ -249,8 +256,9 @@ void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors)
     descriptors.push_back(Descriptor<AudioListenerComponent>("listener","Feature.AudioListener",audioListener));
     descriptors.push_back(Descriptor<AudioSourceComponent>("audio","Feature.Audio",audioSource));
     descriptors.push_back(Descriptor<ParticleEmitterComponent>("emitter","Feature.ParticleEmitter",emitter));
+    descriptors.push_back(Descriptor<NavigationAgentComponent>("navagent","Feature.NavigationAgent",navigationAgent));
 }
-bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=ParticleEmitterComponent::TypeId;}
+bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=NavigationAgentComponent::TypeId;}
 ComponentHandle SceneFeature(const World& world,ComponentTypeId type,bool* authored)
 {
     if(authored)*authored=false;

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet('Debug','Release')][string]$Configuration='Release',
     [string]$Name='',
     [string]$OutputDirectory='',
@@ -57,7 +57,7 @@ try {
         if(Test-Path -LiteralPath $templateInput -PathType Leaf){CopyFile $templateInput (Join-Path $stage $relative)}
     }
     AddStep 'copy_tools'
-    foreach($tool in @('ProjectTool.exe','ShaderBuilder.exe','VideoEncoder.exe','EnvironmentCooker.exe','RenderingCooker.exe','DiffuseProbeCooker.exe')){
+    foreach($tool in @('ProjectTool.exe','ShaderBuilder.exe','VideoEncoder.exe','EnvironmentCooker.exe','RenderingCooker.exe','DiffuseProbeCooker.exe','NavigationCooker.exe')){
         $source=Join-Path $native $tool
         if(!(Test-Path -LiteralPath $source)){throw ('Export.NativeMissing '+$tool)}
         CopyFile $source (Join-Path $stage ('Tools/'+$tool))

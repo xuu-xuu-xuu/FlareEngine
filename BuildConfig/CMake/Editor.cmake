@@ -47,9 +47,10 @@ add_library(EngineEditor STATIC
     Source/ToolLayer/Editor/UiDocumentWorkflow.cpp
     Source/ToolLayer/Editor/EditorMaterialWorkflow.cpp
     Source/ToolLayer/Editor/EditorWorkspaceHost.cpp
+    Source/ToolLayer/Editor/NavigationBakeService.cpp
     Source/ToolLayer/Editor/UICanvasEditor.cpp)
 se_target(EngineEditor)
-target_link_libraries(EngineEditor PUBLIC EngineRuntime EngineScenePhysics EngineAudio EngineSceneAudio EngineParticles EngineSceneParticles EngineAssets EngineGameUI EnginePlatform EngineProjectSession EngineColorGrading)
+target_link_libraries(EngineEditor PUBLIC EngineRuntime EngineScenePhysics EngineAudio EngineSceneAudio EngineParticles EngineSceneParticles EngineNavigation EngineSceneNavigation EngineAssets EngineGameUI EnginePlatform EngineProjectSession EngineColorGrading)
 target_link_libraries(EngineEditor PRIVATE comdlg32 shell32)
 
 add_library(EngineEditorApp STATIC

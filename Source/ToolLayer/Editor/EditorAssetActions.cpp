@@ -79,7 +79,7 @@ std::string Type(const fs::path& path)
     if(extension==".tod")return "tod";
     if(extension==".seenv")return "environment";
     if(extension==".selod"||extension==".sehlod"||extension==".semeshlet"||extension==".seimp"||extension==".sebc"||extension==".ppm"
-        ||extension==".sesh"||extension==".sedp"||extension==".sebrdf"||extension==".seltc"||extension==".sesheen"||extension==".seskin")return "data";
+        ||extension==".sesh"||extension==".sedp"||extension==".senav"||extension==".sebrdf"||extension==".seltc"||extension==".sesheen"||extension==".seskin")return "data";
     return {};
 }
 std::optional<EditorAssetDocumentKind> Kind(const fs::path& path)
