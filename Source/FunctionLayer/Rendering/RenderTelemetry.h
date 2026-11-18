@@ -65,6 +65,7 @@ struct RenderStats
     std::uint64_t frameIndex=0;
     std::uint64_t submission=0; // 与 GpuTiming::submission 对齐，用于迟到时间戳回填。
     float cpuPrepareMilliseconds=0;
+    float cpuMeshSubmitMilliseconds=0;
     std::array<float,RenderPassCount> gpuPassMilliseconds{};
     std::uint32_t drawCalls=0,instances=0,triangles=0,stateChanges=0;
     std::uint32_t psoCreated=0,uploadBytes=0,descriptorUsed=0,vramUsedMiB=0;
@@ -90,7 +91,8 @@ public:
     void SetBudget(float budgetMilliseconds) noexcept;
     float Budget() const noexcept {return budget_;}
     void BeginFrame(std::uint64_t frameIndex,const rhi::Statistics& stats);
-    void EndFrame(const rhi::Statistics& stats,std::uint32_t draws,std::uint32_t instances,std::uint32_t triangles,float cpuMilliseconds);
+    void EndFrame(const rhi::Statistics& stats,std::uint32_t draws,std::uint32_t instances,std::uint32_t triangles,
+        float cpuMilliseconds,float cpuMeshSubmitMilliseconds=-1.0f);
     void ObserveTimings(std::span<const rhi::GpuTiming> timings) noexcept;
     const RenderStats* Latest() const noexcept {return frames_.empty()?nullptr:&frames_.back();}
     const std::deque<RenderStats>& Frames() const noexcept {return frames_;}

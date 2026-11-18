@@ -37,6 +37,9 @@
 #include <iomanip>
 #include <unordered_set>
 #include <limits>
+#ifdef DeviceCapabilities
+#undef DeviceCapabilities
+#endif
 
 namespace se::rhi
 {
@@ -1772,6 +1775,7 @@ Statistics Device::Stats() const
     impl_->PollOcclusionCounters();
     impl_->PollOcclusionTelemetry();
     const auto& p=*impl_;stats.opaqueBindings=p.presentation.opaqueBindings;
+    stats.cpuMeshSubmitMilliseconds=p.presentation.cpuMeshSubmitMilliseconds;
     stats.depthNormals=p.presentation.depthNormalStatistics;stats.gpuDriven=p.presentation.gpuDrivenStatistics;
     stats.screenSpaceOcclusion=p.presentation.screenSpaceStatistics;
     if(p.presentation.ambientOcclusionBuilder)
@@ -1878,6 +1882,11 @@ AdapterInformation Device::Adapter() const
     std::u16string units;for(const wchar_t c:std::wstring_view(desc.Description))units+=static_cast<char16_t>(c);std::u32string decoded;std::string name;
     if(!DecodeUtf16(units,decoded)||!EncodeUtf8(decoded,name))name="Adapter";
     return {name,desc.VendorId,desc.DeviceId,desc.DedicatedVideoMemory,(desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE)!=0};
+}
+DeviceCapabilities Device::Capabilities() const noexcept
+{
+    if(!impl_||!impl_->ready)return {};
+    return {impl_->context.meshShaderTier1};
 }
 Result Device::ExportGpuTimingsCsv(const std::filesystem::path& path)
 {

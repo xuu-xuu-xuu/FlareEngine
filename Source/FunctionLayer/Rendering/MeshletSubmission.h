@@ -1,9 +1,27 @@
 #pragma once
 #include "ResourceLayer/Assets/MeshletBake.h"
+#include "PlatformLayer/Graphics/Rhi.h"
 #include <span>
+#ifdef DeviceCapabilities
+#undef DeviceCapabilities
+#endif
 
 namespace se
 {
+enum class MeshletSubmissionMode : std::uint8_t
+{
+    Disabled=0,
+    ComputeIndirect,
+    MeshShader
+};
+struct MeshletSubmissionSettings
+{
+    bool enabled=false;
+    bool preferMeshShader=true;
+};
+// 按设备硬件能力与运行选项选择 Meshlet 提交轨（零 D3D12 依赖）；不支持硬件或显式关闭时自动回退 Compute+ExecuteIndirect。
+MeshletSubmissionMode SelectMeshletSubmissionMode(const rhi::DeviceCapabilities& capabilities,
+    const MeshletSubmissionSettings& settings) noexcept;
 // 一个 cluster 可以对应多个不相邻范围：范围顺序严格等于实际上传源 IB 的三角形顺序。
 // GPU 可用每范围的 world AABB 裁剪；首版不启用法线锥，双面/负缩放不影响这一保守测试。
 struct MeshletSubmissionRange

@@ -27,6 +27,19 @@ struct alignas(256) Parameters
 };
 static_assert(sizeof(Parameters)==256&&offsetof(Parameters,count)==96&&offsetof(Parameters,clipFromWorld)==112
     &&offsetof(Parameters,screen)==176&&offsetof(Parameters,occlusionEnabled)==192);
+D3D12HeterogeneousFallback EligibleRangeOnly(const D3D12HeterogeneousInput& item)
+{
+    using Reason=D3D12HeterogeneousFallback;
+    const auto& mesh=*item.draw->mesh;
+    const UINT stride=mesh.indexView.Format==DXGI_FORMAT_R16_UINT?2:mesh.indexView.Format==DXGI_FORMAT_R32_UINT?4:0;
+    const UINT count=item.indexCount?item.indexCount:mesh.indexCount;
+    if(item.baseVertex!=0||!stride||!count||count%3||item.firstIndex%3||(!item.indexCount&&item.firstIndex)
+        ||item.firstIndex>mesh.indexCount||count>mesh.indexCount-item.firstIndex
+        ||item.firstIndex>mesh.indexView.SizeInBytes/stride||count>mesh.indexView.SizeInBytes/stride-item.firstIndex)
+        return Reason::InvalidGeometry;
+    if(!se::IsValid(item.worldBounds))return Reason::InvalidBounds;
+    return Reason::None;
+}
 bool ValidOcclusion(ID3D12Device& device,const D3D12HeterogeneousOcclusion& value)
 {
     const auto inverse=se::Inverse(value.clipFromWorld);
@@ -224,8 +237,8 @@ HRESULT D3D12Heterogeneous::Prepare(D3D12UploadArena& arena,const D3D12MeshPipel
     if(occlusion&&!ValidOcclusion(*device_.Get(),*occlusion))return E_INVALIDARG;
     D3D12HeterogeneousPrepared next;next.statistics_.sourceDraws=static_cast<UINT>(input.size());
     if(occlusion)next.occlusion_=occlusion->output;
-    std::vector<D3D12HeterogeneousCommand> records;
-    std::vector<se::VisibilityItem> bounds;
+    std::vector<D3D12HeterogeneousCommand> records;records.reserve(input.size());
+    std::vector<se::VisibilityItem> bounds;bounds.reserve(input.size());
     for(UINT first=0;first<input.size();)
     {
         UINT end=first+1;
@@ -233,9 +246,24 @@ HRESULT D3D12Heterogeneous::Prepare(D3D12UploadArena& arena,const D3D12MeshPipel
         D3D12HeterogeneousSegment segment;segment.sourceFirst=first;segment.sourceCount=end-first;
         segment.pipeline=Pipeline(input[first],defaultPipeline);segment.materialTable=input[first].materialTable;
         UINT unsupported=0;
+        const D3D12MeshDraw* verifiedDraw=nullptr;
+        D3D12UploadSlice verifiedB0{};
+        UINT64 verifiedTable=0;
         for(UINT index=first;index<end;++index)
         {
-            const auto reason=Eligible(input[index],defaultPipeline,trusted(input[index]));
+            const auto& cur=input[index];
+            D3D12HeterogeneousFallback reason;
+            if(verifiedDraw&&cur.draw==verifiedDraw&&cur.b0.resource==verifiedB0.resource
+                &&cur.b0.offset==verifiedB0.offset&&cur.b0.size==verifiedB0.size&&cur.materialTable.ptr==verifiedTable)
+            {
+                reason=EligibleRangeOnly(cur);
+            }
+            else
+            {
+                reason=Eligible(cur,defaultPipeline,trusted(cur));
+                if(reason==D3D12HeterogeneousFallback::None)
+                {verifiedDraw=cur.draw;verifiedB0=cur.b0;verifiedTable=cur.materialTable.ptr;}
+            }
             if(reason!=D3D12HeterogeneousFallback::None)
             {++unsupported;++next.statistics_.reasons[static_cast<size_t>(reason)];}
         }
@@ -250,17 +278,28 @@ HRESULT D3D12Heterogeneous::Prepare(D3D12UploadArena& arena,const D3D12MeshPipel
             segment.cpuFallback=false;segment.commandFirst=static_cast<UINT>(records.size());segment.commandCount=end-first;
             segment.root=segment.pipeline->rootSignature;segment.preparedPipeline=segment.pipeline->prepared;
             const auto result=GetSignature(*segment.root.Get(),segment.signature);if(FAILED(result))return result;
+            const D3D12MeshDraw* leasedDraw=nullptr;
+            ID3D12Resource* leasedB0=nullptr;
             for(UINT index=first;index<end;++index)
             {
                 const auto& item=input[index];const auto& mesh=*item.draw->mesh;
                 D3D12HeterogeneousCommand command;command.vertices=mesh.vertexView;command.indices=mesh.indexView;command.b0=item.b0.Gpu();
                 command.draw={item.indexCount?item.indexCount:mesh.indexCount,1,item.firstIndex,item.baseVertex,0};
                 records.push_back(command);bounds.push_back({item.worldBounds.minimum,index,item.worldBounds.maximum,0});
-                next.vertexLeases_.push_back(mesh.vertices);next.indexLeases_.push_back(mesh.indices);next.constantLeases_.emplace_back(item.b0.resource);
-                if(mesh.texture)next.textureLeases_.push_back(mesh.texture);
-                if(mesh.textureViews)next.viewLeases_.push_back(mesh.textureViews);
-                for(const auto& texture:mesh.pbrTextures)
-                {if(texture.resource)next.textureLeases_.push_back(texture.resource);if(texture.views)next.viewLeases_.push_back(texture.views);}
+                if(item.draw!=leasedDraw)
+                {
+                    leasedDraw=item.draw;
+                    next.vertexLeases_.push_back(mesh.vertices);next.indexLeases_.push_back(mesh.indices);
+                    if(mesh.texture)next.textureLeases_.push_back(mesh.texture);
+                    if(mesh.textureViews)next.viewLeases_.push_back(mesh.textureViews);
+                    for(const auto& texture:mesh.pbrTextures)
+                    {if(texture.resource)next.textureLeases_.push_back(texture.resource);if(texture.views)next.viewLeases_.push_back(texture.views);}
+                }
+                if(item.b0.resource!=leasedB0)
+                {
+                    leasedB0=item.b0.resource;
+                    next.constantLeases_.emplace_back(item.b0.resource);
+                }
             }
             ++next.statistics_.gpuBuckets;
         }

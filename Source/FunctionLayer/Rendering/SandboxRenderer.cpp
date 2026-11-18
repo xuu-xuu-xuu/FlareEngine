@@ -673,6 +673,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     se::rhi::Result result;
     if(editor)
     {
+        se::CpuScope editorGuiScope(frame.profiler,"CPU.EditorGui");
         const auto scaleX=frame.data->editorGui.framebufferScale.x,scaleY=frame.data->editorGui.framebufferScale.y;
         const auto width=static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.width*(scaleX>0?scaleX:1))));
         const auto height=static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.height*(scaleY>0?scaleY:1))));
@@ -685,7 +686,11 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         if(result)result=commands->ConfigureSceneOverlay(frame.data->editorSceneLines,ResourceDirectory()/"Shaders/SceneOverlay.hlsl",scaleX>0?scaleX:1,frame.data->editorGridEnabled);
         if(result)result=editorGui_->Configure(*device_,*commands,*frame.data,editorTarget_->LdrColor(),frame.surface.width,frame.surface.height,ResourceDirectory()/"Shaders");
     }
-    else if(frame.data&&frame.data->editorGuiEnabled)result=gui_.Configure(*device_,*commands,*frame.data,frame.surface.width,frame.surface.height,ResourceDirectory()/"Shaders");
+    else if(frame.data&&frame.data->editorGuiEnabled)
+    {
+        se::CpuScope editorGuiScope(frame.profiler,"CPU.EditorGui");
+        result=gui_.Configure(*device_,*commands,*frame.data,frame.surface.width,frame.surface.height,ResourceDirectory()/"Shaders");
+    }
     if(result&&frame.data&&!frame.data->referenceUiOverlays)
     {
         std::vector<se::AssetDiagnostic> diagnostics;
@@ -1342,8 +1347,11 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             report(diagnostics);
             if(frame.data)
             {
+                const auto meshletMode=se::SelectMeshletSubmissionMode(device_->Capabilities(),
+                    {frame.data->meshletCulling,frame.data->preferMeshShader});
                 lighting.gpuDriven=frame.data->gpuDriven||frame.data->meshletCulling||frame.data->gpuDrivenHiZ;
-                lighting.meshletCulling=frame.data->meshletCulling;
+                lighting.meshletCulling=meshletMode!=se::MeshletSubmissionMode::Disabled;
+                lighting.preferMeshShader=meshletMode==se::MeshletSubmissionMode::MeshShader;
                 lighting.gpuDrivenHiZ=frame.data->gpuDrivenHiZ;
                 if(camera_&&frame.data->indoor.Enabled())
                 {
@@ -1597,13 +1605,14 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         }
     }
     const float cpuMilliseconds=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-telemetryStart).count();
-    telemetry_.EndFrame(Statistics(),static_cast<std::uint32_t>(drawStatistics_.draws),static_cast<std::uint32_t>(drawStatistics_.instances),static_cast<std::uint32_t>(frameTriangles_),cpuMilliseconds);
+    const auto telemetryStats=Statistics();
+    telemetry_.EndFrame(telemetryStats,static_cast<std::uint32_t>(drawStatistics_.draws),static_cast<std::uint32_t>(drawStatistics_.instances),static_cast<std::uint32_t>(frameTriangles_),cpuMilliseconds,static_cast<float>(telemetryStats.cpuMeshSubmitMilliseconds));
     auto completedTimings=device_->GpuTimingsSince(timingCursor_);
     for(const auto& timing:completedTimings)timingCursor_=std::max(timingCursor_,timing.submission);
     telemetry_.ObserveTimings(completedTimings);
     if(frame.updateIndex<=1)
     {
-        const auto gpu=Statistics();
+        const auto gpu=telemetryStats;
         Log(LogLevel::Debug,localization.GetText("Rendering.PsoLibraryHits")+": "+std::to_string(gpu.pipelineLibraryHits)+"/"+std::to_string(gpu.pipelineLibraryStores));
     }
     if(!profileOutput_.empty())
@@ -1611,6 +1620,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             Log(LogLevel::Info,localization.GetText("Rendering.TelemetrySummary")
                 +": frame="+std::to_string(stats->frameIndex)
                 +", cpu="+std::to_string(stats->cpuPrepareMilliseconds)
+                +" ms, mesh_submit="+std::to_string(stats->cpuMeshSubmitMilliseconds)
                 +" ms, gpu="+std::to_string(stats->GpuTotalMilliseconds())
                 +" ms, draws="+std::to_string(stats->drawCalls)
                 +", tris="+std::to_string(stats->triangles)

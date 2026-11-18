@@ -197,6 +197,19 @@ namespace
                 continue;
             }
 
+            D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7{};
+            D3D12_FEATURE_DATA_SHADER_MODEL sm65{ D3D_SHADER_MODEL_6_5 };
+            Microsoft::WRL::ComPtr<ID3D12Device2> device2;
+            wchar_t disableMeshShader[8]{};
+            const DWORD disableLength = GetEnvironmentVariableW(L"SELFENGINE_DISABLE_MESH_SHADER", disableMeshShader, 8);
+            const bool meshShaderDisabled = disableLength > 0 && !(disableLength == 1 && disableMeshShader[0] == L'0');
+            context.meshShaderTier1 = !meshShaderDisabled
+                && SUCCEEDED(candidateDevice.As(&device2))
+                && SUCCEEDED(candidateDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof(options7)))
+                && options7.MeshShaderTier >= D3D12_MESH_SHADER_TIER_1
+                && SUCCEEDED(candidateDevice->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm65, sizeof(sm65)))
+                && sm65.HighestShaderModel >= D3D_SHADER_MODEL_6_5;
+
             context.adapter = std::move(candidate);
             context.device = std::move(candidateDevice);
             Log(LogLevel::Info, localization.GetText("D3D12.SelectedAdapter") + ": " + name);

@@ -106,7 +106,7 @@ struct FrameData
     bool bc7Color=false; // 显式颜色压缩，数据纹理格式保持独立。
     bool depthNormals=false,gtao=false,contactShadows=false;
     float aoRadius=.6f,aoIntensity=.8f,contactLength=.5f;
-    bool diffuseSh=false,localDiffuseSh=false,gpuDriven=false,meshletCulling=false,gpuDrivenHiZ=false;
+    bool diffuseSh=false,localDiffuseSh=false,gpuDriven=false,meshletCulling=false,gpuDrivenHiZ=false,preferMeshShader=true;
     std::string diffuseProbeAsset; // 项目资产ID；无局部资产时只能使用全局环境SH。
     bool clusteredLighting=false,clusterDebug=false; // RG104-07：默认保留旧8点光路径。
     bool instancing=false; // 当前仅 PBR/Benchmark，单例也使用实例管线。

@@ -1837,3 +1837,7 @@ NavigationCooker.SceneLoadFailed=加载待烘焙的场景文件失败
 NavigationCooker.Complete=已完成导航网格离线烘焙
 Feature.Render.TodLighting=昼夜光照联动
 TOD.GpuLinkedPreview=实时 GPU 光照与大气联动
+Feature.Render.PreferMeshShader=优先使用硬件网格着色器
+D3D12.MeshShaderInitializeFailed=网格着色器管线初始化失败，已自动回退间接提交路径。
+D3D12.MeshShaderRecordFailed=录制网格着色器调度命令失败。
+Shader.DxcUnavailable=未找到 Windows SDK DXC 编译器（dxcompiler.dll / dxil.dll）。

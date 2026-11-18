@@ -22,6 +22,7 @@ struct D3D12Context
     std::shared_ptr<D3D12DescriptorPool> srvDescriptors,rtvDescriptors,dsvDescriptors;
     std::shared_ptr<D3D12MemoryAllocator> memory;
     std::shared_ptr<D3D12PipelineCache> pipelines;
+    bool meshShaderTier1 = false;
 };
 
 // 按适配器专用显存计算 DEFAULT 存储自动预算（768 MiB..2 GiB，64 KiB 对齐）。

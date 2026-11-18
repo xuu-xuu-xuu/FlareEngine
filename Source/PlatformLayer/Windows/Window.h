@@ -2,6 +2,9 @@
 
 #include "PlatformLayer/InputState.h"
 #include <Windows.h>
+#ifdef DeviceCapabilities
+#undef DeviceCapabilities
+#endif
 #include <functional>
 #include <optional>
 

@@ -11,13 +11,11 @@ namespace rhi=se::rhi;
 namespace
 {
 // 只认随产品发布的已知内建源文件；用户 Source/Artifact 不推测覆盖语义。
-bool BuiltinCoverage(const D3D12ShaderSource& source)
+bool BuiltinCoverage(const D3D12ShaderSource& source,const std::filesystem::path& expectedShaderDir)
 {
-    std::array<wchar_t,32768> executable{};
-    if(!GetModuleFileNameW(nullptr,executable.data(),static_cast<DWORD>(executable.size())))return false;
-    std::error_code error;const auto expected=std::filesystem::weakly_canonical(std::filesystem::path(executable.data()).parent_path()/"Resources/Shaders",error);
-    if(error)return false;const auto actual=std::filesystem::weakly_canonical(source.path.parent_path(),error);
-    if(error||_wcsicmp(actual.c_str(),expected.c_str()))return false;
+    if(expectedShaderDir.empty())return false;
+    std::error_code error;const auto actual=std::filesystem::weakly_canonical(source.path.parent_path(),error);
+    if(error||_wcsicmp(actual.c_str(),expectedShaderDir.c_str()))return false;
     const std::string name=source.path.filename().string();
     static constexpr const char* names[]{"Pbr.hlsl","Forward.hlsl","ShadowedForward.hlsl","EnvironmentForward.hlsl","BasicLit.hlsl","SkinnedForward.hlsl","SkinnedEnvironmentForward.hlsl",
         "CascadedShadowedForward.hlsl","CascadedEnvironmentForward.hlsl","CascadedBasicLit.hlsl","CascadedSkinnedForward.hlsl","CascadedSkinnedEnvironmentForward.hlsl",
@@ -32,14 +30,13 @@ bool BuiltinCoverage(const D3D12ShaderSource& source)
         return macro.value=="1"&&(macro.name=="SE_MATERIAL_SURFACE"||macro.name=="SE_SKINNED"||macro.name=="SE_VERTEX_COMPRESSED"||macro.name=="SE_NORMAL_BC5"||macro.name=="SE_SHADING_EXTENSIONS");
     });
 }
-bool Supported(const D3D12MeshDraw& draw,const D3D12MeshPipeline& pipeline)
+bool SupportedPrepared(const D3D12PreparedPipeline& prepared,const std::filesystem::path& expectedShaderDir)
 {
-    // 选中描边在 SceneOverlay 中独立绘制，不改变这里复用的主网格顶点/覆盖。
-    if(!pipeline.prepared||!pipeline.prepared->program||!draw.instances.empty()||draw.alphaMode==se::MaterialAlphaMode::Blend)return false;
-    const auto& prepared=*pipeline.prepared;const auto& source=prepared.program->source;
+    if(!prepared.program)return false;
+    const auto& source=prepared.program->source;
     return rhi::UsesLitLayout(source.kind)&&!rhi::IsInstanced(source.kind)&&prepared.depth==rhi::DepthMode::ReadWriteLess
         &&prepared.blend==rhi::BlendMode::Opaque&&prepared.description.SampleDesc.Count==1&&prepared.description.DSVFormat==DXGI_FORMAT_D32_FLOAT
-        &&BuiltinCoverage(source);
+        &&BuiltinCoverage(source,expectedShaderDir);
 }
 bool CreateTarget(D3D12Presentation& p,ID3D12Device& device,UINT width,UINT height,bool material,std::shared_ptr<D3D12DepthNormalTarget>& output,const Localization& text)
 {
@@ -90,49 +87,78 @@ bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,co
     auto& statistics=candidate->statistics;statistics.requested=statistics.valid=true;statistics.complete=true;statistics.allocatedBytes=candidate->target->allocatedBytes;
     const auto count=std::min(content.opaqueDrawCount,content.meshes.size());candidate->pipelines.resize(count);
     std::erase_if(pipelines_,[](const auto& entry){return entry.second.expired();});
+    std::filesystem::path expectedShaderDir;
+    {
+        std::array<wchar_t,32768> executable{};
+        if(GetModuleFileNameW(nullptr,executable.data(),static_cast<DWORD>(executable.size())))
+        {
+            std::error_code error;
+            expectedShaderDir=std::filesystem::weakly_canonical(std::filesystem::path(executable.data()).parent_path()/"Resources/Shaders",error);
+            if(error)expectedShaderDir.clear();
+        }
+    }
+    struct CachedPreparedResult
+    {
+        bool checked=false,supported=false;
+        std::shared_ptr<const D3D12DepthNormalPipeline> pair;
+    };
+    std::unordered_map<const D3D12PreparedPipeline*,CachedPreparedResult> framePreparedCache;
     for(size_t index=0;index<count;++index)
     {
         const auto& draw=content.meshes[index];const auto* main=draw.pipeline?draw.pipeline:content.meshPipeline;
-        if(!main||!Supported(draw,*main)){statistics.complete=false;++statistics.unsupportedDraws;continue;}
-        const auto& prepared=*main->prepared;const bool basic=rhi::IsBasicLit(prepared.program->source.kind),surface=prepared.materialRootParameter!=UINT_MAX;
-        const UINT slot=(basic?2u:0u)+(surface?1u:0u);
-        if(!pixels_[slot])
+        if(!main||!main->prepared||!main->prepared->program||!draw.instances.empty()||draw.alphaMode==se::MaterialAlphaMode::Blend)
+        {statistics.complete=false;++statistics.unsupportedDraws;continue;}
+        const auto& prepared=*main->prepared;
+        auto& cached=framePreparedCache[&prepared];
+        if(!cached.checked)
         {
-            rhi::PipelineDescription description{rhi::PipelineKind::PbrMesh,prepared.program->source.path.parent_path()/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl"),rhi::PbrMaterialLayoutVersion};
-            description.macros.push_back({"SE_DEPTH_NORMALS","1"});description.materialLayoutVersion=surface?rhi::MaterialSurfaceLayoutVersion:0;
-            D3D12ShaderSource source;if(!ReadD3D12ShaderSource(description,source,text))return false;
-            pixels_[slot]=LoadD3D12ShaderProgram(std::move(source),shaderStatistics_,text);if(!pixels_[slot])return false;
-        }
-        if(material&&!indoorPixels_[slot])
-        {
-            const D3D_SHADER_MACRO defines[]{{"SE_MATERIAL_SURFACE","1"},{nullptr,nullptr}};
-            const auto path=prepared.program->source.path.parent_path()/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl");
-            if(!CompileD3D12Shader(path,"PSIndoor","ps_5_1",indoorPixels_[slot],text,0,surface?defines:nullptr))return false;
-        }
-        const auto key=se::Sha256(prepared.key+":"+pixels_[slot]->bytecodeKey+(material?":indoor-material:v1":":geometry39:independent-d32-rg16-less:v1"));
-        auto found=pipelines_.find(key);std::shared_ptr<const D3D12DepthNormalPipeline> pair=found==pipelines_.end()?nullptr:found->second.lock();
-        if(!pair)
-        {
-            auto next=std::make_shared<D3D12DepthNormalPipeline>();next->main=main->prepared;next->pixel=pixels_[slot];
-            auto derived=std::make_shared<D3D12PreparedPipeline>(prepared);derived->key=key;
-            auto description=prepared.description;description.PS={next->pixel->pixel->GetBufferPointer(),next->pixel->pixel->GetBufferSize()};
-            description.NumRenderTargets=1;description.RTVFormats[0]=DXGI_FORMAT_R16G16_FLOAT;description.CachedPSO={};
-            description.BlendState.RenderTarget[0].BlendEnable=FALSE;description.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_RED|D3D12_COLOR_WRITE_ENABLE_GREEN;
-            if(material)
+            cached.checked=true;
+            cached.supported=SupportedPrepared(prepared,expectedShaderDir);
+            if(cached.supported)
             {
-                auto* pixel=indoorPixels_[slot].Get();description.PS={pixel->GetBufferPointer(),pixel->GetBufferSize()};
-                description.NumRenderTargets=2;description.RTVFormats[1]=DXGI_FORMAT_R16G16B16A16_FLOAT;
-                description.BlendState.IndependentBlendEnable=TRUE;
-                description.BlendState.RenderTarget[1]=description.BlendState.RenderTarget[0];
-                description.BlendState.RenderTarget[1].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
+                const bool basic=rhi::IsBasicLit(prepared.program->source.kind),surface=prepared.materialRootParameter!=UINT_MAX;
+                const UINT slot=(basic?2u:0u)+(surface?1u:0u);
+                if(!pixels_[slot])
+                {
+                    rhi::PipelineDescription description{rhi::PipelineKind::PbrMesh,prepared.program->source.path.parent_path()/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl"),rhi::PbrMaterialLayoutVersion};
+                    description.macros.push_back({"SE_DEPTH_NORMALS","1"});description.materialLayoutVersion=surface?rhi::MaterialSurfaceLayoutVersion:0;
+                    D3D12ShaderSource source;if(!ReadD3D12ShaderSource(description,source,text))return false;
+                    pixels_[slot]=LoadD3D12ShaderProgram(std::move(source),shaderStatistics_,text);if(!pixels_[slot])return false;
+                }
+                if(material&&!indoorPixels_[slot])
+                {
+                    const D3D_SHADER_MACRO defines[]{{"SE_MATERIAL_SURFACE","1"},{nullptr,nullptr}};
+                    const auto path=prepared.program->source.path.parent_path()/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl");
+                    if(!CompileD3D12Shader(path,"PSIndoor","ps_5_1",indoorPixels_[slot],text,0,surface?defines:nullptr))return false;
+                }
+                const auto key=se::Sha256(prepared.key+":"+pixels_[slot]->bytecodeKey+(material?":indoor-material:v1":":geometry39:independent-d32-rg16-less:v1"));
+                auto found=pipelines_.find(key);std::shared_ptr<const D3D12DepthNormalPipeline> pair=found==pipelines_.end()?nullptr:found->second.lock();
+                if(!pair)
+                {
+                    auto next=std::make_shared<D3D12DepthNormalPipeline>();next->main=main->prepared;next->pixel=pixels_[slot];
+                    auto derived=std::make_shared<D3D12PreparedPipeline>(prepared);derived->key=key;
+                    auto description=prepared.description;description.PS={next->pixel->pixel->GetBufferPointer(),next->pixel->pixel->GetBufferSize()};
+                    description.NumRenderTargets=1;description.RTVFormats[0]=DXGI_FORMAT_R16G16_FLOAT;description.CachedPSO={};
+                    description.BlendState.RenderTarget[0].BlendEnable=FALSE;description.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_RED|D3D12_COLOR_WRITE_ENABLE_GREEN;
+                    if(material)
+                    {
+                        auto* pixel=indoorPixels_[slot].Get();description.PS={pixel->GetBufferPointer(),pixel->GetBufferSize()};
+                        description.NumRenderTargets=2;description.RTVFormats[1]=DXGI_FORMAT_R16G16B16A16_FLOAT;
+                        description.BlendState.IndependentBlendEnable=TRUE;
+                        description.BlendState.RenderTarget[1]=description.BlendState.RenderTarget[0];
+                        description.BlendState.RenderTarget[1].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
+                    }
+                    description.DepthStencilState.DepthEnable=TRUE;description.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ALL;description.DepthStencilState.DepthFunc=D3D12_COMPARISON_FUNC_LESS;
+                    derived->pipeline.Reset();if(!CheckGraphicsResult(device->CreateGraphicsPipelineState(&description,IID_PPV_ARGS(derived->pipeline.GetAddressOf())),text,"D3D12.CreatePipelineFailed"))return false;
+                    derived->description=description;derived->description.InputLayout={derived->inputElements.data(),static_cast<UINT>(derived->inputElements.size())};
+                    derived->pipeline->SetName(L"SelfEngine.DepthNormals.SameMainVertexShader");next->mesh={derived->rootSignature,derived->pipeline,derived};
+                    pair=std::move(next);pipelines_.insert_or_assign(key,pair);++pipelineCreations_;
+                }
+                cached.pair=std::move(pair);
             }
-            description.DepthStencilState.DepthEnable=TRUE;description.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ALL;description.DepthStencilState.DepthFunc=D3D12_COMPARISON_FUNC_LESS;
-            derived->pipeline.Reset();if(!CheckGraphicsResult(device->CreateGraphicsPipelineState(&description,IID_PPV_ARGS(derived->pipeline.GetAddressOf())),text,"D3D12.CreatePipelineFailed"))return false;
-            derived->description=description;derived->description.InputLayout={derived->inputElements.data(),static_cast<UINT>(derived->inputElements.size())};
-            derived->pipeline->SetName(L"SelfEngine.DepthNormals.SameMainVertexShader");next->mesh={derived->rootSignature,derived->pipeline,derived};
-            pair=std::move(next);pipelines_.insert_or_assign(key,pair);++pipelineCreations_;
         }
-        candidate->pipelines[index]=std::move(pair);++statistics.draws;
+        if(!cached.supported){statistics.complete=false;++statistics.unsupportedDraws;continue;}
+        candidate->pipelines[index]=cached.pair;++statistics.draws;
     }
     frame.depthNormals=std::move(candidate);p.depthNormalStatistics=statistics;return true;
 }

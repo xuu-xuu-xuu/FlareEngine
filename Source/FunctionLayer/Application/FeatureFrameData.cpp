@@ -79,7 +79,7 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame,RenderDefaults de
         frame.diffuseSh=flag("render.diffuseSh");frame.localDiffuseSh=flag("render.localDiffuseSh");
         frame.diffuseProbeAsset=std::get<std::string>(get("render.diffuseProbe"));
         frame.gpuDriven=flag("render.gpuDriven");frame.meshletCulling=flag("render.meshletCulling");
-        frame.gpuDrivenHiZ=flag("render.gpuDrivenHiZ");
+        frame.gpuDrivenHiZ=flag("render.gpuDrivenHiZ");frame.preferMeshShader=flag("render.preferMeshShader");
         frame.clusteredLighting=flag("render.clusteredLighting");frame.clusterDebug=flag("render.clusterDebug");
         if(frame.instancing)frame.modelLod=false;
         frame.modelHlod=flag("render.hlod")&&!frame.instancing;frame.hlodRadius=number("render.hlodRadius");

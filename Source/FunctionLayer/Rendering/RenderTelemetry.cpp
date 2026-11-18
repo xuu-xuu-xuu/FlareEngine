@@ -34,12 +34,14 @@ void RenderTelemetry::BeginFrame(std::uint64_t frameIndex,const rhi::Statistics&
     frameOpen_=true;frameIndex_=frameIndex;cpuMilliseconds_=0;previous_=stats;
 }
 
-void RenderTelemetry::EndFrame(const rhi::Statistics& stats,std::uint32_t draws,std::uint32_t instances,std::uint32_t triangles,float cpuMilliseconds)
+void RenderTelemetry::EndFrame(const rhi::Statistics& stats,std::uint32_t draws,std::uint32_t instances,std::uint32_t triangles,
+    float cpuMilliseconds,float cpuMeshSubmitMilliseconds)
 {
     RenderStats current;
     current.frameIndex=frameOpen_?frameIndex_:stats.submittedFrames;
     current.submission=stats.submittedFrames;
     current.cpuPrepareMilliseconds=cpuMilliseconds;
+    current.cpuMeshSubmitMilliseconds=cpuMeshSubmitMilliseconds>=0.0f?cpuMeshSubmitMilliseconds:static_cast<float>(stats.cpuMeshSubmitMilliseconds);
     current.drawCalls=draws;current.instances=instances;current.triangles=triangles;
     current.stateChanges=Delta(stats.stateTransitions,previous_.stateTransitions);
     current.psoCreated=Delta(stats.pipelineCreations,previous_.pipelineCreations);
@@ -112,13 +114,13 @@ void RenderTelemetry::Reset() noexcept
 bool RenderTelemetry::ExportCsv(const std::filesystem::path& path,std::string& error) const
 {
     std::ostringstream text;
-    text<<"frame,submission,cpu_ms,gpu_ms";
+    text<<"frame,submission,cpu_ms,cpu_mesh_submit_ms,gpu_ms";
     for(std::size_t index=0;index<RenderPassCount;++index)text<<','<<RenderPassName(static_cast<RenderPassId>(index));
     text<<",draws,instances,triangles,state_changes,pso,upload_bytes,descriptors,vram_mib,long_frame,top1,top1_ms,top2,top2_ms,top3,top3_ms\n";
     text<<std::fixed<<std::setprecision(3);
     for(const auto& stats:frames_)
     {
-        text<<stats.frameIndex<<','<<stats.submission<<','<<stats.cpuPrepareMilliseconds<<','<<stats.GpuTotalMilliseconds();
+        text<<stats.frameIndex<<','<<stats.submission<<','<<stats.cpuPrepareMilliseconds<<','<<stats.cpuMeshSubmitMilliseconds<<','<<stats.GpuTotalMilliseconds();
         for(const float value:stats.gpuPassMilliseconds)text<<','<<value;
         text<<','<<stats.drawCalls<<','<<stats.instances<<','<<stats.triangles<<','<<stats.stateChanges
             <<','<<stats.psoCreated<<','<<stats.uploadBytes<<','<<stats.descriptorUsed<<','<<stats.vramUsedMiB

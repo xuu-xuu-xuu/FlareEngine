@@ -61,5 +61,25 @@ add_custom_command(OUTPUT "${particle_shader_output}" "${particle_shader_output}
         "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/ParticleBillboard.hlsl"
         "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/ParticleBindings.hlsli" VERBATIM)
 list(APPEND surface_outputs "${particle_shader_output}" "${particle_shader_output}.json")
+set(meshlet_as_output "${CMAKE_CURRENT_BINARY_DIR}/Resources/Shaders/MeshletCull.as.hlsl.sebin")
+add_custom_command(OUTPUT "${meshlet_as_output}" "${meshlet_as_output}.json"
+    COMMAND ShaderBuilder meshlet-ms "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/MeshletCull.as.hlsl" "${meshlet_as_output}"
+    DEPENDS ShaderBuilder
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/MeshletCull.as.hlsl"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/MeshletBindings.hlsli"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/VisibilityPredicate.hlsli" VERBATIM)
+set(meshlet_ms_output "${CMAKE_CURRENT_BINARY_DIR}/Resources/Shaders/MeshletDraw.ms.hlsl.sebin")
+add_custom_command(OUTPUT "${meshlet_ms_output}" "${meshlet_ms_output}.json"
+    COMMAND ShaderBuilder meshlet-ms "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/MeshletDraw.ms.hlsl" "${meshlet_ms_output}"
+    DEPENDS ShaderBuilder
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/MeshletDraw.ms.hlsl"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/MeshletBindings.hlsli"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/Pbr.hlsl"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/Forward.hlsl"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/ShadowedForward.hlsl"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/EnvironmentForward.hlsl"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/BasicLit.hlsl"
+        ${surface_shader_includes} VERBATIM)
+list(APPEND surface_outputs "${meshlet_as_output}" "${meshlet_as_output}.json" "${meshlet_ms_output}" "${meshlet_ms_output}.json")
 add_custom_target(BuildMaterialSurfaceShaders DEPENDS ${surface_outputs})
 add_dependencies(BuildShaders BuildMaterialSurfaceShaders)

@@ -155,6 +155,28 @@ inline constexpr std::uint32_t VolumetricFogLayoutVersion=25;
 inline constexpr std::uint32_t TemporalAALayoutVersion=26;
 inline constexpr std::uint32_t ExposureColorLayoutVersion=27;
 inline constexpr std::uint32_t MeshletLayoutVersion=28;
+// RG104-17.02：硬件 Amplification/Mesh Shader 管线布局（space1 剔除与几何视图）。
+struct alignas(16) GpuMeshletItem
+{
+    std::uint32_t firstIndex=0,triangleCount=0,indexStride=4,flags=0;
+};
+static_assert(sizeof(GpuMeshletItem)==16&&alignof(GpuMeshletItem)==16
+    &&offsetof(GpuMeshletItem,firstIndex)==0&&offsetof(GpuMeshletItem,triangleCount)==4
+    &&offsetof(GpuMeshletItem,indexStride)==8&&offsetof(GpuMeshletItem,flags)==12);
+struct alignas(16) MeshletCullConstants
+{
+    std::array<Vec4,6> planes{};
+    std::uint32_t totalMeshlets=0,reserved[3]{};
+    Mat4 clipFromWorld{};
+    Vec4 screen{};
+    std::uint32_t occlusionEnabled=0,occlusionReserved[3]{};
+    std::uint32_t padding[12]{};
+};
+static_assert(sizeof(MeshletCullConstants)==256
+    &&offsetof(MeshletCullConstants,totalMeshlets)==96
+    &&offsetof(MeshletCullConstants,clipFromWorld)==112
+    &&offsetof(MeshletCullConstants,screen)==176
+    &&offsetof(MeshletCullConstants,occlusionEnabled)==192);
 // G15：输出 LUT 的显示线性 strip。t0 场景、t1 阴影预览（仅 ShadowOutput）、t2 33³ 2D strip；
 // 编辑器 BasicLit（ShadowOutput）与 Lighting 演示（FinalOutput）共用此布局，t1 在 FinalOutput 中不使用。
 // G15.09：strip 可为 Rgba8（兼容）或 Rgba16Float（保留 >1 的显示线性值与精度）。
@@ -246,7 +268,7 @@ inline constexpr LayoutVersionRecord GSeriesLayoutVersions[] =
     {VolumetricFogLayoutVersion,"G11","雾密度、风与光线步进参数",0},
     {TemporalAALayoutVersion,"G14","抖动、历史与邻域夹取参数",0},
     {ExposureColorLayoutVersion,"G15","直方图、曝光与 LUT 参数",0},
-    {MeshletLayoutVersion,"G07","cluster 描述与间接参数",0},
+    {MeshletLayoutVersion,"G07","cluster/meshlet 描述、剔除常量与间接参数",sizeof(MeshletCullConstants)},
     {OutputLutLayoutVersion,"G15","输出 LUT strip（t0 场景/t1 阴影/t2 33³，Rgba8 或 Rgba16F）",0},
     {ForwardInstancingLayoutVersion,"G06","Forward 实例化（b0/纹理表/b1/实例 SRV）",0},
     {SkinnedLayoutVersion,"W03","蒙皮调色板（受光：b0/纹理表/b1/t8；阴影深度：b0/t8）",0},

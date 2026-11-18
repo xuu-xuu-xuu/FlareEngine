@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 
+#ifdef DeviceCapabilities
+#undef DeviceCapabilities
+#endif
+
 class Localization;
 namespace se {class Profiler;}
 namespace se::rhi
@@ -188,6 +192,7 @@ inline bool ValidShadingExtensionPipeline(const PipelineDescription& pipeline)
 }
 struct Surface {void* window=nullptr;std::uint32_t width=0,height=0;};
 struct AdapterInformation {std::string name;std::uint32_t vendorId=0,deviceId=0;std::uint64_t dedicatedVideoMemory=0;bool software=false;};
+struct DeviceCapabilities {bool meshShaderTier1=false;};
 struct CompletionToken {std::uint64_t device=0,queue=0,value=0;bool operator==(const CompletionToken&) const=default;};
 enum class UploadMode { Pooled, DedicatedBaseline };
 enum class MemoryMode { Placed, CommittedBaseline };
@@ -422,7 +427,7 @@ struct ForwardLighting
     ClusteredLighting cluster;
     ShadingFrameBindings shading;
     std::vector<LocalLight> localLights;
-    bool gpuDriven=false,meshletCulling=false,gpuDrivenHiZ=false;
+    bool gpuDriven=false,meshletCulling=false,gpuDrivenHiZ=false,preferMeshShader=false;
     IndoorLightingSettings indoor;
 };
 struct Image {std::uint32_t width=0,height=0;std::vector<std::uint8_t> rgba8;};
@@ -484,7 +489,8 @@ struct DrawBindingStatistics
 struct GpuDrivenStatistics
 {
     bool requested=false,valid=false,meshlets=false,hzbRequested=false,hzbValid=false;
-    std::uint32_t sourceDraws=0,candidateCommands=0,gpuBuckets=0,cpuDraws=0,cpuBuckets=0,meshletCommands=0;
+    bool meshShaderRequested=false,meshShaderActive=false;
+    std::uint32_t sourceDraws=0,candidateCommands=0,gpuBuckets=0,cpuDraws=0,cpuBuckets=0,meshletCommands=0,meshShaderDispatches=0;
     std::array<std::uint32_t,11> fallbackReasons{};
 };
 // G06.09：间接参数回读的遮挡计数。visible 来自 GPU 写入的 ExecuteIndirect 参数，
@@ -519,6 +525,7 @@ struct Statistics
     std::uint64_t postCreations=0,postResourceBytes=0;
     std::size_t buffers=0,textures=0,pipelines=0,retiring=0,inFlightBatches=0;
     std::uint64_t submittedFrames=0,globalWaits=0,completedValue=0;
+    double cpuMeshSubmitMilliseconds=0;
     std::uint64_t debugWarnings=0,debugErrors=0;
     std::size_t trackedResources=0,trackedSubresources=0;
     std::uint64_t stateTransitions=0,bufferDecays=0;
@@ -676,6 +683,7 @@ public:
     Statistics Stats() const;
     std::vector<std::string> DebugMessages() const; // 调试层 warning/error 的原始诊断，按需读取。
     AdapterInformation Adapter() const;
+    DeviceCapabilities Capabilities() const noexcept;
     bool Occluded() const;
     Result EnableGpuTiming(bool enabled);
     void SetCpuProfiler(Profiler* profiler);

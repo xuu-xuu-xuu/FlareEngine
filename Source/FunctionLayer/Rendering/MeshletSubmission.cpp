@@ -134,4 +134,11 @@ bool TransformMeshletSubmissionBounds(const MeshletSubmission& source,const Mat4
     if(expectedFirst!=source.indices.size())return false;
     output=std::move(next);return true;
 }
+MeshletSubmissionMode SelectMeshletSubmissionMode(const rhi::DeviceCapabilities& capabilities,
+    const MeshletSubmissionSettings& settings) noexcept
+{
+    if(!settings.enabled)return MeshletSubmissionMode::Disabled;
+    if(capabilities.meshShaderTier1&&settings.preferMeshShader)return MeshletSubmissionMode::MeshShader;
+    return MeshletSubmissionMode::ComputeIndirect;
+}
 }

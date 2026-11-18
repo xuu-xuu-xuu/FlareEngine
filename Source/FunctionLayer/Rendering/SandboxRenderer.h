@@ -24,6 +24,9 @@
 #include "GameUIRenderer.h"
 #include "ColorLutFile.h"
 #include <unordered_set>
+#ifdef DeviceCapabilities
+#undef DeviceCapabilities
+#endif
 
 // 共用图形宿主；样例可显式启用三角形，世界/UI 绘制按各自任务接入。
 enum class SandboxScene { Clear, Triangle, TexturedCube, Scene, Materials, Lighting, Shadows, Environment, PostProcess, Benchmark, BasicLit, Hlod };
@@ -46,6 +49,7 @@ public:
     std::vector<std::string> DebugMessages()const{return device_?device_->DebugMessages():std::vector<std::string>{};}
     const se::RenderTelemetry& Telemetry() const noexcept {return telemetry_;}
     se::rhi::AdapterInformation Adapter() const {return device_?device_->Adapter():se::rhi::AdapterInformation{};}
+    se::rhi::DeviceCapabilities Capabilities() const noexcept {return device_?device_->Capabilities():se::rhi::DeviceCapabilities{};}
     SandboxDrawStatistics DrawStatistics() const {return drawStatistics_;}
     se::FrameGraphStats FrameGraphStatistics() const noexcept {return frameGraph_.Stats();}
     se::GameUiRenderStatistics UiStatistics()const{return gameUi_.Statistics();}
