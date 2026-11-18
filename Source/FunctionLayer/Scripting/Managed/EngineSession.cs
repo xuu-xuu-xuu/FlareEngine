@@ -44,6 +44,7 @@ public sealed unsafe partial class EngineSession : IDisposable
     public SceneService Scenes{get;}
     public TimeOfDayService TimeOfDay{get;}
     public InputActions Actions { get; }
+    public Audio Audio { get; }
     public bool IsWindowRunning { get; private set; }
     internal ScriptInput WindowInput { get; private set; } = ScriptInput.Empty;
 
@@ -54,6 +55,7 @@ public sealed unsafe partial class EngineSession : IDisposable
         Scenes=new(this);
         TimeOfDay=new(this);
         Actions = new(this);
+        Audio = new(this);
         Check(NativeMethods.Abi(out var abi));
         if (abi.Version != 1 || abi.TransformSize != Marshal.SizeOf<Transform>() || abi.PointerSize != 8)
             throw new EngineException("Bridge.AbiMismatch", 1);
@@ -65,7 +67,7 @@ public sealed unsafe partial class EngineSession : IDisposable
             handle.CallbackContext = GCHandle.Alloc(this, GCHandleType.Weak);
             Check(NativeMethods.SetUpdate(value, &NativeUpdate, GCHandle.ToIntPtr(handle.CallbackContext)));
             Check(NativeMethods.SetEnvironmentCallback(value,&NativeEnvironmentTick,GCHandle.ToIntPtr(handle.CallbackContext)));
-            if(Marshal.SizeOf<EventHeader>()!=88||Marshal.SizeOf<EventStatistics>()!=104)throw new EngineException("Bridge.AbiMismatch",1);
+            if(Marshal.SizeOf<EventHeader>()!=88||Marshal.SizeOf<EventStatistics>()!=104||Marshal.SizeOf<AudioPlayDescription>()!=40)throw new EngineException("Bridge.AbiMismatch",1);
             Check(NativeMethods.SetEventCallback(value,&NativeEvent,GCHandle.ToIntPtr(handle.CallbackContext)));
             Check(NativeMethods.SetSceneCallback(value,&NativeSceneRetiring,GCHandle.ToIntPtr(handle.CallbackContext)));
             Check(NativeMethods.SetEditorCallback(value, &NativeEditorPhase, GCHandle.ToIntPtr(handle.CallbackContext)));

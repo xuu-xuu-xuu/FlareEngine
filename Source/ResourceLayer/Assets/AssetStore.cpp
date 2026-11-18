@@ -650,6 +650,77 @@ std::shared_ptr<const TODProfile> AssetStore::LoadTODProfile(const AssetId& id,s
     if(!ParseTODProfile(std::string_view(reinterpret_cast<const char*>(bytes.data()),bytes.size()),*candidate,error)){Diagnostic(diagnostics,error.c_str(),id);return {};}
     todProfiles_.insert_or_assign(id,TODEntry{key,candidate});return candidate;
 }
+std::shared_ptr<const AudioClip> AssetStore::LoadAudioClip(const AssetId& id, std::vector<AssetDiagnostic>& diagnostics)
+{
+    const auto record = records_.find(id);
+    if (record == records_.end())
+    {
+        Diagnostic(diagnostics, "Assets.UnknownId", id);
+        return {};
+    }
+    if (!IsAudioExtension(record->second.source))
+    {
+        Diagnostic(diagnostics, "Assets.AudioUnsupportedFormat", id);
+        return {};
+    }
+    std::vector<std::uint8_t> sourceBytes;
+    if (!asset_io::Read(record->second.source, sourceBytes))
+    {
+        Diagnostic(diagnostics, "Assets.ReadFailed", id);
+        return {};
+    }
+    const auto key = asset_io::Hash(sourceBytes);
+    if (key.empty())
+    {
+        Diagnostic(diagnostics, "Assets.ReadFailed", id);
+        return {};
+    }
+    const auto previous = audios_.find(id);
+    if (previous != audios_.end() && previous->second.key == key)
+    {
+        if (auto existing = previous->second.data.lock())
+        {
+            return existing;
+        }
+    }
+
+    auto candidate = std::make_shared<AudioClip>();
+    const auto ext = asset_io::Utf8(record->second.source.extension());
+    const std::filesystem::path cachePath = cacheRoot_ / (id + ".seaud");
+    bool loadedFromCache = false;
+    if (!cacheRoot_.empty() && std::filesystem::is_regular_file(cachePath))
+    {
+        std::vector<std::uint8_t> cacheBytes;
+        std::vector<AssetDiagnostic> cacheDiagnostics;
+        if (asset_io::Read(cachePath, cacheBytes) &&
+            DecodeAudioContainer(cacheBytes, key, *candidate, cacheDiagnostics))
+        {
+            loadedFromCache = true;
+        }
+    }
+
+    if (!loadedFromCache)
+    {
+        if (!DecodeAudioSource(sourceBytes, ext, *candidate, diagnostics))
+        {
+            return {};
+        }
+        if (!cacheRoot_.empty())
+        {
+            std::vector<std::uint8_t> encodedContainer;
+            std::vector<AssetDiagnostic> cacheDiagnostics;
+            if (EncodeAudioContainer(*candidate, key, encodedContainer, cacheDiagnostics))
+            {
+                std::error_code dirError;
+                std::filesystem::create_directories(cacheRoot_, dirError);
+                asset_io::WriteAtomic(cachePath, encodedContainer, true);
+            }
+        }
+    }
+
+    audios_.insert_or_assign(id, AudioEntry{key, candidate});
+    return candidate;
+}
 void AssetStore::CollectUnused()
 {
     std::erase_if(models_, [](const auto& value) { return value.second.data.expired(); });
@@ -657,5 +728,6 @@ void AssetStore::CollectUnused()
     std::erase_if(materials_, [](const auto& value) { return value.second.data.expired(); });
     std::erase_if(environments_, [](const auto& value) { return value.second.data.expired(); });
     std::erase_if(todProfiles_, [](const auto& value) { return value.second.data.expired(); });
+    std::erase_if(audios_, [](const auto& value) { return value.second.data.expired(); });
 }
 }

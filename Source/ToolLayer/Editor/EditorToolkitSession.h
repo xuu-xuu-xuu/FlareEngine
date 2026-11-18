@@ -7,7 +7,9 @@
 #include "ToolLayer/Editor/ViewportDropWorkflow.h"
 #include "ToolLayer/Editor/EditorViewportCamera.h"
 #include "ToolLayer/Editor/EditorUi/EditorInputAdapter.h"
+#include "FunctionLayer/Audio/SceneAudio.h"
 #include "FunctionLayer/Physics/ScenePhysics.h"
+#include "PlatformLayer/Windows/XAudio2Backend.h"
 #include "PlatformLayer/Windows/UiDirectWriteTextService.h"
 #include "PlatformLayer/Windows/Window.h"
 
@@ -56,6 +58,9 @@ struct ToolkitAppState
     std::unique_ptr<EditorPlayInput> playInput;
     PhysicsWorld authoredPhysics;
     ScenePhysics authoredScenePhysics;
+    std::unique_ptr<XAudio2Backend> audioBackend;
+    AudioWorld audio;
+    SceneAudio sceneAudio;
     EditorWorkspaceHost host;
     EditorScriptWorkflow scriptWorkflow;
     EditorViewportCamera editorCamera;
@@ -118,6 +123,15 @@ struct ToolkitAppState
           viewportController(editorCamera),
           hooks(appHooks)
     {
+        audioBackend = std::make_unique<XAudio2Backend>();
+        if (audioBackend->Initialize()) audio.SetBackend(audioBackend.get());
+        else audioBackend.reset();
+    }
+    ~ToolkitAppState()
+    {
+        sceneAudio.Clear(audio);
+        audio.Shutdown();
+        if (audioBackend) audioBackend->Shutdown();
     }
 };
 

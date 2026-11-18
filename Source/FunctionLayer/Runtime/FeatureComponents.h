@@ -18,6 +18,8 @@ using EnvironmentSettingsComponent=FeatureComponent<0x464C0004>;
 using ActorSettingsComponent=FeatureComponent<0x464C0005>;
 using RectangleLightComponent=FeatureComponent<0x464C0006>;
 using ColliderSettingsComponent=FeatureComponent<0x464C0007>;
+using AudioListenerComponent=FeatureComponent<0x464C0008>;
+using AudioSourceComponent=FeatureComponent<0x464C0009>;
 
 void CompleteRenderProperties(std::vector<ComponentProperty>& properties);
 void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors);

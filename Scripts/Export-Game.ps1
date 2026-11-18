@@ -182,7 +182,14 @@ try {
     foreach($asset in @($settings.assets | Where-Object type -eq 'model')){foreach($suffix in @('.model.json','.manifest.json')){
         $path=Join-Path (Join-Path $projectRoot '.cache/assets') ($asset.id+$suffix);if(!(Test-Path -LiteralPath $path)){Fail 'Export.CookFailed' $asset.id};Copy-Item -LiteralPath $path -Destination $cache;$cooked+=@([ordered]@{path='Project/.cache/assets/'+$asset.id+$suffix;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()})
     }}
-    Copy-Item -LiteralPath $dependencyFile -Destination (Join-Path $stage 'dependencies.json');Write-EngineJson (Join-Path $stage 'processed-assets.json') ([ordered]@{schema=1;model_format='validated StaticModel JSON/cache manifest';texture_format='validated source image';material_format='validated material JSON';files=$cooked})
+    foreach($asset in @($settings.assets | Where-Object type -eq 'audio')){
+        $audioCache=Join-Path (Join-Path $projectRoot '.cache/assets') ($asset.id+'.seaud')
+        if(!(Test-Path -LiteralPath $audioCache)){Fail 'Export.CookFailed' $asset.id}
+        $audioTarget=Join-Path $cache ($asset.id+'.seaud');New-Item -ItemType Directory -Path (Split-Path -Parent $audioTarget) -Force | Out-Null
+        Copy-Item -LiteralPath $audioCache -Destination $audioTarget -Force
+        $cooked+=@([ordered]@{path='Project/.cache/assets/'+$asset.id+'.seaud';sha256=(Get-FileHash -LiteralPath $audioTarget -Algorithm SHA256).Hash.ToLowerInvariant()})
+    }
+    Copy-Item -LiteralPath $dependencyFile -Destination (Join-Path $stage 'dependencies.json');Write-EngineJson (Join-Path $stage 'processed-assets.json') ([ordered]@{schema=1;model_format='validated StaticModel JSON/cache manifest';texture_format='validated source image';material_format='validated material JSON';audio_format='decoded PCM .seaud cache container';files=$cooked})
     if($packageMode){$crt=Join-Path $workspace 'Runtime'}else{
     $vswhere=Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe';$vs=(& $vswhere -version '[17.0,18.0)' -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim();if($LASTEXITCODE -ne 0 -or !$vs){Fail 'Export.NativeMissing' 'MSVC redist'}
     $crt=$null;foreach($version in (Get-ChildItem -LiteralPath (Join-Path $vs 'VC/Redist/MSVC') -Directory | Where-Object Name -match '^\d+\.\d+\.\d+$' | Sort-Object {[version]$_.Name} -Descending)){$candidate=Join-Path $version.FullName 'x64/Microsoft.VC143.CRT';if(Test-Path -LiteralPath $candidate){$crt=$candidate;break}}
@@ -198,7 +205,7 @@ try {
             Copy-Item -LiteralPath $notice.FullName -Destination $noticeTarget -Force
         }
     }
-    foreach($license in @(@('ufbx','LICENSE'),@('cgltf','LICENSE'),@('nlohmann','LICENSE.MIT'))){$directory=Join-Path $stage ('ThirdParty/'+$license[0]);New-Item -ItemType Directory -Path $directory -Force | Out-Null;Copy-Item -LiteralPath (Join-Path $workspace ('ThirdParty/'+$license[0]+'/'+$license[1])) -Destination $directory}
+    foreach($license in @(@('ufbx','LICENSE'),@('cgltf','LICENSE'),@('nlohmann','LICENSE.MIT'),@('dr_wav','LICENSE'),@('stb','LICENSE'))){$directory=Join-Path $stage ('ThirdParty/'+$license[0]);New-Item -ItemType Directory -Path $directory -Force | Out-Null;Copy-Item -LiteralPath (Join-Path $workspace ('ThirdParty/'+$license[0]+'/'+$license[1])) -Destination $directory}
     if(Test-Path -LiteralPath (Join-Path $workspace 'ThirdParty/README.md') -PathType Leaf){
         Copy-Item -LiteralPath (Join-Path $workspace 'ThirdParty/README.md') -Destination (Join-Path $stage 'ThirdParty/README.md')
     }

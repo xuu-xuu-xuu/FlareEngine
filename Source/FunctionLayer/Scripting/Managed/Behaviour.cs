@@ -22,6 +22,7 @@ public abstract class Behaviour
     public ScriptSystem Scripts => Owner ?? throw new InvalidOperationException("Script.NotAttached");
     public ScriptInput Input => Scripts.Input;
     public InputActions Actions => Scripts.Session.Actions;
+    public Audio Audio => Scripts.Session.Audio;
     public virtual bool UpdateWhenPaused => false;
     public bool Enabled
     {

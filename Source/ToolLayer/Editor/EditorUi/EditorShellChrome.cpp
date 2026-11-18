@@ -658,6 +658,8 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
         add("EditorUi.CreatePhysicsSphere", "Physics sphere", EditorCommandId::CreateEntity, "physics-sphere");
         add("EditorUi.CreateTriggerBox", "Trigger box", EditorCommandId::CreateEntity, "trigger-box");
         add("Feature.Character", "Capsule character", EditorCommandId::CreateEntity, "character");
+        add("EditorUi.CreateAudioSource", "Audio source", EditorCommandId::CreateEntity, "audio-source");
+        add("Feature.AudioListener", "Audio listener", EditorCommandId::CreateEntity, "audio-listener");
         if (panel == EditorPanelId::Hierarchy && parent != 0)
             add("EditorUi.CreatePrefab", "Create Prefab", EditorCommandId::CreateAsset, "prefab");
     }

@@ -5,6 +5,9 @@
 #include "ResourceLayer/Scenes/SceneSerializer.h"
 #include "FunctionLayer/Physics/PhysicsWorld.h"
 #include "FunctionLayer/Physics/ScenePhysics.h"
+#include "FunctionLayer/Audio/AudioWorld.h"
+#include "FunctionLayer/Audio/SceneAudio.h"
+#include "PlatformLayer/Windows/XAudio2Backend.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "FunctionLayer/GameUI/UiTree.h"
 #include <nlohmann/json.hpp>
@@ -26,6 +29,7 @@
 #include "ResourceLayer/Assets/AssetStore.h"
 #include <filesystem>
 #include <fstream>
+#include <array>
 #include <cstdio>
 #include <unordered_map>
 #include <algorithm>
@@ -40,7 +44,12 @@
 
 namespace
 {
-thread_local const char* lastError = "Bridge.Success";
+thread_local std::array<char, 256> lastError = [] {
+    std::array<char, 256> initial{};
+    constexpr char ok[] = "Bridge.Success";
+    std::memcpy(initial.data(), ok, sizeof(ok));
+    return initial;
+}();
 std::recursive_mutex sessionsMutex;
 struct RuntimeAppearance
 {
@@ -55,8 +64,23 @@ struct RuntimeAppearance
 };
 struct Session
 {
-    Session(){environment.ConfigureClock(1.0/60,8,false);environment.Events().RegisterType({4,"engine.scene_state",1,8});}
-    ~Session(){environment.BeginShutdown();world.Clear();while(world.HasPendingCommands())world.FlushCommands();}
+    Session()
+    {
+        environment.ConfigureClock(1.0/60,8,false);
+        environment.Events().RegisterType({4,"engine.scene_state",1,8});
+        audioBackend=std::make_unique<se::XAudio2Backend>();
+        if(audioBackend->Initialize())audio.SetBackend(audioBackend.get());
+        else audioBackend.reset();
+    }
+    ~Session()
+    {
+        sceneAudio.Clear(audio);
+        audio.Shutdown();
+        if(audioBackend)audioBackend->Shutdown();
+        environment.BeginShutdown();
+        world.Clear();
+        while(world.HasPendingCommands())world.FlushCommands();
+    }
     se::Environment environment;
     NativeLogicObjects logicObjects;
     se::World& world=environment.GetWorld();
@@ -68,6 +92,9 @@ struct Session
     const se::World& ReadWorld() const {return borrowedWorld?*borrowedWorld:editor?editor->EditWorld():world;}
     se::PhysicsWorld physics;
     se::ScenePhysics scenePhysics;
+    std::unique_ptr<se::XAudio2Backend> audioBackend;
+    se::AudioWorld audio;
+    se::SceneAudio sceneAudio;
     std::unordered_map<std::uint64_t,se::EntityHandle> bodyOwners;
     bool physicsDebugDraw=true;
     se::FixedStepClock physicsClock;
@@ -142,10 +169,17 @@ void CloseEventPublishers(SE_Session handle)
         if(it->second.session==handle){it->second.value.Close();it=eventPublishers.erase(it);}else ++it;
 }
 
-int32_t Error(int32_t code, const char* key) noexcept { lastError = key; return code; }
+int32_t Error(int32_t code, const char* key) noexcept
+{
+    const std::string_view text = (key && *key) ? std::string_view(key) : std::string_view("Bridge.NativeException");
+    const std::size_t length = std::min<std::size_t>(text.size(), lastError.size() - 1);
+    if (length > 0) std::memcpy(lastError.data(), text.data(), length);
+    lastError[length] = '\0';
+    return code;
+}
 template<class Function> int32_t Protect(Function&& function) noexcept
 {
-    try { std::lock_guard lock(sessionsMutex); lastError = "Bridge.Success"; return function(); }
+    try { std::lock_guard lock(sessionsMutex); Error(SE_OK, "Bridge.Success"); return function(); }
     catch (const std::bad_alloc&) { return Error(SE_OUT_OF_MEMORY, "Bridge.OutOfMemory"); }
     catch (...) { return Error(SE_INTERNAL_ERROR, "Bridge.NativeException"); }
 }
@@ -167,7 +201,7 @@ Session* Find(SE_Session handle, bool checkThread = true)
     }
     return session;
 }
-int32_t MissingSession() { return std::strcmp(lastError, "Bridge.WrongThread") == 0 ? SE_WRONG_THREAD : SE_INVALID_HANDLE; }
+int32_t MissingSession() { return std::strcmp(lastError.data(), "Bridge.WrongThread") == 0 ? SE_WRONG_THREAD : SE_INVALID_HANDLE; }
 bool ValidUtf8(const char* text, uint32_t size)
 {
     if (!text && size != 0) return false;
@@ -411,12 +445,22 @@ void FinishEnvironmentRelease(Session& session)
 int32_t AdvanceSession(Session& session,SE_Session handle,double seconds,bool singleStep)
 {
     if(session.stepping)return Error(SE_BUSY,"Bridge.SessionBusy");
-    if(!singleStep&&session.Env().FramePaused()&&!session.Env().Closing())return SE_OK;
+    if(!singleStep&&session.Env().FramePaused()&&!session.Env().Closing())
+    {
+        session.sceneAudio.Synchronize(session.WorldRef(),session.assets.get(),session.audio,true);
+        return SE_OK;
+    }
     struct SteppingGuard{Session& value;~SteppingGuard(){value.stepping=false;}} guard{session};
     session.stepping=true;session.callbackFailed=false;
     const auto hooks=EnvironmentHooks(session,handle);
     const bool result=singleStep?session.Env().StepFrame(hooks):session.Env().RunFrame(seconds,hooks);
-    SweepBodies(session);FinishEnvironmentRelease(session);
+    SweepBodies(session);
+    if(result)
+    {
+        const bool audioPaused=!singleStep&&(session.Env().Paused()||session.Env().FramePaused());
+        session.sceneAudio.Synchronize(session.WorldRef(),session.assets.get(),session.audio,audioPaused);
+    }
+    FinishEnvironmentRelease(session);
     if(!result)return session.callbackFailed?Error(SE_CALLBACK_FAILED,"Bridge.CallbackFailed"):Error(SE_INTERNAL_ERROR,session.Env().LastError().c_str());
     ++session.stepCount;return SE_OK;
 }
@@ -447,7 +491,7 @@ bool EditorDocumentRequest(SE_Session handle,Session& session,const nlohmann::js
         if(called!=SE_OK||required==0||required>buffer.size()||buffer[required-1]!='\0')return Error(SE_CALLBACK_FAILED,"Script.MetadataFailed");
         reply.assign(buffer.data(),required-1);return SE_OK;
     });
-    if(result!=SE_OK){error=lastError;return false;}
+    if(result!=SE_OK){error=lastError.data();return false;}
     try
     {
         response=nlohmann::json::parse(reply);
@@ -466,6 +510,7 @@ static_assert(sizeof(SE_ModelInfo)==16);
 static_assert(sizeof(SE_Vector3)==12 && sizeof(SE_BoxBodyDesc)==32 && sizeof(SE_SphereBodyDesc)==32 && sizeof(SE_RayHit)==48);
 static_assert(sizeof(SE_ContactEvent)==24 && sizeof(SE_TriggerEvent)==24 && sizeof(SE_UiStyle)==56 && sizeof(SE_InputState)==772);
 static_assert(sizeof(SE_PointerState)==28 && sizeof(SE_CharacterDesc)==20 && sizeof(SE_CharacterState)==20);
+static_assert(sizeof(SE_AudioPlayDesc)==40);
 
 #include "NativeSessionExports.inl"
 #include "NativeRenderExports.inl"
@@ -473,4 +518,5 @@ static_assert(sizeof(SE_PointerState)==28 && sizeof(SE_CharacterDesc)==20 && siz
 #include "NativePhysicsExports.inl"
 #include "NativeUiExports.inl"
 #include "NativeInputExports.inl"
+#include "NativeAudioExports.inl"
 #include "NativeLogicExports.inl"

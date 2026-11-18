@@ -3,6 +3,7 @@
 #include "StaticModel.h"
 #include "MaterialDocument.h"
 #include "Environment.h"
+#include "AudioClip.h"
 #include "ResourceLayer/Environment/TODProfile.h"
 #include <memory>
 #include <span>
@@ -58,6 +59,7 @@ public:
     std::shared_ptr<const EnvironmentAsset> LoadEnvironment(const AssetId& id,
         std::vector<AssetDiagnostic>& diagnostics);
     std::shared_ptr<const TODProfile> LoadTODProfile(const AssetId& id,std::vector<AssetDiagnostic>& diagnostics);
+    std::shared_ptr<const AudioClip> LoadAudioClip(const AssetId& id, std::vector<AssetDiagnostic>& diagnostics);
     bool DescribeSource(const AssetId& id, AssetSourceSnapshot& output,
         std::vector<AssetDiagnostic>& diagnostics) const;
     static std::shared_ptr<const StaticModel> LoadModelSnapshot(const AssetSourceSnapshot& source,
@@ -79,6 +81,7 @@ private:
     struct MaterialEntry { std::string key; std::weak_ptr<const MaterialDocument> data; };
     struct EnvironmentEntry { std::string key; std::weak_ptr<const EnvironmentAsset> data; };
     struct TODEntry { std::string key;std::weak_ptr<const TODProfile> data; };
+    struct AudioEntry { std::string key; std::weak_ptr<const AudioClip> data; };
     std::filesystem::path sourceRoot_;
     std::filesystem::path cacheRoot_;
     std::unordered_map<AssetId, Record> records_;
@@ -87,5 +90,6 @@ private:
     std::unordered_map<AssetId, MaterialEntry> materials_;
     std::unordered_map<AssetId, EnvironmentEntry> environments_;
     std::unordered_map<AssetId,TODEntry> todProfiles_;
+    std::unordered_map<AssetId, AudioEntry> audios_;
 };
 }

@@ -141,7 +141,7 @@ bool ReadProject(const fs::path& manifest,ProjectDescription& output,std::vector
         for(const auto& asset:json.at("assets"))
         {
             ProjectAsset value{asset.at("id").get<std::string>(),asset.at("type").get<std::string>()};
-            if(!ValidAssetId(value.id)||!assetIds.insert(value.id).second||(value.type!="model"&&value.type!="image"&&value.type!="material"&&value.type!="tod"&&value.type!="shader"&&value.type!="environment"&&value.type!="data"&&value.type!="prefab"))return Fail(diagnostics,"Project.InvalidManifest");
+            if(!ValidAssetId(value.id)||!assetIds.insert(value.id).second||(value.type!="model"&&value.type!="image"&&value.type!="material"&&value.type!="tod"&&value.type!="shader"&&value.type!="environment"&&value.type!="data"&&value.type!="prefab"&&value.type!="audio"))return Fail(diagnostics,"Project.InvalidManifest");
             result.assets.push_back(std::move(value));
         }
         if(json.contains("replay"))
@@ -221,6 +221,8 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             }
             else if(asset.type=="environment")
             {if(!store.LoadEnvironment(asset.id,assetDiagnostics)){for(const auto& d:assetDiagnostics)diagnostics.push_back({d.key,d.detail});return false;}}
+            else if(asset.type=="audio")
+            {if(!store.LoadAudioClip(asset.id,assetDiagnostics)){for(const auto& d:assetDiagnostics)diagnostics.push_back({d.key,d.detail});return false;}}
             else if(asset.type=="data"){} // 已验证源文件和 sidecar 存在并位于项目目录。
             else if(asset.type=="prefab")
             {
@@ -269,6 +271,8 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             {const auto id=std::get<std::string>(FeatureValue(world,entity,"environmentmap.asset"));if(!assetReference(id,"environment"))return Fail(diagnostics,"Project.MissingAsset",id);}
             for(const auto entity:world.Entities())if(world.FindComponent(entity,RenderSettingsComponent::TypeId))
             {const auto id=std::get<std::string>(FeatureValue(world,entity,"render.diffuseProbe"));if(!assetReference(id,"data"))return Fail(diagnostics,"Project.MissingAsset",id);}
+            for(const auto entity:world.Entities())if(world.FindComponent(entity,AudioSourceComponent::TypeId))
+            {const auto id=std::get<std::string>(FeatureValue(world,entity,"audio.clip"));if(!assetReference(id,"audio"))return Fail(diagnostics,"Project.MissingAsset",id);}
             if(!assetReference(world.EnvironmentSettings().todProfile,"tod"))return Fail(diagnostics,"Project.MissingAsset",world.EnvironmentSettings().todProfile);
             for(const auto entity:world.Entities())if(const auto* mesh=world.GetMesh(entity))
             {

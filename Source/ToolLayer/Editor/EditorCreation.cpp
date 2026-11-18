@@ -75,13 +75,13 @@ bool CreateEditorObject(EditorSession& session, std::string_view kind, StableEnt
 {
     const bool mesh = kind == "cube" || kind == "sphere" || kind == "physics-cube" || kind == "physics-sphere";
     const bool light=kind=="light"||kind=="point-light"||kind=="spot-light";
-    const auto feature=kind=="render-settings"?"render":kind=="environment-settings"?"environmentmap":kind=="rectangle-light"?"rectangle":(kind=="physics-cube"||kind=="physics-sphere")?"body":kind=="trigger-box"?"collider":kind=="character"?"character":"";
+    const auto feature=kind=="render-settings"?"render":kind=="environment-settings"?"environmentmap":kind=="rectangle-light"?"rectangle":(kind=="physics-cube"||kind=="physics-sphere")?"body":kind=="trigger-box"?"collider":kind=="character"?"character":kind=="audio-source"?"audio":kind=="audio-listener"?"listener":"";
     if (!mesh && kind != "empty" && kind != "camera" && !light&&!*feature) return false;
     if (!session.BeginEdit("Editor.Create")) return false;
     const char* name = kind == "cube" ? "Cube" : kind == "sphere" ? "Sphere" :
                        kind == "light" ? "Directional Light" : kind == "camera" ? "Camera" : "GameObject";
     const auto* descriptor=FindComponentDescriptor(feature);
-    const char* localLabel=kind=="point-light"?"EditorUi.LightPoint":kind=="spot-light"?"EditorUi.LightSpot":kind=="physics-sphere"?"EditorUi.CreatePhysicsSphere":kind=="trigger-box"?"EditorUi.CreateTriggerBox":nullptr;
+    const char* localLabel=kind=="point-light"?"EditorUi.LightPoint":kind=="spot-light"?"EditorUi.LightSpot":kind=="physics-sphere"?"EditorUi.CreatePhysicsSphere":kind=="trigger-box"?"EditorUi.CreateTriggerBox":kind=="audio-source"?"EditorUi.CreateAudioSource":nullptr;
     const auto id = session.Create(localLabel?(text?text->GetText(localLabel):std::string(kind)):
         descriptor?(text?text->GetText(std::string(descriptor->labelKey)):std::string(descriptor->key)):name, parent);
     bool ready = id != 0;

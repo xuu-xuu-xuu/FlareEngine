@@ -13,6 +13,7 @@
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
 #include "ResourceLayer/Assets/AssetIO.h"
+#include "ResourceLayer/Assets/AudioClip.h"
 #include "ResourceLayer/Assets/MaterialMetadata.h"
 #include "ResourceLayer/Scenes/PrefabDocument.h"
 
@@ -30,6 +31,23 @@ using ui::editor::EditorPropertyType;
 
 namespace
 {
+std::shared_ptr<const AudioClip> ResolveSelectedAudioClip(
+    ToolkitWorkspaceContext& ctx, const std::filesystem::path& path, const AssetId& id)
+{
+    std::vector<AssetDiagnostic> diagnostics;
+    if (!id.empty())
+    {
+        if (auto loaded = ctx.assets.LoadAudioClip(id, diagnostics)) return loaded;
+    }
+    if (!path.empty() && IsAudioExtension(path))
+    {
+        auto direct = std::make_shared<AudioClip>();
+        diagnostics.clear();
+        if (DecodeAudioSource(path, *direct, diagnostics) && direct->Valid()) return direct;
+    }
+    return nullptr;
+}
+
 std::string PropertyText(const PropertyValue& value)
 {
     if (const auto* v = std::get_if<bool>(&value)) return *v ? "true" : "false";
@@ -186,6 +204,11 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
 {
     auto& state = ctx.assetState;
     Log(LogLevel::Info, "EditorUi.ToolkitAsset: " + path);
+    if (ctx.audio && state.previewAudioVoice)
+    {
+        ctx.audio->Stop(state.previewAudioVoice);
+        state.previewAudioVoice = {};
+    }
     if (state.inspectUi) ctx.shell.CancelPropertyInteraction();
     state.inspectUi = false;
     if (ctx.featureTools) ctx.featureTools->SelectSource(path);
@@ -209,11 +232,13 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
     const bool texture = extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
                          extension == ".bmp" || extension == ".tga";
     const bool model = extension == ".fbx" || extension == ".glb" || extension == ".gltf";
+    const bool audio = extension == ".wav" || extension == ".ogg";
     const bool prefab = IsPrefabDocumentPath(selected);
     std::string type = extension;
     if (model) type = ctx.text.GetText("EditorUi.AssetModel");
     else if (prefab) type = ctx.text.GetText("EditorUi.AssetPrefab");
     else if (texture) type = ctx.text.GetText("EditorUi.AssetTexture");
+    else if (audio) type = ctx.text.GetText("EditorUi.AssetAudio");
     else if (extension == ".cs") type = ctx.text.GetText("EditorUi.AssetScript");
     else if (IsMaterialDocumentPath(selected)) type = ctx.text.GetText("EditorUi.DocumentMaterial");
 
@@ -250,6 +275,30 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
             state.rows.push_back({"asset.addPrefab", ctx.text.GetText("EditorUi.InstantiatePrefab"),
                                   EditorPropertyType::Action, {}, ctx.session.IsPlaying()});
         }
+    }
+    if (audio)
+    {
+        for (const auto& id : ctx.assets.ListIds())
+        {
+            if (ctx.assets.Resolve(id) == selected) { state.modelId = id; break; }
+        }
+        if (const auto clip = ResolveSelectedAudioClip(ctx, selected, state.modelId))
+        {
+            const std::string channelLabel = clip->channels == 1
+                ? ctx.text.GetText("EditorUi.AudioMono")
+                : ctx.text.GetText("EditorUi.AudioStereo");
+            addDetail("asset.audioFormat", "EditorUi.AudioFormat",
+                      std::to_string(clip->sampleRate) + " Hz | " + channelLabel);
+            std::ostringstream duration;
+            duration.setf(std::ios::fixed);
+            duration.precision(2);
+            duration << clip->DurationSeconds() << " s";
+            addDetail("asset.audioDuration", "EditorUi.AudioDuration", duration.str());
+        }
+        state.rows.push_back({"asset.previewAudio", ctx.text.GetText("EditorUi.PreviewAudio"),
+                              EditorPropertyType::Action, {}, ctx.session.IsPlaying()});
+        state.rows.push_back({"asset.stopAudio", ctx.text.GetText("EditorUi.StopAudio"),
+                              EditorPropertyType::Action, {}, ctx.session.IsPlaying()});
     }
     if (extension == ".cs")
     {
@@ -457,6 +506,43 @@ bool HandleAssetPropertyAction(ToolkitWorkspaceContext& ctx, const std::string& 
         }
         state.assetName.clear();
         ctx.viewportController.Action("Frame", ctx.session, ctx.assets);
+        return true;
+    }
+    if (key == "asset.previewAudio")
+    {
+        if (!ctx.audio || ctx.session.IsPlaying()) return false;
+        if (state.previewAudioVoice)
+        {
+            ctx.audio->Stop(state.previewAudioVoice);
+            state.previewAudioVoice = {};
+        }
+        const auto clip = ResolveSelectedAudioClip(ctx, state.assetPath, state.modelId);
+        if (!clip)
+        {
+            ctx.shell.SetStatus(ctx.text.GetText("Assets.AudioDecodeFailed"));
+            return false;
+        }
+        auto clipData = std::make_shared<AudioClipData>();
+        clipData->sampleRate = clip->sampleRate;
+        clipData->channels = clip->channels;
+        clipData->samples = clip->samples;
+        AudioPlayDesc desc;
+        desc.clip = std::move(clipData);
+        desc.volume = 1.0f;
+        desc.pitch = 1.0f;
+        desc.spatialBlend = 0.0f;
+        desc.loop = false;
+        desc.priority = 10;
+        state.previewAudioVoice = ctx.audio->Play(desc);
+        return static_cast<bool>(state.previewAudioVoice);
+    }
+    if (key == "asset.stopAudio")
+    {
+        if (ctx.audio && state.previewAudioVoice)
+        {
+            ctx.audio->Stop(state.previewAudioVoice);
+            state.previewAudioVoice = {};
+        }
         return true;
     }
     if (key == "asset.openScript")
@@ -787,7 +873,8 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
 
     ctx.shell.SetPropertyHandler([&ctx](std::uint64_t id, std::string key, std::string value) {
         if (key == "asset.targetPath" || key == "asset.move" || key == "asset.delete" ||
-            key == "asset.addModel" || key == "asset.addPrefab" || key == "asset.openScript")
+            key == "asset.addModel" || key == "asset.addPrefab" || key == "asset.openScript" ||
+            key == "asset.previewAudio" || key == "asset.stopAudio")
         {
             return HandleAssetPropertyAction(ctx, key, value);
         }

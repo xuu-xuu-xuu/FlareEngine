@@ -28,6 +28,11 @@ bool IsImage(const fs::path& path)
     const auto extension=Lower(path.extension().string());
     return extension==".png"||extension==".jpg"||extension==".jpeg";
 }
+bool IsAudio(const fs::path& path)
+{
+    const auto extension=Lower(path.extension().string());
+    return extension==".wav"||extension==".ogg";
+}
 fs::path Canonical(const fs::path& path)
 {
     std::error_code error;
@@ -128,6 +133,12 @@ Group PlanGroup(const fs::path& requested,const fs::path& targetRoot,const fs::p
         {
             ImageData image;std::vector<AssetDiagnostic> diagnostics;
             if(!DecodeImage(file.source,image,diagnostics))
+            {Reject(group,"Assets.ImportInvalidSource",file.source);return group;}
+        }
+        else if(IsAudio(file.source))
+        {
+            AudioClip clip;std::vector<AssetDiagnostic> diagnostics;
+            if(!DecodeAudioSource(file.source,clip,diagnostics))
             {Reject(group,"Assets.ImportInvalidSource",file.source);return group;}
         }
         std::string digest;
@@ -290,7 +301,7 @@ void RegistrationError(const std::vector<AssetDiagnostic>& diagnostics,const fs:
 bool AssetImportService::SupportedExtension(const std::filesystem::path& path)
 {
     const std::string lower = Lower(path.filename().string());
-    return IsModel(path)||IsImage(path)||Lower(path.extension().string())==".sebin"
+    return IsModel(path)||IsImage(path)||IsAudio(path)||Lower(path.extension().string())==".sebin"
         ||lower.ends_with(".material.json")||lower.ends_with(".prefab.json");
 }
 AssetImportPlan AssetImportService::Plan(const AssetImportRequest& request)

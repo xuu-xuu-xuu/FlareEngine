@@ -132,6 +132,32 @@ internal static unsafe partial class NativeMethods
     internal static partial int ExportScene(ulong handle, byte* buffer, uint capacity, out uint required);
     [LibraryImport(Library, EntryPoint = "se_scene_import", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int ImportScene(ulong handle, string json, uint length);
+    [LibraryImport(Library, EntryPoint = "se_audio_play", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int AudioPlay(ulong session, string assetId, uint length, in AudioPlayDescription description, out ulong voice);
+    [LibraryImport(Library, EntryPoint = "se_audio_stop_voice")]
+    internal static partial int AudioStopVoice(ulong session, ulong voice);
+    [LibraryImport(Library, EntryPoint = "se_audio_is_voice_playing")]
+    internal static partial int AudioIsVoicePlaying(ulong session, ulong voice, out int playing);
+    [LibraryImport(Library, EntryPoint = "se_audio_set_voice_parameters")]
+    internal static partial int AudioSetVoiceParameters(ulong session, ulong voice, in AudioPlayDescription description);
+    [LibraryImport(Library, EntryPoint = "se_audio_play_source")]
+    internal static partial int AudioPlaySource(ulong session, ulong entity);
+    [LibraryImport(Library, EntryPoint = "se_audio_stop_source")]
+    internal static partial int AudioStopSource(ulong session, ulong entity);
+    [LibraryImport(Library, EntryPoint = "se_audio_is_source_playing")]
+    internal static partial int AudioIsSourcePlaying(ulong session, ulong entity, out int playing);
+    [LibraryImport(Library, EntryPoint = "se_audio_set_master_volume")]
+    internal static partial int AudioSetMasterVolume(ulong session, float volume);
+    [LibraryImport(Library, EntryPoint = "se_audio_get_master_volume")]
+    internal static partial int AudioGetMasterVolume(ulong session, out float volume);
+    [LibraryImport(Library, EntryPoint = "se_audio_set_paused")]
+    internal static partial int AudioSetPaused(ulong session, int paused);
+    [LibraryImport(Library, EntryPoint = "se_audio_stop_all")]
+    internal static partial int AudioStopAll(ulong session);
+    [LibraryImport(Library, EntryPoint = "se_audio_active_voice_count")]
+    internal static partial int AudioActiveVoiceCount(ulong session, out uint count);
+    [LibraryImport(Library, EntryPoint = "se_audio_use_null_backend")]
+    internal static partial int AudioUseNullBackend(ulong session, int forceNull);
 }
 
 internal sealed class NativeSessionHandle : SafeHandle

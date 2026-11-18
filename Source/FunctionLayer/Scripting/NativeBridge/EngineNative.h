@@ -60,6 +60,12 @@ typedef struct SE_TriggerEvent {
     int32_t entered;
     uint32_t reserved;
 } SE_TriggerEvent;
+typedef uint64_t SE_AudioVoice;
+typedef struct SE_AudioPlayDesc {
+    SE_Vector3 position;
+    float volume, pitch, min_distance_meters, max_distance_meters, spatial_blend;
+    int32_t loop, priority;
+} SE_AudioPlayDesc;
 typedef struct SE_UiStyle {
     float anchor_min_x,anchor_min_y,anchor_max_x,anchor_max_y,pivot_x,pivot_y;
     float offset_x,offset_y,width,height,padding,spacing;
@@ -268,6 +274,19 @@ SE_API int32_t SE_CALL se_ui_consumes_keyboard(SE_Session session, int32_t* cons
 // JSON 输出 caller-owned；kind: 0=文档，1=视觉快照，2=待派发事件（成功复制后消费）。
 SE_API int32_t SE_CALL se_ui_read_json(SE_Session session, int32_t kind, char* buffer, uint32_t capacity, uint32_t* required) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_ui_load_json(SE_Session session, const char* text, uint32_t length) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_play(SE_Session session, const char* asset_id, uint32_t length, const SE_AudioPlayDesc* description, SE_AudioVoice* voice) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_stop_voice(SE_Session session, SE_AudioVoice voice) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_is_voice_playing(SE_Session session, SE_AudioVoice voice, int32_t* playing) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_set_voice_parameters(SE_Session session, SE_AudioVoice voice, const SE_AudioPlayDesc* description) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_play_source(SE_Session session, SE_Entity entity) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_stop_source(SE_Session session, SE_Entity entity) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_is_source_playing(SE_Session session, SE_Entity entity, int32_t* playing) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_set_master_volume(SE_Session session, float volume) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_get_master_volume(SE_Session session, float* volume) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_set_paused(SE_Session session, int32_t paused) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_stop_all(SE_Session session) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_active_voice_count(SE_Session session, uint32_t* count) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_audio_use_null_backend(SE_Session session, int32_t force_null) SE_NOEXCEPT;
 
 #ifdef __cplusplus
 }

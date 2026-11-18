@@ -8,6 +8,7 @@
 #include "ToolLayer/Editor/EditorFeatureTools.h"
 #include "ToolLayer/Editor/ExternalChangeMonitor.h"
 #include "ToolLayer/Editor/EditorSession.h"
+#include "FunctionLayer/Audio/AudioWorld.h"
 #include "FunctionLayer/Rendering/UiPaint.h"
 #include "ResourceLayer/Assets/AssetStore.h"
 
@@ -38,6 +39,7 @@ struct ToolkitAssetInspectorState
     std::shared_ptr<const ImageData> previewImage;
     std::string previewImageKey;
     std::uint64_t previewToken = 0;
+    VoiceHandle previewAudioVoice;
     std::unordered_map<std::string, ui::UiImageInfo> imageInfos;
 };
 
@@ -69,6 +71,7 @@ struct ToolkitWorkspaceContext
     std::string& importStatus;
     std::future<ToolkitImportResult>& importTask;
     EditorApplicationHooks* hooks = nullptr;
+    AudioWorld* audio = nullptr;
 };
 
 // 将引擎诊断键（如 Editor.ExternalChange）解析为当前语言文案，未命中键表时使用本地化兜底键。

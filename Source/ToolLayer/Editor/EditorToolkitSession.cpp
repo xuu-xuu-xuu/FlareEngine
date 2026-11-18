@@ -116,7 +116,7 @@ bool BrowseAndImportToolkitAsset(ToolkitAppState& state)
         OPENFILENAMEW dialog{};
         dialog.lStructSize = sizeof(dialog);
         dialog.hwndOwner = state.hostWindow;
-        dialog.lpstrFilter = L"Assets\0*.fbx;*.gltf;*.glb;*.png;*.jpg;*.jpeg;*.material.json;*.sebin\0All files\0*.*\0";
+        dialog.lpstrFilter = L"Assets\0*.fbx;*.gltf;*.glb;*.png;*.jpg;*.jpeg;*.wav;*.ogg;*.material.json;*.sebin\0All files\0*.*\0";
         dialog.lpstrFile = file;
         dialog.nMaxFile = static_cast<DWORD>(std::size(file));
         const std::wstring initial = state.assets.SourceRoot().wstring();
@@ -299,12 +299,17 @@ void SyncToolkitHierarchyAssetsAndInspector(ToolkitAppState& state)
     for (const AssetId& id : state.assets.ListIds())
     {
         const std::filesystem::path resolved = state.assets.Resolve(id);
-        const std::string extension = resolved.extension().string();
+        std::string extension = resolved.extension().string();
+        for (char& ch : extension)
+        {
+            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+        }
         std::string type = "asset";
         if (extension == ".fbx" || extension == ".gltf" || extension == ".glb") type = "model";
         else if (IsPrefabDocumentPath(resolved)) type = "prefab";
         else if (IsMaterialDocumentPath(resolved)) type = "material";
         else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".tga") type = "texture";
+        else if (extension == ".wav" || extension == ".ogg") type = "audio";
         else if (extension == ".hlsl" || extension == ".hlsli") type = "shader";
         else if (extension == ".json") type = "data";
         entries.push_back({asset_io::Utf8(resolved), type});
@@ -589,6 +594,11 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         return state.session.Redo();
     });
     commands.Register(EditorCommandId::Play, [&state](const EditorCommand&) {
+        if (state.assetState.previewAudioVoice)
+        {
+            state.audio.Stop(state.assetState.previewAudioVoice);
+            state.assetState.previewAudioVoice = {};
+        }
         if (state.session.IsPlaying()) { state.session.StopPlay(); Log(LogLevel::Info, "EditorUi.ToolkitPlay: stop"); return true; }
         if (state.importTask.valid()) return false;
         std::string reason;
@@ -1096,11 +1106,28 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
 
     if (state.session.IsPlaying())
     {
+        if (state.assetState.previewAudioVoice)
+        {
+            state.audio.Stop(state.assetState.previewAudioVoice);
+            state.assetState.previewAudioVoice = {};
+        }
         state.clipPreview.Clear();
         BuildFrameData(*state.session.PlayEnvironment(), state.playUi.get(), nullptr, frame);
+        if (!state.hooks || !state.hooks->playStarted)
+        {
+            state.sceneAudio.Synchronize(*state.session.PlayWorld(), &state.assets, state.audio,
+                                         state.session.PlayPaused());
+        }
     }
     else
     {
+        if (state.sceneAudio.TrackedSourceCount() > 0)
+        {
+            state.sceneAudio.Clear(state.audio);
+            state.audio.StopAll();
+            state.audio.SetPaused(false);
+        }
+        state.audio.Update(ListenerPose{});
         BuildFrameData(state.session.EditWorld(), nullptr, nullptr, frame);
         state.clipPreview.Update(state.session, frame);
     }

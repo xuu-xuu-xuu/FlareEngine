@@ -72,6 +72,7 @@ std::string Type(const fs::path& path)
     const auto extension=Lower(path.extension().string());
     if(extension==".gltf"||extension==".glb"||extension==".fbx")return "model";
     if(extension==".png"||extension==".jpg"||extension==".jpeg")return "image";
+    if(extension==".wav"||extension==".ogg")return "audio";
     if(IsMaterialDocumentPath(path))return "material";
     if(IsPrefabDocumentPath(path))return "prefab";
     if(extension==".sebin")return "shader";
@@ -105,7 +106,7 @@ std::string PointerPart(std::string text)
 }
 bool ReferenceField(EditorAssetDocumentKind kind,const std::string& pointer)
 {
-    if(kind==EditorAssetDocumentKind::Scene)return pointer.ends_with("/asset")||pointer.find("/materials/")!=std::string::npos||pointer=="/environment/todProfile"||pointer.ends_with("/prefab/prefabId");
+    if(kind==EditorAssetDocumentKind::Scene)return pointer.ends_with("/asset")||pointer.ends_with("/clip")||pointer.find("/materials/")!=std::string::npos||pointer=="/environment/todProfile"||pointer.ends_with("/prefab/prefabId");
     if(kind==EditorAssetDocumentKind::Material)return pointer.starts_with("/textures/")||pointer=="/shader";
     if(kind==EditorAssetDocumentKind::Ui)return pointer.ends_with("/image");
     if(kind==EditorAssetDocumentKind::Prefab)return pointer.find("/properties/")!=std::string::npos&&(pointer.ends_with("/value")||pointer.find("/value/")!=std::string::npos);
@@ -430,6 +431,7 @@ bool EditorAssetActions::SyncProjectAssets(const fs::path& requested,AssetStore&
                 }
             }
             else if(type=="image")valid=static_cast<bool>(assets.LoadTextureImage(id,errors));
+            else if(type=="audio")valid=static_cast<bool>(assets.LoadAudioClip(id,errors));
             else if(type=="material")valid=static_cast<bool>(assets.LoadMaterial(id,errors));
             else if(type=="tod")valid=static_cast<bool>(assets.LoadTODProfile(id,errors));
             else if(type=="environment")valid=static_cast<bool>(assets.LoadEnvironment(id,errors));
@@ -526,6 +528,8 @@ bool EditorAssetActions::ValidatePlayAssets(const World& world,const UiTree* ui,
     }
     for(const auto entity:world.Entities())if(world.FindComponent(entity,EnvironmentSettingsComponent::TypeId))
     {const auto id=std::get<std::string>(FeatureValue(world,entity,"environmentmap.asset"));if(id.empty())continue;std::vector<AssetDiagnostic> errors;if(!assets.LoadEnvironment(id,errors))report(errors,{id,{},"/environmentmap/asset",world.Get(entity)->stableId,true},"Assets.ReadFailed");}
+    for(const auto entity:world.Entities())if(world.FindComponent(entity,AudioSourceComponent::TypeId))
+    {const auto id=std::get<std::string>(FeatureValue(world,entity,"audio.clip"));if(id.empty())continue;std::vector<AssetDiagnostic> errors;if(!assets.LoadAudioClip(id,errors))report(errors,{id,{},"/audio/clip",world.Get(entity)->stableId,true},"Assets.AudioReadFailed");}
     if(ui)for(const auto node:ui->Ids())image(ui->Get(node)->imageAsset,{{},{},"/nodes/"+std::to_string(node)+"/image",node,true,EditorAssetDocumentKind::Ui});
     return diagnostics.empty();
     }

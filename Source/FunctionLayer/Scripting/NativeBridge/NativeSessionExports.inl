@@ -6,7 +6,7 @@ int32_t SE_CALL se_get_abi_info(SE_AbiInfo* info) noexcept
 }
 int32_t SE_CALL se_get_last_error(char* buffer, uint32_t capacity, uint32_t* required) noexcept
 {
-    return CopyText(lastError, buffer, capacity, required);
+    return CopyText(lastError.data(), buffer, capacity, required);
 }
 int32_t SE_CALL se_session_create(SE_Session* output) noexcept
 {
@@ -77,7 +77,7 @@ int32_t SE_CALL se_environment_configure(SE_Session handle,double seconds,uint32
 }
 int32_t SE_CALL se_environment_set_paused(SE_Session handle,int32_t paused)noexcept
 {
-    return Protect([&]()->int32_t{auto* s=Find(handle);if(!s)return MissingSession();if(paused!=0&&paused!=1)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");s->Env().SetPaused(paused!=0);return SE_OK;});
+    return Protect([&]()->int32_t{auto* s=Find(handle);if(!s)return MissingSession();if(paused!=0&&paused!=1)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");s->Env().SetPaused(paused!=0);s->audio.SetPaused(paused!=0);return SE_OK;});
 }
 int32_t SE_CALL se_environment_release(SE_Session handle)noexcept
 {
@@ -118,7 +118,7 @@ int32_t SE_CALL se_environment_fixed_step(SE_Session handle,double seconds)noexc
         auto* s=Find(handle);if(!s)return MissingSession();if(s->stepping)return Error(SE_BUSY,"Bridge.SessionBusy");
         if(!s->environmentDriven||!std::isfinite(seconds)||seconds<=0||seconds>1)return Error(SE_INVALID_ARGUMENT,"Tick.ManualFixedRejected");
         struct Guard{Session& s;~Guard(){s.stepping=false;}} guard{*s};s->stepping=true;s->callbackFailed=false;
-        const bool ok=s->Env().RunFixed(seconds,EnvironmentHooks(*s,handle));SweepBodies(*s);FinishEnvironmentRelease(*s);
+        const bool ok=s->Env().RunFixed(seconds,EnvironmentHooks(*s,handle));SweepBodies(*s);if(ok)s->sceneAudio.Synchronize(s->WorldRef(),s->assets.get(),s->audio,s->Env().Paused()||s->Env().FramePaused());FinishEnvironmentRelease(*s);
         if(!ok)return s->callbackFailed?Error(SE_CALLBACK_FAILED,"Bridge.CallbackFailed"):Error(SE_INVALID_ARGUMENT,s->Env().LastError().c_str());return SE_OK;
     });
 }

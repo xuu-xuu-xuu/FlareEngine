@@ -241,6 +241,9 @@ int32_t SE_CALL se_scene_import(SE_Session handle, const char* text, uint32_t le
         session->bodyOwners.clear();
         session->contactEvents.clear(); session->triggerEvents.clear(); session->physicsClock.Reset();
         session->characters.clear();
+        session->sceneAudio.Clear(session->audio);
+        session->audio.StopAll();
+        session->audio.SetPaused(false);
         return SE_OK;
     });
 }

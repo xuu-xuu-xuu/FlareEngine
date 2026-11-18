@@ -116,6 +116,17 @@ const std::array collider{
     P{"collider.halfExtentsMeters","Feature.Collider.HalfExtents",PropertyType::Vector3,Vec3{.5f,.5f,.5f},.001f,10000.f},
     P{"collider.radiusMeters","Feature.Collider.Radius",PropertyType::Number,.5f,.001f,10000.f},
     P{"collider.isTrigger","Feature.Collider.IsTrigger",PropertyType::Boolean,false}};
+const std::array audioListener{
+    P{"listener.volume","Feature.Audio.ListenerVolume",PropertyType::Number,1.f,0.f,4.f}};
+const std::array audioSource{
+    P{"audio.clip","Feature.Audio.Clip",PropertyType::AssetId,std::string{}},
+    P{"audio.volume","Feature.Audio.Volume",PropertyType::Number,1.f,0.f,4.f},
+    P{"audio.pitch","Feature.Audio.Pitch",PropertyType::Number,1.f,.1f,4.f},
+    P{"audio.loop","Feature.Audio.Loop",PropertyType::Boolean,false},
+    P{"audio.playOnStart","Feature.Audio.PlayOnStart",PropertyType::Boolean,true},
+    P{"audio.spatialBlend","Feature.Audio.SpatialBlend",PropertyType::Number,1.f,0.f,1.f},
+    P{"audio.minDistanceMeters","Feature.Audio.MinDistance",PropertyType::Number,1.f,.01f,10000.f},
+    P{"audio.maxDistanceMeters","Feature.Audio.MaxDistance",PropertyType::Number,30.f,.01f,10000.f}};
 
 template<class T> bool ValidFeatureProperty(std::size_t index,const PropertyValue& value,std::string& error)
 {
@@ -213,8 +224,10 @@ void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors)
     descriptors.push_back(Descriptor<ActorSettingsComponent>("actor","Feature.Actor",actor));
     descriptors.push_back(Descriptor<RectangleLightComponent>("rectangle","Feature.Rectangle",rectangleLight));
     descriptors.push_back(Descriptor<ColliderSettingsComponent>("collider","Feature.Collider",collider));
+    descriptors.push_back(Descriptor<AudioListenerComponent>("listener","Feature.AudioListener",audioListener));
+    descriptors.push_back(Descriptor<AudioSourceComponent>("audio","Feature.Audio",audioSource));
 }
-bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=ColliderSettingsComponent::TypeId;}
+bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=AudioSourceComponent::TypeId;}
 ComponentHandle SceneFeature(const World& world,ComponentTypeId type,bool* authored)
 {
     if(authored)*authored=false;

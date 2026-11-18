@@ -81,8 +81,18 @@ add_library(ufbx STATIC ThirdParty/ufbx/ufbx.c)
 set_target_properties(ufbx PROPERTIES C_STANDARD 99)
 target_include_directories(ufbx PUBLIC ThirdParty/ufbx)
 
+add_library(stb_vorbis STATIC ThirdParty/stb/stb_vorbis.c)
+set_target_properties(stb_vorbis PROPERTIES C_STANDARD 99)
+target_include_directories(stb_vorbis PUBLIC ThirdParty)
+target_compile_definitions(stb_vorbis PRIVATE _CRT_SECURE_NO_WARNINGS)
+if(MSVC)
+    target_compile_options(stb_vorbis PRIVATE /W0)
+endif()
+
 add_library(EngineAssets STATIC
     Source/ResourceLayer/Assets/AssetIO.cpp
+    Source/ResourceLayer/Assets/AudioClip.cpp
+    Source/ResourceLayer/Assets/DrWav.c
     Source/ResourceLayer/Assets/ModelImporter.cpp
     Source/ResourceLayer/Assets/AssetStore.cpp
     Source/ResourceLayer/Assets/MaterialDocument.cpp
@@ -111,8 +121,11 @@ add_library(EngineAssets STATIC
     Source/ResourceLayer/Assets/MeshletBake.cpp
     Source/ResourceLayer/Assets/ImpostorBake.cpp)
 se_target(EngineAssets)
+if(MSVC)
+    set_source_files_properties(Source/ResourceLayer/Assets/DrWav.c PROPERTIES COMPILE_OPTIONS "/W0")
+endif()
 target_include_directories(EngineAssets SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/LtcReference/glm/headers")
-target_link_libraries(EngineAssets PUBLIC EngineCore EngineEnvironmentAssets PRIVATE ufbx bcrypt ole32 windowscodecs)
+target_link_libraries(EngineAssets PUBLIC EngineCore EngineEnvironmentAssets PRIVATE ufbx stb_vorbis bcrypt ole32 windowscodecs)
 
 # 离线场景辐照准备只依赖CPU世界和资产，不拉入RHI。
 add_library(EngineDiffuseProbes STATIC Source/FunctionLayer/Rendering/DiffuseProbePreparation.cpp)
@@ -136,10 +149,18 @@ add_library(EngineInput STATIC
 se_target(EngineInput)
 target_link_libraries(EngineInput PUBLIC EngineCore)
 
+add_library(EngineAudio STATIC Source/FunctionLayer/Audio/AudioWorld.cpp)
+se_target(EngineAudio)
+target_link_libraries(EngineAudio PUBLIC EngineCore)
+
+add_library(EngineSceneAudio STATIC Source/FunctionLayer/Audio/SceneAudio.cpp)
+se_target(EngineSceneAudio)
+target_link_libraries(EngineSceneAudio PUBLIC EngineRuntime EngineAudio EngineAssets)
+
 add_library(EngineNative SHARED Source/FunctionLayer/Scripting/NativeBridge/EngineNative.cpp Source/FunctionLayer/Scripting/NativeBridge/WindowProfile.cpp
     Source/FunctionLayer/Scripting/NativeBridge/PlayerQualityMenu.cpp)
 se_target(EngineNative)
-target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineGameUI EngineInput EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
+target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineAudio EngineSceneAudio EngineGameUI EngineInput EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
 
 add_library(EngineApplication STATIC Source/FunctionLayer/Application/FrameData.cpp Source/FunctionLayer/Application/FeatureFrameData.cpp Source/FunctionLayer/Application/FreeCameraInput.cpp
     Source/FunctionLayer/Application/PlayerQuality.cpp)
@@ -158,9 +179,10 @@ add_library(EnginePlatform STATIC
     Source/PlatformLayer/Windows/WindowsUiInput.cpp
     Source/PlatformLayer/Windows/FrameTimer.cpp
     Source/PlatformLayer/Windows/UiDirectWriteTextService.cpp
-    Source/PlatformLayer/Windows/Win32UiPlatformServices.cpp)
+    Source/PlatformLayer/Windows/Win32UiPlatformServices.cpp
+    Source/PlatformLayer/Windows/XAudio2Backend.cpp)
 se_target(EnginePlatform)
-target_link_libraries(EnginePlatform PUBLIC EngineCore EngineGameUI PRIVATE user32 imm32 shell32)
+target_link_libraries(EnginePlatform PUBLIC EngineCore EngineGameUI PRIVATE user32 imm32 shell32 xaudio2)
 
 add_library(EngineSandboxHost STATIC Source/FunctionLayer/Application/SandboxApp.cpp Source/FunctionLayer/Application/SandboxDiagnostics.cpp)
 se_target(EngineSandboxHost)
