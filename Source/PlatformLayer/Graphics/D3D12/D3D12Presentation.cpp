@@ -1047,7 +1047,11 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     {
         if(!RecordD3D12IndoorLighting(presentation,frame,content,states,*rasterColor,rtv,rasterWidth,rasterHeight,localization))return false;
     }
-    else frame.indoor.reset();
+    else
+    {
+        frame.indoor.reset();
+        presentation.indoorHistory.reset();
+    }
     if(!transparentMeshes.empty())
     {
         if(!RecordD3D12OpaqueTemporal(presentation,frame,content,opaqueMeshes,*rasterColor,*rasterDepth,states,localization))return false;
@@ -1272,13 +1276,14 @@ bool ResizeD3D12Presentation(D3D12Presentation& presentation, UINT width, UINT h
         { presentation.failed = true; return false; }
         frame.fenceValue = 0;
         frame.indoor.reset();
+        frame.indoorHistory.reset();
     }
     if (!CheckGraphicsResult(presentation.commandList->Reset(presentation.frames[0].allocator.Get(), nullptr),
         localization, "D3D12.ResetCommandListFailed")
         || !CheckGraphicsResult(presentation.commandList->Close(), localization, "D3D12.CloseCommandListFailed"))
     { presentation.failed = true; return false; }
     for (auto& buffer : presentation.backBuffers) buffer.Reset();
-    presentation.coverage.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.depth.Reset();presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.gameUiRtvs.reset();
+    presentation.coverage.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.indoorHistory.reset();presentation.depth.Reset();presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.gameUiRtvs.reset();
     presentation.width = presentation.height = 0;
     if (!CheckGraphicsResult(presentation.swapChain->ResizeBuffers(D3D12Presentation::bufferCount,
         width, height, D3D12Presentation::bufferFormat, 0), localization, "D3D12.ResizeBuffersFailed"))
@@ -1330,8 +1335,8 @@ void ReleaseD3D12Presentation(D3D12Presentation& presentation) noexcept
         frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploadDestinations.clear();frame.uploads.Release();frame.baselineConstants.Release();frame.descriptors.Release();frame.outputDescriptors.Release();frame.environmentDescriptors.Release();frame.postDescriptors.Release();frame.guiDescriptors.Release();frame.gameUiDescriptors.Release();frame.particleDescriptors.Release();frame.shadowMaterialDescriptors.Release();frame.transparentDsv.reset();frame.transparentDepth.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
     }
     presentation.fenceEvent.Close();
-    for(auto& frame:presentation.frames)frame.indoor.reset();
-    presentation.indoorLighting.reset();presentation.particlePass.reset();presentation.sceneOverlay.reset();presentation.coverage.reset();
+    for(auto& frame:presentation.frames){frame.indoor.reset();frame.indoorHistory.reset();}
+    presentation.indoorHistory.reset();presentation.indoorLighting.reset();presentation.particlePass.reset();presentation.sceneOverlay.reset();presentation.coverage.reset();
     presentation.fence.Reset();
     for (auto& buffer : presentation.backBuffers) buffer.Reset();
     presentation.rtvs.reset();presentation.gameUiRtvs.reset();
@@ -1368,7 +1373,7 @@ void CollectD3D12UploadReferences(D3D12Presentation& p)
     if(!p.fence)return;const auto completed=p.fence->GetCompletedValue();if(completed==UINT64_MAX)return;
     for(UINT index=0;index<p.frameCount;++index)
         if((!p.uploadStates||index!=p.frameCursor)&&p.frames[index].fenceValue<=completed)
-        {p.frames[index].uploadDestinations.clear();p.frames[index].shadow.reset();p.frames[index].post.reset();}
+        {p.frames[index].uploadDestinations.clear();p.frames[index].shadow.reset();p.frames[index].post.reset();p.frames[index].indoorHistory.reset();}
 }
 bool BeginD3D12FrameCommands(D3D12Presentation& p,const Localization& text)
 {
@@ -1382,7 +1387,7 @@ bool BeginD3D12FrameCommands(D3D12Presentation& p,const Localization& text)
         ||!CheckGraphicsResult(p.commandList->Reset(frame.allocator.Get(),nullptr),text,"D3D12.ResetCommandListFailed"))
     {p.failed=true;if(DeviceWasRemoved(p))ReportDeviceRemoval(p,text);return false;}
     PollD3D12ClusterCounters(p);
-    frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.heterogeneousSources.clear();frame.uploadDestinations.clear();frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.particleDescriptors.Reset();frame.shadowMaterialDescriptors.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
+    frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.heterogeneousSources.clear();frame.uploadDestinations.clear();frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.particleDescriptors.Reset();frame.shadowMaterialDescriptors.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.indoorHistory.reset();frame.constantCursor=0;
     CollectD3D12UploadReferences(p);return true;
 }
 bool BeginD3D12UploadBatch(D3D12Presentation& p,const Localization& text)

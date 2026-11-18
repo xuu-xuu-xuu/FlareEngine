@@ -2,6 +2,7 @@
 cbuffer IndoorConstants : register(b0)
 {
     column_major float4x4 indoorView,indoorProjection,indoorInverseProjection,indoorInverseView;
+    column_major float4x4 indoorPreviousClipFromWorld;
     float4 viewport;      // 宽、高、1/宽、1/高
     float4 strengths;     // 漫反射、镜面、雾消光 (1/m)、雾最大距离 (m)
     float4 fogAlbedo;
@@ -11,7 +12,15 @@ cbuffer IndoorConstants : register(b0)
     float4 ordinaryPosition[8],ordinaryRadiance[8];
     column_major float4x4 sunClip[3];
     float4 sunSplits,sunShadowParameters;
-    float4 sampling;      // 稀疏漫反射的栅格步长；4 = 常规，8 = 4× 空间采样
+    float4 sampling;      // x=shift, y=1/stride, z=bounceWidth, w=bounceHeight
+    uint indoorFrameIndex;
+    float indoorHistoryBlendWeight;
+    float indoorHistoryValid;
+    uint indoorAtrousStep;
+};
+cbuffer IndoorFilterPassConstants : register(b1)
+{
+    uint4 indoorFilterParams; // x=stepSize, y=bounceWidth, z=bounceHeight, w=passIndex
 };
 Texture2D<float4> sceneRadiance : register(t0);
 Texture2D<float> sceneDepth : register(t1);
@@ -22,6 +31,10 @@ Texture2D<float4> environmentBrdf : register(t5);
 Texture2D<float> sunDepth : register(t6);
 Texture2DArray<float> sunCascades : register(t7);
 Texture2D<float4> diffuseIrradiance : register(t8);
+Texture2D<float4> indoorExtraA : register(t9);
+Texture2D<float4> indoorExtraB : register(t10);
+RWTexture2D<float4> indoorOutA : register(u0);
+RWTexture2D<float4> indoorOutB : register(u1);
 #include "LocalLightBindings.hlsli"
 SamplerState indoorSampler : register(s0);
 static const float Pi=3.14159265;
@@ -46,11 +59,15 @@ bool Project(float3 viewPosition,out float2 uv)
     uv=clipPoint.xy/max(clipPoint.w,1e-7)*float2(.5,-.5)+.5;
     return clipPoint.w>1e-6&&clipPoint.z>=0&&clipPoint.z<=clipPoint.w&&all(uv>=0)&&all(uv<1);
 }
-float3 WorldNormal(int2 pixel)
+float3 DecodeWorldNormal(float2 packed)
 {
-    float2 packed=sceneNormal.Load(int3(pixel,0));float3 n=float3(packed,1-abs(packed.x)-abs(packed.y));
+    float3 n=float3(packed,1-abs(packed.x)-abs(packed.y));
     if(n.z<0)n.xy=(1-abs(n.yx))*float2(n.x<0?-1:1,n.y<0?-1:1);
     return Unit(n,float3(0,1,0));
+}
+float3 WorldNormal(int2 pixel)
+{
+    return DecodeWorldNormal(sceneNormal.Load(int3(pixel,0)));
 }
 float3 ViewNormal(int2 pixel){return mul((float3x3)indoorView,WorldNormal(pixel));}
 bool ClearSegment(float3 a,float3 b)
@@ -72,6 +89,14 @@ uint PixelHash(uint2 p)
     uint n=p.x*0x9E3779B9u+p.y*0x85EBCA6Bu;
     n^=n>>16;n*=0x7FEB352Du;n^=n>>15;return n;
 }
+float2 LowDiscrepancyR2(uint index,uint2 gridPixel)
+{
+    // Cranley-Patterson 旋转 + R2 低差异序列，确保时域累积逐帧均匀覆盖半球样点。
+    const float2 alpha=float2(0.754877666,0.569840291);
+    uint h=PixelHash(gridPixel);
+    float2 shift=float2((h&0xffffu)/65536.0,((h>>16)&0xffffu)/65536.0);
+    return frac(shift+float(index%256u)*alpha);
+}
 float3 SourceRadiance(int2 samplePixel,float3 samplePoint,float3 sampleNormal,float footprint)
 {
     // HDR 是有方向性的屏幕样本。对代表的有限表面元求平均，使小灯泡只按其覆盖面积入射。
@@ -91,14 +116,16 @@ float3 SourceRadiance(int2 samplePixel,float3 samplePoint,float3 sampleNormal,fl
     }
     return color*.2;
 }
-float3 DiffuseBounce(int2 receiver,float3 p,float3 normal,uint seed)
+float3 DiffuseBounce(int2 receiver,float3 p,float3 normal,uint2 gridPixel)
 {
     // 对其他可见表面像素积分离散形状因子。投影像素面积通过发射面倾角还原。
     float2 uv=PixelUv(receiver);float d=sceneDepth.Load(int3(receiver,0));
     float pixelWidth=length(ViewAt(uv+float2(viewport.z,0),d)-p);
     float radiusPixels=clamp(2.2/max(pixelWidth,1e-5),3,min(viewport.x,viewport.y)*.42);
     float3 incoming=0;float sumWeight=0;
-    float rotation=(seed&0xffffu)*(2*Pi/65536.0);
+    float2 lds=LowDiscrepancyR2(indoorFrameIndex,gridPixel);
+    uint seed=PixelHash(gridPixel^uint2(indoorFrameIndex*1664525u+1013904223u,indoorFrameIndex*22695477u+1u));
+    float rotation=lds.x*(2*Pi);
     [loop]for(uint ring=0;ring<4;++ring)
     {
         float inner=ring*.25,outer=(ring+1)*.25;
@@ -107,7 +134,8 @@ float3 DiffuseBounce(int2 receiver,float3 p,float3 normal,uint seed)
         {
             float angle=rotation+(ray+ring*.382)*(Pi/6);
             uint jitter=PixelHash(uint2(seed+ray,ring));
-            float radius=sqrt(lerp(inner*inner,outer*outer,((jitter&0xffffu)+.5)/65536.0))*radiusPixels;
+            float tRadial=frac(lds.y+((jitter&0xffffu)+.5)/65536.0);
+            float radius=sqrt(lerp(inner*inner,outer*outer,tRadial))*radiusPixels;
             int2 samplePixel=receiver+(int2)round(float2(cos(angle),sin(angle))*radius);
             if(any(samplePixel<0)||any(samplePixel>=int2(viewport.xy)))continue;
             float z=sceneDepth.Load(int3(samplePixel,0));if(z>=1)continue;
@@ -133,25 +161,172 @@ int2 BouncePixel(int2 gridPixel)
     const int shift=max(2,(int)sampling.x),stride=1<<shift;
     return min((gridPixel<<shift)+(stride>>1),(int2)viewport.xy-1);
 }
-float4 PSDiffuse(float4 position:SV_POSITION):SV_Target
+[numthreads(8,8,1)]
+void CSSampleBounce(uint3 dispatchId:SV_DispatchThreadID)
 {
-    int2 gridPixel=(int2)position.xy,pixel=BouncePixel(gridPixel);
-    float depth=sceneDepth.Load(int3(pixel,0));float4 output=0;
+    int2 gridPixel=(int2)dispatchId.xy;
+    int2 extent=max(int2(1,1),(int2)indoorFilterParams.yz);
+    if(any(gridPixel>=extent))return;
+    int2 pixel=BouncePixel(gridPixel);
+    float depth=sceneDepth.Load(int3(pixel,0));
+    float4 output=0;
     if(depth<1)
     {
         float3 p=ViewAt(PixelUv(pixel),depth);
-        output=float4(DiffuseBounce(pixel,p,ViewNormal(pixel),PixelHash((uint2)gridPixel)),-p.z);
+        output=float4(DiffuseBounce(pixel,p,ViewNormal(pixel),(uint2)gridPixel),max(-p.z,1e-4));
     }
-    return output;
+    indoorOutA[gridPixel]=output;
+}
+[numthreads(8,8,1)]
+void CSTemporalAccumulate(uint3 dispatchId:SV_DispatchThreadID)
+{
+    int2 gridPixel=(int2)dispatchId.xy;
+    int2 extent=max(int2(1,1),(int2)indoorFilterParams.yz);
+    if(any(gridPixel>=extent))return;
+    int2 pixel=BouncePixel(gridPixel);
+    float depth=sceneDepth.Load(int3(pixel,0));
+    if(depth>=1)
+    {
+        indoorOutA[gridPixel]=0;
+        indoorOutB[gridPixel]=0;
+        return;
+    }
+    float4 currSample=diffuseIrradiance.Load(int3(gridPixel,0));
+    float3 p=ViewAt(PixelUv(pixel),depth);
+    float3 currViewN=ViewNormal(pixel);
+    float2 currWorldNOct=sceneNormal.Load(int3(pixel,0));
+    float3 currWorldN=DecodeWorldNormal(currWorldNOct);
+    float currDepthMetric=max(-p.z,1e-4);
+
+    // 3x3 法线/深度门控邻域矩估计与方差夹取盒，用于抑制移动/熄灭光源拖影。
+    float3 mean1=0,mean2=0;float sumW=0;
+    float depthSigma=max(.05,currDepthMetric*.02);
+    [unroll]for(int dy=-1;dy<=1;++dy)[unroll]for(int dx=-1;dx<=1;++dx)
+    {
+        int2 q=gridPixel+int2(dx,dy);
+        if(any(q<0)||any(q>=extent))continue;
+        float4 s=diffuseIrradiance.Load(int3(q,0));
+        if(s.a<=0)continue;
+        float w=(dx==0&&dy==0)?1.0:saturate(dot(currViewN,ViewNormal(BouncePixel(q))));
+        if(w<.7)continue;
+        float dz=abs(s.a-currDepthMetric)/depthSigma;
+        w*=exp(-dz*dz*.5);
+        if(w<=1e-4)continue;
+        mean1+=s.rgb*w;
+        mean2+=(s.rgb*s.rgb)*w;
+        sumW+=w;
+    }
+    mean1/=max(sumW,1e-5);
+    mean2/=max(sumW,1e-5);
+    float3 variance=max(0,mean2-mean1*mean1);
+    float3 stddev=sqrt(variance);
+    float3 boxMin=max(0,mean1-1.25*stddev);
+    float3 boxMax=mean1+1.25*stddev;
+
+    float3 accumulated=currSample.rgb;
+    float lum=dot(currSample.rgb,float3(.2126,.7152,.0722));
+    float2 moments=float2(lum,lum*lum);
+    if(indoorHistoryValid>.5)
+    {
+        float3 worldPos=mul(indoorInverseView,float4(p,1)).xyz;
+        float4 prevClip=mul(indoorPreviousClipFromWorld,float4(worldPos,1));
+        if(prevClip.w>1e-6)
+        {
+            float2 prevUv=prevClip.xy/prevClip.w*float2(.5,-.5)+.5;
+            if(all(prevUv>=0)&&all(prevUv<1))
+            {
+                float2 prevTexel=prevUv*float2(extent)-.5;
+                int2 baseTexel=(int2)floor(prevTexel);
+                float2 fracPos=frac(prevTexel);
+                float3 histSum=0;float2 momSum=0;float wSum=0;
+                float relDepthTol=max(.08,currDepthMetric*.08);
+                [unroll]for(int oy=0;oy<=1;++oy)[unroll]for(int ox=0;ox<=1;++ox)
+                {
+                    int2 tc=clamp(baseTexel+int2(ox,oy),int2(0,0),extent-1);
+                    float4 hRad=indoorExtraA.Load(int3(tc,0));
+                    if(hRad.a<=0)continue;
+                    if(abs(hRad.a-currDepthMetric)>relDepthTol)continue;
+                    float4 hMom=indoorExtraB.Load(int3(tc,0));
+                    float3 prevWorldN=DecodeWorldNormal(hMom.zw);
+                    if(dot(currWorldN,prevWorldN)<.85)continue;
+                    float bw=(ox==0?1-fracPos.x:fracPos.x)*(oy==0?1-fracPos.y:fracPos.y);
+                    histSum+=hRad.rgb*bw;
+                    momSum+=hMom.rg*bw;
+                    wSum+=bw;
+                }
+                if(wSum>.05)
+                {
+                    float3 prevColor=clamp(histSum/wSum,boxMin,boxMax);
+                    float2 prevMom=momSum/wSum;
+                    float blend=clamp(indoorHistoryBlendWeight,0,.96);
+                    accumulated=lerp(currSample.rgb,prevColor,blend);
+                    moments=lerp(moments,prevMom,blend);
+                }
+            }
+        }
+    }
+    indoorOutA[gridPixel]=float4(max(accumulated,0),currDepthMetric);
+    indoorOutB[gridPixel]=float4(moments,currWorldNOct);
+}
+[numthreads(8,8,1)]
+void CSATrousFilter(uint3 dispatchId:SV_DispatchThreadID)
+{
+    int2 gridPixel=(int2)dispatchId.xy;
+    int2 extent=max(int2(1,1),(int2)indoorFilterParams.yz);
+    if(any(gridPixel>=extent))return;
+    float4 centerSample=diffuseIrradiance.Load(int3(gridPixel,0));
+    if(centerSample.a<=0){indoorOutA[gridPixel]=0;return;}
+    int2 centerPixel=BouncePixel(gridPixel);
+    float centerDepth=sceneDepth.Load(int3(centerPixel,0));
+    if(centerDepth>=1){indoorOutA[gridPixel]=0;return;}
+    float3 centerP=ViewAt(PixelUv(centerPixel),centerDepth);
+    float3 centerN=ViewNormal(centerPixel);
+    float4 centerMom=indoorExtraA.Load(int3(gridPixel,0));
+    float variance=max(1e-6,centerMom.g-centerMom.r*centerMom.r);
+    float sigmaL=max(.025,4.0*sqrt(variance));
+    float centerLum=dot(centerSample.rgb,float3(.2126,.7152,.0722));
+    int stepSize=max(1,(int)indoorFilterParams.x);
+    float sigmaZ=max(.035,-centerP.z*.012*float(stepSize));
+    const float kWeights[5]={1.0/16.0,4.0/16.0,6.0/16.0,4.0/16.0,1.0/16.0};
+    float3 sum=0;float sumWeight=0;
+    [unroll]for(int oy=-2;oy<=2;++oy)[unroll]for(int ox=-2;ox<=2;++ox)
+    {
+        int2 qGrid=gridPixel+int2(ox,oy)*stepSize;
+        if(any(qGrid<0)||any(qGrid>=extent))continue;
+        float4 qSample=diffuseIrradiance.Load(int3(qGrid,0));
+        if(qSample.a<=0)continue;
+        float kw=kWeights[ox+2]*kWeights[oy+2];
+        if(ox==0&&oy==0)
+        {
+            sum+=qSample.rgb*kw;sumWeight+=kw;continue;
+        }
+        int2 qPixel=BouncePixel(qGrid);
+        float qDepth=sceneDepth.Load(int3(qPixel,0));
+        if(qDepth>=1)continue;
+        float3 qN=ViewNormal(qPixel);
+        float cosN=saturate(dot(centerN,qN));
+        if(cosN<.70)continue;
+        float wNormal=pow(cosN,16.0);
+        float3 qP=ViewAt(PixelUv(qPixel),qDepth);
+        float3 delta=qP-centerP;
+        float planeDist=max(abs(dot(delta,centerN)),abs(dot(delta,qN)));
+        float wDepth=exp(-(planeDist*planeDist)/(2.0*sigmaZ*sigmaZ));
+        float qLum=dot(qSample.rgb,float3(.2126,.7152,.0722));
+        float wLum=exp(-abs(centerLum-qLum)/sigmaL);
+        float w=kw*wNormal*wDepth*wLum;
+        sum+=qSample.rgb*w;
+        sumWeight+=w;
+    }
+    indoorOutA[gridPixel]=float4(sum/max(sumWeight,1e-6),centerSample.a);
 }
 float3 ReconstructDiffuse(int2 receiver,float3 p,float3 n)
 {
-    // 对稀疏入射辐亮度做低频重建。平面距离守住桌沿，法线约束避免穿过墙角；
-    // 接收面颜色留待重建后再乘，墙上花纹不会在四分之一分辨率处被抹掉。
+    // 对已时域累积与 3 趟 À-Trous 降噪的稀疏辐亮度做全分辨率联合双边升采样。
+    // 接收面颜色留待升采样后再乘，墙上花纹不会在四分之一分辨率处被抹掉。
     const int shift=max(2,(int)sampling.x);
     int2 cell=receiver>>shift,extent=((int2)viewport.xy+(1<<shift)-1)>>shift;
     float sigma=max(.035,-p.z*.008),total=0;float3 sum=0;
-    [loop]for(int y=-3;y<=3;++y)[loop]for(int x=-3;x<=3;++x)
+    [loop]for(int y=-2;y<=2;++y)[loop]for(int x=-2;x<=2;++x)
     {
         int2 q=cell+int2(x,y);if(any(q<0)||any(q>=extent))continue;
         float4 sampleValue=diffuseIrradiance.Load(int3(q,0));

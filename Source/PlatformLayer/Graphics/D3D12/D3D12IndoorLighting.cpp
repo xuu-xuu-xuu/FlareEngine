@@ -8,23 +8,22 @@
 #include "D3D12ShadingExtensions.h"
 #include "D3D12Shadow.h"
 #include "D3D12Texture.h"
+#include "PlatformLayer/Graphics/MaterialLayout.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 
 using Microsoft::WRL::ComPtr;
 namespace
 {
-constexpr UINT TableSize=11,LocalShadowSlot=8,EmptyBounceSlot=9,BounceSlot=10;
-struct alignas(16) IndoorConstants
-{
-    se::Mat4 view,projection,inverseProjection,inverseView;
-    se::Vec4 viewport,strengths,fogAlbedo,sunDirection,sunRadiance,environment,ordinaryLightCount;
-    std::array<se::Vec4,8> ordinaryPosition{},ordinaryRadiance{};
-    std::array<se::Mat4,3> sunClip{};
-    se::Vec4 sunSplits{},sunShadowParameters{},sampling{};
-};
-static_assert(sizeof(IndoorConstants)==864&&offsetof(IndoorConstants,sunClip)==624);
+// 0..10 为图形槽位；11..35 为 5 个计算阶段的独立 (t8..t10, u0..u1) 描述符表切片。
+constexpr UINT TableSize=36,LocalShadowSlot=8,EmptyBounceSlot=9,BounceSlot=10;
+constexpr UINT SampleSrvSlot=11,SampleUavSlot=14;
+constexpr UINT TemporalSrvSlot=16,TemporalUavSlot=19;
+constexpr UINT ATrous0SrvSlot=21,ATrous0UavSlot=24;
+constexpr UINT ATrous1SrvSlot=26,ATrous1UavSlot=29;
+constexpr UINT ATrous2SrvSlot=31,ATrous2UavSlot=34;
 
 bool CreateFrame(D3D12Presentation& p,ID3D12Device& device,ID3D12Resource& color,UINT width,UINT height,
     std::shared_ptr<D3D12IndoorFrame>& output,const Localization& text)
@@ -39,11 +38,41 @@ bool CreateFrame(D3D12Presentation& p,ID3D12Device& device,ID3D12Resource& color
         ||!CheckGraphicsResult(device.CreateDescriptorHeap(&heap,IID_PPV_ARGS(frame->descriptors.GetAddressOf())),text,"D3D12.DescriptorCapacityExceeded"))return false;
     output=std::move(frame);return true;
 }
+
+bool CreateHistory(D3D12Presentation& p,UINT width,UINT height,UINT bounceWidth,UINT bounceHeight,
+    std::shared_ptr<D3D12IndoorHistory>& output,const Localization& text)
+{
+    auto candidate=std::make_shared<D3D12IndoorHistory>();
+    candidate->width=width;candidate->height=height;
+    candidate->bounceWidth=bounceWidth;candidate->bounceHeight=bounceHeight;
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width=bounceWidth;desc.Height=bounceHeight;
+    desc.DepthOrArraySize=desc.MipLevels=1;
+    desc.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
+    desc.SampleDesc={1,0};
+    desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    const auto alloc=[&](ComPtr<ID3D12Resource>& target,const char* name){
+        return CheckGraphicsResult(p.memory->Create(desc,D3D12_RESOURCE_STATE_COMMON,nullptr,target,name),text,"D3D12.PostTargetsFailed");
+    };
+    if(!alloc(candidate->rawBounce,"Indoor.RawBounce")
+        ||!alloc(candidate->historyIrradiance[0],"Indoor.HistoryIrradianceA")
+        ||!alloc(candidate->historyIrradiance[1],"Indoor.HistoryIrradianceB")
+        ||!alloc(candidate->historyMoments[0],"Indoor.HistoryMomentsA")
+        ||!alloc(candidate->historyMoments[1],"Indoor.HistoryMomentsB")
+        ||!alloc(candidate->atrous[0],"Indoor.ATrousA")
+        ||!alloc(candidate->atrous[1],"Indoor.ATrousB"))return false;
+    output=std::move(candidate);
+    return true;
+}
+
 se::Vec4 Vector(se::Vec3 value,float w=0){return {value.x,value.y,value.z,w};}
 }
+
 bool D3D12IndoorLighting::Initialize(ID3D12Device& device,const std::filesystem::path& shader,const Localization& text)
 {
     const auto check=[&](HRESULT hr){return CheckGraphicsResult(hr,text,"D3D12.CreatePipelineFailed");};
+    // 图形根签名与 PSO
     D3D12_DESCRIPTOR_RANGE ranges[]{{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,8,0,0,0},
         {D3D12_DESCRIPTOR_RANGE_TYPE_SRV,1,25,0,LocalShadowSlot}};
     D3D12_DESCRIPTOR_RANGE bounceRange{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,1,8,0,0};
@@ -60,11 +89,11 @@ bool D3D12IndoorLighting::Initialize(ID3D12Device& device,const std::filesystem:
     sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_CLAMP;sampler.MaxLOD=D3D12_FLOAT32_MAX;
     sampler.ComparisonFunc=D3D12_COMPARISON_FUNC_ALWAYS;sampler.MaxAnisotropy=1;sampler.ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_ROOT_SIGNATURE_DESC signature{4,parameters,1,&sampler,D3D12_ROOT_SIGNATURE_FLAG_NONE};
-    ComPtr<ID3DBlob> blob,errors,vertex,pixel,diffuse;
+    ComPtr<ID3DBlob> blob,errors,vertex,pixel;
     if(!check(D3D12SerializeRootSignature(&signature,D3D_ROOT_SIGNATURE_VERSION_1,&blob,&errors))
         ||!check(device.CreateRootSignature(0,blob->GetBufferPointer(),blob->GetBufferSize(),IID_PPV_ARGS(root.GetAddressOf())))
-        ||!CompileD3D12Shader(shader,"VSMain","vs_5_1",vertex,text)||!CompileD3D12Shader(shader,"PSMain","ps_5_1",pixel,text)
-        ||!CompileD3D12Shader(shader,"PSDiffuse","ps_5_1",diffuse,text))return false;
+        ||!CompileD3D12Shader(shader,"VSMain","vs_5_1",vertex,text)
+        ||!CompileD3D12Shader(shader,"PSMain","ps_5_1",pixel,text))return false;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};desc.pRootSignature=root.Get();
     desc.VS={vertex->GetBufferPointer(),vertex->GetBufferSize()};desc.PS={pixel->GetBufferPointer(),pixel->GetBufferSize()};
     desc.SampleDesc.Count=1;desc.SampleMask=UINT_MAX;desc.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
@@ -72,8 +101,31 @@ bool D3D12IndoorLighting::Initialize(ID3D12Device& device,const std::filesystem:
     desc.NumRenderTargets=1;desc.RTVFormats[0]=DXGI_FORMAT_R16G16B16A16_FLOAT;
     desc.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
     if(!check(device.CreateGraphicsPipelineState(&desc,IID_PPV_ARGS(pipeline.GetAddressOf()))))return false;
-    desc.PS={diffuse->GetBufferPointer(),diffuse->GetBufferSize()};
-    return check(device.CreateGraphicsPipelineState(&desc,IID_PPV_ARGS(diffusePipeline.GetAddressOf())));
+
+    // 计算根签名与 PSO（单帧 SSGI 采样、时域重投影累积、3 趟 À-Trous 空域降噪）
+    D3D12_DESCRIPTOR_RANGE sceneSrvs{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,4,0,0,0};
+    D3D12_DESCRIPTOR_RANGE extraSrvs{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,3,8,0,0};
+    D3D12_DESCRIPTOR_RANGE uavs{D3D12_DESCRIPTOR_RANGE_TYPE_UAV,2,0,0,0};
+    D3D12_ROOT_PARAMETER computeParameters[5]{};
+    computeParameters[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;computeParameters[0].DescriptorTable={1,&sceneSrvs};
+    computeParameters[1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;computeParameters[1].Descriptor={0,0};
+    computeParameters[2].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;computeParameters[2].Constants={1,0,4};
+    computeParameters[3].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;computeParameters[3].DescriptorTable={1,&extraSrvs};
+    computeParameters[4].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;computeParameters[4].DescriptorTable={1,&uavs};
+    D3D12_ROOT_SIGNATURE_DESC computeSignature{5,computeParameters,0,nullptr,D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    ComPtr<ID3DBlob> computeBlob,computeErrors,sampleCs,temporalCs,atrousCs;
+    if(!check(D3D12SerializeRootSignature(&computeSignature,D3D_ROOT_SIGNATURE_VERSION_1,&computeBlob,&computeErrors))
+        ||!check(device.CreateRootSignature(0,computeBlob->GetBufferPointer(),computeBlob->GetBufferSize(),IID_PPV_ARGS(computeRoot.GetAddressOf())))
+        ||!CompileD3D12Shader(shader,"CSSampleBounce","cs_5_1",sampleCs,text)
+        ||!CompileD3D12Shader(shader,"CSTemporalAccumulate","cs_5_1",temporalCs,text)
+        ||!CompileD3D12Shader(shader,"CSATrousFilter","cs_5_1",atrousCs,text))return false;
+    D3D12_COMPUTE_PIPELINE_STATE_DESC computeDesc{};computeDesc.pRootSignature=computeRoot.Get();
+    computeDesc.CS={sampleCs->GetBufferPointer(),sampleCs->GetBufferSize()};
+    if(!check(device.CreateComputePipelineState(&computeDesc,IID_PPV_ARGS(samplePipeline.GetAddressOf()))))return false;
+    computeDesc.CS={temporalCs->GetBufferPointer(),temporalCs->GetBufferSize()};
+    if(!check(device.CreateComputePipelineState(&computeDesc,IID_PPV_ARGS(temporalPipeline.GetAddressOf()))))return false;
+    computeDesc.CS={atrousCs->GetBufferPointer(),atrousCs->GetBufferSize()};
+    return check(device.CreateComputePipelineState(&computeDesc,IID_PPV_ARGS(atrousPipeline.GetAddressOf())));
 }
 
 bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,
@@ -101,20 +153,12 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
     const float shift=content.post&&content.post->supersample4x?3.f:2.f;
     const UINT bounceWidth=(width+stride-1)/stride,bounceHeight=(height+stride-1)/stride;
     const bool bounce=indoor.indirect&&indoor.indirectStrength>0;
-    if(bounce&&!output.bounce)
-    {
-        auto desc=color.GetDesc();desc.Width=bounceWidth;desc.Height=bounceHeight;desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-        ComPtr<ID3D12Resource> radiance;std::shared_ptr<D3D12DescriptorRange> view;
-        if(!CheckGraphicsResult(p.memory->Create(desc,D3D12_RESOURCE_STATE_COMMON,nullptr,radiance,"Indoor.DiffuseIrradiance"),text,"D3D12.PostTargetsFailed")
-            ||!CheckGraphicsResult(p.rtvPool->Allocate(1,view),text,"D3D12.DescriptorCapacityExceeded"))return false;
-        device->CreateRenderTargetView(radiance.Get(),nullptr,view->Cpu());output.bounce=std::move(radiance);output.bounceRtv=std::move(view);
-    }
-    else if(!bounce){output.bounce.Reset();output.bounceRtv.reset();}
-    IndoorConstants constants{};
+
+    se::rhi::IndoorLightingConstants constants{};
     constants.view=indoor.view;constants.projection=indoor.clipFromView;
     constants.inverseView=*inverseView;constants.inverseProjection=*inverseProjection;
     constants.viewport={float(width),float(height),1.f/width,1.f/height};
-    constants.sampling={shift,1.f/float(stride),0,0};
+    constants.sampling={shift,1.f/float(stride),float(bounceWidth),float(bounceHeight)};
     constants.strengths={indoor.indirect?indoor.indirectStrength:0.f,indoor.reflections?indoor.reflectionStrength:0.f,
         indoor.volumetricFog?indoor.fogDensity:0.f,indoor.fogDistance};
     constants.fogAlbedo=Vector(indoor.fogAlbedo);
@@ -139,6 +183,36 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
         constants.sunSplits={s.cascadeSplits[0],s.cascadeSplits[1],s.cascadeSplits[2],0};
         constants.sunShadowParameters={float(cascaded?s.cascadeCount:1),float(frame.shadow->resolution),cascaded?1.f:0.f,s.depthBias};
     }
+
+    UINT prevHistory=0,currHistory=1;
+    if(bounce)
+    {
+        if(!p.indoorHistory||p.indoorHistory->width!=width||p.indoorHistory->height!=height
+            ||p.indoorHistory->bounceWidth!=bounceWidth||p.indoorHistory->bounceHeight!=bounceHeight)
+        {
+            std::shared_ptr<D3D12IndoorHistory> nextHistory;
+            if(!CreateHistory(p,width,height,bounceWidth,bounceHeight,nextHistory,text))return false;
+            p.indoorHistory=std::move(nextHistory);
+        }
+        frame.indoorHistory=p.indoorHistory;
+        auto& history=*p.indoorHistory;
+        prevHistory=history.historyIndex;
+        currHistory=1u-prevHistory;
+        const bool validHistory=indoor.historyValid&&history.frames>0
+            &&history.lastSubmission==p.submittedFrames&&history.lastSceneToken==indoor.sceneToken
+            &&se::IsFinite(indoor.previousClipFromWorld);
+        constants.previousClipFromWorld=validHistory?indoor.previousClipFromWorld:se::Mat4::Identity();
+        constants.frameIndex=indoor.frameIndex;
+        constants.historyBlendWeight=std::isfinite(indoor.historyBlendWeight)?std::clamp(indoor.historyBlendWeight,0.f,0.96f):0.88f;
+        constants.historyValid=validHistory?1.f:0.f;
+        constants.atrousStep=1;
+    }
+    else
+    {
+        p.indoorHistory.reset();
+        frame.indoorHistory.reset();
+    }
+
     D3D12UploadSlice upload,emptyLocal;
     const UINT size=(sizeof(constants)+255)&~255u;
     if(!CheckGraphicsResult(frame.uploads.Allocate(size,256,upload),text,"D3D12.CreatePipelineFailed"))return false;
@@ -151,19 +225,18 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
         if(!CheckGraphicsResult(frame.uploads.Allocate(localBytes,256,emptyLocal),text,"D3D12.CreatePipelineFailed"))return false;
         std::memset(emptyLocal.cpu,0,localBytes);
     }
+
     auto& commands=*p.commandList.Get();
     auto use=[&](ID3D12Resource& resource,D3D12_RESOURCE_STATES state,const char* name)
     {return CheckGraphicsResult(states.Use(commands,resource,state,name),text,"D3D12.StateTrackingFailed");};
     commands.OMSetRenderTargets(0,nullptr,FALSE,nullptr);
-    if(!use(color,D3D12_RESOURCE_STATE_COPY_SOURCE,"Indoor.OpaqueHDR")||!use(*output.radiance.Get(),D3D12_RESOURCE_STATE_COPY_DEST,"Indoor.SourceHDR"))return false;
+    if(!use(color,D3D12_RESOURCE_STATE_COPY_SOURCE,"Indoor.OpaqueHDR")
+        ||!use(*output.radiance.Get(),D3D12_RESOURCE_STATE_COPY_DEST,"Indoor.SourceHDR"))return false;
     commands.CopyResource(output.radiance.Get(),&color);
-    if(!use(*output.radiance.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Indoor.SourceHDR")
-        ||!use(*target.depth.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Indoor.Depth")
-        ||!use(*target.normal.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Indoor.Normal")
-        ||!use(color,D3D12_RESOURCE_STATE_RENDER_TARGET,"Indoor.HDR"))return false;
-    if(target.material&&!use(*target.material.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Indoor.Material"))return false;
+
     const UINT increment=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     auto at=[&](UINT slot){auto h=output.descriptors->GetCPUDescriptorHandleForHeapStart();h.ptr+=SIZE_T(slot)*increment;return h;};
+    auto gpuAt=[&](UINT slot){auto h=output.descriptors->GetGPUDescriptorHandleForHeapStart();h.ptr+=UINT64(slot)*increment;return h;};
     auto copy=[&](UINT slot,D3D12_CPU_DESCRIPTOR_HANDLE srv){device->CopyDescriptorsSimple(1,at(slot),srv,D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);};
     auto view=[&](UINT slot,ID3D12Resource* resource,DXGI_FORMAT format,D3D12_SRV_DIMENSION dimension)
     {
@@ -173,9 +246,16 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
         else srv.Texture2D.MipLevels=1;
         device->CreateShaderResourceView(resource,&srv,at(slot));
     };
+    auto srv2d=[&](UINT slot,ID3D12Resource* resource){view(slot,resource,DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_SRV_DIMENSION_TEXTURE2D);};
+    auto uav2d=[&](UINT slot,ID3D12Resource* resource)
+    {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};uav.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;uav.ViewDimension=D3D12_UAV_DIMENSION_TEXTURE2D;
+        device->CreateUnorderedAccessView(resource,nullptr,&uav,at(slot));
+    };
+
     view(0,output.radiance.Get(),DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_SRV_DIMENSION_TEXTURE2D);
     copy(1,target.views->Cpu());copy(2,target.views->Cpu(1));
-    if(target.material)copy(3,target.views->Cpu(2));else view(3,nullptr,DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_SRV_DIMENSION_TEXTURE2D);
+    if(target.material)copy(3,target.views->Cpu(2));else srv2d(3,nullptr);
     if(content.environment)
     {
         for(UINT i=1;i<=2;++i)
@@ -202,26 +282,114 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
         copy(LocalShadowSlot,frame.shading->localShadow->srv->Cpu());
     }
     else view(LocalShadowSlot,nullptr,DXGI_FORMAT_R32_FLOAT,D3D12_SRV_DIMENSION_TEXTURE2DARRAY);
-    view(EmptyBounceSlot,nullptr,DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_SRV_DIMENSION_TEXTURE2D);
-    view(BounceSlot,output.bounce.Get(),DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_SRV_DIMENSION_TEXTURE2D);
-    commands.SetGraphicsRootSignature(p.indoorLighting->root.Get());
-    ID3D12DescriptorHeap* heaps[]{output.descriptors.Get()};commands.SetDescriptorHeaps(1,heaps);
-    commands.SetGraphicsRootDescriptorTable(0,heaps[0]->GetGPUDescriptorHandleForHeapStart());
-    commands.SetGraphicsRootConstantBufferView(1,upload.Gpu());commands.SetGraphicsRootConstantBufferView(2,local?frame.shading->localLightConstants.Gpu():emptyLocal.Gpu());
-    auto draw=[&](ID3D12PipelineState* pipeline,D3D12_CPU_DESCRIPTOR_HANDLE targetView,UINT w,UINT h,UINT bounceSlot)
-    {
-        auto srv=heaps[0]->GetGPUDescriptorHandleForHeapStart();srv.ptr+=UINT64(bounceSlot)*increment;
-        commands.SetGraphicsRootDescriptorTable(3,srv);commands.SetPipelineState(pipeline);
-        const D3D12_VIEWPORT vp{0,0,float(w),float(h),0,1};const D3D12_RECT scissor{0,0,LONG(w),LONG(h)};
-        commands.RSSetViewports(1,&vp);commands.RSSetScissorRects(1,&scissor);commands.OMSetRenderTargets(1,&targetView,FALSE,nullptr);
-        commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);commands.DrawInstanced(3,1,0,0);
-    };
+    srv2d(EmptyBounceSlot,nullptr);
+
+    ID3D12DescriptorHeap* heaps[]{output.descriptors.Get()};
     if(bounce)
     {
-        if(!use(*output.bounce.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"Indoor.DiffuseIrradiance"))return false;
-        draw(p.indoorLighting->diffusePipeline.Get(),output.bounceRtv->Cpu(),bounceWidth,bounceHeight,EmptyBounceSlot);
-        commands.OMSetRenderTargets(0,nullptr,FALSE,nullptr);
-        if(!use(*output.bounce.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Indoor.DiffuseIrradiance"))return false;
+        auto& history=*p.indoorHistory;
+        srv2d(BounceSlot,history.atrous[0].Get());
+
+        srv2d(SampleSrvSlot+0,nullptr);srv2d(SampleSrvSlot+1,nullptr);srv2d(SampleSrvSlot+2,nullptr);
+        uav2d(SampleUavSlot+0,history.rawBounce.Get());uav2d(SampleUavSlot+1,nullptr);
+
+        srv2d(TemporalSrvSlot+0,history.rawBounce.Get());
+        srv2d(TemporalSrvSlot+1,history.historyIrradiance[prevHistory].Get());
+        srv2d(TemporalSrvSlot+2,history.historyMoments[prevHistory].Get());
+        uav2d(TemporalUavSlot+0,history.historyIrradiance[currHistory].Get());
+        uav2d(TemporalUavSlot+1,history.historyMoments[currHistory].Get());
+
+        srv2d(ATrous0SrvSlot+0,history.historyIrradiance[currHistory].Get());
+        srv2d(ATrous0SrvSlot+1,history.historyMoments[currHistory].Get());
+        srv2d(ATrous0SrvSlot+2,nullptr);
+        uav2d(ATrous0UavSlot+0,history.atrous[0].Get());uav2d(ATrous0UavSlot+1,nullptr);
+
+        srv2d(ATrous1SrvSlot+0,history.atrous[0].Get());
+        srv2d(ATrous1SrvSlot+1,history.historyMoments[currHistory].Get());
+        srv2d(ATrous1SrvSlot+2,nullptr);
+        uav2d(ATrous1UavSlot+0,history.atrous[1].Get());uav2d(ATrous1UavSlot+1,nullptr);
+
+        srv2d(ATrous2SrvSlot+0,history.atrous[1].Get());
+        srv2d(ATrous2SrvSlot+1,history.historyMoments[currHistory].Get());
+        srv2d(ATrous2SrvSlot+2,nullptr);
+        uav2d(ATrous2UavSlot+0,history.atrous[0].Get());uav2d(ATrous2UavSlot+1,nullptr);
+
+        if(!use(*output.radiance.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"Indoor.ComputeSourceHDR")
+            ||!use(*target.depth.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"Indoor.ComputeDepth")
+            ||!use(*target.normal.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"Indoor.ComputeNormal"))return false;
+        if(target.material&&!use(*target.material.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"Indoor.ComputeMaterial"))return false;
+
+        commands.SetDescriptorHeaps(1,heaps);
+        commands.SetComputeRootSignature(p.indoorLighting->computeRoot.Get());
+        commands.SetComputeRootDescriptorTable(0,gpuAt(0));
+        commands.SetComputeRootConstantBufferView(1,upload.Gpu());
+
+        const UINT gx=(bounceWidth+7)/8,gy=(bounceHeight+7)/8;
+        const auto dispatchCompute=[&](ID3D12PipelineState* pso,UINT stepSize,UINT passIdx,UINT srvSlot,UINT uavSlot){
+            const UINT filterParams[4]{stepSize,bounceWidth,bounceHeight,passIdx};
+            commands.SetComputeRoot32BitConstants(2,4,filterParams,0);
+            commands.SetComputeRootDescriptorTable(3,gpuAt(srvSlot));
+            commands.SetComputeRootDescriptorTable(4,gpuAt(uavSlot));
+            commands.SetPipelineState(pso);
+            commands.Dispatch(gx,gy,1);
+        };
+
+        // 1. 单次反弹采样（R2 低差异序列抖动）
+        if(!use(*history.rawBounce.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,"Indoor.RawBounceWrite"))return false;
+        dispatchCompute(p.indoorLighting->samplePipeline.Get(),1,0,SampleSrvSlot,SampleUavSlot);
+        if(!CheckGraphicsResult(states.UavBarrier(commands,*history.rawBounce.Get(),"Indoor.RawBounceBarrier"),text,"D3D12.StateTrackingFailed")
+            ||!use(*history.rawBounce.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"Indoor.RawBounceRead"))return false;
+
+        // 2. 时域反向重投影 + 邻域方差夹取 + 矩更新
+        if(!use(*history.historyIrradiance[prevHistory].Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"Indoor.HistoryIrradianceRead")
+            ||!use(*history.historyMoments[prevHistory].Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"Indoor.HistoryMomentsRead")
+            ||!use(*history.historyIrradiance[currHistory].Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,"Indoor.HistoryIrradianceWrite")
+            ||!use(*history.historyMoments[currHistory].Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,"Indoor.HistoryMomentsWrite"))return false;
+        dispatchCompute(p.indoorLighting->temporalPipeline.Get(),1,1,TemporalSrvSlot,TemporalUavSlot);
+        if(!CheckGraphicsResult(states.UavBarrier(commands,*history.historyIrradiance[currHistory].Get(),"Indoor.TemporalIrrBarrier"),text,"D3D12.StateTrackingFailed")
+            ||!CheckGraphicsResult(states.UavBarrier(commands,*history.historyMoments[currHistory].Get(),"Indoor.TemporalMomBarrier"),text,"D3D12.StateTrackingFailed")
+            ||!use(*history.historyIrradiance[currHistory].Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"Indoor.TemporalIrrRead")
+            ||!use(*history.historyMoments[currHistory].Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"Indoor.TemporalMomRead"))return false;
+
+        // 3. 三趟法线-深度-方差加权 À-Trous 空域降噪 (step = 1, 2, 4)
+        const UINT atrousSteps[3]{1u,2u,4u};
+        const UINT atrousSrvSlots[3]{ATrous0SrvSlot,ATrous1SrvSlot,ATrous2SrvSlot};
+        const UINT atrousUavSlots[3]{ATrous0UavSlot,ATrous1UavSlot,ATrous2UavSlot};
+        for(UINT pass=0;pass<3;++pass)
+        {
+            ID3D12Resource& outRes=*history.atrous[pass%2u].Get();
+            if(!use(outRes,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,"Indoor.ATrousWrite"))return false;
+            dispatchCompute(p.indoorLighting->atrousPipeline.Get(),atrousSteps[pass],pass,atrousSrvSlots[pass],atrousUavSlots[pass]);
+            if(!CheckGraphicsResult(states.UavBarrier(commands,outRes,"Indoor.ATrousBarrier"),text,"D3D12.StateTrackingFailed"))return false;
+            const auto nextState=(pass==2)?D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE:D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            if(!use(outRes,nextState,"Indoor.ATrousRead"))return false;
+        }
+
+        history.historyIndex=currHistory;
+        ++history.frames;
+        history.lastSubmission=p.submittedFrames+1;
+        history.lastSceneToken=indoor.sceneToken;
     }
-    draw(p.indoorLighting->pipeline.Get(),rtv,width,height,BounceSlot);return true;
+    else
+    {
+        srv2d(BounceSlot,nullptr);
+    }
+
+    if(!use(*output.radiance.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Indoor.SourceHDR")
+        ||!use(*target.depth.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Indoor.Depth")
+        ||!use(*target.normal.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Indoor.Normal")
+        ||!use(color,D3D12_RESOURCE_STATE_RENDER_TARGET,"Indoor.HDR"))return false;
+    if(target.material&&!use(*target.material.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"Indoor.Material"))return false;
+
+    commands.SetGraphicsRootSignature(p.indoorLighting->root.Get());
+    commands.SetDescriptorHeaps(1,heaps);
+    commands.SetGraphicsRootDescriptorTable(0,gpuAt(0));
+    commands.SetGraphicsRootConstantBufferView(1,upload.Gpu());
+    commands.SetGraphicsRootConstantBufferView(2,local?frame.shading->localLightConstants.Gpu():emptyLocal.Gpu());
+    commands.SetGraphicsRootDescriptorTable(3,gpuAt(bounce?BounceSlot:EmptyBounceSlot));
+    commands.SetPipelineState(p.indoorLighting->pipeline.Get());
+    const D3D12_VIEWPORT vp{0,0,float(width),float(height),0,1};const D3D12_RECT scissor{0,0,LONG(width),LONG(height)};
+    commands.RSSetViewports(1,&vp);commands.RSSetScissorRects(1,&scissor);commands.OMSetRenderTargets(1,&rtv,FALSE,nullptr);
+    commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);commands.DrawInstanced(3,1,0,0);
+    return true;
 }

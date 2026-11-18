@@ -1835,3 +1835,5 @@ Navigation.AgentInactive=目标实体未挂载活跃的导航代理组件
 NavigationCooker.Usage=用法：NavigationCooker bake <scene.scene.json> <ContentRoot> <output.senav> [--cell N] [--radius N] [--height N] [--slope N] [--step N]
 NavigationCooker.SceneLoadFailed=加载待烘焙的场景文件失败
 NavigationCooker.Complete=已完成导航网格离线烘焙
+Feature.Render.TodLighting=昼夜光照联动
+TOD.GpuLinkedPreview=实时 GPU 光照与大气联动

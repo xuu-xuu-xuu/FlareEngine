@@ -20,7 +20,7 @@ public:
     const AssetId& Id()const{return id_;}
     bool Ready()const{return !id_.empty();}
     bool Dirty()const;
-    void BeginEdit(){if(Ready()&&!edit_)edit_=profile_;}
+    void BeginEdit(){if(Ready()&&!edit_){edit_=profile_;editTime_=environment_.TimeOfDay().State().time;}}
     bool EndEdit(bool commit);
     bool Undo();bool Redo();
     EnvironmentSnapshot Snapshot()const{return environment_.Snapshot();}
@@ -32,5 +32,6 @@ private:
     std::string saved_,error_;
     std::vector<TODProfile> undo_,redo_;
     std::optional<TODProfile> edit_;
+    std::optional<double> editTime_;
 };
 }

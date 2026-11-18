@@ -1835,3 +1835,5 @@ Navigation.AgentInactive=Target entity does not have an active navigation agent 
 NavigationCooker.Usage=Usage: NavigationCooker bake <scene.scene.json> <ContentRoot> <output.senav> [--cell N] [--radius N] [--height N] [--slope N] [--step N]
 NavigationCooker.SceneLoadFailed=Failed to load scene file for NavMesh bake
 NavigationCooker.Complete=Offline NavMesh bake completed
+Feature.Render.TodLighting=TOD lighting linkage
+TOD.GpuLinkedPreview=Live GPU lighting & atmosphere

@@ -312,7 +312,7 @@ void SyncToolkitHierarchyAssetsAndInspector(ToolkitAppState& state)
         else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".tga") type = "texture";
         else if (extension == ".wav" || extension == ".ogg") type = "audio";
         else if (extension == ".hlsl" || extension == ".hlsli") type = "shader";
-        else if (extension == ".json" || extension == ".senav" || extension == ".selod"
+        else if (extension == ".json" || extension == ".tod" || extension == ".senav" || extension == ".selod"
             || extension == ".sehlod" || extension == ".semeshlet" || extension == ".seimp"
             || extension == ".sebc" || extension == ".ppm" || extension == ".sesh"
             || extension == ".sedp" || extension == ".sebrdf" || extension == ".seltc"
@@ -1203,9 +1203,33 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
         frame.debugLines.insert(frame.debugLines.end(), lines.begin(), lines.end());
     }
     if (state.session.IsPlaying() && state.session.PlayEnvironment()->TimeOfDay().Profile())
+    {
         frame.timeOfDay = state.session.PlayEnvironment()->Snapshot();
-    if (!state.session.IsPlaying() && state.host.TimeOfDayPreview().Ready())
-        frame.timeOfDay = state.host.TimeOfDayPreview().Snapshot();
+        ApplyTimeOfDayFrameData(frame);
+    }
+    else if (!state.session.IsPlaying())
+    {
+        if (state.host.TimeOfDayPreview().Ready())
+        {
+            frame.timeOfDay = state.host.TimeOfDayPreview().Snapshot();
+            ApplyTimeOfDayFrameData(frame);
+        }
+        else if (const auto& todId = state.session.EditWorld().EnvironmentSettings().todProfile; !todId.empty())
+        {
+            std::vector<AssetDiagnostic> ignored;
+            if (const auto profile = state.assets.LoadTODProfile(todId, ignored))
+            {
+                World emptyWorld;
+                EventBus events(emptyWorld, 16, 1024);
+                TODSystem tod(events);
+                if (tod.SelectProfile(*profile))
+                {
+                    frame.timeOfDay = tod.Snapshot(0);
+                    ApplyTimeOfDayFrameData(frame);
+                }
+            }
+        }
+    }
     frame.colorLutPath = state.host.ColorLutPath();
     if (!state.session.IsPlaying()) frame.materialPreview = state.host.Material().Preview();
 

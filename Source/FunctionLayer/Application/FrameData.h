@@ -88,7 +88,9 @@ struct FrameData
     rhi::IndoorLightingSettings indoor;
     EnvironmentView environment;
     SkyView sky;
-    std::optional<EnvironmentSnapshot> timeOfDay; // 自有 CPU 昼夜值；GPU 消费另行接入。
+    std::optional<EnvironmentSnapshot> timeOfDay; // 自有 CPU 昼夜值；由 ApplyTimeOfDayFrameData 消费写入 GPU 光照与大气参数。
+    bool todLighting=true;
+    bool todApplied=false;
     std::optional<rhi::PostProcessSettings> post; // 只有数值；不含 GPU 句柄或 prepared 对象。
     // W06：运行时外观覆盖。mode 0=基础色 1=白模 2=Toon；blend 在场景层统一推进。
     float lookMode=0,lookBlend=0;

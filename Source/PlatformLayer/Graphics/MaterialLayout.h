@@ -10,6 +10,28 @@ inline constexpr std::uint32_t DepthNormalLayoutVersion=39;
 inline constexpr std::uint32_t ShadingExtensionLayoutVersion=40;
 // RG104-16：GPU 广告牌粒子实例与常量布局；与 ParticleBindings.hlsli 严格对齐。
 inline constexpr std::uint32_t ParticleLayoutVersion=41;
+// 室内 SSGI 常量布局；与 IndoorLighting.hlsl IndoorConstants 严格对齐。
+inline constexpr std::uint32_t IndoorLightingLayoutVersion=42;
+struct alignas(16) IndoorLightingConstants
+{
+    Mat4 view,projection,inverseProjection,inverseView;
+    Mat4 previousClipFromWorld;
+    Vec4 viewport,strengths,fogAlbedo,sunDirection,sunRadiance,environment,ordinaryLightCount;
+    std::array<Vec4,8> ordinaryPosition{},ordinaryRadiance{};
+    std::array<Mat4,3> sunClip{};
+    Vec4 sunSplits{},sunShadowParameters{},sampling{};
+    std::uint32_t frameIndex=0;
+    float historyBlendWeight=0.0f;
+    float historyValid=0.0f;
+    std::uint32_t atrousStep=1;
+};
+static_assert(sizeof(IndoorLightingConstants)==944&&alignof(IndoorLightingConstants)==16);
+static_assert(offsetof(IndoorLightingConstants,previousClipFromWorld)==256);
+static_assert(offsetof(IndoorLightingConstants,sunClip)==688);
+static_assert(offsetof(IndoorLightingConstants,frameIndex)==928
+    &&offsetof(IndoorLightingConstants,historyBlendWeight)==932
+    &&offsetof(IndoorLightingConstants,historyValid)==936
+    &&offsetof(IndoorLightingConstants,atrousStep)==940);
 struct alignas(16) ParticleInstanceGpuData
 {
     float position[3]{};
@@ -238,5 +260,6 @@ inline constexpr LayoutVersionRecord GSeriesLayoutVersions[] =
     {DepthNormalLayoutVersion,"RG104-15/G10","独立 D32 + RG16F 世界几何法线 oct（每像素8B，非CB）",8},
     {ShadingExtensionLayoutVersion,"RG104-08/09/10/11/12","独立光照扩展 b5=480B/b6=96B/t13..24，覆盖38正交",480},
     {ParticleLayoutVersion,"RG104-16","GPU粒子广告牌实例(t0 48B)与常量b0=112B",112},
+    {IndoorLightingLayoutVersion,"RG104-SSGI","室内SSGI时域重投影、帧抖动、历史权重与À-Trous常量b0=944B",944},
 };
 }

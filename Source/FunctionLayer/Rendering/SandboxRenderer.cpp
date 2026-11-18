@@ -34,6 +34,19 @@ bool MaterialScene(SandboxScene scene){return scene==SandboxScene::Materials||sc
 bool HlodSceneMode(SandboxScene scene){return scene==SandboxScene::Hlod;}
 bool PbrScene(SandboxScene scene){return MaterialScene(scene)||scene==SandboxScene::Scene||HlodSceneMode(scene);}
 bool BasicLitScene(SandboxScene scene){return scene==SandboxScene::BasicLit;}
+std::uint64_t ComputeIndoorSceneToken(SandboxScene scene,const se::FrameData* data)
+{
+    std::uint64_t token=0;
+    const auto mix=[&](std::uint64_t v){token^=v+0x9e3779b97f4a7c15ull+(token<<6)+(token>>2);};
+    mix(static_cast<std::uint64_t>(scene));
+    if(data)
+    {
+        mix(data->cameraBinding.value_or(0));
+        mix(data->meshes.size());
+        mix(data->editorGuiEnabled?1ull:0ull);
+    }
+    return token;
+}
 bool RequiresMaterialCoverage(const se::FrameData& frame)
 {
     if(!frame.assets)return false;
@@ -164,6 +177,7 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
             &&!(occlusionTimingLength==1&&occlusionTimingValue[0]==L'0');
         occlusionCommitted_=false;
         previousViewProjectionValid_=false;previousWorlds_.clear();
+        indoorHistoryValid_=false;lastSceneWidth_=0;lastSceneHeight_=0;lastIndoorSceneToken_=0;
         if((scene_==SandboxScene::PostProcess||basic)&&!post_.Initialize(*device_,resources/"Shaders",acesToneMap))return false;
         featurePostAces_=acesToneMap;
         if(basic)
@@ -491,14 +505,14 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         hlodResidentRadius_=frame.data?frame.data->hlodRadius:0;
         const bool pbr=frame.data&&(frame.data->fullPbr||materialShading||localLighting||indoorLighting||frame.data->multiscatter
             ||frame.data->diffuseSh||frame.data->localDiffuseSh||!frame.data->rectangleLights.empty());
-        if(pbr!=featureFullPbr_){std::swap(featureEnvironment_?featureEnvironmentPipeline_:pipeline_,featurePbrPipeline_);featureFullPbr_=pbr;previousViewProjectionValid_=false;}
+        if(pbr!=featureFullPbr_){std::swap(featureEnvironment_?featureEnvironmentPipeline_:pipeline_,featurePbrPipeline_);featureFullPbr_=pbr;previousViewProjectionValid_=false;indoorHistoryValid_=false;}
         const bool instanced=sceneInstancing;
-        if(instanced!=featureForward_){std::swap(outputPipeline_,featureForwardOutput_);featureForward_=instanced;previousViewProjectionValid_=false;}
+        if(instanced!=featureForward_){std::swap(outputPipeline_,featureForwardOutput_);featureForward_=instanced;previousViewProjectionValid_=false;indoorHistoryValid_=false;}
         const bool environment=frame.data&&(defaultEnvironment||!frame.data->environment.asset.empty()||frame.data->diffuseSh||frame.data->localDiffuseSh)&&!instanced;
         if(environment!=featureEnvironment_)
-        {std::swap(pipeline_,featureEnvironmentPipeline_);std::swap(skyPipeline_,featureEnvironmentSky_);featureEnvironment_=environment;previousViewProjectionValid_=false;}
+        {std::swap(pipeline_,featureEnvironmentPipeline_);std::swap(skyPipeline_,featureEnvironmentSky_);featureEnvironment_=environment;previousViewProjectionValid_=false;indoorHistoryValid_=false;}
         const bool taa=postFrame&&frame.data->post->taa;
-        if(taa!=taaEnabled_){previousViewProjectionValid_=false;previousWorlds_.clear();}
+        if(taa!=taaEnabled_){previousViewProjectionValid_=false;indoorHistoryValid_=false;previousWorlds_.clear();}
         taaEnabled_=taa;autoExposureEnabled_=postFrame&&frame.data->post->autoExposure;lutEnabled_=postFrame&&frame.data->post->lutEnabled;
         if(frame.data&&frame.data->sceneRenderSettings){occlusionEnabled_=frame.data->occlusion;occlusionHudEnabled_=frame.data->occlusionCounters;occlusionTimingEnabled_=frame.data->occlusionTiming;frameGraphEnabled_=frame.data->frameGraph;}
         else {occlusionEnabled_=occlusionHudEnabled_=occlusionTimingEnabled_=frameGraphEnabled_=false;}
@@ -1333,9 +1347,16 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 lighting.gpuDrivenHiZ=frame.data->gpuDrivenHiZ;
                 if(camera_&&frame.data->indoor.Enabled())
                 {
+                    const auto indoorSceneToken=ComputeIndoorSceneToken(scene_,frame.data);
                     lighting.indoor=frame.data->indoor;
                     lighting.indoor.view=camera_->view;
                     lighting.indoor.clipFromView=viewProjection*camera_->inverseView;
+                    lighting.indoor.previousClipFromWorld=previousViewProjection_;
+                    lighting.indoor.frameIndex=static_cast<std::uint32_t>(frame.updateIndex);
+                    lighting.indoor.sceneToken=indoorSceneToken;
+                    lighting.indoor.historyValid=indoorHistoryValid_&&previousViewProjectionValid_
+                        &&lastSceneWidth_==sceneWidth&&lastSceneHeight_==sceneHeight
+                        &&lastIndoorSceneToken_==indoorSceneToken;
                 }
             }
             if(shadingFrame&&camera_&&frame.data)
@@ -1453,7 +1474,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                         }
                         if(frame.data&&frame.data->referenceUiOverlays)overlays=se::PreparePostProcessOverlays(frame.data->ui,diagnostics);}
                     // 反射、漫反射继续采样 IBL，自定义天空和编辑器的天空开关只决定背景。
-                    const bool useProceduralSky=featureEnvironment_&&frame.data&&(frame.data->sky.enabled||frame.data->timeOfDay
+                    const bool useProceduralSky=featureEnvironment_&&frame.data&&(frame.data->sky.enabled||(frame.data->todLighting&&frame.data->timeOfDay)
                         ||(frame.data->editorGuiEnabled&&!frame.data->editorSkyEnabled));
                     const auto sky=useProceduralSky?*featureEnvironmentSky_:*skyPipeline_;
                     if(frameGraphEnabled_)
@@ -1532,10 +1553,21 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     }
     if(result&&!forward)result=commands->Close();
     if(result)result=device_->Resize(frame.surface.width,frame.surface.height);
-    if(taaFrame&&result)
+    const bool indoorActive=frame.data&&camera_&&frame.data->indoor.Enabled();
+    if((taaFrame||indoorActive)&&result)
     {
         previousViewProjection_=viewProjectionBase;previousViewProjectionValid_=true;
         lastSurfaceWidth_=frame.surface.width;lastSurfaceHeight_=frame.surface.height;
+    }
+    if(indoorActive&&result)
+    {
+        indoorHistoryValid_=true;
+        lastSceneWidth_=sceneWidth;lastSceneHeight_=sceneHeight;
+        lastIndoorSceneToken_=ComputeIndoorSceneToken(scene_,frame.data);
+    }
+    else
+    {
+        indoorHistoryValid_=false;
     }
     preparation.reset();
     se::rhi::CompletionToken token;

@@ -400,6 +400,11 @@ struct IndoorLightingSettings
     float indirectStrength=1,reflectionStrength=1,fogDensity=.035f,fogDistance=25;
     Vec3 fogAlbedo{.85f,.9f,1};
     Mat4 view,clipFromView; // 与本帧几何实际抖动投影一致。
+    Mat4 previousClipFromWorld=Mat4::Identity();
+    std::uint32_t frameIndex=0;
+    float historyBlendWeight=0.88f;
+    bool historyValid=false;
+    std::uint64_t sceneToken=0;
     bool SurfaceEnabled() const {return (indirect&&indirectStrength>0)||(reflections&&reflectionStrength>0);}
     bool Enabled() const {return SurfaceEnabled()||(volumetricFog&&fogDensity>0&&fogDistance>0);}
 };

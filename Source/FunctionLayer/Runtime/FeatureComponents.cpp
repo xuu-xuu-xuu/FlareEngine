@@ -95,7 +95,8 @@ const std::array rendering{
     P{"render.volumetricFog","Feature.Render.VolumetricFog",PropertyType::Boolean,false},
     P{"render.fogDensity","Feature.Render.FogDensity",PropertyType::Number,.035f,0.f,1.f},
     P{"render.fogDistance","Feature.Render.FogDistance",PropertyType::Number,25.f,.1f,500.f},
-    P{"render.fogAlbedo","Feature.Render.FogAlbedo",PropertyType::Vector3,Vec3{.85f,.9f,1},0.f,1.f}};
+    P{"render.fogAlbedo","Feature.Render.FogAlbedo",PropertyType::Vector3,Vec3{.85f,.9f,1},0.f,1.f},
+    P{"render.todLighting","Feature.Render.TodLighting",PropertyType::Boolean,true}};
 const std::array rectangleLight{
     P{"rectangle.color","Feature.Rectangle.Color",PropertyType::Vector3,Vec3{1,1,1},0.f,65504.f},
     P{"rectangle.radiance","Feature.Rectangle.Radiance",PropertyType::Number,10.f,0.f,65504.f},

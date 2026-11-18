@@ -21,6 +21,7 @@ class D3D12DepthNormals;
 struct D3D12DepthNormalTarget;
 struct D3D12DepthNormalFrame;
 struct D3D12IndoorLighting;
+struct D3D12IndoorHistory;
 struct D3D12IndoorFrame;
 struct D3D12Particles;
 class D3D12AmbientOcclusion;
@@ -84,6 +85,7 @@ struct D3D12FrameContext
     std::shared_ptr<D3D12OpaqueTemporal> opaqueTemporal;
     std::shared_ptr<D3D12DepthNormalFrame> depthNormals;
     std::shared_ptr<D3D12IndoorFrame> indoor;
+    std::shared_ptr<D3D12IndoorHistory> indoorHistory;
     std::shared_ptr<D3D12AmbientOcclusionFrame> ambientOcclusion;
     std::shared_ptr<D3D12ShadingFrame> shading;
     D3D12UploadSlice shadingConstants;
@@ -198,6 +200,7 @@ struct D3D12Presentation
     std::shared_ptr<D3D12OpaqueTemporal> opaqueTemporal;
     std::shared_ptr<D3D12DepthNormals> depthNormalBuilder;
     std::shared_ptr<D3D12IndoorLighting> indoorLighting;
+    std::shared_ptr<D3D12IndoorHistory> indoorHistory;
     std::shared_ptr<D3D12Particles> particlePass;
     std::shared_ptr<D3D12DepthNormalTarget> depthNormalTarget;
     se::rhi::DepthNormalStatistics depthNormalStatistics;

@@ -6,7 +6,11 @@ namespace se
 void BuildFrameData(const Environment& environment,const UiTree* ui,const PhysicsWorld* physics,FrameData& output)
 {
     BuildFrameData(environment.GetWorld(),ui,physics,output);
-    if(environment.TimeOfDay().Profile())output.timeOfDay=environment.Snapshot();
+    if(environment.TimeOfDay().Profile())
+    {
+        output.timeOfDay=environment.Snapshot();
+        ApplyTimeOfDayFrameData(output);
+    }
     // 蒙皮调色板复制进本帧快照：渲染器不持有 World 或运行时状态指针。
     for(auto& mesh:output.meshes)
         if(const auto* pose=environment.Skeletal().Find(mesh.entity))mesh.skinPalette=pose->joints;

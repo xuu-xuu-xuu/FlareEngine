@@ -170,6 +170,9 @@ private:
     // G15：SELFENGINE_AUTO_EXPOSURE=1 启用 GPU 直方图曝光；SELFENGINE_LUT=1 启用 33³ LUT。
     // 两者默认关闭，保持既有 Reinhard/CPU 曝光路径逐字节不变。
     bool autoExposureEnabled_=false,lutEnabled_=false;
+    std::uint32_t lastSceneWidth_=0,lastSceneHeight_=0;
+    std::uint64_t lastIndoorSceneToken_=0;
+    bool indoorHistoryValid_=false;
     // G15：SELFENGINE_LUT_FILE 选中的 `.selut` 每帧按修改时间热重载；失败时保留上一版。
     se::ColorLutFile lutFile_;
     std::uint64_t reportedLutFailures_=0;
