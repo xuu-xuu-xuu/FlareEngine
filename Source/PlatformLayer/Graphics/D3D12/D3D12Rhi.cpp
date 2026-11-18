@@ -428,6 +428,8 @@ struct CommandContext::Impl
     std::filesystem::path sceneOverlayShader;
     float sceneLineScale=1;
     bool sceneGrid=false;
+    ParticleFrame particles;
+    std::filesystem::path particleShader;
 };
 Device::Device():impl_(std::make_shared<Impl>()){}
 Device::~Device(){Shutdown();}
@@ -823,6 +825,28 @@ Result CommandContext::ConfigureSceneOverlay(std::span<const SceneLine> lines,co
         if(line.width<=0||line.width>64||line.occludedAlpha<0||line.occludedAlpha>1)return Fail(Error::InvalidArgument);
     }
     impl_->sceneLines.assign(lines.begin(),lines.end());impl_->sceneOverlayShader=shader;impl_->sceneLineScale=scale;impl_->sceneGrid=groundGrid;return {};
+}
+Result CommandContext::ConfigureParticles(const ParticleFrame& particles,const std::filesystem::path& shader)
+{
+    auto d=impl_?impl_->device.lock():nullptr;
+    if(!d||!d->Usable()||impl_->phase||!impl_->particleShader.empty())return Fail(Error::InvalidState);
+    if(shader.empty()||!IsFinite(particles.cameraRight)||!IsFinite(particles.cameraUp))return Fail(Error::InvalidArgument);
+    std::size_t total=0;
+    for(const auto& batch:particles.batches)
+    {
+        total+=batch.instances.size();
+        if(total>MaximumFrameInstances)return Fail(Error::CapacityExceeded);
+        for(const auto& item:batch.instances)
+        {
+            for(float v:item.position)if(!std::isfinite(v))return Fail(Error::InvalidArgument);
+            if(!std::isfinite(item.size)||item.size<0.f)return Fail(Error::InvalidArgument);
+            for(float v:item.color)if(!std::isfinite(v))return Fail(Error::InvalidArgument);
+            for(float v:item.params)if(!std::isfinite(v))return Fail(Error::InvalidArgument);
+        }
+    }
+    impl_->particles=particles;
+    impl_->particleShader=shader;
+    return {};
 }
 Result CommandContext::ConfigureComposition(const FrameComposition& composition)
 {
@@ -1383,6 +1407,7 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     content.screenSpaceOcclusion=c.screenSpaceOcclusion?&*c.screenSpaceOcclusion:nullptr;
     for(UINT slot=0;slot<5;++slot)if(c.shadingTextures[slot])content.shadingTextures[slot]=&c.shadingTextures[slot]->native;
     content.sceneLines=c.sceneLines;content.sceneOverlayShader=c.sceneOverlayShader;content.sceneLineScale=c.sceneLineScale;content.sceneGrid=c.sceneGrid;
+    content.particles=c.particles;content.particleShader=c.particleShader;
     std::vector<const D3D12Texture*> guiTextures;for(const auto& texture:c.guiTextures)guiTextures.push_back(&texture->native);
     D3D12GuiContent gui{c.guiScene?c.guiScene->target.get():nullptr,c.guiComposite?c.guiComposite->target.get():nullptr,
         {c.guiPipeline?&c.guiPipeline->mesh:nullptr,&c.guiGeometry,guiTextures}};

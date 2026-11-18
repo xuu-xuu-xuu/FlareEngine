@@ -49,7 +49,7 @@ add_library(EngineEditor STATIC
     Source/ToolLayer/Editor/EditorWorkspaceHost.cpp
     Source/ToolLayer/Editor/UICanvasEditor.cpp)
 se_target(EngineEditor)
-target_link_libraries(EngineEditor PUBLIC EngineRuntime EngineScenePhysics EngineAudio EngineSceneAudio EngineAssets EngineGameUI EnginePlatform EngineProjectSession EngineColorGrading)
+target_link_libraries(EngineEditor PUBLIC EngineRuntime EngineScenePhysics EngineAudio EngineSceneAudio EngineParticles EngineSceneParticles EngineAssets EngineGameUI EnginePlatform EngineProjectSession EngineColorGrading)
 target_link_libraries(EngineEditor PRIVATE comdlg32 shell32)
 
 add_library(EngineEditorApp STATIC

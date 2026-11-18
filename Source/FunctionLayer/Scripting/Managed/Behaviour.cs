@@ -23,6 +23,7 @@ public abstract class Behaviour
     public ScriptInput Input => Scripts.Input;
     public InputActions Actions => Scripts.Session.Actions;
     public Audio Audio => Scripts.Session.Audio;
+    public Particles Particles => Scripts.Session.Particles;
     public virtual bool UpdateWhenPaused => false;
     public bool Enabled
     {

@@ -287,6 +287,11 @@ SE_API int32_t SE_CALL se_audio_set_paused(SE_Session session, int32_t paused) S
 SE_API int32_t SE_CALL se_audio_stop_all(SE_Session session) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_audio_active_voice_count(SE_Session session, uint32_t* count) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_audio_use_null_backend(SE_Session session, int32_t force_null) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_particles_emit_burst(SE_Session session, SE_Entity entity, uint32_t count, uint32_t* spawned) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_particles_set_playing(SE_Session session, SE_Entity entity, int32_t playing) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_particles_clear(SE_Session session, SE_Entity entity) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_particles_active_count(SE_Session session, SE_Entity entity, uint32_t* count) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_particles_emitter_count(SE_Session session, uint32_t* count) SE_NOEXCEPT;
 
 #ifdef __cplusplus
 }

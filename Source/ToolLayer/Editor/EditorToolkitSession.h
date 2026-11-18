@@ -8,6 +8,7 @@
 #include "ToolLayer/Editor/EditorViewportCamera.h"
 #include "ToolLayer/Editor/EditorUi/EditorInputAdapter.h"
 #include "FunctionLayer/Audio/SceneAudio.h"
+#include "FunctionLayer/Particles/SceneParticles.h"
 #include "FunctionLayer/Physics/ScenePhysics.h"
 #include "PlatformLayer/Windows/XAudio2Backend.h"
 #include "PlatformLayer/Windows/UiDirectWriteTextService.h"
@@ -61,6 +62,7 @@ struct ToolkitAppState
     std::unique_ptr<XAudio2Backend> audioBackend;
     AudioWorld audio;
     SceneAudio sceneAudio;
+    SceneParticles sceneParticles;
     EditorWorkspaceHost host;
     EditorScriptWorkflow scriptWorkflow;
     EditorViewportCamera editorCamera;
@@ -129,6 +131,7 @@ struct ToolkitAppState
     }
     ~ToolkitAppState()
     {
+        sceneParticles.Clear();
         sceneAudio.Clear(audio);
         audio.Shutdown();
         if (audioBackend) audioBackend->Shutdown();

@@ -107,6 +107,28 @@ const std::array actor{
     P{"actor.speed","Feature.Actor.Speed",PropertyType::Number,1.f,0.f,10.f},
     P{"actor.loop","Feature.Actor.Loop",PropertyType::Boolean,true},
     P{"actor.playing","Feature.Actor.Playing",PropertyType::Boolean,true}};
+const std::array emitter{
+    P{"emitter.playing","Feature.Particle.Playing",PropertyType::Boolean,true},
+    P{"emitter.loop","Feature.Particle.Loop",PropertyType::Boolean,true},
+    P{"emitter.prewarm","Feature.Particle.Prewarm",PropertyType::Boolean,false},
+    P{"emitter.additive","Feature.Particle.Additive",PropertyType::Boolean,false},
+    P{"emitter.shape","Feature.Particle.Shape",PropertyType::Number,2.f,0.f,2.f},
+    P{"emitter.emissionRate","Feature.Particle.EmissionRate",PropertyType::Number,20.f,0.f,5000.f},
+    P{"emitter.lifetimeSeconds","Feature.Particle.Lifetime",PropertyType::Number,1.5f,.05f,60.f},
+    P{"emitter.startSizeMeters","Feature.Particle.StartSize",PropertyType::Number,.25f,.01f,50.f},
+    P{"emitter.endSizeMeters","Feature.Particle.EndSize",PropertyType::Number,.05f,0.f,50.f},
+    P{"emitter.speedMin","Feature.Particle.SpeedMin",PropertyType::Number,1.5f,0.f,200.f},
+    P{"emitter.speedMax","Feature.Particle.SpeedMax",PropertyType::Number,3.f,0.f,200.f},
+    P{"emitter.coneAngleDegrees","Feature.Particle.ConeAngle",PropertyType::Number,25.f,0.f,89.f},
+    P{"emitter.radiusMeters","Feature.Particle.Radius",PropertyType::Number,.5f,0.f,50.f},
+    P{"emitter.gravity","Feature.Particle.Gravity",PropertyType::Vector3,Vec3{0.f,-2.f,0.f},-200.f,200.f},
+    P{"emitter.startColor","Feature.Particle.StartColor",PropertyType::Vector3,Vec3{1.f,.85f,.4f},0.f,16.f},
+    P{"emitter.startAlpha","Feature.Particle.StartAlpha",PropertyType::Number,1.f,0.f,1.f},
+    P{"emitter.endColor","Feature.Particle.EndColor",PropertyType::Vector3,Vec3{1.f,.35f,.1f},0.f,16.f},
+    P{"emitter.endAlpha","Feature.Particle.EndAlpha",PropertyType::Number,0.f,0.f,1.f},
+    P{"emitter.maxParticles","Feature.Particle.MaxParticles",PropertyType::Number,256.f,1.f,16384.f},
+    P{"emitter.seed","Feature.Particle.Seed",PropertyType::Number,1.f,1.f,2147483647.f},
+    P{"emitter.softFactor","Feature.Particle.SoftFactor",PropertyType::Number,1.5f,.5f,8.f}};
 const std::array environment{
     P{"environmentmap.asset","Feature.Environment.Asset",PropertyType::AssetId,std::string{}},
     P{"environmentmap.intensity","Feature.Environment.Intensity",PropertyType::Number,1.f,0.f,100.f},
@@ -226,8 +248,9 @@ void AppendEngineFeatureMetadata(std::vector<ComponentDescriptor>& descriptors)
     descriptors.push_back(Descriptor<ColliderSettingsComponent>("collider","Feature.Collider",collider));
     descriptors.push_back(Descriptor<AudioListenerComponent>("listener","Feature.AudioListener",audioListener));
     descriptors.push_back(Descriptor<AudioSourceComponent>("audio","Feature.Audio",audioSource));
+    descriptors.push_back(Descriptor<ParticleEmitterComponent>("emitter","Feature.ParticleEmitter",emitter));
 }
-bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=AudioSourceComponent::TypeId;}
+bool IsEngineFeature(ComponentTypeId type)noexcept{return type>=PhysicsBodyComponent::TypeId&&type<=ParticleEmitterComponent::TypeId;}
 ComponentHandle SceneFeature(const World& world,ComponentTypeId type,bool* authored)
 {
     if(authored)*authored=false;

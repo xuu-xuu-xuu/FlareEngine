@@ -158,6 +158,16 @@ internal static unsafe partial class NativeMethods
     internal static partial int AudioActiveVoiceCount(ulong session, out uint count);
     [LibraryImport(Library, EntryPoint = "se_audio_use_null_backend")]
     internal static partial int AudioUseNullBackend(ulong session, int forceNull);
+    [LibraryImport(Library, EntryPoint = "se_particles_emit_burst")]
+    internal static partial int ParticlesEmitBurst(ulong session, ulong entity, uint count, out uint spawned);
+    [LibraryImport(Library, EntryPoint = "se_particles_set_playing")]
+    internal static partial int ParticlesSetPlaying(ulong session, ulong entity, int playing);
+    [LibraryImport(Library, EntryPoint = "se_particles_clear")]
+    internal static partial int ParticlesClear(ulong session, ulong entity);
+    [LibraryImport(Library, EntryPoint = "se_particles_active_count")]
+    internal static partial int ParticlesActiveCount(ulong session, ulong entity, out uint count);
+    [LibraryImport(Library, EntryPoint = "se_particles_emitter_count")]
+    internal static partial int ParticlesEmitterCount(ulong session, out uint count);
 }
 
 internal sealed class NativeSessionHandle : SafeHandle

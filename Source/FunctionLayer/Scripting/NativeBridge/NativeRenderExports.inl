@@ -61,6 +61,7 @@ int32_t SE_CALL se_session_run_window(SE_Session handle, const char* locale, uin
             return !s->stopWindow&&se_session_step(handle,dt)==SE_OK&&!s->stopWindow;};
         services.extract=[s,sequence,interactive,&qualityMenu,&playerWindow,&captureCursor,&captureLog,&gameRenderer](se::FrameData& data){
             se::BuildFrameData(s->Env(),&s->UiRef(),s->physicsDebugDraw?&s->physics:nullptr,data);data.assets=s->assets.get();
+            se::PopulateParticleFrame(s->sceneParticles,data);
             if(interactive&&s->playerQuality)se::ApplyPlayerQuality(s->playerQuality->Level(),data,s->qualityProfiles);
             if(qualityMenu)qualityMenu->Append(playerWindow,data);
             s->appearance.Apply(data);
@@ -184,7 +185,7 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
         struct EditorGuard{Session& s;~EditorGuard(){s.editor=nullptr;s.borrowedWorld=nullptr;s.borrowedEnvironment=nullptr;s.borrowedUi=nullptr;s.windowRunning=false;s.input={};s.pointer={};s.inputActions.Reset();}} guard{*s};
         s->windowRunning=true;s->stopWindow=false;s->pendingPlay=-1;
         bool callbackFailed=false;
-        auto clearRuntime=[s]{s->scenePhysics.Clear(s->physics);for(auto body:s->physics.Bodies())s->physics.DestroyBody(body);s->physics.ResetTriggers();s->characterTriggerTracker.Clear();s->bodyOwners.clear();s->characters.clear();s->physicsClock.Reset();s->contactEvents.clear();s->triggerEvents.clear();s->uiEvents.clear();s->sceneAudio.Clear(s->audio);s->audio.StopAll();s->audio.SetPaused(false);s->environmentDriven=s->environmentPhysics=s->pendingEnvironmentRelease=false;s->physics.SetEnvironmentDriven(false);};
+        auto clearRuntime=[s]{s->scenePhysics.Clear(s->physics);for(auto body:s->physics.Bodies())s->physics.DestroyBody(body);s->physics.ResetTriggers();s->characterTriggerTracker.Clear();s->bodyOwners.clear();s->characters.clear();s->physicsClock.Reset();s->contactEvents.clear();s->triggerEvents.clear();s->uiEvents.clear();s->sceneAudio.Clear(s->audio);s->audio.StopAll();s->audio.SetPaused(false);s->sceneParticles.Clear();s->environmentDriven=s->environmentPhysics=s->pendingEnvironmentRelease=false;s->physics.SetEnvironmentDriven(false);};
         se::EditorApplicationHooks hooks;hooks.resourceDirectory=resources;hooks.startPlaying=startPlaying!=0;
         hooks.initialize=[s,sceneFile](se::EditorSession& editor,se::UiTree& ui){
             s->editor=&editor;ui=s->ui;
@@ -287,6 +288,7 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
             if(s->editor&&s->editor->IsPlaying())
             {
                 se::BuildFrameData(s->Env(),&ui,s->physicsDebugDraw?&s->physics:nullptr,frame);
+                se::PopulateParticleFrame(s->sceneParticles,frame);
                 s->appearance.Apply(frame);
             }
             else se::BuildFrameData(world,&ui,s->physicsDebugDraw?&s->physics:nullptr,frame);

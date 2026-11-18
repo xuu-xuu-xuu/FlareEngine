@@ -660,6 +660,7 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
         add("Feature.Character", "Capsule character", EditorCommandId::CreateEntity, "character");
         add("EditorUi.CreateAudioSource", "Audio source", EditorCommandId::CreateEntity, "audio-source");
         add("Feature.AudioListener", "Audio listener", EditorCommandId::CreateEntity, "audio-listener");
+        add("Feature.ParticleEmitter", "Particle emitter", EditorCommandId::CreateEntity, "particle-emitter");
         if (panel == EditorPanelId::Hierarchy && parent != 0)
             add("EditorUi.CreatePrefab", "Create Prefab", EditorCommandId::CreateAsset, "prefab");
     }

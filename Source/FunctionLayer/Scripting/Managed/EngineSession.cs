@@ -45,6 +45,7 @@ public sealed unsafe partial class EngineSession : IDisposable
     public TimeOfDayService TimeOfDay{get;}
     public InputActions Actions { get; }
     public Audio Audio { get; }
+    public Particles Particles { get; }
     public bool IsWindowRunning { get; private set; }
     internal ScriptInput WindowInput { get; private set; } = ScriptInput.Empty;
 
@@ -56,6 +57,7 @@ public sealed unsafe partial class EngineSession : IDisposable
         TimeOfDay=new(this);
         Actions = new(this);
         Audio = new(this);
+        Particles = new(this);
         Check(NativeMethods.Abi(out var abi));
         if (abi.Version != 1 || abi.TransformSize != Marshal.SizeOf<Transform>() || abi.PointerSize != 8)
             throw new EngineException("Bridge.AbiMismatch", 1);

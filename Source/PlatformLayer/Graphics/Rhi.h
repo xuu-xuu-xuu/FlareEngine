@@ -278,6 +278,17 @@ struct SceneLine
     Vec4 color{1,1,1,1};
     float width=1,occludedAlpha=0;
 };
+struct ParticleBatch
+{
+    bool additive=false;
+    std::vector<ParticleInstanceGpuData> instances;
+};
+struct ParticleFrame
+{
+    Vec3 cameraRight{1,0,0};
+    Vec3 cameraUp{0,1,0};
+    std::vector<ParticleBatch> batches;
+};
 struct InstanceParameters
 {
     Mat4 world;
@@ -593,6 +604,7 @@ public:
     // 场景最终输出之后、编辑器 GUI 之前的 sRGB 游戏界面；帧开始时复制几何并保活资源。
     Result ConfigureGameUi(PipelineHandle pipeline,const GuiGeometry& geometry,std::span<const TextureHandle> commandTextures);
     Result ConfigureSceneOverlay(std::span<const SceneLine> lines,const std::filesystem::path& shader,float pixelScale=1,bool groundGrid=false);
+    Result ConfigureParticles(const ParticleFrame& particles,const std::filesystem::path& shader);
     Result ConfigureShadows(const ShadowSettings& shadows,PipelineHandle depthPipeline);
     Result ConfigureEnvironment(const EnvironmentBindings& environment);
     Result ConfigurePostProcess(const PostProcessSettings& settings,const PostProcessPipelines& pipelines);

@@ -1,5 +1,6 @@
 #include "FeatureFrameData.h"
 #include <unordered_map>
+#include "FunctionLayer/Particles/SceneParticles.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 namespace se
 {
@@ -78,5 +79,28 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame,RenderDefaults de
         frame.environment.yaw=std::get<float>(FeatureValue(world,owner,"environmentmap.yaw"))*Pi/180.f;
     }
     else frame.environment.useEngineDefault=defaults==RenderDefaults::Project&&frame.fullPbr&&!authoredEnvironment;
+}
+void PopulateParticleFrame(const SceneParticles& particles,FrameData& output)
+{
+    Vec3 cameraPosition{};
+    if(output.editorCamera)
+    {
+        cameraPosition=output.editorCamera->position;
+    }
+    else if(!output.cameras.empty())
+    {
+        const CameraInstance* selected=nullptr;
+        if(output.cameraBinding)
+        {
+            for(const auto& item:output.cameras)if(item.entity==*output.cameraBinding){selected=&item;break;}
+        }
+        if(!selected)
+        {
+            for(const auto& item:output.cameras)if(item.camera.primary){selected=&item;break;}
+        }
+        if(!selected)selected=&output.cameras.front();
+        cameraPosition={selected->world(0,3),selected->world(1,3),selected->world(2,3)};
+    }
+    particles.BuildBatches(cameraPosition,output.particles.batches);
 }
 }

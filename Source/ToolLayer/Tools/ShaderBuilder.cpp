@@ -1,5 +1,6 @@
 #include "PlatformLayer/Graphics/D3D12/D3D12ShaderProgram.h"
 #include "PlatformLayer/Graphics/D3D12/D3D12AmbientOcclusion.h"
+#include "PlatformLayer/Graphics/D3D12/D3D12Particles.h"
 #include "PlatformLayer/Windows/ExecutablePath.h"
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
@@ -18,6 +19,12 @@ int wmain(int argc,wchar_t** argv)
     if(requestedMode==L"ao-compute")
     {
         if(argc!=4||!WriteD3D12AmbientOcclusionShaders(argv[2],argv[3],text))
+        {Log(LogLevel::Error,text.GetText("Shader.WriteFailed"));return 1;}
+        Log(LogLevel::Info,text.GetText("Shader.BuildComplete"));return 0;
+    }
+    if(requestedMode==L"particle")
+    {
+        if(argc!=4||!WriteD3D12ParticleShader(argv[2],argv[3],text))
         {Log(LogLevel::Error,text.GetText("Shader.WriteFailed"));return 1;}
         Log(LogLevel::Info,text.GetText("Shader.BuildComplete"));return 0;
     }

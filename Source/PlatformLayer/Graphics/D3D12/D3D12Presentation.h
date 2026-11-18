@@ -22,6 +22,7 @@ struct D3D12DepthNormalTarget;
 struct D3D12DepthNormalFrame;
 struct D3D12IndoorLighting;
 struct D3D12IndoorFrame;
+struct D3D12Particles;
 class D3D12AmbientOcclusion;
 struct D3D12AmbientOcclusionOutput;
 struct D3D12AmbientOcclusionFrame;
@@ -117,6 +118,7 @@ struct D3D12FrameContext
     D3D12FrameDescriptors postDescriptors;
     D3D12FrameDescriptors guiDescriptors;
     D3D12FrameDescriptors gameUiDescriptors;
+    D3D12FrameDescriptors particleDescriptors;
     std::shared_ptr<D3D12SceneOverlayFrame> sceneOverlay;
     std::shared_ptr<D3D12ShadowTarget> shadow;
     std::shared_ptr<D3D12SceneCoverage> coverage;
@@ -166,6 +168,8 @@ struct D3D12FrameContent
     std::filesystem::path sceneOverlayShader;
     float sceneLineScale=1;
     bool sceneGrid=false;
+    se::rhi::ParticleFrame particles;
+    std::filesystem::path particleShader;
     // G06.10：多批次遮挡；与 content.meshes 一一对应，空表示普通绘制。
     const D3D12IndirectBatch* indirects=nullptr;
     std::size_t indirectCount=0;
@@ -194,6 +198,7 @@ struct D3D12Presentation
     std::shared_ptr<D3D12OpaqueTemporal> opaqueTemporal;
     std::shared_ptr<D3D12DepthNormals> depthNormalBuilder;
     std::shared_ptr<D3D12IndoorLighting> indoorLighting;
+    std::shared_ptr<D3D12Particles> particlePass;
     std::shared_ptr<D3D12DepthNormalTarget> depthNormalTarget;
     se::rhi::DepthNormalStatistics depthNormalStatistics;
     std::shared_ptr<D3D12AmbientOcclusion> ambientOcclusionBuilder;

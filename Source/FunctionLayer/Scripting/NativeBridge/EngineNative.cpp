@@ -7,10 +7,12 @@
 #include "FunctionLayer/Physics/ScenePhysics.h"
 #include "FunctionLayer/Audio/AudioWorld.h"
 #include "FunctionLayer/Audio/SceneAudio.h"
+#include "FunctionLayer/Particles/SceneParticles.h"
 #include "PlatformLayer/Windows/XAudio2Backend.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "FunctionLayer/GameUI/UiTree.h"
 #include <nlohmann/json.hpp>
+#include "FunctionLayer/Application/FeatureFrameData.h"
 #include "FunctionLayer/Application/FrameData.h"
 #include "FunctionLayer/Application/SandboxApp.h"
 #include "FunctionLayer/Rendering/SandboxRenderer.h"
@@ -74,6 +76,7 @@ struct Session
     }
     ~Session()
     {
+        sceneParticles.Clear();
         sceneAudio.Clear(audio);
         audio.Shutdown();
         if(audioBackend)audioBackend->Shutdown();
@@ -95,6 +98,7 @@ struct Session
     std::unique_ptr<se::XAudio2Backend> audioBackend;
     se::AudioWorld audio;
     se::SceneAudio sceneAudio;
+    se::SceneParticles sceneParticles;
     std::unordered_map<std::uint64_t,se::EntityHandle> bodyOwners;
     bool physicsDebugDraw=true;
     se::FixedStepClock physicsClock;
@@ -323,6 +327,8 @@ void SceneServices(Session& session,SE_Session handle)
         std::erase_if(session.characters,[&](const auto& item){return std::find_if(members.begin(),members.end(),[&](auto entity){return entity.Pack()==item.first;})!=members.end();});
         std::erase_if(session.contactEvents,[&](const auto& event){return std::any_of(members.begin(),members.end(),[&](auto entity){const auto* record=session.WorldRef().Get(entity);return record&&(record->stableId==event.entity_a||record->stableId==event.entity_b);});});
         std::erase_if(session.triggerEvents,[&](const auto& event){return std::any_of(members.begin(),members.end(),[&](auto entity){const auto* record=session.WorldRef().Get(entity);return record&&(record->stableId==event.trigger_entity||record->stableId==event.other_entity);});});
+        for(const auto id:invalidated)session.sceneParticles.RemoveEmitter(id);
+        for(const auto entity:members)if(const auto* record=session.WorldRef().Get(entity))session.sceneParticles.RemoveEmitter(record->stableId);
         if(failed)throw std::runtime_error("Scene.CallbackFailed");
     });
 }
@@ -448,6 +454,7 @@ int32_t AdvanceSession(Session& session,SE_Session handle,double seconds,bool si
     if(!singleStep&&session.Env().FramePaused()&&!session.Env().Closing())
     {
         session.sceneAudio.Synchronize(session.WorldRef(),session.assets.get(),session.audio,true);
+        session.sceneParticles.Synchronize(session.WorldRef(),0.0,true);
         return SE_OK;
     }
     struct SteppingGuard{Session& value;~SteppingGuard(){value.stepping=false;}} guard{session};
@@ -459,6 +466,8 @@ int32_t AdvanceSession(Session& session,SE_Session handle,double seconds,bool si
     {
         const bool audioPaused=!singleStep&&(session.Env().Paused()||session.Env().FramePaused());
         session.sceneAudio.Synchronize(session.WorldRef(),session.assets.get(),session.audio,audioPaused);
+        const double particleDt=singleStep?session.Env().Clock().Step():(audioPaused?0.0:seconds);
+        session.sceneParticles.Synchronize(session.WorldRef(),particleDt,audioPaused);
     }
     FinishEnvironmentRelease(session);
     if(!result)return session.callbackFailed?Error(SE_CALLBACK_FAILED,"Bridge.CallbackFailed"):Error(SE_INTERNAL_ERROR,session.Env().LastError().c_str());
@@ -519,4 +528,5 @@ static_assert(sizeof(SE_AudioPlayDesc)==40);
 #include "NativeUiExports.inl"
 #include "NativeInputExports.inl"
 #include "NativeAudioExports.inl"
+#include "NativeParticlesExports.inl"
 #include "NativeLogicExports.inl"

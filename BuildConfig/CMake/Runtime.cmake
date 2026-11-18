@@ -157,15 +157,23 @@ add_library(EngineSceneAudio STATIC Source/FunctionLayer/Audio/SceneAudio.cpp)
 se_target(EngineSceneAudio)
 target_link_libraries(EngineSceneAudio PUBLIC EngineRuntime EngineAudio EngineAssets)
 
+add_library(EngineParticles STATIC Source/FunctionLayer/Particles/ParticleSimulator.cpp)
+se_target(EngineParticles)
+target_link_libraries(EngineParticles PUBLIC EngineCore)
+
+add_library(EngineSceneParticles STATIC Source/FunctionLayer/Particles/SceneParticles.cpp)
+se_target(EngineSceneParticles)
+target_link_libraries(EngineSceneParticles PUBLIC EngineRuntime EngineParticles)
+
 add_library(EngineNative SHARED Source/FunctionLayer/Scripting/NativeBridge/EngineNative.cpp Source/FunctionLayer/Scripting/NativeBridge/WindowProfile.cpp
     Source/FunctionLayer/Scripting/NativeBridge/PlayerQualityMenu.cpp)
 se_target(EngineNative)
-target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineAudio EngineSceneAudio EngineGameUI EngineInput EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
+target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineAudio EngineSceneAudio EngineParticles EngineSceneParticles EngineGameUI EngineInput EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
 
 add_library(EngineApplication STATIC Source/FunctionLayer/Application/FrameData.cpp Source/FunctionLayer/Application/FeatureFrameData.cpp Source/FunctionLayer/Application/FreeCameraInput.cpp
     Source/FunctionLayer/Application/PlayerQuality.cpp)
 se_target(EngineApplication)
-target_link_libraries(EngineApplication PUBLIC EngineRuntime EnginePhysics EngineGameUI EngineAssets)
+target_link_libraries(EngineApplication PUBLIC EngineRuntime EnginePhysics EngineSceneParticles EngineGameUI EngineAssets)
 
 add_library(EnginePlatform STATIC
     Source/PlatformLayer/Windows/ExecutablePath.cpp

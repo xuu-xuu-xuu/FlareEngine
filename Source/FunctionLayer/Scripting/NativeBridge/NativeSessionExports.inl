@@ -118,7 +118,8 @@ int32_t SE_CALL se_environment_fixed_step(SE_Session handle,double seconds)noexc
         auto* s=Find(handle);if(!s)return MissingSession();if(s->stepping)return Error(SE_BUSY,"Bridge.SessionBusy");
         if(!s->environmentDriven||!std::isfinite(seconds)||seconds<=0||seconds>1)return Error(SE_INVALID_ARGUMENT,"Tick.ManualFixedRejected");
         struct Guard{Session& s;~Guard(){s.stepping=false;}} guard{*s};s->stepping=true;s->callbackFailed=false;
-        const bool ok=s->Env().RunFixed(seconds,EnvironmentHooks(*s,handle));SweepBodies(*s);if(ok)s->sceneAudio.Synchronize(s->WorldRef(),s->assets.get(),s->audio,s->Env().Paused()||s->Env().FramePaused());FinishEnvironmentRelease(*s);
+        const bool paused=s->Env().Paused()||s->Env().FramePaused();
+        const bool ok=s->Env().RunFixed(seconds,EnvironmentHooks(*s,handle));SweepBodies(*s);if(ok){s->sceneAudio.Synchronize(s->WorldRef(),s->assets.get(),s->audio,paused);s->sceneParticles.Synchronize(s->WorldRef(),paused?0.0:seconds,paused);}FinishEnvironmentRelease(*s);
         if(!ok)return s->callbackFailed?Error(SE_CALLBACK_FAILED,"Bridge.CallbackFailed"):Error(SE_INVALID_ARGUMENT,s->Env().LastError().c_str());return SE_OK;
     });
 }

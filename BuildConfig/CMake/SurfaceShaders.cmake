@@ -54,5 +54,12 @@ foreach(surface_pair IN LISTS material_surface_programs)
             ${surface_shader_includes} VERBATIM)
     list(APPEND surface_outputs "${surface_output}" "${surface_output}.json")
 endforeach()
+set(particle_shader_output "${CMAKE_CURRENT_BINARY_DIR}/Resources/Shaders/ParticleBillboard.hlsl.sebin")
+add_custom_command(OUTPUT "${particle_shader_output}" "${particle_shader_output}.json"
+    COMMAND ShaderBuilder particle "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/ParticleBillboard.hlsl" "${particle_shader_output}"
+    DEPENDS ShaderBuilder
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/ParticleBillboard.hlsl"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/ParticleBindings.hlsli" VERBATIM)
+list(APPEND surface_outputs "${particle_shader_output}" "${particle_shader_output}.json")
 add_custom_target(BuildMaterialSurfaceShaders DEPENDS ${surface_outputs})
 add_dependencies(BuildShaders BuildMaterialSurfaceShaders)

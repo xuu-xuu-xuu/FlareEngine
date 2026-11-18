@@ -50,6 +50,7 @@ struct FrameData
     std::optional<StableEntityId> cameraBinding; // 每视口显式绑定；空时按有效 primary 的稳定 ID 选择。
     std::vector<LightInstance> lights;
     std::vector<RectangleLightInstance> rectangleLights;
+    rhi::ParticleFrame particles;
     std::vector<UiVisual> ui;
     bool referenceUiOverlays=false; // 仅旧后处理基准使用固定矩形路径，普通控件使用 GameUIRenderer。
     std::vector<DebugLine> debugLines;

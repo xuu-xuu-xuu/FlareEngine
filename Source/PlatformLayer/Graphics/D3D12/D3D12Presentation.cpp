@@ -22,6 +22,7 @@
 #include "D3D12DepthNormals.h"
 #include "D3D12AmbientOcclusion.h"
 #include "D3D12IndoorLighting.h"
+#include "D3D12Particles.h"
 #include "D3D12ShadingExtensions.h"
 #include "D3D12Heterogeneous.h"
 #include "D3D12Dred.h"
@@ -735,7 +736,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     if(!CheckGraphicsResult(presentation.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf())),localization,"D3D12.DescriptorCapacityExceeded")
         ||!CheckGraphicsResult(frame.descriptors.Prepare(*device.Get(),textureViews,(content.environment?7:shadow?4:pbr?3:1)+(forward&&content.forward->cluster.enabled?4:0)+(frame.shading?D3D12ShadingTextureCount:0)),localization,"D3D12.DescriptorCapacityExceeded"))
     {presentation.commandList->Close();return false;}
-    if(!transparentMeshes.empty()&&frame.transparentDepth.Get()!=rasterDepth)
+    if((!transparentMeshes.empty()||(forward&&!content.particles.batches.empty()))&&frame.transparentDepth.Get()!=rasterDepth)
     {
         std::shared_ptr<D3D12DescriptorRange> descriptor;
         if(!CheckGraphicsResult(presentation.dsvPool->Allocate(1,descriptor),localization,"D3D12.DescriptorCapacityExceeded"))return false;
@@ -1055,6 +1056,11 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         const auto readOnlyDsv=frame.transparentDsv->Cpu();presentation.commandList->OMSetRenderTargets(1,&rtv,FALSE,&readOnlyDsv);
         RecordD3D12Meshes(*content.meshPipeline,transparentMeshes,clipFromWorld,frame,*presentation.commandList.Get(),rasterWidth,rasterHeight,false,nullptr,{},static_cast<UINT>(opaqueCount));
     }
+    if(forward&&!content.particles.batches.empty())
+    {
+        if(!RecordD3D12Particles(presentation,frame,content,states,*rasterColor,*rasterDepth,rtv,frame.transparentDsv->Cpu(),rasterWidth,rasterHeight,localization))
+        {presentation.commandList->Close();presentation.failed=true;return false;}
+    }
     if(content.sceneDepthCapture)
     {
         if(!use(rasterDepth,D3D12_RESOURCE_STATE_COPY_SOURCE,"SceneDepth.Capture")
@@ -1321,11 +1327,11 @@ void ReleaseD3D12Presentation(D3D12Presentation& presentation) noexcept
         frame.sceneOverlay.reset();frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.heterogeneousOutput.reset();frame.heterogeneousHiZ.reset();frame.heterogeneousSources.clear();frame.clusters.reset();frame.clusterDescriptorIncrement=0;
         frame.allocator.Reset();frame.fenceValue=0;
         frame.timestampQueries.Reset();frame.timestampReadback.Reset();frame.timestampsPending=false;
-        frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploadDestinations.clear();frame.uploads.Release();frame.baselineConstants.Release();frame.descriptors.Release();frame.outputDescriptors.Release();frame.environmentDescriptors.Release();frame.postDescriptors.Release();frame.guiDescriptors.Release();frame.gameUiDescriptors.Release();frame.shadowMaterialDescriptors.Release();frame.transparentDsv.reset();frame.transparentDepth.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
+        frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploadDestinations.clear();frame.uploads.Release();frame.baselineConstants.Release();frame.descriptors.Release();frame.outputDescriptors.Release();frame.environmentDescriptors.Release();frame.postDescriptors.Release();frame.guiDescriptors.Release();frame.gameUiDescriptors.Release();frame.particleDescriptors.Release();frame.shadowMaterialDescriptors.Release();frame.transparentDsv.reset();frame.transparentDepth.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
     }
     presentation.fenceEvent.Close();
     for(auto& frame:presentation.frames)frame.indoor.reset();
-    presentation.indoorLighting.reset();presentation.sceneOverlay.reset();presentation.coverage.reset();
+    presentation.indoorLighting.reset();presentation.particlePass.reset();presentation.sceneOverlay.reset();presentation.coverage.reset();
     presentation.fence.Reset();
     for (auto& buffer : presentation.backBuffers) buffer.Reset();
     presentation.rtvs.reset();presentation.gameUiRtvs.reset();
@@ -1376,7 +1382,7 @@ bool BeginD3D12FrameCommands(D3D12Presentation& p,const Localization& text)
         ||!CheckGraphicsResult(p.commandList->Reset(frame.allocator.Get(),nullptr),text,"D3D12.ResetCommandListFailed"))
     {p.failed=true;if(DeviceWasRemoved(p))ReportDeviceRemoval(p,text);return false;}
     PollD3D12ClusterCounters(p);
-    frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.heterogeneousSources.clear();frame.uploadDestinations.clear();frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.shadowMaterialDescriptors.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
+    frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.heterogeneousSources.clear();frame.uploadDestinations.clear();frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.particleDescriptors.Reset();frame.shadowMaterialDescriptors.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
     CollectD3D12UploadReferences(p);return true;
 }
 bool BeginD3D12UploadBatch(D3D12Presentation& p,const Localization& text)

@@ -13,6 +13,7 @@
 #include "UiInspector.h"
 #include "ToolLayer/Editor/EditorUi/EditorViewportMath.h"
 #include "ToolLayer/Tools/Project.h"
+#include "FunctionLayer/Application/FeatureFrameData.h"
 #include "CoreLayer/Log.h"
 #include "PlatformLayer/Windows/StartupProgress.h"
 #include "ResourceLayer/Assets/AssetIO.h"
@@ -1117,10 +1118,12 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
         {
             state.sceneAudio.Synchronize(*state.session.PlayWorld(), &state.assets, state.audio,
                                          state.session.PlayPaused());
+            PopulateParticleFrame(state.sceneParticles, frame);
         }
     }
     else
     {
+        if (state.sceneParticles.TrackedEmitterCount() > 0) state.sceneParticles.Clear();
         if (state.sceneAudio.TrackedSourceCount() > 0)
         {
             state.sceneAudio.Clear(state.audio);

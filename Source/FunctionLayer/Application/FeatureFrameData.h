@@ -1,3 +1,8 @@
 #pragma once
 #include "FrameData.h"
-namespace se { void ApplyFeatureFrameData(const World&,FrameData&,RenderDefaults defaults=RenderDefaults::Project); }
+namespace se
+{
+class SceneParticles;
+void ApplyFeatureFrameData(const World&,FrameData&,RenderDefaults defaults=RenderDefaults::Project);
+void PopulateParticleFrame(const SceneParticles& particles,FrameData& output);
+}

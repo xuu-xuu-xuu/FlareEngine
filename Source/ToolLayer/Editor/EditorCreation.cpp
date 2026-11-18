@@ -75,7 +75,7 @@ bool CreateEditorObject(EditorSession& session, std::string_view kind, StableEnt
 {
     const bool mesh = kind == "cube" || kind == "sphere" || kind == "physics-cube" || kind == "physics-sphere";
     const bool light=kind=="light"||kind=="point-light"||kind=="spot-light";
-    const auto feature=kind=="render-settings"?"render":kind=="environment-settings"?"environmentmap":kind=="rectangle-light"?"rectangle":(kind=="physics-cube"||kind=="physics-sphere")?"body":kind=="trigger-box"?"collider":kind=="character"?"character":kind=="audio-source"?"audio":kind=="audio-listener"?"listener":"";
+    const auto feature=kind=="render-settings"?"render":kind=="environment-settings"?"environmentmap":kind=="rectangle-light"?"rectangle":(kind=="physics-cube"||kind=="physics-sphere")?"body":kind=="trigger-box"?"collider":kind=="character"?"character":kind=="audio-source"?"audio":kind=="audio-listener"?"listener":kind=="particle-emitter"?"emitter":"";
     if (!mesh && kind != "empty" && kind != "camera" && !light&&!*feature) return false;
     if (!session.BeginEdit("Editor.Create")) return false;
     const char* name = kind == "cube" ? "Cube" : kind == "sphere" ? "Sphere" :

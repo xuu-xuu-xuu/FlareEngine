@@ -8,6 +8,28 @@ inline constexpr std::uint32_t MaterialLayoutVersion=1,MaterialConstantAlignment
 // RG104-15：独立几何输入格式；不替换绑定布局或 38 号材质 b4。
 inline constexpr std::uint32_t DepthNormalLayoutVersion=39;
 inline constexpr std::uint32_t ShadingExtensionLayoutVersion=40;
+// RG104-16：GPU 广告牌粒子实例与常量布局；与 ParticleBindings.hlsli 严格对齐。
+inline constexpr std::uint32_t ParticleLayoutVersion=41;
+struct alignas(16) ParticleInstanceGpuData
+{
+    float position[3]{};
+    float size=0;
+    float color[4]{};
+    float params[4]{}; // x=rotationRadians, y=additive, z=softFactor, w=reserved
+};
+struct alignas(16) ParticleFrameConstants
+{
+    Mat4 clipFromWorld{};
+    float cameraRight[4]{};
+    float cameraUp[4]{};
+    float viewport[4]{};
+};
+static_assert(sizeof(ParticleInstanceGpuData)==48&&alignof(ParticleInstanceGpuData)==16
+    &&offsetof(ParticleInstanceGpuData,size)==12&&offsetof(ParticleInstanceGpuData,color)==16
+    &&offsetof(ParticleInstanceGpuData,params)==32);
+static_assert(sizeof(ParticleFrameConstants)==112&&alignof(ParticleFrameConstants)==16
+    &&offsetof(ParticleFrameConstants,cameraRight)==64&&offsetof(ParticleFrameConstants,cameraUp)==80
+    &&offsetof(ParticleFrameConstants,viewport)==96);
 struct alignas(16) ShadingFrameConstants
 {
     Vec4 modes{},viewport{},probeOrigin{},probeSpacing{},probeDimensions{};
@@ -215,5 +237,6 @@ inline constexpr LayoutVersionRecord GSeriesLayoutVersions[] =
     {MaterialSurfaceLayoutVersion,"RG104-05/15","独立材质覆盖b4：RGBA因子/cutoff/mode/doubleSided",32},
     {DepthNormalLayoutVersion,"RG104-15/G10","独立 D32 + RG16F 世界几何法线 oct（每像素8B，非CB）",8},
     {ShadingExtensionLayoutVersion,"RG104-08/09/10/11/12","独立光照扩展 b5=480B/b6=96B/t13..24，覆盖38正交",480},
+    {ParticleLayoutVersion,"RG104-16","GPU粒子广告牌实例(t0 48B)与常量b0=112B",112},
 };
 }

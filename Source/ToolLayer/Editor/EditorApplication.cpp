@@ -288,6 +288,7 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
         };
         services.windowClosing = [&state]() {
             state.playInput->Deactivate(state.hostWindow);
+            state.sceneParticles.Clear();
             state.sceneAudio.Clear(state.audio);
             state.audio.StopAll();
             state.assetState.previewAudioVoice = {};
@@ -366,6 +367,7 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
                     {
                         state.playUi->Update(state.session.PlayFixedStep());
                         if (!state.session.StepPlayFrame()) return false;
+                        state.sceneParticles.Synchronize(*state.session.PlayWorld(), state.session.PlayFixedStep(), false);
                     }
                 }
                 else if (state.hooks && state.hooks->update)
@@ -376,6 +378,8 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
                 {
                     if (!state.session.PlayPaused()) state.playUi->Update(seconds);
                     if (!state.session.PlayEnvironment()->RunFrame(seconds)) return false;
+                    state.sceneParticles.Synchronize(*state.session.PlayWorld(),
+                        state.session.PlayPaused() ? 0.0 : seconds, state.session.PlayPaused());
                 }
                 state.session.CompletePlayFrame();
             }

@@ -695,6 +695,17 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     const auto viewProjection=taaFrame?se::ApplyProjectionJitter(viewProjectionBase,
         se::HaltonJitter(static_cast<std::uint32_t>(frame.updateIndex)),sceneWidth*geometryScale,sceneHeight*geometryScale):viewProjectionBase;
     if(result&&forward)result=commands->ConfigureView(viewProjection);
+    if(result&&forward&&frame.data&&!frame.data->particles.batches.empty())
+    {
+        auto particles=frame.data->particles;
+        if(camera_)
+        {
+            const auto& inv=camera_->inverseView;
+            particles.cameraRight={inv(0,0),inv(1,0),inv(2,0)};
+            particles.cameraUp={inv(0,1),inv(1,1),inv(2,1)};
+        }
+        result=commands->ConfigureParticles(particles,ResourceDirectory()/"Shaders/ParticleBillboard.hlsl");
+    }
     const se::rhi::DepthNormalSettings geometrySettings{frame.data&&camera_&&(frame.data->depthNormals||frame.data->gtao||frame.data->contactShadows||frame.data->gpuDrivenHiZ||frame.data->indoor.Enabled())};
     std::optional<se::rhi::ScreenSpaceOcclusionSettings> screenSettings;
     if(frame.data&&camera_&&(frame.data->gtao||frame.data->contactShadows))
