@@ -192,7 +192,7 @@ inline bool ValidShadingExtensionPipeline(const PipelineDescription& pipeline)
 }
 struct Surface {void* window=nullptr;std::uint32_t width=0,height=0;};
 struct AdapterInformation {std::string name;std::uint32_t vendorId=0,deviceId=0;std::uint64_t dedicatedVideoMemory=0;bool software=false;};
-struct DeviceCapabilities {bool meshShaderTier1=false;};
+struct DeviceCapabilities {bool meshShaderTier1=false,rayTracingTier1_1=false;};
 struct CompletionToken {std::uint64_t device=0,queue=0,value=0;bool operator==(const CompletionToken&) const=default;};
 enum class UploadMode { Pooled, DedicatedBaseline };
 enum class MemoryMode { Placed, CommittedBaseline };
@@ -418,6 +418,35 @@ struct IndoorLightingSettings
     bool SurfaceEnabled() const {return (indirect&&indirectStrength>0)||(reflections&&reflectionStrength>0);}
     bool Enabled() const {return SurfaceEnabled()||(volumetricFog&&fogDensity>0&&fogDistance>0);}
 };
+// DXR 1.1 混合硬件光线追踪设置。关闭或硬件不支持时零开销回退光栅与屏幕空间路径。
+struct RayTracingSettings
+{
+    bool enabled=false;
+    bool shadows=true,reflections=true,ambientOcclusion=true,globalIllumination=true;
+    float shadowStrength=1.f,reflectionStrength=1.f,aoStrength=.85f,giStrength=1.f;
+    float aoRadius=1.5f,maxDistance=120.f,sunAngularRadius=.0093f,normalBias=.015f;
+    float maxRoughness=.78f,historyBlendWeight=.90f;
+    Mat4 view,clipFromView;
+    Mat4 previousClipFromWorld=Mat4::Identity();
+    std::uint32_t frameIndex=0;
+    bool historyValid=false;
+    std::uint64_t sceneToken=0;
+    bool VisibilityEnabled() const noexcept {return enabled&&((shadows&&shadowStrength>0)||(ambientOcclusion&&aoStrength>0&&aoRadius>0));}
+    bool IndirectEnabled() const noexcept {return enabled&&((reflections&&reflectionStrength>0)||(globalIllumination&&giStrength>0));}
+    bool Active() const noexcept {return VisibilityEnabled()||IndirectEnabled();}
+};
+enum class RayTracingFallback : std::uint32_t
+{
+    None=0,UnsupportedHardware,MissingDepthNormals,IncompleteGeometry,
+    EmptyAccelerationStructure,ShaderUnavailable,ResourceFailure
+};
+struct RayTracingStatistics
+{
+    bool requested=false,supported=false,valid=false,shadowsValid=false,aoValid=false,reflectionsValid=false,giValid=false;
+    RayTracingFallback fallback=RayTracingFallback::None;
+    std::uint32_t blasCount=0,blasBuilds=0,blasCacheHits=0,tlasInstances=0,uniqueMeshes=0,unsupportedDraws=0;
+    std::uint64_t accelerationBytes=0,scratchBytes=0,denoiserBytes=0;
+};
 struct ForwardLighting
 {
     Vec3 directionToLight{0,0,1},directionalRadiance{},sky{0.02f,0.04f,0.08f};
@@ -434,6 +463,7 @@ struct ForwardLighting
     std::vector<LocalLight> localLights;
     bool gpuDriven=false,meshletCulling=false,gpuDrivenHiZ=false,preferMeshShader=false;
     IndoorLightingSettings indoor;
+    RayTracingSettings rayTracing;
 };
 struct Image {std::uint32_t width=0,height=0;std::vector<std::uint8_t> rgba8;};
 struct RenderTargetDescription {std::uint32_t width=0,height=0;bool depth=true,srgb=false;TextureFormat format=TextureFormat::Rgba8;};
@@ -520,6 +550,7 @@ struct Statistics
 {
     DepthNormalStatistics depthNormals;
     ScreenSpaceOcclusionStatistics screenSpaceOcclusion;
+    RayTracingStatistics rayTracing;
     GpuDrivenStatistics gpuDriven;
     ClusteredStatistics clustered;
     std::uint32_t hdrWidth=0,hdrHeight=0;

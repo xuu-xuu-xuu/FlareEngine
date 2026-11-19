@@ -34,7 +34,7 @@ void AppendFeatureInspector(const EditorSession& session,const Localization& tex
                 EditorProperty row{std::move(key),label,type,std::move(raw),session.IsPlaying()||!property.editable,{},title};
                 if(rendering)
                 {
-                    const bool limited=property.key.starts_with("render.shadow")||property.key=="render.post"||property.key=="render.lod"||property.key=="render.frameGraph"||property.key=="render.aces"||property.key.starts_with("render.bloom")||property.key=="render.taa"||property.key=="render.supersample4x"||property.key=="render.fxaa"||property.key=="render.autoExposure"||property.key.starts_with("render.lut");
+                    const bool limited=property.key.starts_with("render.shadow")||property.key=="render.post"||property.key=="render.lod"||property.key=="render.frameGraph"||property.key=="render.aces"||property.key.starts_with("render.bloom")||property.key=="render.taa"||property.key=="render.supersample4x"||property.key=="render.fxaa"||property.key=="render.autoExposure"||property.key.starts_with("render.lut")||property.key=="render.rayTracing"||property.key.starts_with("render.rt");
                     row.readOnly|=(instancing&&(limited||property.key.starts_with("render.hlod")))||(!instancing&&property.key.starts_with("render.occlusion"));
                 }
                 row.axis=axis;if(type==EditorPropertyType::Number){row.dragStep=.01f;row.dragMinimum=property.minimum;row.dragMaximum=property.maximum;}rows.push_back(std::move(row));};

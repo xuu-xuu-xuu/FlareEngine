@@ -21,6 +21,7 @@
 #include "D3D12DepthPrepass.h"
 #include "D3D12DepthNormals.h"
 #include "D3D12AmbientOcclusion.h"
+#include "D3D12RayTracing.h"
 #include "D3D12IndoorLighting.h"
 #include "D3D12Particles.h"
 #include "D3D12ShadingExtensions.h"
@@ -246,6 +247,7 @@ bool InitializeD3D12Presentation(D3D12Presentation& presentation,
     initialized.states=context.states;
     initialized.memory=context.memory;
     initialized.meshShaderTier1=context.meshShaderTier1;
+    initialized.rayTracingTier1_1=context.rayTracingTier1_1;
     initialized.srvPool=context.srvDescriptors;initialized.rtvPool=context.rtvDescriptors;
     initialized.dsvPool=context.dsvDescriptors;
     struct InitialLifetime
@@ -880,9 +882,32 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     }
     else {frame.depthNormals.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};}
     const bool depthNormals=frame.depthNormals&&frame.depthNormals->statistics.valid;
-    if(!PrepareD3D12AmbientOcclusion(presentation,frame,content,rasterWidth,rasterHeight,localization)
-        ||!PrepareD3D12ShadingExtensions(presentation,frame,content,localization))return false;
-    const bool beforeOpaqueWork=depthNormals||(frame.ambientOcclusion&&frame.ambientOcclusion->statistics.valid)||frame.shading
+    if(!PrepareD3D12RayTracing(presentation,frame,content,rasterWidth,rasterHeight,localization))
+    {presentation.commandList->Close();return false;}
+    D3D12FrameContent aoContent=content;
+    std::optional<se::rhi::ScreenSpaceOcclusionSettings> maskedAo;
+    if(frame.rayTracing&&frame.rayTracing->visibilityValid&&content.screenSpaceOcclusion&&!content.screenSpaceCapture)
+    {
+        maskedAo=*content.screenSpaceOcclusion;
+        if(frame.rayTracing->statistics.aoValid)maskedAo->gtao=false;
+        if(frame.rayTracing->statistics.shadowsValid)maskedAo->contactShadows=false;
+        aoContent.screenSpaceOcclusion=&*maskedAo;
+    }
+    if(!PrepareD3D12AmbientOcclusion(presentation,frame,aoContent,rasterWidth,rasterHeight,localization))
+    {presentation.commandList->Close();return false;}
+    SyncD3D12RayTracingScreenFallback(frame);
+    if(!PrepareD3D12ShadingExtensions(presentation,frame,content,localization))
+    {presentation.commandList->Close();return false;}
+    const bool shadowDebugOrPreview=content.shadow&&(content.shadow->preview
+        ||content.shadow->filter.debug!=se::rhi::ShadowFilterDebugMode::None);
+    const bool pureRtDirectionalShadows=forward&&frame.rayTracing&&frame.rayTracing->statistics.shadowsValid
+        &&frame.rayTracing->allShadowCastersTraced&&!shadowDebugOrPreview
+        &&frame.shading&&transparentMeshes.empty()&&!content.shadowCapture
+        &&!(content.forward&&content.forward->indoor.volumetricFog&&content.forward->indoor.fogDensity>0);
+    if(pureRtDirectionalShadows&&frame.forwardConstants.cpu)
+        reinterpret_cast<se::rhi::ForwardFrameConstants*>(frame.forwardConstants.cpu)->pointCount.y=0.f;
+    const bool beforeOpaqueWork=depthNormals||(frame.ambientOcclusion&&frame.ambientOcclusion->statistics.valid)
+        ||(frame.rayTracing&&frame.rayTracing->valid)||frame.shading
         ||(forward&&!indirect&&(content.forward->gpuDriven||content.forward->meshletCulling));
     D3D12GuiUpload guiUpload,gameUiUpload;
     if(gui&&!PrepareD3D12Gui(presentation,frame,gui->layer,frame.guiDescriptors,guiUpload,localization)){presentation.commandList->Close();return false;}
@@ -1107,6 +1132,8 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     if(shadow)
     {
         if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,2);
+        const bool needShadowPass=!pureRtDirectionalShadows||(frame.shading&&frame.shading->localShadow);
+        if(needShadowPass)
         {
             MeshSubmitTimer shadowSlice(shadowRecordMs);
             if(!RecordD3D12Shadow(presentation,frame,content,states,localization)){presentation.commandList->Close();return false;}
@@ -1186,6 +1213,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         auto& output=*frame.ambientOcclusion->output;
         if(!copy(*output.visibility.Get(),content.screenSpaceCapture)||(output.half&&!copy(*output.half.Get(),content.halfAoCapture)))return false;
     }
+    if(!RecordD3D12RayTracingPreOpaque(presentation,frame,content,states,localization)){presentation.commandList->Close();return false;}
     if(!RecordD3D12ShadingExtensions(presentation,frame,states,localization))return false;
     const bool preOpaqueGpuDriven=bool(frame.heterogeneous)||(frame.meshlet&&frame.meshlet->OcclusionEnabled());
     if(beforeOpaqueWork&&!preOpaqueGpuDriven&&presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,shadow?6:4);
@@ -1253,9 +1281,28 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     }
     if (triangle) RecordD3D12Triangle(*triangle, *presentation.commandList.Get(),
         sceneWidth, sceneHeight, clipFromWorld);
-    if(forward&&content.forward->indoor.Enabled())
+    if(forward&&frame.rayTracing&&frame.rayTracing->indirectValid)
     {
-        if(!RecordD3D12IndoorLighting(presentation,frame,content,states,*rasterColor,rtv,rasterWidth,rasterHeight,localization))return false;
+        if(!RecordD3D12RayTracingPostOpaque(presentation,frame,content,states,*rasterColor,rtv,rasterWidth,rasterHeight,localization))
+        {presentation.commandList->Close();return false;}
+    }
+    D3D12FrameContent indoorContent=content;
+    std::optional<se::rhi::ForwardLighting> maskedForward;
+    if(forward&&frame.rayTracing&&frame.rayTracing->valid&&content.forward)
+    {
+        if((frame.rayTracing->reflectionsValid&&content.forward->indoor.reflections)
+            ||(frame.rayTracing->giValid&&content.forward->indoor.indirect))
+        {
+            maskedForward=*content.forward;
+            if(frame.rayTracing->reflectionsValid)maskedForward->indoor.reflections=false;
+            if(frame.rayTracing->giValid)maskedForward->indoor.indirect=false;
+            indoorContent.forward=&*maskedForward;
+        }
+    }
+    if(forward&&indoorContent.forward&&indoorContent.forward->indoor.Enabled())
+    {
+        if(!RecordD3D12IndoorLighting(presentation,frame,indoorContent,states,*rasterColor,rtv,rasterWidth,rasterHeight,localization))
+        {presentation.commandList->Close();return false;}
     }
     else
     {
@@ -1503,13 +1550,14 @@ bool ResizeD3D12Presentation(D3D12Presentation& presentation, UINT width, UINT h
         frame.fenceValue = 0;
         frame.indoor.reset();
         frame.indoorHistory.reset();
+        frame.rayTracing.reset();
     }
     if (!CheckGraphicsResult(presentation.commandList->Reset(presentation.frames[0].allocator.Get(), nullptr),
         localization, "D3D12.ResetCommandListFailed")
         || !CheckGraphicsResult(presentation.commandList->Close(), localization, "D3D12.CloseCommandListFailed"))
     { presentation.failed = true; return false; }
     for (auto& buffer : presentation.backBuffers) buffer.Reset();
-    presentation.coverage.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.indoorHistory.reset();presentation.depth.Reset();presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.gameUiRtvs.reset();
+    presentation.coverage.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.indoorHistory.reset();ResetD3D12RayTracingTargets(presentation);presentation.depth.Reset();presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.gameUiRtvs.reset();
     presentation.width = presentation.height = 0;
     if (!CheckGraphicsResult(presentation.swapChain->ResizeBuffers(D3D12Presentation::bufferCount,
         width, height, D3D12Presentation::bufferFormat, 0), localization, "D3D12.ResizeBuffersFailed"))
@@ -1555,21 +1603,21 @@ void ReleaseD3D12Presentation(D3D12Presentation& presentation) noexcept
     presentation.commandList.Reset();
     for (auto& frame : presentation.frames)
     {
-        frame.sceneOverlay.reset();frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.heterogeneousOutput.reset();frame.meshlet.reset();frame.meshletOutput.reset();frame.heterogeneousHiZ.reset();frame.heterogeneousSources.clear();frame.clusters.reset();frame.clusterDescriptorIncrement=0;
+        frame.sceneOverlay.reset();frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.rayTracing.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.heterogeneousOutput.reset();frame.meshlet.reset();frame.meshletOutput.reset();frame.heterogeneousHiZ.reset();frame.heterogeneousSources.clear();frame.clusters.reset();frame.clusterDescriptorIncrement=0;
         frame.allocator.Reset();frame.fenceValue=0;
         frame.timestampQueries.Reset();frame.timestampReadback.Reset();frame.timestampsPending=false;
         frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploadDestinations.clear();frame.uploads.Release();frame.baselineConstants.Release();frame.descriptors.Release();frame.outputDescriptors.Release();frame.environmentDescriptors.Release();frame.postDescriptors.Release();frame.guiDescriptors.Release();frame.gameUiDescriptors.Release();frame.particleDescriptors.Release();frame.shadowMaterialDescriptors.Release();frame.transparentDsv.reset();frame.transparentDepth.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.constantCursor=0;
     }
     presentation.fenceEvent.Close();
     for(auto& frame:presentation.frames){frame.indoor.reset();frame.indoorHistory.reset();}
-    presentation.indoorHistory.reset();presentation.indoorLighting.reset();presentation.particlePass.reset();presentation.sceneOverlay.reset();presentation.coverage.reset();
+    presentation.indoorHistory.reset();presentation.indoorLighting.reset();presentation.rayTracing.reset();presentation.rayTracingStatistics={};presentation.particlePass.reset();presentation.sceneOverlay.reset();presentation.coverage.reset();
     presentation.fence.Reset();
     for (auto& buffer : presentation.backBuffers) buffer.Reset();
     presentation.rtvs.reset();presentation.gameUiRtvs.reset();
     presentation.depth.Reset();
     presentation.dsv.reset();
     presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.srvPool.reset();presentation.rtvPool.reset();
-    presentation.shadow.reset();presentation.shadowTargets.clear();presentation.shadowCacheHits=0;presentation.shadowCacheMisses=0;presentation.clusterBuilder.reset();presentation.opaqueTemporal.reset();presentation.depthNormalBuilder.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionBuilder.reset();presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.shadingDefaults.reset();presentation.heterogeneousBuilder.reset();presentation.meshletBuilder.reset();presentation.heterogeneousHiZBuilder.reset();presentation.gpuDrivenStatistics={};presentation.cpuMeshSubmitMilliseconds=0;presentation.cpuShadowRecordMilliseconds=0;presentation.meshShaderTier1=false;presentation.clustered={};presentation.dsvPool.reset();
+    presentation.shadow.reset();presentation.shadowTargets.clear();presentation.shadowCacheHits=0;presentation.shadowCacheMisses=0;presentation.clusterBuilder.reset();presentation.opaqueTemporal.reset();presentation.depthNormalBuilder.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionBuilder.reset();presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.shadingDefaults.reset();presentation.heterogeneousBuilder.reset();presentation.meshletBuilder.reset();presentation.heterogeneousHiZBuilder.reset();presentation.gpuDrivenStatistics={};presentation.cpuMeshSubmitMilliseconds=0;presentation.cpuShadowRecordMilliseconds=0;presentation.meshShaderTier1=false;presentation.rayTracingTier1_1=false;presentation.clustered={};presentation.dsvPool.reset();
     presentation.swapChain.Reset();
     if(presentation.states&&presentation.stateQueueBound)presentation.states->UnbindQueue(presentation.queue.Get());
     presentation.stateQueueBound=false;
@@ -1599,7 +1647,7 @@ void CollectD3D12UploadReferences(D3D12Presentation& p)
     if(!p.fence)return;const auto completed=p.fence->GetCompletedValue();if(completed==UINT64_MAX)return;
     for(UINT index=0;index<p.frameCount;++index)
         if((!p.uploadStates||index!=p.frameCursor)&&p.frames[index].fenceValue<=completed)
-        {p.frames[index].uploadDestinations.clear();p.frames[index].shadow.reset();p.frames[index].post.reset();p.frames[index].indoorHistory.reset();}
+        {p.frames[index].uploadDestinations.clear();p.frames[index].shadow.reset();p.frames[index].post.reset();p.frames[index].indoorHistory.reset();p.frames[index].rayTracing.reset();}
 }
 bool BeginD3D12FrameCommands(D3D12Presentation& p,const Localization& text)
 {
@@ -1613,7 +1661,7 @@ bool BeginD3D12FrameCommands(D3D12Presentation& p,const Localization& text)
         ||!CheckGraphicsResult(p.commandList->Reset(frame.allocator.Get(),nullptr),text,"D3D12.ResetCommandListFailed"))
     {p.failed=true;if(DeviceWasRemoved(p))ReportDeviceRemoval(p,text);return false;}
     PollD3D12ClusterCounters(p);
-    frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.meshlet.reset();frame.heterogeneousSources.clear();frame.uploadDestinations.clear();frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.particleDescriptors.Reset();frame.shadowMaterialDescriptors.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.shadowCachePendingCommit=false;frame.post.reset();frame.indoorHistory.reset();frame.constantCursor=0;
+    frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.rayTracing.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.meshlet.reset();frame.heterogeneousSources.clear();frame.uploadDestinations.clear();frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.particleDescriptors.Reset();frame.shadowMaterialDescriptors.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.shadowCachePendingCommit=false;frame.post.reset();frame.indoorHistory.reset();frame.constantCursor=0;
     CollectD3D12UploadReferences(p);return true;
 }
 bool BeginD3D12UploadBatch(D3D12Presentation& p,const Localization& text)

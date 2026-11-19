@@ -635,12 +635,16 @@ void AppendShadowModelDraws(const StaticRenderModel& model,const Mat4& entityWor
     {
         const auto& mesh=model.meshes[part.mesh];rhi::DrawIndexed draw;
         auto material=mesh.material;const auto materialIndex=model.source->meshes[part.mesh].material;
+        bool overridden=false;
         if(materialIndex>=0&&static_cast<std::size_t>(materialIndex)<overrides.size()&&overrides[static_cast<std::size_t>(materialIndex)])
-            material=overrides[static_cast<std::size_t>(materialIndex)];
+        {material=overrides[static_cast<std::size_t>(materialIndex)];overridden=true;}
         if(material&&material->alphaMode==MaterialAlphaMode::Blend)continue;
         if(material)
         {draw.texture=*material->baseColor;draw.tint=material->color;draw.alphaMode=material->alphaMode;
-         draw.alphaCutoff=material->alphaCutoff;draw.pbr.doubleSided=material->doubleSided;}
+         draw.alphaCutoff=material->alphaCutoff;draw.pbr.metallic=material->metallic;
+         draw.pbr.roughness=material->roughness;draw.pbr.doubleSided=material->doubleSided;
+         draw.unlit=model.fallbackMeshes[part.mesh]&&!overridden;}
+        draw.compressedVertices=mesh.vertexLayoutVersion==rhi::VertexLayoutVersionCompressed;
         draw.vertices=*mesh.vertices;draw.indices=*LevelIndices(mesh,lodLevel);draw.world=DrawWorld(model,part,entityWorld);
         // W03：蒙皮部件的顶点缓冲是 80 字节布局，必须配蒙皮深度 PSO 与调色板；
         // 缺其中任何一项时跳过该部件，避免把蒙皮顶点当参考顶点读成错误几何。

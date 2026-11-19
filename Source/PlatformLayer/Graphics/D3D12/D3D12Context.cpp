@@ -210,6 +210,19 @@ namespace
                 && SUCCEEDED(candidateDevice->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm65, sizeof(sm65)))
                 && sm65.HighestShaderModel >= D3D_SHADER_MODEL_6_5;
 
+            D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5{};
+            D3D12_FEATURE_DATA_SHADER_MODEL rtSm65{ D3D_SHADER_MODEL_6_5 };
+            Microsoft::WRL::ComPtr<ID3D12Device5> device5;
+            wchar_t disableRayTracing[8]{};
+            const DWORD rtDisableLength = GetEnvironmentVariableW(L"SELFENGINE_DISABLE_RAYTRACING", disableRayTracing, 8);
+            const bool rayTracingDisabled = rtDisableLength > 0 && !(rtDisableLength == 1 && disableRayTracing[0] == L'0');
+            context.rayTracingTier1_1 = !rayTracingDisabled
+                && SUCCEEDED(candidateDevice.As(&device5))
+                && SUCCEEDED(candidateDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options5, sizeof(options5)))
+                && options5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1
+                && SUCCEEDED(candidateDevice->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &rtSm65, sizeof(rtSm65)))
+                && rtSm65.HighestShaderModel >= D3D_SHADER_MODEL_6_5;
+
             context.adapter = std::move(candidate);
             context.device = std::move(candidateDevice);
             Log(LogLevel::Info, localization.GetText("D3D12.SelectedAdapter") + ": " + name);

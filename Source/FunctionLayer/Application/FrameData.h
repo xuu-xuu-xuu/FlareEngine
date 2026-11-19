@@ -94,6 +94,7 @@ struct FrameData
     Vec3 skyColor{0.02f,0.04f,0.08f}; // 线性 HDR；普通 Sky 的固定背景，环境模式使用 environment。
     DirectionalShadowView shadow;
     rhi::IndoorLightingSettings indoor;
+    rhi::RayTracingSettings rayTracing;
     EnvironmentView environment;
     SkyView sky;
     std::optional<EnvironmentSnapshot> timeOfDay; // 自有 CPU 昼夜值；由 ApplyTimeOfDayFrameData 消费写入 GPU 光照与大气参数。

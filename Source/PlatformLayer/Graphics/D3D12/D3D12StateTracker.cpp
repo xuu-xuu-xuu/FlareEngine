@@ -39,6 +39,14 @@ bool Compatible(D3D12_RESOURCE_STATES before,D3D12_RESOURCE_STATES after)
 }
 bool ValidUsage(const D3D12StateRecord& record,D3D12_RESOURCE_STATES state)
 {
+    if(state==D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE)
+    {
+        return record.heap==D3D12TrackedHeap::Default
+            &&record.description.Dimension==D3D12_RESOURCE_DIMENSION_BUFFER
+            &&(record.description.Flags&D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)!=0
+            &&(record.states.empty()||record.states[0]==D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+    }
+    if(!record.states.empty()&&record.states[0]==D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE)return false;
     const UINT bits=static_cast<UINT>(state);
     constexpr UINT writes=D3D12_RESOURCE_STATE_RENDER_TARGET|D3D12_RESOURCE_STATE_DEPTH_WRITE|D3D12_RESOURCE_STATE_COPY_DEST|D3D12_RESOURCE_STATE_RESOLVE_DEST|D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     if(bits&~(readStates|writes))return false;
@@ -211,12 +219,14 @@ HRESULT D3D12StateRecording::UavBarrier(ID3D12GraphicsCommandList& commands,ID3D
     if(committed_||registry_.owner_!=std::this_thread::get_id()||!registry_.queue_||!pass)return E_UNEXPECTED;
     const auto found=local_.find(&resource);if(found==local_.end())return E_INVALIDARG;
     const auto& local=found->second;
-    if(!ValidUsage(*local.record,D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
-        ||!std::all_of(local.states.begin(),local.states.end(),[](auto state){return state==D3D12_RESOURCE_STATE_UNORDERED_ACCESS;}))return E_INVALIDARG;
+    const auto activeState=local.states.empty()?D3D12_RESOURCE_STATE_COMMON:local.states[0];
+    const bool validUav=(activeState==D3D12_RESOURCE_STATE_UNORDERED_ACCESS&&ValidUsage(*local.record,D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+        ||(activeState==D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE&&ValidUsage(*local.record,D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE));
+    if(!validUav||!std::all_of(local.states.begin(),local.states.end(),[activeState](auto state){return state==activeState;}))return E_INVALIDARG;
     D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_UAV;barrier.UAV.pResource=&resource;
     commands.ResourceBarrier(1,&barrier);
     events_.push_back({local.record->serial,0,local.record->name,pass,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
-        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,false,false,true});return S_OK;
+        activeState,activeState,false,false,true});return S_OK;
 }
 void D3D12StateRecording::Commit()
 {
@@ -227,7 +237,8 @@ void D3D12StateRecording::Commit()
     {
         local.record->states=std::move(local.states);local.record->lastSubmission=submission;
         if(local.activate)local.record->activationPending=false;
-        if(local.record->heap==D3D12TrackedHeap::Default&&local.record->description.Dimension==D3D12_RESOURCE_DIMENSION_BUFFER)
+        if(local.record->heap==D3D12TrackedHeap::Default&&local.record->description.Dimension==D3D12_RESOURCE_DIMENSION_BUFFER
+            &&!local.record->states.empty()&&local.record->states[0]!=D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE)
         {
             const auto before=local.record->states[0];
             if(before!=D3D12_RESOURCE_STATE_COMMON)

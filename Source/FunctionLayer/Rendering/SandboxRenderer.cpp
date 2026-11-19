@@ -438,9 +438,10 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             customCascadeUnsupported=customCascadeUnsupported||(preview?!preview->shader.empty():material&&!material->shader.empty());
         }
     const bool indoorLighting=frame.data&&frame.data->indoor.Enabled();
+    const bool rayTracingLighting=frame.data&&frame.data->rayTracing.Active();
     // 已编译的用户 Shader 沿用其布局；需要材质扩展的表面仍使用引擎的对应技术。
     const bool shadingRequested=frame.data&&(materialShading||localLighting||!frame.data->rectangleLights.empty()
-        ||(!customCascadeUnsupported&&(indoorLighting||frame.data->multiscatter||frame.data->gtao||frame.data->contactShadows
+        ||(!customCascadeUnsupported&&(indoorLighting||rayTracingLighting||frame.data->multiscatter||frame.data->gtao||frame.data->contactShadows
             ||frame.data->diffuseSh||frame.data->localDiffuseSh)));
     const bool shadingFrame=shadingRequested&&ForwardScene(scene_);
     const bool bc7Color=frame.data&&frame.data->bc7Color;
@@ -469,7 +470,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         if(!reloadBuiltin(cube_,false)||!reloadBuiltin(sphere_,true))return RenderResult::Failed;
     }
     const bool requestedPost=frame.data&&frame.data->post.has_value();
-    const bool sceneInstancing=frame.data&&frame.data->instancing&&!coverageFrame&&!requestedPost&&!shadingFrame
+    const bool sceneInstancing=frame.data&&frame.data->instancing&&!coverageFrame&&!requestedPost&&!shadingFrame&&!rayTracingLighting
         &&!frame.data->depthNormals&&!frame.data->gpuDriven&&!frame.data->meshletCulling&&!frame.data->gpuDrivenHiZ;
     if(frame.data&&frame.data->instancing&&!sceneInstancing&&reportedDiagnostics_.insert("Rendering.ShadingInstancingFallback").second)
         Log(LogLevel::Warning,localization.GetText("Rendering.ShadingInstancingFallback"));
@@ -505,16 +506,16 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             featureHlodSignature_=std::move(signature);hlodEnabled_=hlod;
         }
         hlodResidentRadius_=frame.data?frame.data->hlodRadius:0;
-        const bool pbr=frame.data&&(frame.data->fullPbr||materialShading||localLighting||indoorLighting||frame.data->multiscatter
+        const bool pbr=frame.data&&(frame.data->fullPbr||materialShading||localLighting||indoorLighting||rayTracingLighting||frame.data->multiscatter
             ||frame.data->diffuseSh||frame.data->localDiffuseSh||!frame.data->rectangleLights.empty());
-        if(pbr!=featureFullPbr_){std::swap(featureEnvironment_?featureEnvironmentPipeline_:pipeline_,featurePbrPipeline_);featureFullPbr_=pbr;previousViewProjectionValid_=false;indoorHistoryValid_=false;}
+        if(pbr!=featureFullPbr_){std::swap(featureEnvironment_?featureEnvironmentPipeline_:pipeline_,featurePbrPipeline_);featureFullPbr_=pbr;previousViewProjectionValid_=false;indoorHistoryValid_=false;rayTracingHistoryValid_=false;}
         const bool instanced=sceneInstancing;
-        if(instanced!=featureForward_){std::swap(outputPipeline_,featureForwardOutput_);featureForward_=instanced;previousViewProjectionValid_=false;indoorHistoryValid_=false;}
+        if(instanced!=featureForward_){std::swap(outputPipeline_,featureForwardOutput_);featureForward_=instanced;previousViewProjectionValid_=false;indoorHistoryValid_=false;rayTracingHistoryValid_=false;}
         const bool environment=frame.data&&(defaultEnvironment||!frame.data->environment.asset.empty()||frame.data->diffuseSh||frame.data->localDiffuseSh)&&!instanced;
         if(environment!=featureEnvironment_)
-        {std::swap(pipeline_,featureEnvironmentPipeline_);std::swap(skyPipeline_,featureEnvironmentSky_);featureEnvironment_=environment;previousViewProjectionValid_=false;indoorHistoryValid_=false;}
+        {std::swap(pipeline_,featureEnvironmentPipeline_);std::swap(skyPipeline_,featureEnvironmentSky_);featureEnvironment_=environment;previousViewProjectionValid_=false;indoorHistoryValid_=false;rayTracingHistoryValid_=false;}
         const bool taa=postFrame&&frame.data->post->taa;
-        if(taa!=taaEnabled_){previousViewProjectionValid_=false;indoorHistoryValid_=false;previousWorlds_.clear();}
+        if(taa!=taaEnabled_){previousViewProjectionValid_=false;indoorHistoryValid_=false;rayTracingHistoryValid_=false;previousWorlds_.clear();}
         taaEnabled_=taa;autoExposureEnabled_=postFrame&&frame.data->post->autoExposure;lutEnabled_=postFrame&&frame.data->post->lutEnabled;
         if(frame.data&&frame.data->sceneRenderSettings){occlusionEnabled_=frame.data->occlusion;occlusionHudEnabled_=frame.data->occlusionCounters;occlusionTimingEnabled_=frame.data->occlusionTiming;frameGraphEnabled_=frame.data->frameGraph;}
         else {occlusionEnabled_=occlusionHudEnabled_=occlusionTimingEnabled_=frameGraphEnabled_=false;}
@@ -733,7 +734,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         }
         result=commands->ConfigureParticles(particles,ResourceDirectory()/"Shaders/ParticleBillboard.hlsl");
     }
-    const se::rhi::DepthNormalSettings geometrySettings{frame.data&&camera_&&(frame.data->depthNormals||frame.data->gtao||frame.data->contactShadows||frame.data->gpuDrivenHiZ||frame.data->indoor.Enabled())};
+    const se::rhi::DepthNormalSettings geometrySettings{frame.data&&camera_&&(frame.data->depthNormals||frame.data->gtao||frame.data->contactShadows||frame.data->gpuDrivenHiZ||frame.data->indoor.Enabled()||frame.data->rayTracing.Active())};
     std::optional<se::rhi::ScreenSpaceOcclusionSettings> screenSettings;
     if(frame.data&&camera_&&(frame.data->gtao||frame.data->contactShadows))
     {
@@ -1383,6 +1384,19 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                         &&lastSceneWidth_==sceneWidth&&lastSceneHeight_==sceneHeight
                         &&lastIndoorSceneToken_==indoorSceneToken;
                 }
+                if(camera_&&frame.data->rayTracing.Active())
+                {
+                    const auto rtSceneToken=ComputeIndoorSceneToken(scene_,frame.data);
+                    lighting.rayTracing=frame.data->rayTracing;
+                    lighting.rayTracing.view=camera_->view;
+                    lighting.rayTracing.clipFromView=clipFromView;
+                    lighting.rayTracing.previousClipFromWorld=previousViewProjection_;
+                    lighting.rayTracing.frameIndex=static_cast<std::uint32_t>(frame.updateIndex);
+                    lighting.rayTracing.sceneToken=rtSceneToken;
+                    lighting.rayTracing.historyValid=rayTracingHistoryValid_&&previousViewProjectionValid_
+                        &&lastSceneWidth_==sceneWidth&&lastSceneHeight_==sceneHeight
+                        &&lastRayTracingSceneToken_==rtSceneToken;
+                }
             }
             if(shadingFrame&&camera_&&frame.data)
             {
@@ -1600,31 +1614,34 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if(result&&!forward)result=commands->Close();
     if(result)result=device_->Resize(frame.surface.width,frame.surface.height);
     const bool indoorActive=frame.data&&camera_&&frame.data->indoor.Enabled();
-    if((taaFrame||indoorActive)&&result)
+    const bool rtActive=frame.data&&camera_&&frame.data->rayTracing.Active();
+    if((taaFrame||indoorActive||rtActive)&&result)
     {
         previousViewProjection_=viewProjectionBase;previousViewProjectionValid_=true;
         lastSurfaceWidth_=frame.surface.width;lastSurfaceHeight_=frame.surface.height;
     }
-    if(indoorActive&&result)
+    const auto activeSceneToken=(indoorActive||rtActive)?ComputeIndoorSceneToken(scene_,frame.data):0ull;
+    if((indoorActive||rtActive)&&result)
     {
-        indoorHistoryValid_=true;
         lastSceneWidth_=sceneWidth;lastSceneHeight_=sceneHeight;
-        lastIndoorSceneToken_=ComputeIndoorSceneToken(scene_,frame.data);
     }
-    else
-    {
-        indoorHistoryValid_=false;
-    }
+    if(indoorActive&&result){indoorHistoryValid_=true;lastIndoorSceneToken_=activeSceneToken;}
+    else indoorHistoryValid_=false;
+    if(rtActive&&result){rayTracingHistoryValid_=true;lastRayTracingSceneToken_=activeSceneToken;}
+    else rayTracingHistoryValid_=false;
     preparation.reset();
     se::rhi::CompletionToken token;
     se::rhi::Image capture;const bool requested=!captureOutput_.empty()&&!captured_&&frame.updateIndex==captureFrame_;
     if(result)result=device_->Submit(*commands,token,requested?&capture:nullptr);
     if(result)
     {
-        const auto indirect=device_->Stats().gpuDriven;
+        const auto gpuStats=device_->Stats();
+        const auto& indirect=gpuStats.gpuDriven;
         const std::string key="Rendering.GpuDrivenHiZUnavailable";
         if(indirect.hzbRequested&&!indirect.hzbValid&&reportedDiagnostics_.insert(key).second)
             Log(LogLevel::Warning,localization.GetText(key));
+        if(gpuStats.rayTracing.requested&&!gpuStats.rayTracing.valid&&reportedDiagnostics_.insert("Rendering.RayTracingFallback").second)
+            Log(LogLevel::Warning,localization.GetText("Rendering.RayTracingFallback"));
     }
     if(clusteredFrame&&result)
     {
@@ -1846,5 +1863,7 @@ void SandboxRenderer::Shutdown() noexcept
     occlusionEnabled_=false;occlusionPipeline_.reset();forwardOcclusionPipeline_.reset();
     lastCameraError_ = se::CameraError::None;
     lastMultiplePrimary_ = lastRejectedPrimary_ = controlsReported_ = false;
+    indoorHistoryValid_ = rayTracingHistoryValid_ = false;
+    lastIndoorSceneToken_ = lastRayTracingSceneToken_ = 0;
     reportedBc1Uploads_=0;
 }

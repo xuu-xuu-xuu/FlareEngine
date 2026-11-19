@@ -80,7 +80,7 @@ bool CreateTarget(D3D12Presentation& p,ID3D12Device& device,UINT width,UINT heig
 bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,UINT width,UINT height,const Localization& text)
 {
     Microsoft::WRL::ComPtr<ID3D12Device> device;if(FAILED(p.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf()))))return false;
-    const bool material=content.forward&&content.forward->indoor.SurfaceEnabled();
+    const bool material=content.forward&&(content.forward->indoor.SurfaceEnabled()||content.forward->rayTracing.IndirectEnabled());
     if(!p.depthNormalTarget||p.depthNormalTarget->width!=width||p.depthNormalTarget->height!=height||bool(p.depthNormalTarget->material)!=material)
         if(!CreateTarget(p,*device.Get(),width,height,material,p.depthNormalTarget,text))return false;
     auto candidate=std::make_shared<D3D12DepthNormalFrame>();candidate->target=p.depthNormalTarget;

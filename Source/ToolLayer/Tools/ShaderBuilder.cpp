@@ -2,6 +2,7 @@
 #include "PlatformLayer/Graphics/D3D12/D3D12AmbientOcclusion.h"
 #include "PlatformLayer/Graphics/D3D12/D3D12Meshlet.h"
 #include "PlatformLayer/Graphics/D3D12/D3D12Particles.h"
+#include "PlatformLayer/Graphics/D3D12/D3D12RayTracing.h"
 #include "PlatformLayer/Windows/ExecutablePath.h"
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
@@ -32,6 +33,12 @@ int wmain(int argc,wchar_t** argv)
     if(requestedMode==L"meshlet-ms")
     {
         if(argc!=4||!WriteD3D12MeshletShader(argv[2],argv[3],text))
+        {Log(LogLevel::Error,text.GetText("Shader.WriteFailed"));return 1;}
+        Log(LogLevel::Info,text.GetText("Shader.BuildComplete"));return 0;
+    }
+    if(requestedMode==L"raytracing")
+    {
+        if(argc!=4||!WriteD3D12RayTracingShaders(argv[2],argv[3],text))
         {Log(LogLevel::Error,text.GetText("Shader.WriteFailed"));return 1;}
         Log(LogLevel::Info,text.GetText("Shader.BuildComplete"));return 0;
     }

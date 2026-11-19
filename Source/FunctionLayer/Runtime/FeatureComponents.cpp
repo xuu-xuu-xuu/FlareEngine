@@ -100,7 +100,19 @@ const std::array rendering{
     P{"render.preferMeshShader","Feature.Render.PreferMeshShader",PropertyType::Boolean,true},
     P{"render.transientAliasing","Feature.Render.TransientAliasing",PropertyType::Boolean,true},
     P{"render.staticShadowCache","Feature.Render.StaticShadowCache",PropertyType::Boolean,true},
-    P{"render.staticBatching","Feature.Render.StaticBatching",PropertyType::Boolean,false}};
+    P{"render.staticBatching","Feature.Render.StaticBatching",PropertyType::Boolean,false},
+    P{"render.rayTracing","Feature.Render.RayTracing",PropertyType::Boolean,false},
+    P{"render.rtShadows","Feature.Render.RtShadows",PropertyType::Boolean,true},
+    P{"render.rtShadowStrength","Feature.Render.RtShadowStrength",PropertyType::Number,1.f,0.f,1.f},
+    P{"render.rtReflections","Feature.Render.RtReflections",PropertyType::Boolean,true},
+    P{"render.rtReflectionStrength","Feature.Render.RtReflectionStrength",PropertyType::Number,1.f,0.f,4.f},
+    P{"render.rtAmbientOcclusion","Feature.Render.RtAmbientOcclusion",PropertyType::Boolean,true},
+    P{"render.rtAoStrength","Feature.Render.RtAoStrength",PropertyType::Number,.85f,0.f,1.f},
+    P{"render.rtAoRadius","Feature.Render.RtAoRadius",PropertyType::Number,1.5f,.05f,50.f},
+    P{"render.rtGi","Feature.Render.RtGi",PropertyType::Boolean,true},
+    P{"render.rtGiStrength","Feature.Render.RtGiStrength",PropertyType::Number,1.f,0.f,4.f},
+    P{"render.rtMaxDistance","Feature.Render.RtMaxDistance",PropertyType::Number,120.f,1.f,2000.f},
+    P{"render.rtSunAngularRadius","Feature.Render.RtSunAngularRadius",PropertyType::Number,.0093f,0.f,.15f}};
 const std::array rectangleLight{
     P{"rectangle.color","Feature.Rectangle.Color",PropertyType::Vector3,Vec3{1,1,1},0.f,65504.f},
     P{"rectangle.radiance","Feature.Rectangle.Radiance",PropertyType::Number,10.f,0.f,65504.f},

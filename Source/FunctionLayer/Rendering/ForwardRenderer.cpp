@@ -73,7 +73,7 @@ namespace
 {
 bool NeedsShadowCasters(const rhi::ShadowSettings& shadows,const rhi::ForwardLighting& lighting)
 {
-    return shadows.enabled||std::any_of(lighting.localLights.begin(),lighting.localLights.end(),
+    return shadows.enabled||lighting.rayTracing.Active()||std::any_of(lighting.localLights.begin(),lighting.localLights.end(),
         [](const auto& light){return light.castsShadow;});
 }
 bool NeedsGeometry(const rhi::DepthNormalSettings* geometry,const rhi::ScreenSpaceOcclusionSettings* occlusion)

@@ -7,6 +7,7 @@
 #include "D3D12Presentation.h"
 #include "D3D12DepthNormals.h"
 #include "D3D12AmbientOcclusion.h"
+#include "D3D12RayTracing.h"
 #include "D3D12ShadingExtensions.h"
 #include "D3D12LocalLighting.h"
 #include "D3D12Context.h"
@@ -895,6 +896,7 @@ Result CommandContext::ConfigureForward(const ForwardLighting& lighting,Pipeline
             ||!range(indoor.fogDistance,.1f,500)||!range(indoor.fogAlbedo.x,0,1)||!range(indoor.fogAlbedo.y,0,1)||!range(indoor.fogAlbedo.z,0,1)
             ||!IsFinite(indoor.view)||!IsFinite(indoor.clipFromView)||!Inverse(indoor.view)||!Inverse(indoor.clipFromView))return Fail(Error::InvalidArgument);
     }
+    if(!ValidD3D12RayTracingSettings(lighting.rayTracing))return Fail(Error::InvalidArgument);
     if(lighting.pointCount>MaximumPointLights||!IsFinite(lighting.exposure)||lighting.exposure<1.0f/1024||lighting.exposure>64
         ||!radiance(lighting.sky)||!radiance(lighting.directionalRadiance)||!IsFinite(lighting.directionToLight)||!IsFinite(length)||length<1e-12f)return Fail(Error::InvalidArgument);
     for(UINT index=0;index<lighting.pointCount;++index)
@@ -1152,6 +1154,12 @@ Result CommandContext::DrawShadow(const DrawIndexed& draw)
         if(!IsFinite(draw.tint)||draw.tint.w<0||draw.tint.w>1)return Fail(Error::InvalidArgument);
     }
     else if(pipeline&&pipeline->mesh.prepared->program->source.materialLayoutVersion)return Fail(Error::Unsupported);
+    else if(draw.texture)
+    {
+        auto albedo=device->textures.Get(draw.texture,device->id);
+        if(albedo&&device->Ready(*albedo)&&!albedo->target&&!albedo->native.cube&&albedo->native.arrayLayers==1&&albedo->native.views)
+            coverage=std::move(albedo);
+    }
     D3D12Mesh mesh;mesh.vertices=vertex->resource;mesh.indices=index->resource;
     mesh.vertexView={vertex->resource->GetGPUVirtualAddress(),vertex->bytes,vertex->stride};
     mesh.indexView={index->resource->GetGPUVirtualAddress(),index->bytes,index->stride==2?DXGI_FORMAT_R16_UINT:DXGI_FORMAT_R32_UINT};mesh.indexCount=index->count;
@@ -1550,7 +1558,9 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     {
         D3D12MeshDraw shadow{};
         shadow.mesh=&c.shadowGeometry[index];shadow.world=c.shadowWorlds[index];
-        shadow.textureIsData=c.shadowMaterials[index].textureIsData;shadow.tint=c.shadowMaterials[index].tint;shadow.pbr.doubleSided=c.shadowMaterials[index].pbr.doubleSided;
+        shadow.textureIsData=c.shadowMaterials[index].textureIsData;shadow.unlit=c.shadowMaterials[index].unlit;
+        shadow.tint=c.shadowMaterials[index].tint;shadow.pbr=c.shadowMaterials[index].pbr;
+        shadow.compressedVertices=c.shadowMaterials[index].compressedVertices;
         shadow.alphaMode=c.shadowMaterials[index].alphaMode;shadow.alphaCutoff=c.shadowMaterials[index].alphaCutoff;
         shadow.skinPalette=c.shadowPalettes[index];
         shadow.skinJointCount=c.shadowJointCounts[index];shadow.skinJointOffset=c.shadowJointOffsets[index];
@@ -1780,6 +1790,7 @@ Statistics Device::Stats() const
     stats.cpuShadowRecordMilliseconds=p.presentation.cpuShadowRecordMilliseconds;
     stats.depthNormals=p.presentation.depthNormalStatistics;stats.gpuDriven=p.presentation.gpuDrivenStatistics;
     stats.screenSpaceOcclusion=p.presentation.screenSpaceStatistics;
+    stats.rayTracing=p.presentation.rayTracingStatistics;
     if(p.presentation.ambientOcclusionBuilder)
     {
         const auto loads=p.presentation.ambientOcclusionBuilder->ShaderStatistics();stats.screenSpaceOcclusion.kernelCreations=2;
@@ -1891,7 +1902,7 @@ AdapterInformation Device::Adapter() const
 DeviceCapabilities Device::Capabilities() const noexcept
 {
     if(!impl_||!impl_->ready)return {};
-    return {impl_->context.meshShaderTier1};
+    return {impl_->context.meshShaderTier1,impl_->context.rayTracingTier1_1};
 }
 Result Device::ExportGpuTimingsCsv(const std::filesystem::path& path)
 {

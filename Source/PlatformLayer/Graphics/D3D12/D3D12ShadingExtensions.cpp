@@ -1,5 +1,6 @@
 #include "D3D12ShadingExtensions.h"
 #include "D3D12AmbientOcclusion.h"
+#include "D3D12RayTracing.h"
 #include "D3D12Gui.h"
 #include "D3D12SceneCoverage.h"
 #include "D3D12Memory.h"
@@ -50,12 +51,16 @@ bool PrepareD3D12ShadingExtensions(D3D12Presentation& p,D3D12FrameContext& frame
     const UINT width=frame.coverage?frame.coverage->samples.color.width:content.sceneHdr?content.sceneHdr->color.width:p.width;
     const UINT height=frame.coverage?frame.coverage->samples.color.height:content.sceneHdr?content.sceneHdr->color.height:p.height;
     auto constants=content.forward->shading.constants;
-    constants.viewport={float(width),float(height),frame.ambientOcclusion&&frame.ambientOcclusion->statistics.aoValid?1.f:0.f,frame.ambientOcclusion&&frame.ambientOcclusion->statistics.contactValid?1.f:0.f};
+    const bool rtVis=frame.rayTracing&&frame.rayTracing->visibilityValid;
+    const bool aoActive=rtVis?frame.rayTracing->aoValid:(frame.ambientOcclusion&&frame.ambientOcclusion->statistics.aoValid);
+    const bool shadowActive=rtVis?frame.rayTracing->shadowsValid:(frame.ambientOcclusion&&frame.ambientOcclusion->statistics.contactValid);
+    constants.viewport={float(width),float(height),aoActive?1.f:0.f,shadowActive?1.f:0.f};
     if(!CheckGraphicsResult(frame.uploads.Allocate(512,256,frame.shadingConstants),text,"D3D12.UploadCapacityExceeded"))return false;
     std::memset(frame.shadingConstants.cpu,0,512);std::memcpy(frame.shadingConstants.cpu,&constants,sizeof(constants));
     frame.shadingMaterials.resize(content.meshes.size());candidate->views.resize(content.meshes.size());
-    auto occlusion=GetD3D12AmbientOcclusionView(frame);
-    if(occlusion.ptr)candidate->resources.push_back(frame.ambientOcclusion->output->visibility);
+    auto occlusion=rtVis?GetD3D12RayTracingVisibilityView(frame):GetD3D12AmbientOcclusionView(frame);
+    if(rtVis&&occlusion.ptr)candidate->resources.push_back(frame.rayTracing->targets->visibility);
+    else if(occlusion.ptr)candidate->resources.push_back(frame.ambientOcclusion->output->visibility);
     for(size_t index=0;index<content.meshes.size();++index)
     {
         const auto& draw=content.meshes[index];auto& table=candidate->views[index];table.fill(candidate->defaults->views->Cpu());table[8]=candidate->defaults->views->Cpu(1);

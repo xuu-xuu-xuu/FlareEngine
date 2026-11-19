@@ -35,6 +35,13 @@ add_custom_command(OUTPUT "${occlusion_output}.GtaoHalf.seao" "${occlusion_outpu
     DEPENDS ShaderBuilder "${occlusion_source}" "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/AmbientOcclusionBindings.hlsli" VERBATIM)
 add_custom_target(BuildOcclusionShaders DEPENDS "${occlusion_output}.GtaoHalf.seao" "${occlusion_output}.ResolveOcclusion.seao")
 add_dependencies(BuildShaders BuildOcclusionShaders)
+set(raytracing_source "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders/RayTracing.hlsl")
+set(raytracing_output "${CMAKE_CURRENT_BINARY_DIR}/Resources/Shaders/RayTracing.hlsl.sebin")
+add_custom_command(OUTPUT "${raytracing_output}" "${raytracing_output}.json"
+    COMMAND ShaderBuilder raytracing "${raytracing_source}" "${raytracing_output}"
+    DEPENDS ShaderBuilder "${raytracing_source}" VERBATIM)
+add_custom_target(BuildRayTracingShaders DEPENDS "${raytracing_output}" "${raytracing_output}.json")
+add_dependencies(BuildShaders BuildRayTracingShaders)
 add_dependencies(SelfEngineEditor BuildShaders)
 add_dependencies(EngineNative BuildShaders)
 
