@@ -179,8 +179,9 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
         occlusionCommitted_=false;
         previousViewProjectionValid_=false;previousWorlds_.clear();
         indoorHistoryValid_=false;lastSceneWidth_=0;lastSceneHeight_=0;lastIndoorSceneToken_=0;
-        if((scene_==SandboxScene::PostProcess||basic)&&!post_.Initialize(*device_,resources/"Shaders",acesToneMap))return false;
-        featurePostAces_=acesToneMap;
+        const bool initialPostAces=basic&&acesLength==0?true:acesToneMap;
+        if((scene_==SandboxScene::PostProcess||basic)&&!post_.Initialize(*device_,resources/"Shaders",initialPostAces))return false;
+        featurePostAces_=initialPostAces;
         if(basic)
         {
             se::rhi::PipelineDescription fullPbr{se::rhi::PipelineKind::ShadowedMesh,resources/"Shaders/ShadowedForward.hlsl",4};
@@ -521,7 +522,8 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         if(aces!=featurePostAces_)
         {
             se::PostProcessRenderer candidate;
-            if(!candidate.Initialize(*device_,ResourceDirectory()/"Shaders",aces)||!device_->WaitIdle())return RenderResult::Failed;
+            // PostProcessRenderer 仅持有 RHI Pipeline 句柄，旧管线由 Device::Destroy 按在途 Fence 延迟回收，无需全局 WaitIdle。
+            if(!candidate.Initialize(*device_,ResourceDirectory()/"Shaders",aces))return RenderResult::Failed;
             post_=std::move(candidate);
             featurePostAces_=aces;
         }

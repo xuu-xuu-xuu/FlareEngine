@@ -6,7 +6,7 @@
 )
 $ErrorActionPreference='Stop'
 if([Console]::IsOutputRedirected){[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}
-$root=if($SelfEngineRoot){[IO.Path]::GetFullPath($SelfEngineRoot)}else{(Resolve-Path (Join-Path $PSScriptRoot '..')).Path}
+$root=$(if($SelfEngineRoot){[IO.Path]::GetFullPath($SelfEngineRoot)}else{(Resolve-Path (Join-Path $PSScriptRoot '..')).Path}).TrimEnd('\','/')
 Set-Location -LiteralPath $root
 . (Join-Path $PSScriptRoot 'SourceIdentity.ps1')
 . (Join-Path $PSScriptRoot 'NativeProgram.ps1')
@@ -50,8 +50,18 @@ try {
     Get-ChildItem -LiteralPath (Join-Path $native 'Resources') -Force |
         Where-Object Name -ne 'Templates' | Copy-Item -Destination $stageResources.FullName -Recurse -Force
     # 模板取仓库中的制作文件。开发者试开构建目录中的模板后，里面可能有 IDE 工程、日志和几 GB 的缓存。
-    $templateInputs=@(& git -C $root -c core.quotepath=false ls-files --cached --others --exclude-standard -- Resources/Templates)
-    if($LASTEXITCODE -ne 0 -or !$templateInputs){throw 'Cannot enumerate the project templates.'}
+    if(Test-Path -LiteralPath (Join-Path $root '.git')){
+        $templateInputs=@(& git -C $root -c core.quotepath=false ls-files --cached --others --exclude-standard -- Resources/Templates)
+        if($LASTEXITCODE -ne 0 -or !$templateInputs){throw 'Cannot enumerate the project templates.'}
+    }else{
+        $tplDir=Join-Path $root 'Resources/Templates'
+        if(!(Test-Path -LiteralPath $tplDir -PathType Container)){throw 'Cannot enumerate the project templates.'}
+        $templateInputs=@(Get-ChildItem -LiteralPath $tplDir -Recurse -File | ForEach-Object {
+            $rel=$_.FullName.Substring($root.Length+1).Replace('\','/')
+            if($rel -notmatch '/(bin|obj|__pycache__|\.cache|out|\.vs)/' -and $_.Extension -notin @('.log','.user','.suo')){$rel}
+        })
+        if(!$templateInputs){throw 'Cannot enumerate the project templates.'}
+    }
     foreach($relative in $templateInputs){
         $templateInput=Join-Path $root $relative
         if(Test-Path -LiteralPath $templateInput -PathType Leaf){CopyFile $templateInput (Join-Path $stage $relative)}

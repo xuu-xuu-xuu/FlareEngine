@@ -4,13 +4,23 @@ if($PSVersionTable.PSVersion.Major -le 5){
     Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1') -Force -ErrorAction Stop
 }
 function Get-EngineSourceIdentity([string]$ProjectRoot){
-    $ProjectRoot=(Resolve-Path -LiteralPath $ProjectRoot).Path.TrimEnd('\')
+    $ProjectRoot=(Resolve-Path -LiteralPath $ProjectRoot).Path.TrimEnd('\','/')
     $inputPaths=[Collections.Generic.List[string]]::new()
-    # 仅计算可发布输入，排除本地保留的回归、实验和旧路径原件。
-    $candidates=& git -C $ProjectRoot -c core.quotepath=false ls-files --cached --others --exclude-standard
-    if($LASTEXITCODE -ne 0){throw 'Cannot enumerate engine source inputs.'}
+    # 仅计算可发布输入，排除本地保留的回归、实验和旧路径原件；非 Git 源码归档包直接枚举允许目录。
+    $hasGit=Test-Path -LiteralPath (Join-Path $ProjectRoot '.git')
+    if($hasGit){
+        $candidates=& git -C $ProjectRoot -c core.quotepath=false ls-files --cached --others --exclude-standard
+        if($LASTEXITCODE -ne 0){throw 'Cannot enumerate engine source inputs.'}
+    }else{
+        $candidates=@(foreach($dir in @('Source','Resources','Scripts','ThirdParty','BuildConfig/CMake')){
+            $sub=Join-Path $ProjectRoot $dir
+            if(Test-Path -LiteralPath $sub -PathType Container){
+                Get-ChildItem -LiteralPath $sub -Recurse -File | ForEach-Object { $_.FullName.Substring($ProjectRoot.Length+1).Replace('\','/') }
+            }
+        })
+    }
     foreach($relative in @($candidates | Sort-Object -Unique)){
-        if($relative -match '^(Source|Resources|Scripts|ThirdParty|BuildConfig/CMake)/' -and $relative -notmatch '/(bin|obj|__pycache__|\.cache)/' -and [IO.Path]::GetExtension($relative) -notin @('.pyc','.pyo','.md')){
+        if($relative -match '^(Source|Resources|Scripts|ThirdParty|BuildConfig/CMake)/' -and $relative -notmatch '/(bin|obj|__pycache__|\.cache|out|\.vs)/' -and [IO.Path]::GetExtension($relative) -notin @('.pyc','.pyo','.md','.log','.user','.suo')){
             $full=Join-Path $ProjectRoot $relative
             if(Test-Path -LiteralPath $full -PathType Leaf){$inputPaths.Add($full)}
         }
@@ -32,7 +42,11 @@ function Get-EngineSourceIdentity([string]$ProjectRoot){
     $sha=[Security.Cryptography.SHA256]::Create()
     try{$identity=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-','').ToLowerInvariant()}
     finally{$sha.Dispose()}
-    $head=(& git -C $ProjectRoot rev-parse HEAD).Trim();if($LASTEXITCODE -ne 0){throw 'Cannot identify Git base.'}
-    $dirty=[bool](& git -C $ProjectRoot status --porcelain)
-    return [ordered]@{schema=1;identity='SHA256 UTF8 path NUL digest LF, ordinal path order';excludes=@('**/bin/**','**/obj/**','**/__pycache__/**','**/.cache/**','*.pyc','*.pyo','*.md');git_head=$head;dirty=$dirty;source_sha256=$identity;files=$sourceFiles}
+    if($hasGit){
+        $head=(& git -C $ProjectRoot rev-parse HEAD).Trim();if($LASTEXITCODE -ne 0){throw 'Cannot identify Git base.'}
+        $dirty=[bool](& git -C $ProjectRoot status --porcelain)
+    }else{
+        $head='archive';$dirty=$false
+    }
+    return [ordered]@{schema=1;identity='SHA256 UTF8 path NUL digest LF, ordinal path order';excludes=@('**/bin/**','**/obj/**','**/__pycache__/**','**/.cache/**','**/out/**','**/.vs/**','*.pyc','*.pyo','*.md','*.log','*.user','*.suo');git_head=$head;dirty=$dirty;source_sha256=$identity;files=$sourceFiles}
 }

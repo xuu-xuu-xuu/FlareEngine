@@ -38,6 +38,7 @@ export default defineConfig({
             { text: '连续抓帧并导出 MP4', link: '/user/record-video' }
           ] },
           { text: '给玩家提供画质设置', link: '/user/player-quality' },
+          { text: '预制体、拖放落场与玩法系统', link: '/user/gameplay-systems' },
           { text: '物理、渲染和资源工具', link: '/user/feature-tools' },
           { text: '从源码启动编辑器', link: '/user/build-from-source' }
         ]
@@ -60,12 +61,15 @@ export default defineConfig({
         { text: "环境光照、大气与反射", link: "/render/environment" },
         { text: "后处理、抗锯齿与调色", link: "/render/post" },
         { text: "可见性、Hi-Z 与间接绘制", link: "/render/visibility" },
+        { text: "Mesh Shader 双轨管线与渲染优化", link: "/render/mesh-shader" },
+        { text: "确定性粒子模拟与 GPU 绘制", link: "/render/particles" },
         { text: "LOD、HLOD 与代理几何", link: "/render/detail" },
         { text: "D3D12 设备、命令与 GPU 资源寿命", link: "/render/device" },
         { text: "交换链、绘制与读回", link: "/render/presentation" }
       ] },
       { text: "世界与运行时", collapsed: true, items: [
         { text: "实体、层级与组件存储", link: "/runtime/entities" },
+        { text: "预制体格式、实例化与覆盖同步", link: "/runtime/prefab" },
         { text: "组件基类与生命周期", link: "/runtime/component-base" },
         { text: "World 的灯光接口", link: "/runtime/world" },
         { text: "原生组件反射与属性序列化", link: "/runtime/metadata" },
@@ -73,6 +77,8 @@ export default defineConfig({
         { text: "主循环、任务顺序与事件", link: "/runtime/scheduling" },
         { text: "昼夜、天空与场景环境", link: "/runtime/daylight" },
         { text: "刚体、碰撞与角色控制", link: "/runtime/physics" },
+        { text: "3D 空间音频与 XAudio2 后端", link: "/runtime/audio" },
+        { text: "导航网格烘焙与角色寻路", link: "/runtime/navigation" },
         { text: "骨骼动画与 GPU 蒙皮", link: "/runtime/skeletal-animation" }
       ] },
       { text: "资产与资源", collapsed: true, items: [
@@ -87,7 +93,7 @@ export default defineConfig({
         { text: "托管宿主与原生 ABI", link: "/scripts/bridge" }
       ] },
       { text: "UI 系统", collapsed: true, items: [
-        { text: "自研 UI 文档、样式与布局", link: "/ui/toolkit" },
+        { text: "自研 UI 单栈架构、文档与布局", link: "/ui/toolkit" },
         { text: "字体图集、文本编辑与 DPI", link: "/ui/text" },
         { text: "控件状态、列表与叠层", link: "/ui/widgets" },
         { text: "游戏 UI、绑定与合成", link: "/ui/game" }
@@ -103,7 +109,7 @@ export default defineConfig({
       ] },
       { text: "平台与基础服务", collapsed: true, items: [
         { text: "从窗口消息到一帧画面", link: "/platform/frame" },
-        { text: "输入、文字事件与窗口适配", link: "/platform/input" },
+        { text: "输入、手柄、动作映射与窗口适配", link: "/platform/input" },
         { text: "基础服务、任务与诊断", link: "/platform/services" }
       ] },
       { text: "构建与分发", collapsed: true, items: [
