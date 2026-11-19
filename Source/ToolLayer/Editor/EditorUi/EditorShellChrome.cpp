@@ -74,11 +74,15 @@ void EditorShell::BuildChromeMenus()
         chrome_.AddMenu(panels, PanelLabel(panel), EditorCommandId::TogglePanel, EditorPanelName(panel));
     }
     chrome_.AddMenu(panels, Text("EditorUi.FocusViewport", "Focus Viewport"), EditorCommandId::FocusViewport);
+    chrome_.AddMenu(panels, Text("EditorUi.Layout2By3", "2 by 3 Layout (Unity Default)"),
+                    EditorCommandId::TogglePanel, "@layout:2by3");
     chrome_.AddMenu(panels, Text("EditorUi.LayoutStandard", "Standard Shelf Layout (Unity)"),
                     EditorCommandId::TogglePanel, "@layout:standard");
     chrome_.AddMenu(panels, Text("EditorUi.LayoutWide", "Wide Viewport Layout (UE)"),
                     EditorCommandId::TogglePanel, "@layout:wide");
-    chrome_.AddMenu(panels, Text("EditorUi.LayoutReset", "Reset Default Layout"),
+    chrome_.AddMenu(panels, Text("EditorUi.LayoutClassic", "Classic 3-Column Layout"),
+                    EditorCommandId::TogglePanel, "@layout:classic");
+    chrome_.AddMenu(panels, Text("EditorUi.LayoutReset", "Reset Default 2 by 3 Layout"),
                     EditorCommandId::TogglePanel, "@layout:reset");
     const std::string help = Text("EditorUi.Help", "Help");
     chrome_.AddMenu(help, Text("EditorUi.About", "About"), EditorCommandId::TogglePanel, "about");
@@ -227,10 +231,11 @@ void EditorShell::BuildChrome()
         quickButtons_.push_back({button, std::move(action), std::move(label), cmd, std::move(arg), rightAligned});
     };
     addQuickButton("save", Text("EditorUi.Save", "Save"), EditorCommandId::Save, {}, false);
-    addQuickButton("undo", "↶", EditorCommandId::Undo, {}, false);
-    addQuickButton("redo", "↷", EditorCommandId::Redo, {}, false);
+    addQuickButton("undo", Text("EditorUi.Undo", "Undo"), EditorCommandId::Undo, {}, false);
+    addQuickButton("redo", Text("EditorUi.Redo", "Redo"), EditorCommandId::Redo, {}, false);
     addQuickButton("create", Text("EditorUi.QuickCreate", "+ Create") + " ▾", EditorCommandId::CreateEntity, {}, false);
     addQuickButton("import", Text("EditorUi.Import", "Import"), EditorCommandId::Import, {}, false);
+    addQuickButton("compile", Text("EditorUi.CompileScripts", "Compile Scripts"), EditorCommandId::Build, {}, false);
 
     addQuickButton("layout", Text("EditorUi.Layout", "Layout") + " ▾", EditorCommandId::TogglePanel, {}, true);
     addQuickButton("build", Text("EditorUi.QuickBuild", "Build & Export"), EditorCommandId::TogglePanel, "build-export", true);
@@ -368,7 +373,7 @@ void EditorShell::BindRootInputHandlers()
                 insideDropdown = dropdown.x <= event.x && event.x < dropdown.x + dropdown.width &&
                     dropdown.y <= event.y && event.y < dropdown.y + dropdown.height;
             }
-            bool onPopupTrigger = (event.target == assetsTypeElement_);
+            bool onPopupTrigger = (event.target == assetsTypeElement_ || event.target == assetsCreateElement_);
             for (const auto& q : quickButtons_)
                 if ((q.action == "create" || q.action == "layout") && event.target == q.button) onPopupTrigger = true;
             if (!insideDropdown && !onPopupTrigger &&
@@ -555,9 +560,10 @@ void EditorShell::UpdateTransport()
                           (pressedTransport_ == button ? flare::workspace::Pressed :
                           (hoveredChrome_ == button && enabled ? flare::workspace::Hover : flare::workspace::Header));
         auto style = ButtonStyle(left + cellWidth * i, 4, cellWidth - 2, toolbarHeight_ - 8, UiInk(base));
-        style.color = enabled ? UiInk(flare::Heading) : kMuted;
+        style.cornerRadius = 5.0f;
+        style.color = active ? UiInk(flare::Heading) : (enabled ? UiInk(play ? flare::Gold : flare::Heading) : kMuted);
         style.borderWidth = 1.0f;
-        style.borderColor = active ? UiInk(flare::Heading, 0.45f) : kBorder;
+        style.borderColor = active ? UiInk(flare::Heading, 0.35f) : kBorder;
         style.padding.left = std::max(0.0f, (cellWidth - 2 - MeasuredWidth(icon, style.fontSize)) * 0.5f);
         style.padding.right = 0.0f;
         document_.SetStyle(button, style);
@@ -574,8 +580,8 @@ void EditorShell::UpdateTransport()
         if (!q.button.IsValid()) continue;
         std::string text = q.label;
         if (q.action == "save" && dirty_) text += " ●";
-        const bool compactIcon = q.action == "undo" || q.action == "redo";
-        const float btnW = compactIcon ? 28.0f : (MeasuredWidth(text, 12.5f) + 16.0f);
+        else if (q.action == "compile" && scriptsDirty_) text = Text("EditorUi.CompileScriptsDirty", "Compile Scripts ●");
+        const float btnW = MeasuredWidth(text, 12.5f) + 16.0f;
         float x = 0.0f;
         bool fits = false;
         if (!q.rightAligned)
@@ -595,20 +601,16 @@ void EditorShell::UpdateTransport()
 
         const bool menuActive = (q.action == "create" && openMenu_ == "@create") ||
                                 (q.action == "layout" && openMenu_ == "@layout");
-        const bool accent = (q.action == "save" && dirty_) || menuActive;
-        const bool disabled = previewPlaying_ && (q.action == "create" || q.action == "import");
+        const bool accent = (q.action == "save" && dirty_) || (q.action == "compile" && scriptsDirty_) || menuActive;
+        const bool disabled = previewPlaying_ && (q.action == "create" || q.action == "import" || q.action == "compile");
         const auto fill = accent ? flare::workspace::Selection :
                           (hoveredChrome_ == q.button && !disabled ? flare::workspace::Hover : flare::workspace::Header);
         auto style = ButtonStyle(x, 4.0f, btnW, toolbarHeight_ - 8.0f, UiInk(fill));
+        style.cornerRadius = 5.0f;
         style.fontSize = 12.5f;
-        style.color = disabled ? kMuted : UiInk(flare::Text);
+        style.color = disabled ? kMuted : UiInk(accent ? flare::Gold : flare::Text);
         style.borderWidth = 1.0f;
-        style.borderColor = accent ? UiInk(flare::workspace::Focus) : kBorder;
-        if (compactIcon)
-        {
-            style.padding.left = std::max(0.0f, (btnW - MeasuredWidth(text, 12.5f)) * 0.5f);
-            style.padding.right = 0.0f;
-        }
+        style.borderColor = accent ? UiInk(flare::workspace::Focus, 0.7f) : kBorder;
         document_.SetText(q.button, text);
         document_.SetStyle(q.button, style);
         document_.SetEnabled(q.button, !disabled);
@@ -640,7 +642,7 @@ void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, 
     }
     if (!visible) return;
 
-    const bool wideTools = available >= 540.f;
+    const bool wideTools = available >= 520.f;
     const std::string labels[] = {
         wideTools ? Text("EditorUi.ToolViewShort", "Hand Q") : "✥",
         wideTools ? Text("EditorUi.ToolMoveShort", "Move W") : "↔",
@@ -663,8 +665,9 @@ void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, 
             (hoveredChrome_ == button ? flare::workspace::Hover : flare::workspace::Header);
         const float w = wideTools ? (MeasuredWidth(labels[i], 12.f) + 14.f) : 28.f;
         auto style = ButtonStyle(tx, 1.f, w, pillH, UiInk(fill));
+        style.cornerRadius = 5.0f;
         style.fontSize = 12.f;
-        style.color = active[i] ? UiInk(flare::Heading) : kText;
+        style.color = active[i] ? UiInk(flare::Gold) : kText;
         if (!wideTools)
         {
             style.padding.left = std::max(0.0f, (w - MeasuredWidth(labels[i], 12.f)) * 0.5f);
@@ -676,7 +679,8 @@ void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, 
     }
     const float transformW = std::min(tx, available);
     auto tools = AbsoluteStyle(viewport.x + 8.f, viewport.y + 8.f, transformW, pillH + 2.f);
-    tools.background = UiInk(flare::workspace::Divider, 0.92f);
+    tools.background = UiInk(flare::Background, 0.82f);
+    tools.cornerRadius = 6.0f;
     tools.overflow = UiOverflow::Hidden;
     document_.SetStyle(transformTools_, tools);
 
@@ -692,8 +696,9 @@ void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, 
         const float width = std::min(rowBudget, MeasuredWidth(labels[i], 12.f) + 14.f);
         if (vx > 1.f && vx + width > rowBudget) { vx = 1.f; vy += pillH + 1.f; }
         auto style = ButtonStyle(vx, vy, width, pillH, UiInk(fill));
+        style.cornerRadius = 5.0f;
         style.fontSize = 12.f;
-        style.color = active[i] ? UiInk(flare::Heading) : kText;
+        style.color = active[i] ? UiInk(flare::Gold) : kText;
         vx += width + 1.f;
         maxWidth = std::max(maxWidth, vx);
         document_.SetText(button, labels[i]);
@@ -703,7 +708,8 @@ void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, 
     const float barY = placeNextToTransform ? (viewport.y + 8.f) : (viewport.y + 8.f + pillH + 6.f);
     const float height = std::min(vy + pillH + 1.f, std::max(0.f, viewport.height - (barY - viewport.y) - 4.f));
     auto bar = AbsoluteStyle(barX, barY, maxWidth, height);
-    bar.background = UiInk(flare::workspace::Divider, 0.92f);
+    bar.background = UiInk(flare::Background, 0.82f);
+    bar.cornerRadius = 6.0f;
     bar.overflow = UiOverflow::Hidden;
     document_.SetStyle(viewportTools_, bar);
 }
@@ -737,7 +743,8 @@ bool EditorShell::ApplyLayoutPreset(std::string_view preset)
     DockNode targetLayout = DefaultEditorDockLayout();
     if (preset == "standard") targetLayout = StandardShelfDockLayout();
     else if (preset == "wide") targetLayout = WideViewportDockLayout();
-    else if (preset != "reset" && preset != "default") return false;
+    else if (preset == "classic") targetLayout = ClassicThreeColumnDockLayout();
+    else if (preset != "reset" && preset != "default" && preset != "2by3") return false;
 
     dock_ = EditorDock(std::move(targetLayout));
     if (!dock_.Find(activePanel_)) SetActivePanel(EditorPanelId::Viewport);
@@ -826,6 +833,11 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
     }
     else
     {
+        if (panel == EditorPanelId::None)
+        {
+            add("EditorUi.CreateScriptAsset", "Create C# script", EditorCommandId::CreateAsset, "script");
+            add("EditorUi.NewMaterial", "New material", EditorCommandId::CreateAsset, "material");
+        }
         add("EditorUi.CreateEmpty", "Create empty object", EditorCommandId::CreateEntity, "empty");
         add("EditorUi.CreateCube", "Create cube", EditorCommandId::CreateEntity, "cube");
         add("EditorUi.CreateSphere", "Create sphere", EditorCommandId::CreateEntity, "sphere");
@@ -857,11 +869,13 @@ void EditorShell::OpenLayoutMenu(float x, float y)
     CloseMenu();
     openMenu_ = "@layout";
     std::vector<EditorMenuItem> items{
+        {{}, Text("EditorUi.Layout2By3", "2 by 3 Layout (Unity Default)"), EditorCommandId::TogglePanel, "@layout:2by3"},
         {{}, Text("EditorUi.LayoutStandard", "Standard Shelf Layout (Unity)"), EditorCommandId::TogglePanel, "@layout:standard"},
         {{}, Text("EditorUi.LayoutWide", "Wide Viewport Layout (UE)"), EditorCommandId::TogglePanel, "@layout:wide"},
-        {{}, Text("EditorUi.LayoutReset", "Reset Default Layout"), EditorCommandId::TogglePanel, "@layout:reset"},
+        {{}, Text("EditorUi.LayoutClassic", "Classic 3-Column Layout"), EditorCommandId::TogglePanel, "@layout:classic"},
+        {{}, Text("EditorUi.LayoutReset", "Reset Default 2 by 3 Layout"), EditorCommandId::TogglePanel, "@layout:reset"},
     };
-    ShowMenu(root_, x, y, 240.0f, items);
+    ShowMenu(root_, x, y, 250.0f, items);
 }
 
 void EditorShell::OpenAssetTypeMenu(float x, float y)
@@ -896,15 +910,18 @@ void EditorShell::ShowMenu(UiElementHandle surface, float x, float y, float widt
     auto panelStyle = AbsoluteStyle(left, top, width, height);
     panelStyle.background = UiInk(flare::workspace::Panel);
     panelStyle.borderWidth = 1.0f;
-    panelStyle.borderColor = UiInk(flare::workspace::Focus);
+    panelStyle.borderColor = UiInk(flare::workspace::Divider);
+    panelStyle.cornerRadius = 8.0f;
     document_.SetStyle(menuDropdown_, panelStyle);
     for (std::size_t i = 0; i < items.size(); ++i)
     {
         const auto& item = items[i];
         const auto button = document_.CreateElement(UiElementKind::Button);
         document_.SetParent(button, menuDropdown_);
-        document_.SetStyle(button, ButtonStyle(4.0f, 4.0f + static_cast<float>(i) * 26.0f,
-                                               width - 8.0f, 24.0f, UiInk(flare::workspace::Panel)));
+        auto itemStyle = ButtonStyle(4.0f, 4.0f + static_cast<float>(i) * 26.0f,
+                                     width - 8.0f, 24.0f, UiInk(flare::workspace::Panel));
+        itemStyle.cornerRadius = 4.0f;
+        document_.SetStyle(button, itemStyle);
         document_.SetText(button, item.label);
         dispatcher_.AddHandler(button, UiEventType::PointerDown,
             [this, command = EditorCommand{item.command, item.argument, target}, label = item.label](UiInputEvent& event) {

@@ -493,8 +493,142 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             }
         }
     });
-    state.shell->SetAssetDragHandler([&state](const std::string& path, float x, float y, bool active) {
+    const auto lowerExt = [](const std::filesystem::path& p) {
+        std::string ext = asset_io::Utf8(p.extension());
+        for (char& ch : ext)
+        {
+            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+        }
+        return ext;
+    };
+    const auto isCsScriptPath = [lowerExt](const std::filesystem::path& p) {
+        return lowerExt(p) == ".cs";
+    };
+    const auto applyAssetToEntity = [&state, lowerExt](const std::string& path, StableEntityId targetId,
+                                                       EditorPanelId dropPanel) -> bool {
+        if (state.session.IsPlaying()) return false;
+        const std::filesystem::path target = asset_io::FromUtf8(path);
+        const std::string ext = lowerExt(target);
+        if (ext == ".cs")
+        {
+            if (targetId == 0) targetId = state.session.Selected();
+            if (targetId == 0)
+            {
+                state.shell->SetStatus(state.text.GetText("EditorUi.SelectObjectFirst"));
+                return false;
+            }
+            state.session.Select(targetId);
+            state.assetState.assetName.clear();
+            const std::string scriptId = state.scriptWorkflow.ScriptIdForSource(target);
+            const std::string display = state.scriptWorkflow.ClassNameForSource(target);
+            bool needsCompile = false;
+            if (state.scriptWorkflow.AttachScript(targetId, scriptId, needsCompile))
+            {
+                const std::string msg = state.text.GetText("EditorUi.ScriptAttached") + ": " + display;
+                state.shell->SetStatus(msg);
+                state.shell->AppendConsoleLine(msg);
+                state.shell->FocusPanel(EditorPanelId::Inspector);
+                return true;
+            }
+            if (needsCompile && !scriptId.empty())
+            {
+                state.shell->Commands().Execute(
+                    {EditorCommandId::Build, std::to_string(targetId) + "|" + scriptId});
+                return true;
+            }
+            if (!state.scriptWorkflow.Status().empty()) state.shell->SetStatus(state.scriptWorkflow.Status());
+            return false;
+        }
+        if (IsMaterialDocumentPath(target))
+        {
+            if (targetId == 0) targetId = state.session.Selected();
+            AssetId matId;
+            for (const auto& id : state.assets.ListIds())
+            {
+                std::error_code ec;
+                if (state.assets.Resolve(id) == target ||
+                    (std::filesystem::equivalent(state.assets.Resolve(id), target, ec) && !ec))
+                {
+                    matId = id;
+                    break;
+                }
+            }
+            const EntityHandle entity = state.session.EditWorld().FindByStableId(targetId);
+            const auto* mesh = state.session.EditWorld().GetMesh(entity);
+            if (!mesh || matId.empty()) return false;
+            MeshComponent updated = *mesh;
+            if (updated.materials.empty()) updated.materials.push_back(matId);
+            else updated.materials[0] = matId;
+            if (!state.session.SetMesh(targetId, updated)) return false;
+            state.session.Select(targetId);
+            state.assetState.assetName.clear();
+            const std::string msg = state.text.GetText("EditorUi.MaterialAssigned") + ": " +
+                                    asset_io::Utf8(target.stem().stem());
+            state.shell->SetStatus(msg);
+            state.shell->AppendConsoleLine(msg);
+            return true;
+        }
+        if (dropPanel == EditorPanelId::Hierarchy &&
+            (ext == ".fbx" || ext == ".glb" || ext == ".gltf" || IsPrefabDocumentPath(target)))
+        {
+            AssetId assetId;
+            for (const auto& id : state.assets.ListIds())
+            {
+                std::error_code ec;
+                if (state.assets.Resolve(id) == target ||
+                    (std::filesystem::equivalent(state.assets.Resolve(id), target, ec) && !ec))
+                {
+                    assetId = id;
+                    break;
+                }
+            }
+            if (assetId.empty()) return false;
+            std::string error;
+            StableEntityId createdId = 0;
+            bool ok = false;
+            if (IsPrefabDocumentPath(target))
+            {
+                PrefabDocument doc;
+                Transform rootTransform{};
+                if (ReadPrefabDocument(target, doc, error))
+                    rootTransform.scale = PrefabRootAuthoredScale(doc);
+                ok = InstantiatePrefabIntoScene(state.session, state.assets, assetId, rootTransform,
+                                                createdId, error, state.hooks);
+            }
+            else
+            {
+                ok = AddModelToScene(state.session, state.assets, assetId, error);
+                createdId = state.session.Selected();
+            }
+            if (!ok)
+            {
+                state.shell->SetStatus(LocalizedToolkitStatus(state.text, error, "EditorUi.DropFailed"));
+                return false;
+            }
+            if (targetId != 0 && createdId != 0 && createdId != targetId)
+            {
+                if (state.session.BeginEdit("Reparent"))
+                {
+                    if (state.session.SetParent(createdId, targetId)) state.session.CommitEdit();
+                    else state.session.CancelEdit();
+                }
+            }
+            state.assetState.assetName.clear();
+            state.viewportController.Action("Frame", state.session, state.assets);
+            return true;
+        }
+        return false;
+    };
+
+    state.shell->SetAssetEntityDropHandler(applyAssetToEntity);
+    state.shell->SetAssetDragHandler([&state, isCsScriptPath](const std::string& path, float x, float y, bool active) {
         if (!active || !state.camera || state.session.IsPlaying())
+        {
+            state.dropWorkflow.ClearHover();
+            return;
+        }
+        const std::filesystem::path dragPath = asset_io::FromUtf8(path);
+        if (isCsScriptPath(dragPath) || IsMaterialDocumentPath(dragPath))
         {
             state.dropWorkflow.ClearHover();
             return;
@@ -505,7 +639,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         state.dropWorkflow.BeginOrUpdateHover(path, *state.camera, {u, v},
             state.session.EditWorld(), state.assets, &state.session.EditEnvironment().Spatial());
     });
-    state.shell->SetAssetDropHandler([&state](const std::string& path, float x, float y) {
+    state.shell->SetAssetDropHandler([&state, applyAssetToEntity, isCsScriptPath](const std::string& path, float x, float y) {
         if (!state.camera || state.session.IsPlaying())
         {
             state.dropWorkflow.ClearHover();
@@ -514,6 +648,14 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         float u = 0.0f, v = 0.0f;
         ui::editor::ViewportNormalize({state.viewportRect.x, state.viewportRect.y,
                                        state.viewportRect.width, state.viewportRect.height}, x, y, u, v);
+        const std::filesystem::path targetPath = asset_io::FromUtf8(path);
+        if (isCsScriptPath(targetPath) || IsMaterialDocumentPath(targetPath))
+        {
+            state.dropWorkflow.ClearHover();
+            StableEntityId picked = PickEditorBounds(state.session.EditWorld(), state.assets, *state.camera, u, v);
+            if (picked == 0) picked = state.session.Selected();
+            return applyAssetToEntity(path, picked, EditorPanelId::Viewport);
+        }
         std::string error;
         StableEntityId created = 0;
         if (!state.dropWorkflow.CommitDrop(path, *state.camera, {u, v},
@@ -635,22 +777,37 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         return true;
     };
     commands.Register(EditorCommandId::Export, [&state](const EditorCommand&) { return state.exportAction(); });
-    commands.Register(EditorCommandId::Build, [&state, saveAll](const EditorCommand&) {
+    commands.Register(EditorCommandId::Build, [&state, saveAll](const EditorCommand& command) {
+        std::uint64_t pendingEntity = 0;
+        std::string pendingScriptId;
+        if (const auto sep = command.argument.find('|'); sep != std::string::npos)
+        {
+            pendingEntity = static_cast<std::uint64_t>(std::strtoull(command.argument.c_str(), nullptr, 10));
+            pendingScriptId = command.argument.substr(sep + 1);
+        }
         wchar_t requestPath[MAX_PATH]{};
         const DWORD length = GetEnvironmentVariableW(L"SELFENGINE_EDITOR_RESTART_REQUEST", requestPath, MAX_PATH);
         if (length == 0 || length >= MAX_PATH)
         {
-            state.shell->SetStatus(state.text.GetText("EditorUi.BuildControlUnavailable"));
+            state.shell->SetStatus(state.text.GetText(
+                pendingEntity != 0 ? "EditorUi.ScriptNeedsCompile" : "EditorUi.BuildControlUnavailable"));
             return false;
         }
+        EditorScriptWorkflow::EnsureProjectBindings(state.root);
         if (!saveAll()) { state.shell->SetStatus(state.text.GetText("EditorUi.SaveFailed")); return false; }
+        PersistToolkitSession(state, true);
         std::string error;
         if (!WriteBuildRestartRequest(requestPath, error))
         {
             state.shell->SetStatus(LocalizedToolkitStatus(state.text, error, "EditorUi.SaveFailed"));
             return false;
         }
-        state.shell->SetStatus(state.text.GetText("EditorUi.BuildRestart"));
+        if (pendingEntity != 0 && !pendingScriptId.empty())
+        {
+            EditorScriptWorkflow::QueuePendingAttach(state.crashDirectory, pendingEntity, pendingScriptId);
+        }
+        state.shell->SetStatus(state.text.GetText(
+            pendingEntity != 0 ? "EditorUi.ScriptQueuedCompile" : "EditorUi.BuildRestart"));
         Log(LogLevel::Info, "EditorUi.ToolkitBuild: restart requested");
         if (state.hostWindow) PostMessageW(state.hostWindow, WM_CLOSE, 0, 0);
         return true;
@@ -804,6 +961,15 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         const bool saved = CreateEditorAsset(command.argument, state.root, state.assets, created, error);
         if (!created.empty())
         {
+            if (command.argument == "script")
+            {
+                EditorScriptWorkflow::EnsureProjectBindings(state.root);
+                const std::string msg = state.text.GetText("Editor.ScriptCreated") + ": " +
+                                        asset_io::Utf8(created.filename());
+                state.importStatus = msg;
+                state.shell->SetStatus(msg);
+                state.shell->AppendConsoleLine(msg);
+            }
             state.scriptWorkflow.RefreshSources();
             state.pendingAsset = asset_io::Utf8(created);
         }
@@ -962,6 +1128,19 @@ void FinalizeToolkitWindowUi(ToolkitAppState& state)
     }
     state.featureTools = std::make_unique<EditorFeatureTools>(state.root, state.assets, state.session, state.text);
     state.featureTools->Attach(*state.shell);
+    {
+        std::uint64_t attachedEntity = 0;
+        std::string attachedName;
+        if (state.scriptWorkflow.ConsumePendingAttachOnStartup(state.crashDirectory, attachedEntity, attachedName))
+        {
+            state.session.Select(attachedEntity);
+            state.assetState.assetName.clear();
+            const std::string msg = state.text.GetText("EditorUi.ScriptAttached") + ": " + attachedName;
+            state.importStatus = msg;
+            state.shell->SetStatus(msg);
+            state.shell->AppendConsoleLine(msg);
+        }
+    }
     Log(LogLevel::Info, "EditorUi.ToolkitHostReady");
 }
 
@@ -986,7 +1165,7 @@ std::optional<LRESULT> HandleToolkitWindowMessage(ToolkitAppState& state, HWND w
     if (message == WM_CLOSE)
     {
         if (!state.shell || state.shell->CloseApproved()) return std::optional<LRESULT>{};
-        state.shell->SetDirty(state.host.AnyDocumentDirty(state.session, &state.ui));
+        state.shell->SetDirty(state.host.AnyDocumentDirty(state.session, &state.ui) || state.scriptWorkflow.Dirty());
         if (state.shell->RequestClose()) return std::optional<LRESULT>{0};
         return std::optional<LRESULT>{};
     }
@@ -1223,7 +1402,8 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
             [&state]() { state.shell->SetStatus(state.text.GetText("EditorUi.Keep")); });
     }
 
-    state.shell->SetDirty(state.host.AnyDocumentDirty(state.session, &state.ui));
+    state.shell->SetScriptsDirty(state.scriptWorkflow.SourcesNeedCompile());
+    state.shell->SetDirty(state.host.AnyDocumentDirty(state.session, &state.ui) || state.scriptWorkflow.Dirty());
     if (state.shell->ConsumeCloseRequest()) PostMessageW(state.hostWindow, WM_CLOSE, 0, 0);
 
     if (state.session.IsPlaying())

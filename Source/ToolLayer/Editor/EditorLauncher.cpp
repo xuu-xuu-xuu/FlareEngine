@@ -663,8 +663,8 @@ LRESULT CALLBACK NewProjectProcedure(HWND window, UINT message, WPARAM wParam, L
             GetWindowRect(dialog->preview, &banner);
             MapWindowPoints(HWND_DESKTOP, window, reinterpret_cast<LPPOINT>(&banner), 2);
             InflateRect(&banner, ScaleWindow(window, 10), ScaleWindow(window, 6));
-            launcher_style::Fill(dc, banner, flare::Surface);
-            launcher_style::Frame(dc, banner, dialog->previewWarning ? flare::Warning : flare::Border, 1);
+            launcher_style::FillRound(dc, banner, flare::Surface, ScaleWindow(window, 8));
+            launcher_style::FrameRound(dc, banner, dialog->previewWarning ? flare::Warning : flare::Border, ScaleWindow(window, 8));
         }
         EndPaint(window, &ps);
         return 0;
@@ -848,9 +848,29 @@ void PaintLauncherBackground(const LauncherState& state, HDC dc)
     launcher_style::Fill(dc, sidebar, flare::Surface);
     launcher_style::Fill(dc, mainArea, flare::Background);
 
-    // 顶部品牌金色细带与侧栏右分隔线
-    RECT accentTop{0, 0, sidebar.right, ScaleWindow(state.window, 3)};
-    launcher_style::Fill(dc, accentTop, flare::Gold);
+    // 品牌标志背后的日冕柔光，呼应图标里的金色星芒；标志自己画，避免静态控件的方形底色盖住光晕。
+    const int markSize = ScaleWindow(state.window, 44);
+    const int markX = ScaleWindow(state.window, 20), markY = ScaleWindow(state.window, 24);
+    launcher_style::Glow(dc, markX + markSize / 2, markY + markSize / 2, ScaleWindow(state.window, 96), flare::Gold, 46);
+    if (launcher_style::GdiplusReady()) DrawFlareMark(dc, markX + markSize / 2, markY + markSize / 2, markSize);
+    else DrawIconEx(dc, markX, markY, AppIcon(48), markSize, markSize, 0, nullptr, DI_NORMAL);
+
+    // 搜索框：去掉原生细边框，由父窗口画圆角底与焦点金边。
+    if (state.recentSearch)
+    {
+        RECT field{};
+        GetWindowRect(state.recentSearch, &field);
+        MapWindowPoints(HWND_DESKTOP, state.window, reinterpret_cast<LPPOINT>(&field), 2);
+        InflateRect(&field, ScaleWindow(state.window, 10), ScaleWindow(state.window, 5));
+        const int radius = ScaleWindow(state.window, 7);
+        launcher_style::FillRound(dc, field, flare::Surface, radius);
+        const bool focused = GetFocus() == state.recentSearch;
+        launcher_style::FrameRound(dc, field, focused ? flare::Gold : flare::Border, radius, 1.0f, focused ? 200 : 255);
+    }
+
+    // 顶部渐隐金线与侧栏右分隔线
+    RECT accentTop{0, 0, client.right, ScaleWindow(state.window, 2)};
+    launcher_style::FadeLine(dc, accentTop, flare::Gold, 220);
     RECT divider{sidebar.right - 1, 0, sidebar.right, client.bottom};
     launcher_style::Fill(dc, divider, flare::Border);
 
@@ -860,7 +880,7 @@ void PaintLauncherBackground(const LauncherState& state, HDC dc)
     {
         const int headerLineY = ScaleWindow(state.window, 62);
         RECT headerDivider{contentLeft, headerLineY, contentRight, headerLineY + 1};
-        launcher_style::Fill(dc, headerDivider, flare::Border);
+        launcher_style::FadeLine(dc, headerDivider, flare::Silver, 70);
     }
 }
 
@@ -896,7 +916,7 @@ void LayoutLauncher(LauncherState& s)
     const int searchW = std::min(sc(260), mainWidth / 2);
 
     move(s.recentLabel, mainLeft, sc(22), mainWidth - searchW - sc(12), sc(28));
-    move(s.recentSearch, mainLeft + mainWidth - searchW, sc(22), searchW, sc(28));
+    move(s.recentSearch, mainLeft + mainWidth - searchW + sc(10), sc(27), searchW - sc(20), sc(18));
 
     const int listTop = sc(74);
     const int actionsY = std::max(listTop + sc(140), static_cast<int>(r.bottom) - sc(82));
@@ -1059,6 +1079,19 @@ LRESULT CALLBACK LauncherProcedure(HWND window, UINT message, WPARAM wParam, LPA
         const auto brush = launcher_style::ControlColors(message, reinterpret_cast<HDC>(wParam), muted, onSidebar);
         if (state && (child == state->title || child == state->recentLabel))
             SetTextColor(reinterpret_cast<HDC>(wParam), flare::Native(flare::Heading));
+        // 最近项目列表与主区同底，卡片自己承担层次。
+        if (state && child == state->recentList)
+        {
+            SetBkColor(reinterpret_cast<HDC>(wParam), flare::Native(flare::Background));
+            SetDCBrushColor(reinterpret_cast<HDC>(wParam), flare::Native(flare::Background));
+            return reinterpret_cast<LRESULT>(GetStockObject(DC_BRUSH));
+        }
+        // 品牌标题叠在光晕上：透明底，文字不变所以无需擦除旧字。
+        if (state && (child == state->title || child == state->subtitle))
+        {
+            SetBkMode(reinterpret_cast<HDC>(wParam), TRANSPARENT);
+            return reinterpret_cast<LRESULT>(GetStockObject(NULL_BRUSH));
+        }
         return brush;
     }
     case WM_MEASUREITEM:
@@ -1094,6 +1127,15 @@ LRESULT CALLBACK LauncherProcedure(HWND window, UINT message, WPARAM wParam, LPA
             return 0;
         case ControlRecentSearch:
             if (HIWORD(wParam) == EN_CHANGE) RefreshRecent(*state);
+            if (HIWORD(wParam) == EN_SETFOCUS || HIWORD(wParam) == EN_KILLFOCUS)
+            {
+                // 重画父窗口上的圆角焦点边。
+                RECT field{};
+                GetWindowRect(state->recentSearch, &field);
+                MapWindowPoints(HWND_DESKTOP, window, reinterpret_cast<LPPOINT>(&field), 2);
+                InflateRect(&field, ScaleWindow(window, 12), ScaleWindow(window, 7));
+                RedrawWindow(window, &field, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+            }
             return 0;
         case ControlRecentList:
             if (HIWORD(wParam) == LBN_SELCHANGE)
@@ -1177,6 +1219,7 @@ bool CreateControls(LauncherState& state)
     const int iconSize = ScaleWindow(state.window, 44);
     if (!make(L"STATIC", L"", SS_ICON | SS_REALSIZEIMAGE, 20, 24, iconSize, iconSize, -1, state.brandMark)) return false;
     SendMessageW(state.brandMark, STM_SETICON, reinterpret_cast<WPARAM>(AppIcon(iconSize >= 48 ? 48 : 32)), 0);
+    ShowWindow(state.brandMark, SW_HIDE); // 由 PaintLauncherBackground 连同光晕一起绘制。
 
     if (!make(L"STATIC", state.strings.title, SS_LEFT | SS_NOPREFIX, 0, 0, 160, 28, -1, state.title, state.titleFont)) return false;
     if (!make(L"STATIC", state.strings.subtitle, SS_LEFT | SS_NOPREFIX, 0, 0, 160, 20, -1, state.subtitle, state.bodyFont)) return false;
@@ -1187,7 +1230,7 @@ bool CreateControls(LauncherState& state)
     if (!button(state.strings.quit, ControlQuit, true, state.quit)) return false;
 
     if (!make(L"STATIC", state.strings.recentTitle, SS_LEFT | SS_CENTERIMAGE, 0, 0, 220, 28, -1, state.recentLabel, state.sectionFont)) return false;
-    if (!make(L"EDIT", L"", WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 220, 28, ControlRecentSearch, state.recentSearch)) return false;
+    if (!make(L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 220, 28, ControlRecentSearch, state.recentSearch)) return false;
     launcher_style::SetPlaceholder(state.recentSearch, state.strings.searchHint.c_str());
 
     if (!make(L"LISTBOX", L"", WS_VSCROLL | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_TABSTOP,

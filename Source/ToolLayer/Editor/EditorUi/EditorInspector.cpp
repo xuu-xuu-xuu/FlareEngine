@@ -200,6 +200,7 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
         auto style = CellStyle(x, (RowHeight - 16) * 0.5f, 16, 16,
                                UiInk(checked && !p.readOnly ? flare::workspace::Selection : flare::workspace::Field));
         style.padding = {2,0,0,0};
+        style.cornerRadius = 3.0f;
         style.borderWidth = 1;
         style.borderColor = UiInk(checked && !p.readOnly ? flare::workspace::Focus : flare::workspace::Divider);
         style.color = UiInk(p.readOnly ? flare::Disabled : flare::Heading);
@@ -210,12 +211,13 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
         if (item.title == Text("EditorUi.AddComponent", "Add Component"))
         {
             const float width = std::max(0.0f, std::min(220.0f, right - 2 * LeftInset));
-            auto style = CellStyle((right-width)*0.5f, 1, width, RowHeight - 2, UiInk(flare::workspace::Selection));
+            auto style = CellStyle((right-width)*0.5f, 1, width, RowHeight - 2, UiInk(flare::Accent));
+            style.cornerRadius = 5.0f;
             const auto caption = "＋ " + item.title + (item.closed ? "  ▾" : "  ▴");
             style.padding.left = std::max(3.0f, (width - MeasuredWidth(caption, 13.0f))*0.5f);
             style.borderWidth = 1;
-            style.borderColor = UiInk(flare::workspace::Focus);
-            style.color = UiInk(flare::Heading);
+            style.borderColor = UiInk(flare::Gold);
+            style.color = UiInk(flare::Background);
             add(caption, style);
             return;
         }
@@ -250,6 +252,7 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
         style.color = UiInk(first.readOnly ? flare::Disabled : flare::Heading);
         style.borderWidth = 1.0f;
         style.borderColor = UiInk(flare::workspace::Divider);
+        style.cornerRadius = 4.0f;
         add(first.label, style);
         return;
     }
@@ -279,6 +282,7 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
                                    UiInk(AxisBadgeColor(field.axis), field.readOnly ? 0.45f : 0.92f));
             style.color = UiInk(flare::Heading);
             style.fontSize = 11.5f;
+            style.cornerRadius = 3.0f;
             const std::string axisStr(1, field.axis);
             style.padding = {std::max(1.0f, (pillW - MeasuredWidth(axisStr, 11.5f)) * 0.5f), 0.0f, 0.0f, 0.0f};
             add(axisStr, style);
@@ -293,6 +297,7 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
         style.color = UiInk(field.readOnly ? flare::Muted : flare::Heading);
         style.borderColor = UiInk(field.overridden ? flare::workspace::Focus : flare::workspace::Divider);
         style.borderWidth = 1;
+        style.cornerRadius = 3.0f;
         if (field.type == EditorPropertyType::Color)
         {
             float r=0,g=0,b=0;std::istringstream value(field.value);

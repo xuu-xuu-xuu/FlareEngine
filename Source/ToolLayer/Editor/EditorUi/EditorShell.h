@@ -110,6 +110,11 @@ public:
     void SetAssetImportHandler(std::function<void()> handler);
     void SetAssetDragHandler(std::function<void(const std::string&, float, float, bool)> handler);
     void SetAssetDropHandler(std::function<bool(const std::string&, float, float)> handler);
+    void SetAssetEntityDropHandler(std::function<bool(const std::string&, std::uint64_t, EditorPanelId)> handler)
+    {
+        assetEntityDropHandler_ = std::move(handler);
+    }
+    void SetScriptsDirty(bool dirty) noexcept { scriptsDirty_ = dirty; }
     void SetViewportImage(std::string image);
     void SetGizmo(float x, float y, bool visible);
     void SetGizmoDragHandler(std::function<void(int, float, float)> handler);
@@ -410,7 +415,9 @@ private:
     std::function<void(std::string)> assetSelectionHandler_;
     std::function<void(std::string)> assetActivateHandler_;
     std::function<void()> assetImportHandler_;
+    std::function<bool(const std::string&, std::uint64_t, EditorPanelId)> assetEntityDropHandler_;
     UiElementHandle assetsTypeElement_{};
+    UiElementHandle assetsCreateElement_{};
     UiElementHandle assetsImportElement_{};
     UiElementHandle assetsPreview_{};
     UiElementHandle consoleClearButton_{};
@@ -486,6 +493,7 @@ private:
     std::string selectionLabel_;
     std::string lastStatusText_;
     bool dirty_ = false;
+    bool scriptsDirty_ = false;
     std::filesystem::path layoutPath_;
 
     float width_ = 1280.0f;

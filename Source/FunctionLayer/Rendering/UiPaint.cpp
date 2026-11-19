@@ -247,10 +247,12 @@ void UiPainter::Visit(UiElementHandle element, UiDisplayList& displayList, UiPai
     if (style.background.a > 0.0f)
     {
         displayList.Rect(rect, style.background);
+        displayList.commands.back().radius = std::max(0.0f, style.cornerRadius);
     }
     if (style.borderWidth > 0.0f && style.borderColor.a > 0.0f)
     {
         displayList.Border(rect, style.borderWidth, style.borderColor);
+        displayList.commands.back().radius = std::max(0.0f, style.cornerRadius);
     }
     for (UiElementHandle child = document_->FirstChild(element); child.IsValid();
          child = document_->NextSibling(child))
@@ -379,15 +381,24 @@ struct GeometryContext
                         const UiRect& clip)
     {
         const std::uint32_t packed = PackColor(color);
+        return AppendTriangle(a, packed, b, packed, c, packed, texture, clip);
+    }
+
+    bool AppendTriangle(const Vec2& a, std::uint32_t colorA,
+                        const Vec2& b, std::uint32_t colorB,
+                        const Vec2& c, std::uint32_t colorC,
+                        std::uint64_t texture,
+                        const UiRect& clip)
+    {
         if (geometry.vertices.size() / 3 >= 65536)
         {
             return Reject("UI.PaintCapacity");
         }
         const std::uint32_t base = static_cast<std::uint32_t>(geometry.vertices.size());
         const std::uint32_t first = static_cast<std::uint32_t>(geometry.indices.size());
-        geometry.vertices.push_back(GuiVertex{a, {}, packed});
-        geometry.vertices.push_back(GuiVertex{b, {}, packed});
-        geometry.vertices.push_back(GuiVertex{c, {}, packed});
+        geometry.vertices.push_back(GuiVertex{a, {}, colorA});
+        geometry.vertices.push_back(GuiVertex{b, {}, colorB});
+        geometry.vertices.push_back(GuiVertex{c, {}, colorC});
         geometry.indices.insert(geometry.indices.end(), {base, base + 1, base + 2});
         const Vec4 scissor{clip.x, clip.y, clip.x + clip.width, clip.y + clip.height};
         if (!geometry.commands.empty() && geometry.commands.back().texture == texture &&
@@ -401,6 +412,77 @@ struct GeometryContext
         }
         ++stats.quads;
         return true;
+    }
+
+    // 圆角矩形按四个圆心生成轮廓；边缘留一个物理像素的透明渐变充当抗锯齿。
+    // stroke 为 0 时填充，否则描边。shortcut: 半径被抬到不小于 stroke+feather，足够覆盖编辑器的 2px 以内描边。
+    bool AppendRoundedRect(const UiRect& rect, float radius, float stroke, const UiColor& color,
+                           std::uint64_t texture, const UiRect& clip, float feather)
+    {
+        if (!Finite(rect) || Empty(rect) || Empty(Intersect(rect, clip)) || color.a <= 0.0f)
+        {
+            return true;
+        }
+        const float halfExtent = std::min(rect.width, rect.height) * 0.5f;
+        stroke = std::min(stroke, halfExtent);
+        radius = std::min(std::max(radius, stroke + feather), halfExtent);
+        constexpr int Arc = 6;
+        constexpr int Count = 4 * (Arc + 1);
+        std::array<Vec2, Count> centers{};
+        std::array<Vec2, Count> normals{};
+        const Vec2 corners[4] = {{rect.x + rect.width - radius, rect.y + radius},
+                                 {rect.x + rect.width - radius, rect.y + rect.height - radius},
+                                 {rect.x + radius, rect.y + rect.height - radius},
+                                 {rect.x + radius, rect.y + radius}};
+        for (int corner = 0; corner < 4; ++corner)
+        {
+            for (int step = 0; step <= Arc; ++step)
+            {
+                const float angle = (-90.0f + 90.0f * corner + 90.0f * step / Arc) * 0.0174532925f;
+                const int index = corner * (Arc + 1) + step;
+                centers[index] = corners[corner];
+                normals[index] = {std::cos(angle), std::sin(angle)};
+            }
+        }
+        const auto point = [&](int index, float offset) {
+            return Vec2{centers[index].x + normals[index].x * offset, centers[index].y + normals[index].y * offset};
+        };
+        const std::uint32_t solid = PackColor(color);
+        const std::uint32_t clear = PackColor({color.r, color.g, color.b, 0.0f});
+        const auto band = [&](float inner, std::uint32_t innerColor, float outer, std::uint32_t outerColor) {
+            if (outer <= inner) return true;
+            for (int index = 0; index < Count; ++index)
+            {
+                const int next = (index + 1) % Count;
+                const Vec2 a = point(index, inner), b = point(next, inner);
+                const Vec2 c = point(next, outer), d = point(index, outer);
+                if (!AppendTriangle(a, innerColor, b, innerColor, c, outerColor, texture, clip) ||
+                    !AppendTriangle(a, innerColor, c, outerColor, d, outerColor, texture, clip))
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        const float half = feather * 0.5f;
+        if (stroke <= 0.0f)
+        {
+            const float edge = std::max(0.0f, radius - half);
+            const Vec2 middle{rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f};
+            for (int index = 0; index < Count; ++index)
+            {
+                if (!AppendTriangle(middle, solid, point(index, edge), solid, point((index + 1) % Count, edge), solid,
+                                    texture, clip))
+                {
+                    return false;
+                }
+            }
+            return band(edge, solid, radius + half, clear);
+        }
+        const float inner = radius - stroke;
+        return band(std::max(0.0f, inner - half), clear, inner + half, solid) &&
+               band(inner + half, solid, radius - half, solid) &&
+               band(radius - half, solid, radius + half, clear);
     }
 };
 } // namespace
@@ -427,6 +509,7 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
     geometry.framebufferScale = {1.0f, 1.0f};
     GeometryContext context{geometry, stats, errors, {}, options.whiteTexture};
     context.clips.push_back({0.0f, 0.0f, displayList.width, displayList.height});
+    const float feather = options.textPixelScale.x > 0.0f ? 1.0f / options.textPixelScale.x : 1.0f;
 
     for (const UiPaintCommand& command : displayList.commands)
     {
@@ -446,6 +529,11 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
             }
             break;
         case UiPaintCommandKind::Rect:
+            if (command.radius > 0.0f)
+            {
+                context.AppendRoundedRect(command.rect, command.radius, 0.0f, command.color, options.whiteTexture, clip, feather);
+                break;
+            }
             context.AppendQuad(command.rect, {options.whiteU, options.whiteV, options.whiteWidth, options.whiteHeight}, command.color,
                                options.whiteTexture, clip);
             break;
@@ -455,6 +543,11 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
                                          std::min(command.rect.width, command.rect.height) * 0.5f);
             if (width <= 0.0f)
             {
+                break;
+            }
+            if (command.radius > 0.0f)
+            {
+                context.AppendRoundedRect(command.rect, command.radius, width, command.color, options.whiteTexture, clip, feather);
                 break;
             }
             context.AppendQuad({command.rect.x, command.rect.y, command.rect.width, width},

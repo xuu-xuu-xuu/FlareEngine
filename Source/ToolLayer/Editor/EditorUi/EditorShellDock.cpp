@@ -358,7 +358,9 @@ void EditorShell::UpdatePanelContentRects()
         document_.SetStyle(designerCanvas_, style);
     }
     const float assetsW = panelWidth(EditorPanelId::Assets);
-    const bool showTypeFilter = assetsTypeElement_.IsValid() && assetsW >= 196.0f;
+    const bool showCreateBtn = assetsCreateElement_.IsValid() && assetsW >= 128.0f;
+    if (assetsCreateElement_.IsValid()) document_.SetVisible(assetsCreateElement_, showCreateBtn);
+    const bool showTypeFilter = assetsTypeElement_.IsValid() && assetsW >= 168.0f;
     if (assetsTypeElement_.IsValid())
     {
         document_.SetVisible(assetsTypeElement_, showTypeFilter);
@@ -375,9 +377,9 @@ void EditorShell::UpdatePanelContentRects()
             else if (tf == "audio") typeLabel = Text("EditorUi.AssetAudio", "Audio");
             typeLabel += " ▾";
             UiStyle style = document_.Style(assetsTypeElement_);
-            style.left = UiLength::Px(std::max(0.0f, assetsW - 134.0f));
+            style.left = UiLength::Px(std::max(0.0f, assetsW - 104.0f));
             style.top = UiLength::Px(1.0f);
-            style.width = UiLength::Px(64.0f);
+            style.width = UiLength::Px(52.0f);
             style.height = UiLength::Px(22.0f);
             style.background = !tf.empty() ? UiInk(flare::workspace::Selection) : kSurfaceRaised;
             style.borderWidth = 1.0f;
@@ -392,8 +394,10 @@ void EditorShell::UpdatePanelContentRects()
         const bool focused = dispatcher_.Focus() == assetsFilterElement_;
         style.borderWidth = 1;
         style.borderColor = focused ? UiInk(flare::workspace::Focus) : kBorder;
-        const float reserveRight = showTypeFilter ? 140.0f : 73.0f;
-        style.width = UiLength::Px(std::max(0.0f, assetsW - reserveRight));
+        const float filterLeft = showCreateBtn ? 28.0f : 3.0f;
+        const float reserveRight = showTypeFilter ? 107.0f : 52.0f;
+        style.left = UiLength::Px(filterLeft);
+        style.width = UiLength::Px(std::max(0.0f, assetsW - filterLeft - reserveRight));
         const bool placeholder = !focused && assetsFilter_->Text().empty();
         style.color = placeholder ? kMuted : kText;
         document_.SetText(assetsFilterElement_, placeholder ? Text("EditorUi.SearchAssets", "Search assets")
@@ -403,8 +407,9 @@ void EditorShell::UpdatePanelContentRects()
     if (assetsImportElement_.IsValid())
     {
         UiStyle style = document_.Style(assetsImportElement_);
-        style.left = UiLength::Px(std::max(0.0f, assetsW - 66.0f));
+        style.left = UiLength::Px(std::max(0.0f, assetsW - 49.0f));
         style.top = UiLength::Px(1.0f);
+        style.width = UiLength::Px(46.0f);
         style.height = UiLength::Px(22.0f);
         document_.SetStyle(assetsImportElement_, style);
     }

@@ -241,7 +241,9 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
         assetsTypeElement_ = document_.CreateElement(UiElementKind::Button);
         if (document_.SetParent(assetsTypeElement_, slot.panel))
         {
-            document_.SetStyle(assetsTypeElement_, ButtonStyle(0.0f, 1.0f, 64.0f, 22.0f, kSurfaceRaised));
+            auto typeStyle = ButtonStyle(0.0f, 1.0f, 64.0f, 22.0f, kSurfaceRaised);
+            typeStyle.cornerRadius = 4.0f;
+            document_.SetStyle(assetsTypeElement_, typeStyle);
             document_.SetText(assetsTypeElement_, Text("EditorUi.FilterAll", "All") + " ▾");
             dispatcher_.AddHandler(assetsTypeElement_, UiEventType::PointerDown, [this](UiInputEvent& event) {
                 if (event.button != 0) return;
@@ -257,7 +259,9 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
         assetsFilterElement_ = document_.CreateElement(UiElementKind::TextEdit);
         if (document_.SetParent(assetsFilterElement_, slot.panel))
         {
-            document_.SetStyle(assetsFilterElement_, ButtonStyle(3.0f, 2.0f, 100.0f, 20.0f, kSurface));
+            auto filterStyle = ButtonStyle(3.0f, 2.0f, 100.0f, 20.0f, kSurface);
+            filterStyle.cornerRadius = 4.0f;
+            document_.SetStyle(assetsFilterElement_, filterStyle);
             assetsFilter_ = std::make_unique<UiTextEdit>(document_, assetsFilterElement_, text_);
             dispatcher_.AddHandler(assetsFilterElement_, UiEventType::PointerDown, [this](UiInputEvent&) {
                 dispatcher_.SetFocus(assetsFilterElement_);
@@ -306,10 +310,33 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 assetsFilter_->CancelComposition();
             });
         }
+        assetsCreateElement_ = document_.CreateElement(UiElementKind::Button);
+        if (document_.SetParent(assetsCreateElement_, slot.panel))
+        {
+            auto createStyle = ButtonStyle(2.0f, 1.0f, 24.0f, 22.0f, kSurfaceActive);
+            createStyle.cornerRadius = 4.0f;
+            createStyle.color = UiInk(flare::Gold);
+            createStyle.padding = {5.0f, 0.0f, 0.0f, 0.0f};
+            document_.SetStyle(assetsCreateElement_, createStyle);
+            document_.SetText(assetsCreateElement_, "＋");
+            dispatcher_.AddHandler(assetsCreateElement_, UiEventType::PointerDown, [this](UiInputEvent& event) {
+                if (event.button != 0) return;
+                if (openMenu_ == "@create") CloseMenu();
+                else
+                {
+                    const auto bounds = layout_.Rect(assetsCreateElement_);
+                    OpenCreateMenu(EditorPanelId::Assets, bounds.x, bounds.y + bounds.height);
+                }
+                event.handled = true;
+            });
+        }
         assetsImportElement_ = document_.CreateElement(UiElementKind::Button);
         if (document_.SetParent(assetsImportElement_, slot.panel))
         {
-            document_.SetStyle(assetsImportElement_, ButtonStyle(0.0f, 0.0f, 64.0f, 24.0f, kSurfaceActive));
+            auto importStyle = ButtonStyle(0.0f, 0.0f, 52.0f, 24.0f, kSurfaceActive);
+            importStyle.cornerRadius = 4.0f;
+            importStyle.color = UiInk(flare::Gold);
+            document_.SetStyle(assetsImportElement_, importStyle);
             document_.SetText(assetsImportElement_, Text("EditorUi.Import", "Import"));
             dispatcher_.AddHandler(assetsImportElement_, UiEventType::PointerDown, [this](UiInputEvent& event) {
                 if (event.button != 0) return;
@@ -391,7 +418,12 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             if (!assetDrag_ || assetDrag_->assetPath.empty()) return;
             const float dx = event.x - assetDrag_->startX;
             const float dy = event.y - assetDrag_->startY;
-            if (!assetDrag_->dragging && std::abs(dx) + std::abs(dy) > 4.0f) assetDrag_->dragging = true;
+            if (!assetDrag_->dragging && std::abs(dx) + std::abs(dy) > 4.0f)
+            {
+                assetDrag_->dragging = true;
+                lastAssetClickPath_.clear();
+                lastAssetClickTick_ = 0;
+            }
             if (!assetDrag_->dragging) return;
             if (dragGhost_.IsValid())
             {
@@ -407,6 +439,54 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             const auto target = UiHitTest(document_, layout_).Hit(CurrentInputRoot(), event.x, event.y).target;
             const bool overViewport = target == ViewportPanel();
             if (assetDrag_->hoverHandler) assetDrag_->hoverHandler(assetDrag_->assetPath, event.x, event.y, overViewport);
+
+            const auto insideRect = [&](const UiRect& r) {
+                return r.width > 0.0f && r.height > 0.0f &&
+                       event.x >= r.x && event.x < r.x + r.width &&
+                       event.y >= r.y && event.y < r.y + r.height;
+            };
+            const UiRect hierContent = layout_.Rect(Slot(EditorPanelId::Hierarchy).content);
+            const bool overHierarchy = dock_.SurfaceFor(EditorPanelId::Hierarchy) == inputSurface_ &&
+                                       document_.Visible(Slot(EditorPanelId::Hierarchy).panel) &&
+                                       insideRect(hierContent);
+            if (overHierarchy)
+            {
+                const float hOffset = hierarchyList_ ? hierarchyList_->Offset() : 0.0f;
+                const int hRow = static_cast<int>((event.y - hierContent.y + hOffset) / 20.0f);
+                if (hRow != hoveredHierarchyRow_)
+                {
+                    hoveredHierarchyRow_ = hRow;
+                    if (hierarchyList_) { hierarchyList_->Invalidate(); hierarchyList_->Sync(); }
+                }
+            }
+            else if (hoveredHierarchyRow_ != -1)
+            {
+                hoveredHierarchyRow_ = -1;
+                if (hierarchyList_) { hierarchyList_->Invalidate(); hierarchyList_->Sync(); }
+            }
+            const UiRect inspPanel = layout_.Rect(Slot(EditorPanelId::Inspector).panel);
+            const bool overInspector = dock_.SurfaceFor(EditorPanelId::Inspector) == inputSurface_ &&
+                                       document_.Visible(Slot(EditorPanelId::Inspector).panel) &&
+                                       insideRect(inspPanel);
+            if (dropHighlight_.IsValid())
+            {
+                if (overInspector || overHierarchy)
+                {
+                    if (CurrentInputRoot().IsValid()) document_.SetParent(dropHighlight_, CurrentInputRoot());
+                    const UiRect highlightRect = overInspector ? inspPanel : layout_.Rect(Slot(EditorPanelId::Hierarchy).panel);
+                    UiStyle hl = document_.Style(dropHighlight_);
+                    hl.left = UiLength::Px(highlightRect.x);
+                    hl.top = UiLength::Px(highlightRect.y);
+                    hl.width = UiLength::Px(highlightRect.width);
+                    hl.height = UiLength::Px(highlightRect.height);
+                    document_.SetStyle(dropHighlight_, hl);
+                    document_.SetVisible(dropHighlight_, true);
+                }
+                else
+                {
+                    document_.SetVisible(dropHighlight_, false);
+                }
+            }
             event.handled = true;
         }, UiEventPhase::Bubble);
         dispatcher_.AddHandler(slot.content, UiEventType::PointerUp, [this](UiInputEvent& event) {
@@ -418,7 +498,37 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             if (dropped)
             {
                 const auto target = UiHitTest(document_, layout_).Hit(CurrentInputRoot(), event.x, event.y).target;
-                if (target == ViewportPanel() && dropHandler) dropHandler(path, event.x, event.y);
+                if (target == ViewportPanel() && dropHandler)
+                {
+                    dropHandler(path, event.x, event.y);
+                }
+                else if (assetEntityDropHandler_)
+                {
+                    const auto insideRect = [&](const UiRect& r) {
+                        return r.width > 0.0f && r.height > 0.0f &&
+                               event.x >= r.x && event.x < r.x + r.width &&
+                               event.y >= r.y && event.y < r.y + r.height;
+                    };
+                    const UiRect hierPanel = layout_.Rect(Slot(EditorPanelId::Hierarchy).panel);
+                    const UiRect inspPanel = layout_.Rect(Slot(EditorPanelId::Inspector).panel);
+                    if (dock_.SurfaceFor(EditorPanelId::Hierarchy) == inputSurface_ &&
+                        document_.Visible(Slot(EditorPanelId::Hierarchy).panel) && insideRect(hierPanel))
+                    {
+                        const UiRect hierContent = layout_.Rect(Slot(EditorPanelId::Hierarchy).content);
+                        const float hOffset = hierarchyList_ ? hierarchyList_->Offset() : 0.0f;
+                        const int hRow = insideRect(hierContent)
+                            ? static_cast<int>((event.y - hierContent.y + hOffset) / 20.0f) : -1;
+                        const auto rows = hierarchyModel_.VisibleRows();
+                        const std::uint64_t entityId = (hRow >= 0 && static_cast<std::size_t>(hRow) < rows.size())
+                            ? hierarchyModel_.Nodes()[rows[static_cast<std::size_t>(hRow)]].id : 0;
+                        assetEntityDropHandler_(path, entityId, EditorPanelId::Hierarchy);
+                    }
+                    else if (dock_.SurfaceFor(EditorPanelId::Inspector) == inputSurface_ &&
+                             document_.Visible(Slot(EditorPanelId::Inspector).panel) && insideRect(inspPanel))
+                    {
+                        assetEntityDropHandler_(path, inspectorModel_.Target(), EditorPanelId::Inspector);
+                    }
+                }
             }
             event.handled = true;
         }, UiEventPhase::Bubble);
@@ -461,6 +571,7 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             clearStyle.fontSize = 12.0f;
             clearStyle.borderWidth = 1.0f;
             clearStyle.borderColor = kBorder;
+            clearStyle.cornerRadius = 4.0f;
             document_.SetStyle(consoleClearButton_, clearStyle);
             document_.SetText(consoleClearButton_, Text("EditorUi.ClearConsole", "Clear"));
             dispatcher_.AddHandler(consoleClearButton_, UiEventType::PointerDown, [this](UiInputEvent& event) {
@@ -729,6 +840,16 @@ void EditorShell::SetAssetDropHandler(std::function<bool(const std::string&, flo
 void EditorShell::CancelAssetDrag()
 {
     if (dragGhost_.IsValid()) document_.SetVisible(dragGhost_, false);
+    if (dropHighlight_.IsValid() && !tabDragging_) document_.SetVisible(dropHighlight_, false);
+    if (hoveredHierarchyRow_ != -1)
+    {
+        hoveredHierarchyRow_ = -1;
+        if (hierarchyList_)
+        {
+            hierarchyList_->Invalidate();
+            hierarchyList_->Sync();
+        }
+    }
     if (assetDrag_)
     {
         if (assetDrag_->dragging && assetDrag_->hoverHandler)

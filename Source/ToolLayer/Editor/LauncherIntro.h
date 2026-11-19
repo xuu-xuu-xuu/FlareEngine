@@ -26,4 +26,7 @@ private:
     SIZE size_{};
     std::vector<HWND> hiddenControls_;
 };
+
+// 片头末帧同款矢量金色标志（透明底），size 为外接正方形边长。调用方需已启动 GDI+。
+void DrawFlareMark(HDC dc, int centerX, int centerY, int size);
 }

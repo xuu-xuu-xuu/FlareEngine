@@ -304,7 +304,7 @@ bool EditorDockState::Deserialize(std::string_view json, DockNode& layout, std::
 
 std::string EditorDockState::Serialize(const EditorDock& workspace)
 {
-    Json root;root["version"]=2;root["layout"]=ToJson(workspace.Root());root["floating"]=Json::array();
+    Json root;root["version"]=3;root["layout"]=ToJson(workspace.Root());root["floating"]=Json::array();
     for(const auto& w:workspace.Windows())
         root["floating"].push_back({{"id",w.id},{"x",w.x},{"y",w.y},{"width",w.width},{"height",w.height},{"layout",ToJson(w.layout)}});
     return root.dump(2);
@@ -317,11 +317,11 @@ bool EditorDockState::Deserialize(std::string_view text,EditorDock& workspace,st
     {
         const auto json=Json::parse(text);
         const int version=json.value("version",0);
-        if(version!=1&&version!=2){error="unsupported dock version";return false;}
+        if(version<1||version>3){error="unsupported dock version";return false;}
         DockNode main;
         if(!FromJson(json.at("layout"),main,error))return false;
-        EditorDock result(std::move(main));std::vector<FloatingDockWindow> windows;
-        if(version==2)
+        std::vector<FloatingDockWindow> windows;
+        if(version>=2)
         {
             const auto& entries=json.at("floating");
             if(!entries.is_array()||entries.size()>32){error="invalid floating windows";return false;}
@@ -334,6 +334,10 @@ bool EditorDockState::Deserialize(std::string_view text,EditorDock& workspace,st
                 windows.push_back(std::move(window));
             }
         }
+        // 旧版未手动调整过的默认三栏布局在首次升级时平滑迁移为新版 2 by 3 默认布局。
+        if(version<=2&&windows.empty()&&main==ClassicThreeColumnDockLayout())
+            main=DefaultEditorDockLayout();
+        EditorDock result(std::move(main));
         if(!result.RestoreWindows(std::move(windows))){error="invalid or duplicated floating panels";return false;}
         workspace=std::move(result);return true;
     }

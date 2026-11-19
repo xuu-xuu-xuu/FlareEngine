@@ -52,6 +52,7 @@ struct DockNode
 };
 
 [[nodiscard]] DockNode DefaultEditorDockLayout();
+[[nodiscard]] DockNode ClassicThreeColumnDockLayout();
 [[nodiscard]] DockNode StandardShelfDockLayout();
 [[nodiscard]] DockNode WideViewportDockLayout();
 [[nodiscard]] const char* EditorPanelName(EditorPanelId panel) noexcept;

@@ -302,8 +302,15 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
     }
     if (extension == ".cs")
     {
+        state.rows.push_back({"asset.scriptClass", ctx.text.GetText("Editor.ScriptClassName"),
+                              EditorPropertyType::String, ctx.scriptWorkflow.ClassNameForSource(selected),
+                              ctx.session.IsPlaying()});
         state.rows.push_back({"asset.openScript", ctx.text.GetText("Editor.ScriptOpenSource"),
                               EditorPropertyType::Action, {}, false});
+        state.rows.push_back({"asset.attachScript", ctx.text.GetText("EditorUi.AttachScriptToSelected"),
+                              EditorPropertyType::Action, {}, ctx.session.IsPlaying()});
+        state.rows.push_back({"asset.compileScripts", ctx.text.GetText("EditorUi.CompileScripts"),
+                              EditorPropertyType::Action, {}, ctx.session.IsPlaying()});
     }
     if (asset_io::Within(ctx.assets.SourceRoot(), selected))
     {
@@ -552,6 +559,50 @@ bool HandleAssetPropertyAction(ToolkitWorkspaceContext& ctx, const std::string& 
         const bool opened = ctx.scriptWorkflow.OpenSelected(settings);
         if (!opened) ctx.shell.SetStatus(ctx.scriptWorkflow.Status());
         return opened;
+    }
+    if (key == "asset.scriptClass")
+    {
+        std::filesystem::path renamed;
+        if (!ctx.scriptWorkflow.RenameScriptSource(state.assetPath, value, renamed))
+        {
+            ctx.shell.SetStatus(ctx.scriptWorkflow.Status());
+            return false;
+        }
+        HandleAssetSelection(ctx, asset_io::Utf8(renamed));
+        ctx.shell.SetStatus(ctx.text.GetText("EditorUi.ScriptRenamed") + ": " + value);
+        return true;
+    }
+    if (key == "asset.attachScript")
+    {
+        const StableEntityId target = ctx.session.Selected();
+        if (target == 0)
+        {
+            ctx.shell.SetStatus(ctx.text.GetText("EditorUi.SelectObjectFirst"));
+            return false;
+        }
+        const std::string scriptId = ctx.scriptWorkflow.ScriptIdForSource(state.assetPath);
+        const std::string display = ctx.scriptWorkflow.ClassNameForSource(state.assetPath);
+        bool needsCompile = false;
+        if (ctx.scriptWorkflow.AttachScript(target, scriptId, needsCompile))
+        {
+            state.assetName.clear();
+            const std::string msg = ctx.text.GetText("EditorUi.ScriptAttached") + ": " + display;
+            ctx.shell.SetStatus(msg);
+            ctx.shell.AppendConsoleLine(msg);
+            return true;
+        }
+        if (needsCompile && !scriptId.empty())
+        {
+            state.assetName.clear();
+            ctx.shell.Commands().Execute({ui::editor::EditorCommandId::Build, std::to_string(target) + "|" + scriptId});
+            return true;
+        }
+        if (!ctx.scriptWorkflow.Status().empty()) ctx.shell.SetStatus(ctx.scriptWorkflow.Status());
+        return false;
+    }
+    if (key == "asset.compileScripts")
+    {
+        return ctx.shell.Commands().Execute({ui::editor::EditorCommandId::Build, {}});
     }
     return false;
 }
@@ -874,6 +925,7 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
     ctx.shell.SetPropertyHandler([&ctx](std::uint64_t id, std::string key, std::string value) {
         if (key == "asset.targetPath" || key == "asset.move" || key == "asset.delete" ||
             key == "asset.addModel" || key == "asset.addPrefab" || key == "asset.openScript" ||
+            key == "asset.scriptClass" || key == "asset.attachScript" || key == "asset.compileScripts" ||
             key == "asset.previewAudio" || key == "asset.stopAudio")
         {
             return HandleAssetPropertyAction(ctx, key, value);
@@ -963,6 +1015,14 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
             settings.executable = asset_io::FromUtf8(ctx.host.Preferences().externalEditor);
             const bool result = ctx.scriptWorkflow.Apply(id, ctx.session.IsPlaying(), key, value, settings);
             if (!ctx.scriptWorkflow.Status().empty()) ctx.shell.SetStatus(ctx.scriptWorkflow.Status());
+            std::uint64_t pendingEntity = 0;
+            std::string pendingScriptId;
+            std::filesystem::path createdSource;
+            if (result && ctx.scriptWorkflow.ConsumeCreatedPendingAttach(pendingEntity, pendingScriptId, createdSource))
+            {
+                ctx.shell.Commands().Execute(
+                    {ui::editor::EditorCommandId::Build, std::to_string(pendingEntity) + "|" + pendingScriptId});
+            }
             return result;
         }
         return ApplySceneInspector(ctx.session, id, key, value, &ctx.assets);

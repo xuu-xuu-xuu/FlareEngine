@@ -1,6 +1,9 @@
 #include "LauncherStyle.h"
+#include <objidl.h>
+#include <gdiplus.h>
 #include <commctrl.h>
 #include <uxtheme.h>
+#include <algorithm>
 #include <cwctype>
 #include <string>
 #include <string_view>
@@ -8,6 +11,42 @@
 
 namespace se::launcher_style
 {
+// shortcut: 进程级 GDI+ 令牌不主动关闭，随进程退出回收；LauncherIntro 自己的令牌照常成对开关。
+bool GdiplusReady()
+{
+    static const bool ready = [] {
+        Gdiplus::GdiplusStartupInput input;
+        ULONG_PTR token = 0;
+        return Gdiplus::GdiplusStartup(&token, &input, nullptr) == Gdiplus::Ok;
+    }();
+    return ready;
+}
+
+namespace
+{
+Gdiplus::Color Argb(flare::Color color, BYTE alpha)
+{
+    return Gdiplus::Color(alpha, color.r, color.g, color.b);
+}
+
+void RoundPath(Gdiplus::GraphicsPath& path, float x, float y, float width, float height, float radius)
+{
+    const float d = std::min(radius * 2.0f, std::min(width, height));
+    if (d <= 0.0f) { path.AddRectangle(Gdiplus::RectF(x, y, width, height)); return; }
+    path.AddArc(x, y, d, d, 180.0f, 90.0f);
+    path.AddArc(x + width - d, y, d, d, 270.0f, 90.0f);
+    path.AddArc(x + width - d, y + height - d, d, d, 0.0f, 90.0f);
+    path.AddArc(x, y + height - d, d, d, 90.0f, 90.0f);
+    path.CloseFigure();
+}
+
+void Smooth(Gdiplus::Graphics& g)
+{
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+}
+} // namespace
+
 void Fill(HDC dc, RECT rect, flare::Color color)
 {
     SetDCBrushColor(dc, flare::Native(color));
@@ -23,6 +62,60 @@ void Frame(HDC dc, RECT rect, flare::Color color, int thickness)
         FrameRect(dc, &rect, brush);
         InflateRect(&rect, -1, -1);
     }
+}
+
+void FillRound(HDC dc, RECT rect, flare::Color color, int radius, BYTE alpha)
+{
+    if (!GdiplusReady() || radius <= 0) { Fill(dc, rect, color); return; }
+    Gdiplus::Graphics g(dc);
+    Smooth(g);
+    Gdiplus::GraphicsPath path;
+    RoundPath(path, static_cast<float>(rect.left), static_cast<float>(rect.top),
+              static_cast<float>(rect.right - rect.left), static_cast<float>(rect.bottom - rect.top), static_cast<float>(radius));
+    Gdiplus::SolidBrush brush(Argb(color, alpha));
+    g.FillPath(&brush, &path);
+}
+
+void FrameRound(HDC dc, RECT rect, flare::Color color, int radius, float thickness, BYTE alpha)
+{
+    if (!GdiplusReady() || radius <= 0) { Frame(dc, rect, color, std::max(1, static_cast<int>(thickness))); return; }
+    Gdiplus::Graphics g(dc);
+    Smooth(g);
+    const float half = thickness * 0.5f;
+    Gdiplus::GraphicsPath path;
+    RoundPath(path, rect.left + half, rect.top + half, rect.right - rect.left - thickness,
+              rect.bottom - rect.top - thickness, std::max(0.0f, radius - half));
+    Gdiplus::Pen pen(Argb(color, alpha), thickness);
+    g.DrawPath(&pen, &path);
+}
+
+void Glow(HDC dc, int x, int y, int radius, flare::Color color, BYTE alpha)
+{
+    if (!GdiplusReady() || radius <= 0) return;
+    Gdiplus::Graphics g(dc);
+    Smooth(g);
+    Gdiplus::GraphicsPath path;
+    path.AddEllipse(static_cast<float>(x - radius), static_cast<float>(y - radius),
+                    static_cast<float>(2 * radius), static_cast<float>(2 * radius));
+    Gdiplus::PathGradientBrush brush(&path);
+    brush.SetCenterColor(Argb(color, alpha));
+    Gdiplus::Color edge = Argb(color, 0);
+    INT count = 1;
+    brush.SetSurroundColors(&edge, &count);
+    g.FillPath(&brush, &path);
+}
+
+void FadeLine(HDC dc, RECT rect, flare::Color color, BYTE alpha)
+{
+    if (!GdiplusReady()) { Fill(dc, rect, color); return; }
+    Gdiplus::Graphics g(dc);
+    const Gdiplus::RectF area(static_cast<float>(rect.left), static_cast<float>(rect.top),
+                              static_cast<float>(rect.right - rect.left), static_cast<float>(rect.bottom - rect.top));
+    Gdiplus::LinearGradientBrush brush(area, Argb(color, 0), Argb(color, 0), Gdiplus::LinearGradientModeHorizontal);
+    const Gdiplus::Color stops[3] = {Argb(color, 0), Argb(color, alpha), Argb(color, 0)};
+    const Gdiplus::REAL positions[3] = {0.0f, 0.35f, 1.0f};
+    brush.SetInterpolationColors(stops, positions, 3);
+    g.FillRectangle(&brush, area);
 }
 
 LRESULT ControlColors(UINT message, HDC dc, bool muted, bool onSurface)
@@ -134,7 +227,7 @@ LRESULT CALLBACK ListHover(HWND hwnd, UINT message, WPARAM wp, LPARAM lp, UINT_P
                 const int saved = SaveDC(dc);
                 RECT client{};
                 GetClientRect(hwnd, &client);
-                launcher_style::Frame(dc, client, flare::Border, 1);
+                launcher_style::FrameRound(dc, client, flare::Border, ScaleForWindow(hwnd, 10));
                 const auto font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
                 if (font) SelectObject(dc, font);
                 SetBkMode(dc, TRANSPARENT);
@@ -285,14 +378,17 @@ bool DrawControl(const DRAWITEMSTRUCT& item)
 
         if (role == ButtonRole::Card)
         {
+            DrawThemeParentBackground(item.hwndItem, dc, &row);
+            const int radius = ScaleForWindow(item.hwndItem, 8);
             const auto bg = active ? flare::Selected : (hovered && !disabled ? flare::Hover : flare::Surface);
-            Fill(dc, row, bg);
-            Frame(dc, row, active ? flare::Accent : (hovered ? flare::Silver : flare::Border), active ? 2 : 1);
+            FillRound(dc, row, bg, radius);
+            FrameRound(dc, row, active ? flare::Gold : (hovered ? flare::Silver : flare::Border), radius,
+                       active ? 1.5f : 1.0f, active ? 230 : (hovered ? 120 : 255));
             if (active)
             {
-                RECT bar = row;
-                bar.right = bar.left + ScaleForWindow(item.hwndItem, 4);
-                Fill(dc, bar, flare::Accent);
+                RECT bar{row.left + ScaleForWindow(item.hwndItem, 5), row.top + ScaleForWindow(item.hwndItem, 12),
+                         row.left + ScaleForWindow(item.hwndItem, 8), row.bottom - ScaleForWindow(item.hwndItem, 12)};
+                FillRound(dc, bar, flare::Gold, ScaleForWindow(item.hwndItem, 2));
             }
 
             const int padX = ScaleForWindow(item.hwndItem, 12);
@@ -326,14 +422,20 @@ bool DrawControl(const DRAWITEMSTRUCT& item)
 
         flare::Color bg = flare::Raised;
         flare::Color border = flare::Border;
+        flare::Color textColor = flare::Heading;
+        BYTE borderAlpha = 255;
         if (disabled)
         {
             bg = flare::Surface;
+            textColor = flare::Disabled;
         }
         else if (role == ButtonRole::Primary)
         {
-            bg = selected ? flare::Selected : (hovered ? flare::AccentHover : flare::Accent);
-            border = hovered || focused ? flare::Heading : flare::Accent;
+            // 黑字压香槟金：主操作唯一的高亮色块。
+            constexpr flare::Color pressedGold{206, 160, 82};
+            bg = selected ? pressedGold : (hovered ? flare::AccentHover : flare::Accent);
+            border = focused ? flare::Heading : bg;
+            textColor = flare::Background;
         }
         else if (role == ButtonRole::Danger)
         {
@@ -343,13 +445,16 @@ bool DrawControl(const DRAWITEMSTRUCT& item)
         else
         {
             bg = selected ? flare::Selected : (hovered ? flare::Hover : flare::Raised);
-            border = focused ? flare::Accent : (hovered ? flare::Silver : flare::Border);
+            border = focused ? flare::Gold : (hovered ? flare::Silver : flare::Border);
+            if (hovered && !focused) borderAlpha = 110;
         }
 
-        Fill(dc, row, bg);
-        Frame(dc, row, border, 1);
+        DrawThemeParentBackground(item.hwndItem, dc, &row);
+        const int radius = ScaleForWindow(item.hwndItem, 6);
+        FillRound(dc, row, bg, radius);
+        FrameRound(dc, row, border, radius, 1.0f, borderAlpha);
         if (role == ButtonRole::Primary && boldFont && !disabled) SelectObject(dc, boldFont);
-        SetTextColor(dc, flare::Native(disabled ? flare::Disabled : flare::Heading));
+        SetTextColor(dc, flare::Native(textColor));
         InflateRect(&row, -ScaleForWindow(item.hwndItem, 10), 0);
         DrawTextW(dc, rawText, -1, &row, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
         RestoreDC(dc, saved);
@@ -377,14 +482,16 @@ bool DrawControl(const DRAWITEMSTRUCT& item)
                 const bool available = parts[4] == L"1";
 
                 const auto cardBg = selected ? flare::Selected : (hovered ? flare::Hover : flare::Surface);
-                Fill(dc, card, cardBg);
-                Frame(dc, card, selected ? flare::Accent : (hovered ? flare::Silver : flare::Border), 1);
+                const int cardRadius = ScaleForWindow(item.hwndItem, 8);
+                FillRound(dc, card, cardBg, cardRadius);
+                FrameRound(dc, card, selected ? flare::Gold : (hovered ? flare::Silver : flare::Border), cardRadius,
+                           1.0f, selected ? 200 : (hovered ? 110 : 255));
 
                 if (selected || !available)
                 {
-                    RECT stripe = card;
-                    stripe.right = stripe.left + ScaleForWindow(item.hwndItem, 4);
-                    Fill(dc, stripe, !available ? flare::Warning : flare::Accent);
+                    RECT stripe{card.left + ScaleForWindow(item.hwndItem, 4), card.top + ScaleForWindow(item.hwndItem, 12),
+                                card.left + ScaleForWindow(item.hwndItem, 7), card.bottom - ScaleForWindow(item.hwndItem, 12)};
+                    FillRound(dc, stripe, !available ? flare::Warning : flare::Gold, ScaleForWindow(item.hwndItem, 2));
                 }
 
                 const int pad = ScaleForWindow(item.hwndItem, 10);
@@ -393,8 +500,9 @@ bool DrawControl(const DRAWITEMSTRUCT& item)
                           card.top + ((card.bottom - card.top) - tileSize) / 2,
                           card.left + pad + ScaleForWindow(item.hwndItem, 4) + tileSize,
                           card.top + ((card.bottom - card.top) + tileSize) / 2};
-                Fill(dc, tile, selected ? flare::Raised : flare::Background);
-                Frame(dc, tile, !available ? flare::Warning : flare::Border, 1);
+                const int tileRadius = ScaleForWindow(item.hwndItem, 7);
+                FillRound(dc, tile, flare::Background, tileRadius);
+                FrameRound(dc, tile, !available ? flare::Warning : flare::Gold, tileRadius, 1.0f, !available ? 255 : 90);
 
                 wchar_t initial[2]{L'F', L'\0'};
                 for (wchar_t ch : parts[0])
@@ -422,8 +530,8 @@ bool DrawControl(const DRAWITEMSTRUCT& item)
                 const int badgeH = ScaleForWindow(item.hwndItem, 19);
                 RECT badgeRect{rightEdge - badgeW, card.top + ScaleForWindow(item.hwndItem, 7),
                                rightEdge, card.top + ScaleForWindow(item.hwndItem, 7) + badgeH};
-                Fill(dc, badgeRect, !available ? flare::Danger : flare::Raised);
-                Frame(dc, badgeRect, !available ? flare::Warning : flare::Border, 1);
+                FillRound(dc, badgeRect, !available ? flare::Danger : flare::Raised, badgeH / 2);
+                FrameRound(dc, badgeRect, !available ? flare::Warning : flare::Border, badgeH / 2);
                 SetTextColor(dc, flare::Native(!available ? flare::Heading : flare::Silver));
                 DrawTextW(dc, badge.c_str(), -1, &badgeRect, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX);
 

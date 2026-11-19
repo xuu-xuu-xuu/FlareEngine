@@ -182,4 +182,16 @@ void LauncherIntro::Release()
     if (graphics_) { Gdiplus::GdiplusShutdown(graphics_); graphics_ = 0; }
 }
 LauncherIntro::~LauncherIntro() { Release(); }
+
+void DrawFlareMark(HDC dc, int centerX, int centerY, int size)
+{
+    Gdiplus::Graphics g(dc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    // 标志（含星芒）约占 200 个设计单位；与片头相同的 -4,2 偏移让圆环视觉居中。
+    const float scale = size / 200.0f;
+    g.TranslateTransform(static_cast<float>(centerX), static_cast<float>(centerY));
+    g.ScaleTransform(scale, scale);
+    g.TranslateTransform(-4.0f, 2.0f);
+    DrawMark(g, 10000.0f, 255);
+}
 }

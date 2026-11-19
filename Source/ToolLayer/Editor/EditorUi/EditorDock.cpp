@@ -53,7 +53,42 @@ bool FindParentOfLeaf(DockNode& node, const DockNode* target, DockNode*& parent,
 }
 } // namespace
 
+// 默认采用 Unity 经典的 2 by 3 布局：左侧上下双视窗（场景视口 + 控制台），右侧三列并排通高（层级 | 资源 | 属性）。
 DockNode DefaultEditorDockLayout()
+{
+    DockNode leftTop = MakeTabs({EditorPanelId::Viewport, EditorPanelId::UiDesigner});
+    DockNode leftBottom = MakeTabs({EditorPanelId::Console});
+    DockNode left;
+    left.kind = DockNode::Kind::Split;
+    left.axis = DockAxis::Vertical;
+    left.ratio = 0.62f;
+    left.children = {std::move(leftTop), std::move(leftBottom)};
+
+    DockNode colHierarchy = MakeTabs({EditorPanelId::Hierarchy});
+    DockNode colAssets = MakeTabs({EditorPanelId::Assets});
+    DockNode colInspector = MakeTabs({EditorPanelId::Inspector});
+
+    DockNode assetsInspector;
+    assetsInspector.kind = DockNode::Kind::Split;
+    assetsInspector.axis = DockAxis::Horizontal;
+    assetsInspector.ratio = 0.43f;
+    assetsInspector.children = {std::move(colAssets), std::move(colInspector)};
+
+    DockNode rightColumns;
+    rightColumns.kind = DockNode::Kind::Split;
+    rightColumns.axis = DockAxis::Horizontal;
+    rightColumns.ratio = 0.27f;
+    rightColumns.children = {std::move(colHierarchy), std::move(assetsInspector)};
+
+    DockNode root;
+    root.kind = DockNode::Kind::Split;
+    root.axis = DockAxis::Horizontal;
+    root.ratio = 0.46f;
+    root.children = {std::move(left), std::move(rightColumns)};
+    return root;
+}
+
+DockNode ClassicThreeColumnDockLayout()
 {
     DockNode leftTop = MakeTabs({EditorPanelId::Hierarchy});
     DockNode leftBottom = MakeTabs({EditorPanelId::Assets});

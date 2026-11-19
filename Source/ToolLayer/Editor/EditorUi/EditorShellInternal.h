@@ -19,7 +19,7 @@ namespace se::ui::editor::detail
 
 inline constexpr float kTabHeight = 24.0f;
 inline constexpr float kMinimumGroupSize = 80.0f;
-inline constexpr float kSplitterReach = 4.5f;
+inline constexpr float kSplitterReach = 3.5f;
 inline constexpr float kTabArrowWidth = 18.0f;
 
 inline const auto kBackground = UiInk(flare::Background);

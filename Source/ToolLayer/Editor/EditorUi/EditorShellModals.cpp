@@ -88,21 +88,22 @@ void EditorShell::ShowCloseModal()
         return;
     }
     UiStyle dialog = AbsoluteStyle(left, top, dialogWidth, dialogHeight);
-    dialog.background = kSurface;
-    dialog.borderWidth = 2.0f;
-    dialog.borderColor = kAccent;
+    dialog.background = UiInk(flare::workspace::Panel);
+    dialog.borderWidth = 1.0f;
+    dialog.borderColor = UiInk(flare::workspace::Focus, 0.45f);
+    dialog.cornerRadius = 10.0f;
     document_.SetStyle(modalDialog_, dialog);
 
     const UiElementHandle title = document_.CreateElement(UiElementKind::Label);
     if (document_.SetParent(title, modalDialog_))
     {
-        document_.SetStyle(title, ButtonStyle(20.0f, 20.0f, dialogWidth - 40.0f, 24.0f, kSurface));
+        document_.SetStyle(title, ButtonStyle(20.0f, 20.0f, dialogWidth - 40.0f, 24.0f, kContent));
         document_.SetText(title, Text("EditorUi.CloseUnsavedTitle", "Unsaved changes"));
     }
     const UiElementHandle message = document_.CreateElement(UiElementKind::Label);
     if (document_.SetParent(message, modalDialog_))
     {
-        UiStyle style = ButtonStyle(20.0f, 56.0f, dialogWidth - 40.0f, 48.0f, kSurface);
+        UiStyle style = ButtonStyle(20.0f, 56.0f, dialogWidth - 40.0f, 48.0f, kContent);
         style.textFlow = UiTextFlow::Wrap;
         style.padding = {};
         style.color = kMuted;
@@ -117,13 +118,16 @@ void EditorShell::ShowCloseModal()
         {
             return UiElementHandle{};
         }
-        document_.SetStyle(button, ButtonStyle(x, 144.0f, 120.0f, 30.0f, color));
+        auto style = ButtonStyle(x, 144.0f, 120.0f, 30.0f, color);
+        style.cornerRadius = 6.0f;
+        document_.SetStyle(button, style);
         document_.SetText(button, label);
         return button;
     };
-    modalSave_ = makeButton(20.0f, Text("EditorUi.Save", "Save").c_str(), kSurfaceActive);
+    modalSave_ = makeButton(20.0f, Text("EditorUi.Save", "Save").c_str(), UiInk(flare::Accent));
+    if (modalSave_.IsValid()) { auto style = document_.Style(modalSave_); style.color = kBackground; document_.SetStyle(modalSave_, style); }
     modalDiscard_ = makeButton(154.0f, Text("EditorUi.DiscardChanges", "Discard").c_str(),
-                               UiColor{0.55f, 0.16f, 0.18f, 1.0f});
+                               UiInk(flare::Danger));
     modalCancel_ = makeButton(288.0f, Text("EditorUi.Cancel", "Cancel").c_str(), kSurfaceRaised);
     (void)dialogWidth;
 
@@ -199,21 +203,22 @@ void EditorShell::ShowConfirm(std::string title, std::string message, std::strin
         return;
     }
     UiStyle dialog = AbsoluteStyle(left, top, dialogWidth, dialogHeight);
-    dialog.background = kSurface;
-    dialog.borderWidth = 2.0f;
-    dialog.borderColor = kAccent;
+    dialog.background = UiInk(flare::workspace::Panel);
+    dialog.borderWidth = 1.0f;
+    dialog.borderColor = UiInk(flare::workspace::Focus, 0.45f);
+    dialog.cornerRadius = 10.0f;
     document_.SetStyle(confirmDialog_, dialog);
 
     const UiElementHandle titleLabel = document_.CreateElement(UiElementKind::Label);
     if (document_.SetParent(titleLabel, confirmDialog_))
     {
-        document_.SetStyle(titleLabel, ButtonStyle(20.0f, 20.0f, dialogWidth - 40.0f, 24.0f, kSurface));
+        document_.SetStyle(titleLabel, ButtonStyle(20.0f, 20.0f, dialogWidth - 40.0f, 24.0f, kContent));
         document_.SetText(titleLabel, title);
     }
     const UiElementHandle messageLabel = document_.CreateElement(UiElementKind::Label);
     if (document_.SetParent(messageLabel, confirmDialog_))
     {
-        UiStyle style = ButtonStyle(20.0f, 56.0f, dialogWidth - 40.0f, 48.0f, kSurface);
+        UiStyle style = ButtonStyle(20.0f, 56.0f, dialogWidth - 40.0f, 48.0f, kContent);
         style.textFlow = UiTextFlow::Wrap;
         style.padding = {};
         style.color = kMuted;
@@ -227,18 +232,21 @@ void EditorShell::ShowConfirm(std::string title, std::string message, std::strin
         {
             return UiElementHandle{};
         }
-        document_.SetStyle(button, ButtonStyle(x, 144.0f, 120.0f, 30.0f, color));
+        auto style = ButtonStyle(x, 144.0f, 120.0f, 30.0f, color);
+        style.cornerRadius = 6.0f;
+        document_.SetStyle(button, style);
         document_.SetText(button, label);
         return button;
     };
-    confirmPrimary_ = makeButton(20.0f, primaryLabel, primaryEnabled ? kSurfaceActive : kSurfaceRaised);
+    confirmPrimary_ = makeButton(20.0f, primaryLabel, primaryEnabled ? UiInk(flare::Accent) : kSurfaceRaised);
+    if (primaryEnabled && confirmPrimary_.IsValid()) { auto style = document_.Style(confirmPrimary_); style.color = kBackground; document_.SetStyle(confirmPrimary_, style); }
     if (!primaryEnabled && confirmPrimary_.IsValid())
     {
         UiStyle disabledStyle = document_.Style(confirmPrimary_);
         disabledStyle.color = kMuted;
         document_.SetStyle(confirmPrimary_, disabledStyle);
     }
-    confirmSecondary_ = makeButton(154.0f, secondaryLabel, UiColor{0.55f, 0.16f, 0.18f, 1.0f});
+    confirmSecondary_ = makeButton(154.0f, secondaryLabel, UiInk(flare::Danger));
     confirmCancel_ = makeButton(288.0f, cancelLabel, kSurfaceRaised);
     (void)dialogWidth;
     if (secondaryLabel.empty())
