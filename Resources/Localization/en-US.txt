@@ -1841,3 +1841,6 @@ Feature.Render.PreferMeshShader=Prefer hardware mesh shader
 D3D12.MeshShaderInitializeFailed=Failed to initialize mesh shader pipeline; falling back to indirect submission.
 D3D12.MeshShaderRecordFailed=Failed to record mesh shader dispatch commands.
 Shader.DxcUnavailable=Windows SDK DXC compiler (dxcompiler.dll / dxil.dll) was not found.
+Feature.Render.TransientAliasing=Transient physical memory aliasing
+Feature.Render.StaticShadowCache=Static cascade shadow cache
+Feature.Render.StaticBatching=Static mesh spatial batching

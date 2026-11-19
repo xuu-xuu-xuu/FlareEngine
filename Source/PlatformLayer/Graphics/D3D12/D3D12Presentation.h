@@ -128,6 +128,9 @@ struct D3D12FrameContext
     D3D12FrameDescriptors particleDescriptors;
     std::shared_ptr<D3D12SceneOverlayFrame> sceneOverlay;
     std::shared_ptr<D3D12ShadowTarget> shadow;
+    bool shadowCachePendingCommit=false;
+    std::array<std::uint64_t,3> pendingShadowCacheHashes{};
+    UINT pendingShadowCacheHits=0,pendingShadowCacheMisses=0;
     std::shared_ptr<D3D12SceneCoverage> coverage;
     std::shared_ptr<D3D12PostTargets> post; // 保持该帧后处理资源至 Fence 完成，视口可独立调整尺寸。
     bool timestampShadow=false;
@@ -218,9 +221,11 @@ struct D3D12Presentation
     std::shared_ptr<D3D12HiZ> heterogeneousHiZBuilder;
     bool meshShaderTier1=false;
     double cpuMeshSubmitMilliseconds=0;
+    double cpuShadowRecordMilliseconds=0;
     se::rhi::GpuDrivenStatistics gpuDrivenStatistics;
     se::rhi::ClusteredStatistics clustered;
     UINT64 shadowCreations=0;
+    UINT64 shadowCacheHits=0,shadowCacheMisses=0;
     Microsoft::WRL::ComPtr<ID3D12Resource> hdr;
     UINT64 hdrCreations=0;
     std::shared_ptr<D3D12SceneCoverage> coverage;

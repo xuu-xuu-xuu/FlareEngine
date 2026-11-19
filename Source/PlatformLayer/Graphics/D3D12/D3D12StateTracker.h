@@ -13,6 +13,12 @@
 #include <algorithm>
 
 enum class D3D12TrackedHeap { Default, Upload, Readback };
+struct D3D12AliasSlotState
+{
+    std::uint64_t id=0;
+    ID3D12Resource* activeOwner=nullptr;
+    std::weak_ptr<struct D3D12StateRecord> activeOwnerRecord;
+};
 struct D3D12StateRecord
 {
     std::uint64_t serial=0,lastSubmission=0;
@@ -21,6 +27,7 @@ struct D3D12StateRecord
     D3D12_RESOURCE_DESC description{};
     D3D12TrackedHeap heap=D3D12TrackedHeap::Default;
     bool activationPending=false;
+    std::shared_ptr<D3D12AliasSlotState> aliasSlot;
     std::vector<D3D12_RESOURCE_STATES> states;
 };
 struct D3D12StateEvent
@@ -32,11 +39,12 @@ struct D3D12StateEvent
     bool implicitDecay=false;
     bool activation=false;
     bool uav=false;
+    bool aliasSwitch=false;
 };
 struct D3D12StateStatistics
 {
     std::size_t resources=0,subresources=0;
-    std::uint64_t submissions=0,transitions=0,bufferDecays=0,activations=0,uavBarriers=0;
+    std::uint64_t submissions=0,transitions=0,bufferDecays=0,activations=0,uavBarriers=0,aliasBarriers=0,discards=0;
 };
 class D3D12StateRecording;
 // 每设备一个实例；资源的私有 IUnknown 持有状态，Registry 只保留弱引用。
@@ -49,6 +57,7 @@ public:
     ID3D12CommandQueue* BoundQueue()const noexcept {return queue_;}
     void UnbindQueue(ID3D12CommandQueue* queue) noexcept;
     HRESULT Register(ID3D12Resource& resource,D3D12_RESOURCE_STATES initial,D3D12TrackedHeap heap,std::string name);
+    HRESULT RegisterAliased(ID3D12Resource& resource,std::shared_ptr<D3D12AliasSlotState> slot,D3D12_RESOURCE_STATES initial,std::string name);
     HRESULT RequireActivation(ID3D12Resource& resource);
     std::shared_ptr<const D3D12StateRecord> Find(ID3D12Resource& resource) const;
     void SetName(ID3D12Resource& resource,const std::string& name);
@@ -65,7 +74,7 @@ private:
     std::size_t queueUsers_=0;
     std::unordered_map<ID3D12Resource*,std::weak_ptr<D3D12StateRecord>> records_;
     std::deque<D3D12StateEvent> events_;
-    std::uint64_t nextResource_=1,submissions_=0,transitions_=0,decays_=0,activations_=0,uavBarriers_=0;
+    std::uint64_t nextResource_=1,submissions_=0,transitions_=0,decays_=0,activations_=0,uavBarriers_=0,aliasBarriers_=0,discards_=0;
 };
 class D3D12StateRecording
 {
@@ -78,9 +87,10 @@ public:
     HRESULT UavBarrier(ID3D12GraphicsCommandList& commands,ID3D12Resource& resource,const char* pass);
     // 仅在 ExecuteCommandLists 之后调用；未提交的析构自动丢弃候选状态。
     void Commit();
-    std::size_t PendingTransitions() const noexcept {return static_cast<std::size_t>(std::count_if(events_.begin(),events_.end(),[](const auto& event){return !event.activation&&!event.uav;}));}
+    std::size_t PendingTransitions() const noexcept {return static_cast<std::size_t>(std::count_if(events_.begin(),events_.end(),[](const auto& event){return !event.activation&&!event.uav&&!event.aliasSwitch;}));}
     std::size_t PendingActivations() const noexcept {return static_cast<std::size_t>(std::count_if(events_.begin(),events_.end(),[](const auto& event){return event.activation;}));}
     std::size_t PendingUavBarriers() const noexcept {return static_cast<std::size_t>(std::count_if(events_.begin(),events_.end(),[](const auto& event){return event.uav;}));}
+    std::size_t PendingAliasBarriers() const noexcept {return static_cast<std::size_t>(std::count_if(events_.begin(),events_.end(),[](const auto& event){return event.aliasSwitch;}));}
 private:
     struct Local
     {
@@ -89,8 +99,16 @@ private:
         std::vector<D3D12_RESOURCE_STATES> states;
         bool activate=false;
     };
+    struct LocalSlotOwner
+    {
+        std::shared_ptr<D3D12AliasSlotState> slot;
+        ID3D12Resource* owner=nullptr;
+        std::shared_ptr<D3D12StateRecord> ownerRecord;
+    };
     D3D12StateRegistry& registry_;
     std::unordered_map<ID3D12Resource*,Local> local_;
+    std::unordered_map<D3D12AliasSlotState*,LocalSlotOwner> localSlots_;
+    std::uint64_t pendingDiscards_=0;
     std::vector<D3D12StateEvent> events_;
     bool committed_=false;
 };

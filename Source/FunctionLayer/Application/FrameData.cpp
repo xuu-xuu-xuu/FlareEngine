@@ -13,22 +13,34 @@ void BuildFrameData(const Environment& environment,const UiTree* ui,const Physic
     }
     // 蒙皮调色板复制进本帧快照：渲染器不持有 World 或运行时状态指针。
     for(auto& mesh:output.meshes)
-        if(const auto* pose=environment.Skeletal().Find(mesh.entity))mesh.skinPalette=pose->joints;
+        if(const auto* pose=environment.Skeletal().Find(mesh.entity)){mesh.skinPalette=pose->joints;mesh.staticGeometry=false;}
 }
 void BuildFrameData(const World& world,const UiTree* ui,const PhysicsWorld* physics,FrameData& output,RenderDefaults defaults)
 {
     FrameData next;
     for(auto entity:world.Entities())
     {
-        const auto* record=world.Get(entity);bool enabled=true,rigidHierarchy=true;
+        const auto* record=world.Get(entity);bool enabled=true,rigidHierarchy=true,staticHierarchy=true;
+        const auto activeOn=[&](EntityHandle target,ComponentTypeId type){
+            const auto* component=world.GetComponent(world.FindComponent(target,type));
+            return component&&component->Active();
+        };
         for(auto p=entity;p;){const auto* r=world.Get(p);if(!r||!r->enabled){enabled=false;break;}
             const auto* transform=world.GetTransform(p);
             if(!transform||!HasUnitScale(transform->scale))rigidHierarchy=false;
+            if(activeOn(p,ComponentTypes::Script)||activeOn(p,CharacterSettingsComponent::TypeId)
+                ||activeOn(p,ActorSettingsComponent::TypeId)||activeOn(p,NavigationAgentComponent::TypeId))
+                staticHierarchy=false;
+            else if(activeOn(p,PhysicsBodyComponent::TypeId))
+            {
+                if(std::get<float>(FeatureValue(world,p,"body.mass"))>0.f)staticHierarchy=false;
+            }
             p=r->parent;}
         if(!enabled)continue;
         const auto matrix=world.GetWorldMatrix(entity);
-        const auto active=[&](ComponentTypeId type){const auto* component=world.GetComponent(world.FindComponent(entity,type));return component&&component->Active();};
-        if(const auto* mesh=world.GetMesh(entity);mesh&&active(ComponentTypes::Mesh))next.meshes.push_back({record->stableId,matrix,*mesh});
+        const auto active=[&](ComponentTypeId type){return activeOn(entity,type);};
+        if(const auto* mesh=world.GetMesh(entity);mesh&&active(ComponentTypes::Mesh))
+            next.meshes.push_back({record->stableId,matrix,*mesh,{},staticHierarchy,world.EntitySpatialRevision(entity)});
         if(const auto* camera=world.GetCamera(entity);camera&&active(ComponentTypes::Camera))next.cameras.push_back({record->stableId,matrix,*camera,rigidHierarchy});
         if(const auto* light=world.GetLight(entity);light&&active(ComponentTypes::Light))next.lights.push_back({record->stableId,matrix,*light});
         if(active(RectangleLightComponent::TypeId))

@@ -63,6 +63,7 @@ struct D3D12MeshDraw
     std::array<const D3D12Texture*,6> layerTextures{};
     se::Aabb worldBounds;
     bool hasWorldBounds=false;
+    bool staticShadowCaster=false;
     std::span<const se::rhi::GeometryCluster> geometryClusters;
 };
 

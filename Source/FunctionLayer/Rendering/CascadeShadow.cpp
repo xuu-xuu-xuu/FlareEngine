@@ -1,7 +1,9 @@
 #include "CascadeShadow.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
+#include <vector>
 
 namespace se
 {
@@ -129,5 +131,117 @@ CascadeSelection SelectCascade(const CascadeShadowSettings& settings,float viewD
     }
     std::uint32_t index=0;while(index<last&&viewDepth>settings.splitDistances[index])++index;
     selection.first=selection.second=index;return selection;
+}
+
+namespace
+{
+std::uint32_t CanonicalFloatBits(float v) noexcept
+{
+    if(v==0.f)return 0u;
+    std::uint32_t bits=0;
+    std::memcpy(&bits,&v,sizeof(bits));
+    return bits;
+}
+std::uint64_t MixHash64(std::uint64_t seed,std::uint64_t value) noexcept
+{
+    value+=0x9E3779B97F4A7C15ull;
+    value=(value^(value>>30))*0xBF58476D1CE4E5B9ull;
+    value=(value^(value>>27))*0x94D049BB133111EBull;
+    value^=(value>>31);
+    return seed^(value+0x9E3779B97F4A7C15ull+(seed<<6)+(seed>>2));
+}
+bool OverlapsOrthographicCascade(const Mat4& clipFromWorld,const Aabb& bounds) noexcept
+{
+    if(!IsFinite(bounds.minimum)||!IsFinite(bounds.maximum)
+        ||bounds.minimum.x>bounds.maximum.x||bounds.minimum.y>bounds.maximum.y||bounds.minimum.z>bounds.maximum.z)
+        return true;
+    Vec3 clipMin{std::numeric_limits<float>::max(),std::numeric_limits<float>::max(),std::numeric_limits<float>::max()};
+    Vec3 clipMax{-clipMin.x,-clipMin.y,-clipMin.z};
+    for(int corner=0;corner<8;++corner)
+    {
+        const Vec3 p{
+            (corner&1)?bounds.maximum.x:bounds.minimum.x,
+            (corner&2)?bounds.maximum.y:bounds.minimum.y,
+            (corner&4)?bounds.maximum.z:bounds.minimum.z};
+        const Vec4 c=clipFromWorld*Vec4{p.x,p.y,p.z,1.f};
+        if(!IsFinite(c))return true;
+        clipMin={(std::min)(clipMin.x,c.x),(std::min)(clipMin.y,c.y),(std::min)(clipMin.z,c.z)};
+        clipMax={(std::max)(clipMax.x,c.x),(std::max)(clipMax.y,c.y),(std::max)(clipMax.z,c.z)};
+    }
+    return !(clipMax.x<-1.f||clipMin.x>1.f||clipMax.y<-1.f||clipMin.y>1.f||clipMax.z<0.f||clipMin.z>1.f);
+}
+}
+
+std::uint64_t HashShadowTransform(const Mat4& world) noexcept
+{
+    std::uint64_t h=0x6A09E667F3BCC908ull;
+    for(const float v:world.values)h=MixHash64(h,CanonicalFloatBits(v));
+    return h?h:1ull;
+}
+
+std::uint64_t HashShadowMaskMaterial(std::uint64_t textureKey,float alphaCutoff,float alphaScale,bool doubleSided) noexcept
+{
+    std::uint64_t h=0xBB67AE8584CAA73Bull;
+    h=MixHash64(h,textureKey);
+    h=MixHash64(h,CanonicalFloatBits(alphaCutoff));
+    h=MixHash64(h,CanonicalFloatBits(alphaScale));
+    h=MixHash64(h,doubleSided?1ull:0ull);
+    return h?h:1ull;
+}
+
+std::array<std::uint64_t,CascadeShadowMaximumCascades> ComputeCascadeStaticShadowHashes(
+    std::span<const Mat4> cascadeClipFromWorld,const Vec3& directionToLight,std::uint32_t resolution,
+    std::span<const StaticShadowCasterInput> staticCasters)
+{
+    std::array<std::uint64_t,CascadeShadowMaximumCascades> result{};
+    if(cascadeClipFromWorld.empty()||!resolution||!IsFinite(directionToLight))return result;
+    const Vec3 dir=Normalize(directionToLight);
+    if(LengthSquared(dir)<0.99f)return result;
+
+    struct SortedCaster
+    {
+        std::size_t index=0;
+        std::uint64_t transformHash=0;
+    };
+    std::vector<SortedCaster> sorted;
+    sorted.reserve(staticCasters.size());
+    for(std::size_t i=0;i<staticCasters.size();++i)
+        sorted.push_back({i,HashShadowTransform(staticCasters[i].world)});
+    std::sort(sorted.begin(),sorted.end(),[&](const SortedCaster& a,const SortedCaster& b){
+        const auto& ca=staticCasters[a.index];
+        const auto& cb=staticCasters[b.index];
+        if(ca.entityId!=cb.entityId)return ca.entityId<cb.entityId;
+        if(ca.geometryKey!=cb.geometryKey)return ca.geometryKey<cb.geometryKey;
+        if(a.transformHash!=b.transformHash)return a.transformHash<b.transformHash;
+        return ca.maskMaterialHash<cb.maskMaterialHash;
+    });
+
+    const std::size_t count=(std::min)(static_cast<std::size_t>(CascadeShadowMaximumCascades),cascadeClipFromWorld.size());
+    for(std::size_t slice=0;slice<count;++slice)
+    {
+        const auto& matrix=cascadeClipFromWorld[slice];
+        if(!IsFinite(matrix))continue;
+        std::uint64_t h=MixHash64(0x3C6EF372FE94F82Bull,slice);
+        h=MixHash64(h,resolution);
+        h=MixHash64(h,CanonicalFloatBits(dir.x));
+        h=MixHash64(h,CanonicalFloatBits(dir.y));
+        h=MixHash64(h,CanonicalFloatBits(dir.z));
+        for(const float v:matrix.values)h=MixHash64(h,CanonicalFloatBits(v));
+
+        std::uint64_t casterCount=0;
+        for(const auto& item:sorted)
+        {
+            const auto& caster=staticCasters[item.index];
+            if(caster.hasWorldBounds&&!OverlapsOrthographicCascade(matrix,caster.worldBounds))continue;
+            h=MixHash64(h,caster.entityId);
+            h=MixHash64(h,caster.geometryKey);
+            h=MixHash64(h,item.transformHash);
+            h=MixHash64(h,caster.maskMaterialHash);
+            ++casterCount;
+        }
+        h=MixHash64(h,casterCount);
+        result[slice]=h?h:1ull;
+    }
+    return result;
 }
 }

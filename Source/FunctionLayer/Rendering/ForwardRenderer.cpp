@@ -135,7 +135,13 @@ rhi::Result RecordShadowedFrame(rhi::CommandContext& commands,const rhi::Forward
     auto result=commands.ConfigureForward(lighting,output,sky);if(result)result=commands.ConfigureShadows(shadows,depth);
     if(result)result=ConfigureGeometry(commands,geometry,occlusion);
     if(result&&environment)result=commands.ConfigureEnvironment(*environment);
-    if(result&&post){if(!postPipelines)return {rhi::Error::InvalidArgument};result=commands.ConfigurePostProcess(*post,*postPipelines);}
+    if(result&&post)
+    {
+        if(!postPipelines)return {rhi::Error::InvalidArgument};
+        auto directPost=*post;
+        directPost.transientAliasing=false;
+        result=commands.ConfigurePostProcess(directPost,*postPipelines);
+    }
     if(result)result=commands.BeginPass({rhi::PassKind::Clear,rhi::ResourceUse::ColorWrite,rhi::ResourceUse::DepthWrite,"Clear"});
     if(result)result=commands.EndPass();
     if(result)result=commands.BeginPass({rhi::PassKind::Shadow,rhi::ResourceUse::None,rhi::ResourceUse::DepthWrite,"Shadow"});
@@ -264,7 +270,7 @@ rhi::Result RecordShadowedFrameGraph(rhi::CommandContext& commands,const rhi::Fo
     if(result)result=ConfigureGeometry(commands,geometry,occlusion);
     if(result)result=commands.ConfigureShadows(shadows,depth);
     if(result&&environment)result=commands.ConfigureEnvironment(*environment);
-    if(result&&post){if(!postPipelines)return {rhi::Error::InvalidArgument};result=commands.ConfigurePostProcess(*post,*postPipelines);}
+    if(result&&post&&!postPipelines)return {rhi::Error::InvalidArgument};
     if(!result)return result;
     graph.Reset();
     width=(std::max)(1u,width);height=(std::max)(1u,height);
@@ -298,12 +304,12 @@ rhi::Result RecordShadowedFrameGraph(rhi::CommandContext& commands,const rhi::Fo
             rhi::ResourceUse::ColorRead,false,false,GraphBody::Transparent);
         graph.Read(blend,sceneColor);graph.Read(blend,sceneDepth);graph.Read(blend,shadowDepth);graph.Write(blend,sceneColor);
     }
-    std::uint32_t ldr=FrameGraphInvalid,bloomA=FrameGraphInvalid;
+    std::uint32_t ldr=FrameGraphInvalid,bloomA=FrameGraphInvalid,bloomB=FrameGraphInvalid;
     if(post)
     {
         ldr=graph.AddTexture("LdrColor",{width,height,1,rhi::TextureFormat::Rgba8});
         const auto bloomWidth=(std::max)(1u,(width+1)/2),bloomHeight=(std::max)(1u,(height+1)/2);
-        const auto bloomB=post->bloom?graph.AddTexture("BloomB",{bloomWidth,bloomHeight,1,rhi::TextureFormat::Rgba16Float}):FrameGraphInvalid;
+        bloomB=post->bloom?graph.AddTexture("BloomB",{bloomWidth,bloomHeight,1,rhi::TextureFormat::Rgba16Float}):FrameGraphInvalid;
         if(post->bloom)bloomA=graph.AddTexture("BloomA",{bloomWidth,bloomHeight,1,rhi::TextureFormat::Rgba16Float});
         if(post->bloom)
         {
@@ -332,6 +338,20 @@ rhi::Result RecordShadowedFrameGraph(rhi::CommandContext& commands,const rhi::Fo
     graph.Read(outputPass,post?ldr:sceneColor);graph.Write(outputPass,backbuffer);
     const auto status=graph.Compile();
     if(status!=FrameGraphStatus::Success)return {GraphFailure(status)};
+    if(post)
+    {
+        auto graphPost=*post;
+        if(graphPost.transientAliasing)
+        {
+            const auto textures=graph.Textures();
+            graphPost.transientAliasing=bloomB==FrameGraphInvalid
+                ||(bloomB<textures.size()&&ldr<textures.size()
+                    &&textures[bloomB].physicalSlot!=FrameGraphInvalid
+                    &&textures[bloomB].physicalSlot==textures[ldr].physicalSlot);
+        }
+        result=commands.ConfigurePostProcess(graphPost,*postPipelines);
+        if(!result)return result;
+    }
     return ExecuteFrameGraph(commands,graph,
         [&]{rhi::Result record;if(!NeedsShadowCasters(shadows,lighting))return record;
             for(const auto& draw:casters){if(!draw.castsShadow)continue;record=commands.DrawShadow(draw);if(!record)break;}

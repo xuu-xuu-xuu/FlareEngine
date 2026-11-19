@@ -9,6 +9,7 @@
 namespace
 {
 constexpr GUID allocationId{0x40fa53c7,0xf887,0x4944,{0x9d,0x56,0x9f,0x9c,0x84,0x69,0xb5,0xa7}};
+constexpr GUID aliasedMemberId{0x7b31a8e4,0x51c2,0x4d93,{0xa2,0x19,0x61,0x4e,0xd2,0x83,0x4f,0x11}};
 UINT64 Align(UINT64 value,UINT64 alignment){return (value+alignment-1)&~(alignment-1);}
 D3D12MemoryCategory Category(const D3D12_RESOURCE_DESC& description)
 {
@@ -76,6 +77,25 @@ struct D3D12MemoryAllocator::Impl : public std::enable_shared_from_this<Impl>
     void Trim()
     {
         std::erase_if(blocks,[&](const auto& block){if(block->used)return false;stats.reserved-=block->capacity;return true;});
+    }
+};
+
+struct D3D12TransientAliasSlot
+{
+    std::shared_ptr<D3D12MemoryAllocator::Impl> owner;
+    std::shared_ptr<D3D12MemoryAllocator::Impl::Lease> lease;
+    std::shared_ptr<D3D12AliasSlotState> state;
+    UINT64 memberBytesSum=0;
+    UINT64 savedBytes=0;
+    UINT64 memberCount=0;
+    ~D3D12TransientAliasSlot()
+    {
+        if(owner)
+        {
+            if(owner->stats.aliasedSlots>0)--owner->stats.aliasedSlots;
+            if(owner->stats.aliasedSavedBytes>=savedBytes)owner->stats.aliasedSavedBytes-=savedBytes;
+            if(owner->stats.aliasedResources>=memberCount)owner->stats.aliasedResources-=memberCount;
+        }
     }
 };
 D3D12MemoryAllocator::D3D12MemoryAllocator(ID3D12Device& device,std::shared_ptr<D3D12StateRegistry> states)
@@ -160,6 +180,119 @@ HRESULT D3D12MemoryAllocator::Create(const D3D12_RESOURCE_DESC& description,D3D1
     auto* holder=new Holder<Impl::Lease>(lease);result=candidate->SetPrivateDataInterface(allocationId,holder);holder->Release();
     if(FAILED(result))return result;
     output=std::move(candidate);return S_OK;
+}
+bool D3D12MemoryAllocator::IsPlacedMode() const noexcept
+{
+    return impl_&&impl_->settings.mode==se::rhi::MemoryMode::Placed;
+}
+HRESULT D3D12MemoryAllocator::CreateTransientSlot(UINT64 bytes,UINT64 alignment,D3D12MemoryCategory category,
+    std::shared_ptr<D3D12TransientAliasSlot>& output,const std::string& name)
+{
+    auto& p=*impl_;
+    if(p.owner!=std::this_thread::get_id()||!p.states)return E_UNEXPECTED;
+    if(output||!bytes||!alignment||(alignment&(alignment-1))||p.nextAllocation==UINT64_MAX)return E_INVALIDARG;
+    if(p.settings.mode!=se::rhi::MemoryMode::Placed)return E_NOTIMPL;
+
+    const UINT64 effectiveAlign=std::max(UINT64{D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT},alignment);
+    const UINT64 alignedBytes=Align(bytes,effectiveAlign);
+    const auto budgetFailure=[&]{++p.stats.budgetFailures;return D3D12MemoryBudgetExceeded;};
+    if(alignedBytes>p.settings.budgetBytes)return budgetFailure();
+
+    auto lease=std::make_shared<Impl::Lease>();
+    lease->owner=impl_;
+    lease->info={p.nextAllocation++,0,0,alignedBytes,effectiveAlign,category,true,name};
+
+    UINT64 chosenOffset=0;
+    for(const auto& block:p.blocks)
+    {
+        if(block->category!=category||block->alignment<effectiveAlign)continue;
+        for(const auto& [offset,size]:block->free)
+        {
+            const auto aligned=Align(offset,effectiveAlign);
+            if(aligned-offset<=size&&alignedBytes<=size-(aligned-offset)){lease->block=block;chosenOffset=aligned;break;}
+        }
+        if(lease->block)break;
+    }
+    if(!lease->block)
+    {
+        auto capacity=Align(std::max(p.settings.heapPageBytes,alignedBytes),effectiveAlign);
+        if(capacity>p.settings.budgetBytes-p.stats.reserved)p.Trim();
+        const auto remaining=(p.settings.budgetBytes-p.stats.reserved)/effectiveAlign*effectiveAlign;
+        capacity=std::min(capacity,remaining);
+        if(capacity<alignedBytes)return budgetFailure();
+        auto block=std::make_shared<Impl::Block>();
+        block->id=p.nextHeap++;block->capacity=capacity;block->alignment=effectiveAlign;block->category=category;
+        D3D12_HEAP_DESC heap{};heap.SizeInBytes=capacity;heap.Alignment=effectiveAlign;heap.Properties.Type=D3D12_HEAP_TYPE_DEFAULT;
+        heap.Properties.CreationNodeMask=heap.Properties.VisibleNodeMask=1;heap.Flags=Flags(category);
+        const auto hr=p.device->CreateHeap(&heap,IID_PPV_ARGS(block->heap.GetAddressOf()));
+        if(FAILED(hr))return hr;
+        block->heap->SetName(L"SelfEngine.DefaultMemoryHeap");
+        block->free.emplace(0,capacity);p.blocks.push_back(block);lease->block=std::move(block);
+        p.stats.reserved+=capacity;++p.stats.heapCreations;p.stats.peakReserved=std::max(p.stats.peakReserved,p.stats.reserved);
+    }
+    lease->info.heap=lease->block->id;
+    lease->info.offset=chosenOffset;
+    {
+        auto& block=*lease->block;
+        const auto first=lease->info.offset,sz=lease->info.bytes;
+        auto range=std::prev(block.free.upper_bound(first));
+        const auto begin=range->first,end=range->first+range->second;
+        block.free.erase(range);
+        if(first>begin)block.free.emplace(begin,first-begin);
+        if(first+sz<end)block.free.emplace(first+sz,end-first-sz);
+        block.used+=sz;
+    }
+    p.stats.used+=alignedBytes;++p.stats.resources;++p.stats.aliasedSlots;
+    p.stats.peakUsed=std::max(p.stats.peakUsed,p.stats.used);
+    p.stats.peakReserved=std::max(p.stats.peakReserved,p.stats.reserved);
+    lease->accounted=true;
+    p.allocations.emplace(lease->info.serial,lease);
+
+    auto slot=std::make_shared<D3D12TransientAliasSlot>();
+    slot->owner=impl_;
+    slot->lease=std::move(lease);
+    slot->state=std::make_shared<D3D12AliasSlotState>();
+    slot->state->id=slot->lease->info.serial;
+    output=std::move(slot);
+    return S_OK;
+}
+HRESULT D3D12MemoryAllocator::CreateAliasedResource(const std::shared_ptr<D3D12TransientAliasSlot>& slot,UINT64 intraSlotOffset,
+    const D3D12_RESOURCE_DESC& description,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear,
+    Microsoft::WRL::ComPtr<ID3D12Resource>& output,const std::string& name)
+{
+    auto& p=*impl_;
+    if(p.owner!=std::this_thread::get_id()||!p.states)return E_UNEXPECTED;
+    if(!slot||slot->owner!=impl_||!slot->lease||!slot->lease->block||output
+        ||description.Dimension==D3D12_RESOURCE_DIMENSION_UNKNOWN
+        ||(description.Flags&D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS))return E_INVALIDARG;
+    if(Category(description)!=slot->lease->info.category)return E_INVALIDARG;
+    const auto alloc=p.device->GetResourceAllocationInfo(0,1,&description);
+    if(!alloc.SizeInBytes||alloc.SizeInBytes==UINT64_MAX||!alloc.Alignment||(alloc.Alignment&(alloc.Alignment-1)))return E_INVALIDARG;
+    const UINT64 heapOffset=slot->lease->info.offset+intraSlotOffset;
+    if(intraSlotOffset>slot->lease->info.bytes||alloc.SizeInBytes>slot->lease->info.bytes-intraSlotOffset
+        ||(heapOffset%alloc.Alignment)!=0)return E_INVALIDARG;
+
+    Microsoft::WRL::ComPtr<ID3D12Resource> candidate;
+    auto hr=p.device->CreatePlacedResource(slot->lease->block->heap.Get(),heapOffset,&description,initial,clear,IID_PPV_ARGS(candidate.GetAddressOf()));
+    if(FAILED(hr))return hr;
+    hr=p.states->RegisterAliased(*candidate.Get(),slot->state,initial,name);
+    if(FAILED(hr))return hr;
+
+    auto* holder=new Holder<D3D12TransientAliasSlot>(slot);
+    hr=candidate->SetPrivateDataInterface(aliasedMemberId,holder);
+    holder->Release();
+    if(FAILED(hr))return hr;
+
+    ++p.stats.resourceCreations;
+    ++p.stats.aliasedResources;
+    ++slot->memberCount;
+    slot->memberBytesSum+=alloc.SizeInBytes;
+    const UINT64 newSaved=slot->memberBytesSum>slot->lease->info.bytes?(slot->memberBytesSum-slot->lease->info.bytes):0;
+    p.stats.aliasedSavedBytes+=(newSaved-slot->savedBytes);
+    slot->savedBytes=newSaved;
+
+    output=std::move(candidate);
+    return S_OK;
 }
 void D3D12MemoryAllocator::Trim(){if(impl_->owner==std::this_thread::get_id())impl_->Trim();}
 void D3D12MemoryAllocator::SetName(ID3D12Resource& resource,const std::string& name)

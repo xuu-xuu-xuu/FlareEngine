@@ -649,6 +649,11 @@ void AppendShadowModelDraws(const StaticRenderModel& model,const Mat4& entityWor
             if(skinPalette.empty()||!skinPipeline||!skinJointCount)continue;
             draw.pipeline=skinPipeline;draw.skinPalette=skinPalette;draw.skinJointCount=skinJointCount;
         }
+        else if(!model.compressed)
+        {
+            if(const auto bounds=TransformBounds(mesh.localBounds,draw.world))
+            {draw.worldBounds=*bounds;draw.hasWorldBounds=true;}
+        }
         output.push_back(draw);
     }
 }

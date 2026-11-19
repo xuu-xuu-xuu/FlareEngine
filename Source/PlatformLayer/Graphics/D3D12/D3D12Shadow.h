@@ -3,6 +3,7 @@
 #include "PlatformLayer/Graphics/Rhi.h"
 #include <d3d12.h>
 #include <wrl/client.h>
+#include <array>
 
 struct D3D12Presentation;
 struct D3D12FrameContext;
@@ -13,6 +14,9 @@ struct D3D12ShadowTarget
 {
     Microsoft::WRL::ComPtr<ID3D12Resource> depth;
     std::shared_ptr<D3D12DescriptorRange> dsv,srv;
+    Microsoft::WRL::ComPtr<ID3D12Resource> staticCacheDepth;
+    std::shared_ptr<D3D12DescriptorRange> staticCacheDsv;
+    std::array<std::uint64_t,3> cachedCascadeHashes{};
     UINT resolution=0;
     UINT layers=1;
 };

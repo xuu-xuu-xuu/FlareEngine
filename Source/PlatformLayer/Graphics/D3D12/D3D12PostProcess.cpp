@@ -14,21 +14,44 @@ bool PrepareD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const
     const UINT width=content.sceneHdr?content.sceneHdr->color.width:p.width,height=content.sceneHdr?content.sceneHdr->color.height:p.height;
     if(!content.post||!hdrResource||!depthResource||std::any_of(content.postPipelines.begin(),content.postPipelines.end(),[](const auto* pipeline){return !pipeline||!pipeline->prepared;}))return false;
     Microsoft::WRL::ComPtr<ID3D12Device> device;if(FAILED(p.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf()))))return false;
-    if(!p.post||p.post->width!=width||p.post->height!=height||p.post->hdrSource.Get()!=hdrResource||p.post->depthSource.Get()!=depthResource)
+    const bool wantTransientAlias=content.post->transientAliasing&&p.memory&&p.memory->IsPlacedMode();
+    if(!p.post||p.post->width!=width||p.post->height!=height||p.post->hdrSource.Get()!=hdrResource||p.post->depthSource.Get()!=depthResource
+        ||p.post->transientAliased!=wantTransientAlias)
     {
-        auto candidate=std::make_shared<D3D12PostTargets>();candidate->hdrSource=hdrResource;candidate->depthSource=depthResource;candidate->width=width;candidate->height=height;candidate->bloomWidth=(width+1)/2;candidate->bloomHeight=(height+1)/2;
-        const auto create=[&](UINT width,UINT height,DXGI_FORMAT format,const char* name,D3D12PostTexture& target){
-            D3D12_RESOURCE_DESC desc{};desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=width;desc.Height=height;desc.DepthOrArraySize=desc.MipLevels=1;
-            desc.Format=format;desc.SampleDesc={1,0};desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-            const auto result=p.memory->Create(desc,D3D12_RESOURCE_STATE_COMMON,nullptr,target.resource,name);
-            if(!CheckGraphicsResult(result,text,result==D3D12MemoryBudgetExceeded?"D3D12.GpuMemoryBudgetExceeded":"D3D12.PostTargetsFailed"))return false;
+        auto candidate=std::make_shared<D3D12PostTargets>();candidate->hdrSource=hdrResource;candidate->depthSource=depthResource;candidate->width=width;candidate->height=height;candidate->bloomWidth=(width+1)/2;candidate->bloomHeight=(height+1)/2;candidate->transientAliased=wantTransientAlias;
+        const auto makeDesc=[](UINT w,UINT h,DXGI_FORMAT format){
+            D3D12_RESOURCE_DESC desc{};desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=w;desc.Height=h;desc.DepthOrArraySize=desc.MipLevels=1;
+            desc.Format=format;desc.SampleDesc={1,0};desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;return desc;
+        };
+        const auto finishViews=[&](const D3D12_RESOURCE_DESC& desc,DXGI_FORMAT format,D3D12PostTexture& target){
             if(!CheckGraphicsResult(p.rtvPool->Allocate(1,target.rtv),text,"D3D12.DescriptorCapacityExceeded")||!CheckGraphicsResult(p.srvPool->Allocate(1,target.srv),text,"D3D12.DescriptorCapacityExceeded"))return false;
             device->CreateRenderTargetView(target.resource.Get(),nullptr,target.rtv->Cpu());D3D12_SHADER_RESOURCE_VIEW_DESC view{};view.Format=format;view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
             view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;view.Texture2D.MipLevels=1;device->CreateShaderResourceView(target.resource.Get(),&view,target.srv->Cpu());
             candidate->allocatedBytes+=device->GetResourceAllocationInfo(0,1,&desc).SizeInBytes;return true;
         };
-        if(!create(candidate->bloomWidth,candidate->bloomHeight,DXGI_FORMAT_R16G16B16A16_FLOAT,"Bloom.Ping",candidate->bloom[0])
-            ||!create(candidate->bloomWidth,candidate->bloomHeight,DXGI_FORMAT_R16G16B16A16_FLOAT,"Bloom.Pong",candidate->bloom[1])
+        const auto create=[&](UINT w,UINT h,DXGI_FORMAT format,const char* name,D3D12PostTexture& target){
+            const auto desc=makeDesc(w,h,format);
+            const auto result=p.memory->Create(desc,D3D12_RESOURCE_STATE_COMMON,nullptr,target.resource,name);
+            if(!CheckGraphicsResult(result,text,result==D3D12MemoryBudgetExceeded?"D3D12.GpuMemoryBudgetExceeded":"D3D12.PostTargetsFailed"))return false;
+            return finishViews(desc,format,target);
+        };
+        if(!create(candidate->bloomWidth,candidate->bloomHeight,DXGI_FORMAT_R16G16B16A16_FLOAT,"Bloom.Ping",candidate->bloom[0]))return false;
+        if(wantTransientAlias)
+        {
+            const auto pongDesc=makeDesc(candidate->bloomWidth,candidate->bloomHeight,DXGI_FORMAT_R16G16B16A16_FLOAT);
+            const auto ldrDesc=makeDesc(width,height,DXGI_FORMAT_R8G8B8A8_UNORM);
+            const auto pongAlloc=device->GetResourceAllocationInfo(0,1,&pongDesc);
+            const auto ldrAlloc=device->GetResourceAllocationInfo(0,1,&ldrDesc);
+            const auto slotResult=p.memory->CreateTransientSlot((std::max)(pongAlloc.SizeInBytes,ldrAlloc.SizeInBytes),
+                (std::max)(pongAlloc.Alignment,ldrAlloc.Alignment),D3D12MemoryCategory::RenderTarget,
+                candidate->transientSlot,"PostProcess.TransientSlot0");
+            if(!CheckGraphicsResult(slotResult,text,slotResult==D3D12MemoryBudgetExceeded?"D3D12.GpuMemoryBudgetExceeded":"D3D12.PostTargetsFailed"))return false;
+            const auto pongRes=p.memory->CreateAliasedResource(candidate->transientSlot,0,pongDesc,D3D12_RESOURCE_STATE_COMMON,nullptr,candidate->bloom[1].resource,"Bloom.Pong");
+            if(!CheckGraphicsResult(pongRes,text,"D3D12.PostTargetsFailed")||!finishViews(pongDesc,DXGI_FORMAT_R16G16B16A16_FLOAT,candidate->bloom[1]))return false;
+            const auto ldrRes=p.memory->CreateAliasedResource(candidate->transientSlot,0,ldrDesc,D3D12_RESOURCE_STATE_COMMON,nullptr,candidate->ldr.resource,"ToneMap.Ldr");
+            if(!CheckGraphicsResult(ldrRes,text,"D3D12.PostTargetsFailed")||!finishViews(ldrDesc,DXGI_FORMAT_R8G8B8A8_UNORM,candidate->ldr))return false;
+        }
+        else if(!create(candidate->bloomWidth,candidate->bloomHeight,DXGI_FORMAT_R16G16B16A16_FLOAT,"Bloom.Pong",candidate->bloom[1])
             ||!create(width,height,DXGI_FORMAT_R8G8B8A8_UNORM,"ToneMap.Ldr",candidate->ldr))return false;
         if(!CheckGraphicsResult(p.rtvPool->Allocate(D3D12Presentation::bufferCount,candidate->outputRtvs),text,"D3D12.DescriptorCapacityExceeded"))return false;
         D3D12_RENDER_TARGET_VIEW_DESC view{};view.ViewDimension=D3D12_RTV_DIMENSION_TEXTURE2D;view.Format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;

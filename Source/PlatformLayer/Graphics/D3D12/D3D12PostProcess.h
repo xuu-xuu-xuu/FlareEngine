@@ -7,6 +7,7 @@
 struct D3D12Presentation;
 struct D3D12FrameContext;
 struct D3D12FrameContent;
+struct D3D12TransientAliasSlot;
 class D3D12StateRecording;
 class Localization;
 struct D3D12PostTexture
@@ -43,6 +44,8 @@ struct D3D12PostTargets
     float lutLift[3]{0,0,0},lutGamma[3]{1,1,1},lutGain[3]{1,1,1};
     UINT width=0,height=0,bloomWidth=0,bloomHeight=0;
     UINT64 allocatedBytes=0,taaLastSubmission=0;
+    std::shared_ptr<D3D12TransientAliasSlot> transientSlot;
+    bool transientAliased=false;
 };
 bool PrepareD3D12PostProcess(D3D12Presentation& presentation,D3D12FrameContext& frame,const D3D12FrameContent& content,const Localization& text);
 bool RecordD3D12PostProcess(D3D12Presentation& presentation,D3D12FrameContext& frame,const D3D12FrameContent& content,D3D12StateRecording& states,UINT backBufferIndex,const Localization& text);

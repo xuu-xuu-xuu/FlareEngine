@@ -199,7 +199,7 @@ struct ResourceRecord
     FrameGraphTextureDesc desc;
     bool imported=false,used=false;
     std::uint32_t versionCount=0;
-    std::uint32_t first=FrameGraphInvalid,last=FrameGraphInvalid,aliasGroup=FrameGraphInvalid;
+    std::uint32_t first=FrameGraphInvalid,last=FrameGraphInvalid,aliasGroup=FrameGraphInvalid,physicalSlot=FrameGraphInvalid;
     std::uint64_t bytes=0;
 };
 
@@ -223,7 +223,7 @@ struct FrameGraph::Impl
     {
         std::size_t bytes=0;
         bytes+=std::size_t(passes)*(sizeof(PassRecord)+sizeof(FrameGraphPassView)+sizeof(std::uint8_t)*3+sizeof(std::uint32_t)*2);
-        bytes+=std::size_t(resources)*(sizeof(ResourceRecord)+sizeof(FrameGraphTextureView)+sizeof(std::uint32_t)*4+sizeof(std::uint64_t)+sizeof(std::uint8_t)*2);
+        bytes+=std::size_t(resources)*(sizeof(ResourceRecord)+sizeof(FrameGraphTextureView)+sizeof(TransientAliasMember)*2+sizeof(TransientAliasSlot)+sizeof(std::uint32_t)*5+sizeof(std::uint64_t)+sizeof(std::uint8_t)*2);
         bytes+=std::size_t(edges)*sizeof(Edge);
         bytes+=std::size_t(resources)*versions*sizeof(std::uint32_t);
         bytes+=64*1024; // 对齐与实现余量
@@ -246,8 +246,11 @@ struct FrameGraph::Impl
         slotBytes=arena.Allocate<std::uint64_t>(maxResources);
         passViews=arena.Allocate<FrameGraphPassView>(maxPasses);
         textureViews=arena.Allocate<FrameGraphTextureView>(maxResources);
+        aliasMembers=arena.Allocate<TransientAliasMember>(maxResources);
+        aliasSlots=arena.Allocate<TransientAliasSlot>(maxResources);
+        aliasSlotOrder=arena.Allocate<std::uint32_t>(maxResources);
         arenaFailed=!passes||!resources||!edges||!order||!queue||!live||!emitted||!indegree||!writers
-            ||!group||!slotEnd||!slotBytes||!passViews||!textureViews;
+            ||!group||!slotEnd||!slotBytes||!passViews||!textureViews||!aliasMembers||!aliasSlots||!aliasSlotOrder;
     }
 
     void Reset() noexcept
@@ -259,6 +262,7 @@ struct FrameGraph::Impl
         status=FrameGraphStatus::Success;
         error[0]='\0';
         stats={};
+        aliasPlan={};
         if(arenaFailed)Fail(FrameGraphStatus::CapacityExceeded,"CapacityExceeded: frame arena is too small");
     }
 
@@ -341,10 +345,14 @@ struct FrameGraph::Impl
     std::uint64_t* slotBytes=nullptr;
     FrameGraphPassView* passViews=nullptr;
     FrameGraphTextureView* textureViews=nullptr;
+    TransientAliasMember* aliasMembers=nullptr;
+    TransientAliasSlot* aliasSlots=nullptr;
+    std::uint32_t* aliasSlotOrder=nullptr;
     std::uint32_t passCount=0,resourceCount=0,edgeCount=0,orderCount=0,passLimit=0;
     FrameGraphStatus status=FrameGraphStatus::Success;
     char error[512]{};
     FrameGraphStats stats;
+    TransientAliasPlan aliasPlan;
 };
 
 FrameGraph::FrameGraph(std::uint32_t maxPasses,std::uint32_t maxResources,std::uint32_t maxEdges,std::uint32_t maxVersions)
@@ -733,6 +741,81 @@ FrameGraphStatus FrameGraph::Compile() noexcept
     state.stats.savedBytes=state.stats.transientBytes>state.stats.aliasedBytes
         ?state.stats.transientBytes-state.stats.aliasedBytes:0;
 
+    // 5b. RG104-19：跨尺寸/格式的非历史瞬态 RT/DS 物理堆槽位规划（按 64 KiB 硬件放置粒度对齐）。
+    {
+        constexpr std::uint64_t kPlacementAlignment=65536ull;
+        const auto align64k=[](std::uint64_t v) noexcept -> std::uint64_t {
+            return v?((v+kPlacementAlignment-1ull)&~(kPlacementAlignment-1ull)):kPlacementAlignment;
+        };
+        std::uint32_t transientCount=0;
+        for(std::uint32_t r=0;r<state.resourceCount;++r)
+        {
+            auto& res=state.resources[r];
+            res.physicalSlot=FrameGraphInvalid;
+            if(!res.imported&&res.used)state.group[transientCount++]=r;
+        }
+        for(std::uint32_t i=1;i<transientCount;++i)
+        {
+            const auto value=state.group[i];
+            auto pos=i;
+            while(pos>0&&state.resources[state.group[pos-1]].first>state.resources[value].first)
+            {
+                state.group[pos]=state.group[pos-1];
+                --pos;
+            }
+            state.group[pos]=value;
+        }
+        std::uint32_t physSlots=0;
+        std::uint64_t unaliasedTotal=0,aliasedTotal=0;
+        for(std::uint32_t i=0;i<transientCount;++i)
+        {
+            auto& res=state.resources[state.group[i]];
+            const std::uint64_t aligned=align64k(res.bytes);
+            unaliasedTotal+=aligned;
+            std::uint32_t chosen=physSlots;
+            for(std::uint32_t s=0;s<physSlots;++s)
+            {
+                if(state.slotEnd[s]<res.first)
+                {
+                    chosen=s;
+                    break;
+                }
+            }
+            if(chosen==physSlots)
+            {
+                state.slotEnd[physSlots]=res.last;
+                state.slotBytes[physSlots]=aligned;
+                ++physSlots;
+            }
+            else
+            {
+                state.slotEnd[chosen]=res.last;
+                state.slotBytes[chosen]=(std::max)(state.slotBytes[chosen],aligned);
+            }
+            res.physicalSlot=chosen;
+            state.aliasSlotOrder[i]=chosen;
+        }
+        std::uint32_t memberOffset=0;
+        for(std::uint32_t s=0;s<physSlots;++s)
+        {
+            const std::uint32_t firstMember=memberOffset;
+            for(std::uint32_t i=0;i<transientCount;++i)
+            {
+                if(state.aliasSlotOrder[i]!=s)continue;
+                const auto rIdx=state.group[i];
+                const auto& res=state.resources[rIdx];
+                state.aliasMembers[memberOffset++]={rIdx,res.first,res.last,align64k(res.bytes)};
+            }
+            state.aliasSlots[s]={s,state.slotBytes[s],
+                std::span<const TransientAliasMember>(state.aliasMembers+firstMember,memberOffset-firstMember)};
+            aliasedTotal+=state.slotBytes[s];
+        }
+        state.aliasPlan.slots=std::span<const TransientAliasSlot>(state.aliasSlots,physSlots);
+        state.aliasPlan.unaliasedBytes=unaliasedTotal;
+        state.aliasPlan.aliasedBytes=aliasedTotal;
+        state.aliasPlan.savedBytes=unaliasedTotal>aliasedTotal?unaliasedTotal-aliasedTotal:0;
+    }
+
     // 6. 编译视图（Pass 视图按执行顺序排列，declaration 保留原始声明下标）。
     for(std::uint32_t orderIndex=0;orderIndex<state.orderCount;++orderIndex)
     {
@@ -761,6 +844,7 @@ FrameGraphStatus FrameGraph::Compile() noexcept
         view.firstPass=resource.first;
         view.lastPass=resource.last;
         view.aliasGroup=resource.aliasGroup;
+        view.physicalSlot=resource.physicalSlot;
         view.bytes=resource.bytes;
     }
 
@@ -802,6 +886,11 @@ std::span<const std::uint32_t> FrameGraph::ExecutionOrder() const noexcept
 const FrameGraphStats& FrameGraph::Stats() const noexcept
 {
     return impl_->stats;
+}
+
+const TransientAliasPlan& FrameGraph::AliasPlan() const noexcept
+{
+    return impl_->aliasPlan;
 }
 
 bool FrameGraph::WriteDot(const std::filesystem::path& path) const

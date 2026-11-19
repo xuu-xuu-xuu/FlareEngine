@@ -249,6 +249,7 @@ struct DrawIndexed
         bool multiscatter=false,specularAA=false;
     } pbr;
     bool castsShadow=true;
+    bool staticShadowCaster=false; // RG104-18：静态投射物进入级联底图缓存；动态/蒙皮投射物逐帧叠加。
     // G05.12：仅 TexturedMesh 管线的 Impostor 编码（相邻视角序号与插值权重）；普通绘制保持 0。
     float impostorView=0,impostorNext=0,impostorBlend=0;
     // 仅用于统计与诊断；0 表示未提供，绘制仍以缓冲自身大小为准。
@@ -324,6 +325,9 @@ struct ShadowSettings
     float cascadeNear=0.1f,cascadeBlend=0.10f;
     bool cascadeDebug=false;
     ShadowFilterSettings filter; // 独立新布局消费；默认沿用旧 point / 5x5 PCF。
+    // RG104-18：逐级静态阴影缓存；哈希非 0 时启用底图复用，任一依赖变化立即按级重绘底图。
+    bool staticShadowCache=false;
+    std::array<std::uint64_t,3> staticCascadeHashes{};
 };
 struct EnvironmentBindings
 {
@@ -355,6 +359,7 @@ struct PostProcessSettings
     float taaStaticBlend=0.1f,taaDynamicBlend=0.2f;
     float taaDepthThreshold=0.05f,taaVelocityThreshold=0.01f,taaSharpen=0.0f;
     bool supersample4x=false; // HDR 几何 2×2 空间采样，后处理保持输出分辨率。
+    bool transientAliasing=false; // RG104-19：由 FrameGraph 证明不重叠瞬态纹理共享物理堆槽位。
 };
 struct PostProcessPipelines {PipelineHandle extract,blur,toneMap,fxaa,overlay;};
 struct OverlayQuad
@@ -526,6 +531,7 @@ struct Statistics
     std::size_t buffers=0,textures=0,pipelines=0,retiring=0,inFlightBatches=0;
     std::uint64_t submittedFrames=0,globalWaits=0,completedValue=0;
     double cpuMeshSubmitMilliseconds=0;
+    double cpuShadowRecordMilliseconds=0;
     std::uint64_t debugWarnings=0,debugErrors=0;
     std::size_t trackedResources=0,trackedSubresources=0;
     std::uint64_t stateTransitions=0,bufferDecays=0;
@@ -536,6 +542,8 @@ struct Statistics
     std::uint64_t descriptorHeapsCreated=0,descriptorCopies=0,descriptorFailures=0;
     std::uint64_t memoryBudgetBytes=0,memoryReservedBytes=0,memoryUsedBytes=0,memoryFreeBytes=0,memoryPeakReservedBytes=0,memoryPeakUsedBytes=0;
     std::uint64_t memoryResources=0,memoryHeaps=0,memoryCommittedResources=0,memoryHeapCreations=0,memoryCommittedCreations=0,memoryResourceCreations=0,memoryBudgetFailures=0,stateActivations=0;
+    std::uint64_t transientAliasedSlots=0,transientAliasedResources=0,transientAliasedSavedBytes=0,aliasBarriers=0,aliasDiscards=0;
+    std::uint64_t shadowCacheHits=0,shadowCacheMisses=0;
     std::uint64_t shaderProgramCompilations=0,shaderArtifactLoads=0,shaderArtifactRejections=0,shaderProgramHits=0;
     std::uint64_t pipelineCacheHits=0,pipelineCacheMisses=0,pipelineCreations=0,rootSignatureCreations=0,livePreparedPipelines=0,liveShaderPrograms=0;
     std::uint64_t pipelineLibraryHits=0,pipelineLibraryStores=0;

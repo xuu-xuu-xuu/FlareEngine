@@ -19,6 +19,7 @@
 #include <vector>
 #include "CoreLayer/Profiler.h"
 #include "ForwardRenderer.h"
+#include "CascadeShadow.h"
 #include "ShadowSystem.h"
 #include "ResourceLayer/Assets/ImageWriter.h"
 #include "ResourceLayer/Assets/ImpostorBake.h"
@@ -1107,7 +1108,16 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 overrides.push_back(found->second);
             }
             if((scene_==SandboxScene::Shadows||BasicLitScene(scene_)||EnvironmentScene(scene_))&&mesh.mesh.castsShadow)
+            {
+                const auto firstCaster=casters.size();
                 se::AppendShadowModelDraws(*model,mesh.world,casters,0,skinPalette,skinJointCount,skinShadowPipeline,overrides);
+                const bool isStaticCaster=mesh.staticGeometry&&!skinnedModel;
+                for(auto cIdx=firstCaster;cIdx<casters.size();++cIdx)
+                {
+                    casters[cIdx].stableId=mesh.entity;
+                    casters[cIdx].staticShadowCaster=isStaticCaster;
+                }
+            }
             if(!candidate.visible)continue;
             if(candidateIndex<proxyCandidate.size()&&proxyCandidate[candidateIndex])continue;
             ++instanceDrawCount;
@@ -1460,6 +1470,27 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     se::PrepareDirectionalShadow(view,lighting,shadows,diagnostics)))result={se::rhi::Error::InvalidArgument};
                 else if(result)
                 {
+                    if(cascadedFrame&&frame.data&&frame.data->staticShadowCache&&shadows.enabled)
+                    {
+                        std::vector<se::StaticShadowCasterInput> staticInputs;
+                        staticInputs.reserve(casters.size());
+                        for(const auto& c:casters)
+                        {
+                            if(!c.castsShadow||!c.staticShadowCaster||!c.skinPalette.empty())continue;
+                            const std::uint64_t vbKey=(static_cast<std::uint64_t>(c.vertices.generation)<<32)|c.vertices.index;
+                            const std::uint64_t ibKey=(static_cast<std::uint64_t>(c.indices.generation)<<32)|c.indices.index;
+                            const std::uint64_t geomKey=vbKey^(ibKey+0x9E3779B97F4A7C15ull+(vbKey<<6)+(vbKey>>2));
+                            const std::uint64_t texKey=(static_cast<std::uint64_t>(c.texture.generation)<<32)
+                                |static_cast<std::uint64_t>(c.texture.index);
+                            const std::uint64_t maskHash=c.alphaMode==se::MaterialAlphaMode::Mask
+                                ?se::HashShadowMaskMaterial(texKey,c.alphaCutoff,c.tint.w,c.pbr.doubleSided):0ull;
+                            staticInputs.push_back({c.stableId,geomKey,c.world,c.worldBounds,c.hasWorldBounds,maskHash});
+                        }
+                        shadows.staticShadowCache=true;
+                        shadows.staticCascadeHashes=se::ComputeCascadeStaticShadowHashes(
+                            std::span<const se::Mat4>(shadows.cascadeClipFromWorld).first(shadows.cascadeCount),
+                            lighting.directionToLight,shadows.resolution,staticInputs);
+                    }
                     std::optional<se::rhi::PostProcessSettings> settings;std::vector<se::rhi::OverlayQuad> overlays;
                     const auto pipelines=post_.Bindings();
                     if(postFrame){settings=se::PreparePostProcessSettings(frame.data&&frame.data->post?*frame.data->post:se::rhi::PostProcessSettings{},diagnostics);

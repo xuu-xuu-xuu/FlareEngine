@@ -78,8 +78,29 @@ struct FrameGraphTextureView
     std::string_view name;
     FrameGraphTextureDesc desc;
     bool imported=false;
-    std::uint32_t firstPass=FrameGraphInvalid,lastPass=FrameGraphInvalid,aliasGroup=FrameGraphInvalid;
+    std::uint32_t firstPass=FrameGraphInvalid,lastPass=FrameGraphInvalid,aliasGroup=FrameGraphInvalid,physicalSlot=FrameGraphInvalid;
     std::uint64_t bytes=0;
+};
+
+// RG104-19：纯逻辑层非历史瞬态纹理物理槽位分配方案（64 KiB 对齐，零 D3D12 依赖）。
+struct TransientAliasMember
+{
+    std::uint32_t resource=FrameGraphInvalid;
+    std::uint32_t firstPass=FrameGraphInvalid,lastPass=FrameGraphInvalid;
+    std::uint64_t alignedBytes=0;
+};
+
+struct TransientAliasSlot
+{
+    std::uint32_t slot=FrameGraphInvalid;
+    std::uint64_t requiredBytes=0;
+    std::span<const TransientAliasMember> members;
+};
+
+struct TransientAliasPlan
+{
+    std::span<const TransientAliasSlot> slots;
+    std::uint64_t unaliasedBytes=0,aliasedBytes=0,savedBytes=0;
 };
 
 class FrameGraph
@@ -115,6 +136,7 @@ public:
     std::span<const FrameGraphTextureView> Textures() const noexcept; // 声明顺序。
     std::span<const std::uint32_t> ExecutionOrder() const noexcept;   // Pass 声明下标。
     const FrameGraphStats& Stats() const noexcept;
+    const TransientAliasPlan& AliasPlan() const noexcept;
 
     bool WriteDot(const std::filesystem::path& path) const;
     bool WriteJson(const std::filesystem::path& path) const;

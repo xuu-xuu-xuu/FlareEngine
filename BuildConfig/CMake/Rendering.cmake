@@ -44,6 +44,7 @@ add_library(EngineSandboxRenderer STATIC
     Source/FunctionLayer/Rendering/MaterialSurfacePipelines.cpp
     Source/FunctionLayer/Rendering/ShadingResources.cpp
     Source/FunctionLayer/Rendering/MeshletSubmission.cpp
+    Source/FunctionLayer/Rendering/StaticBatchCache.cpp
     Source/FunctionLayer/Rendering/Visibility.cpp
     Source/FunctionLayer/Rendering/RenderQueue.cpp
     Source/FunctionLayer/Rendering/Instancing.cpp

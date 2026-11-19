@@ -1554,6 +1554,7 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
         shadow.alphaMode=c.shadowMaterials[index].alphaMode;shadow.alphaCutoff=c.shadowMaterials[index].alphaCutoff;
         shadow.skinPalette=c.shadowPalettes[index];
         shadow.skinJointCount=c.shadowJointCounts[index];shadow.skinJointOffset=c.shadowJointOffsets[index];
+        shadow.staticShadowCaster=c.shadowMaterials[index].staticShadowCaster;
         shadow.pipeline=c.shadowPipelines[index]?&c.shadowPipelines[index]->mesh:nullptr;
         shadowDraws.push_back(shadow);
     }
@@ -1776,6 +1777,7 @@ Statistics Device::Stats() const
     impl_->PollOcclusionTelemetry();
     const auto& p=*impl_;stats.opaqueBindings=p.presentation.opaqueBindings;
     stats.cpuMeshSubmitMilliseconds=p.presentation.cpuMeshSubmitMilliseconds;
+    stats.cpuShadowRecordMilliseconds=p.presentation.cpuShadowRecordMilliseconds;
     stats.depthNormals=p.presentation.depthNormalStatistics;stats.gpuDriven=p.presentation.gpuDrivenStatistics;
     stats.screenSpaceOcclusion=p.presentation.screenSpaceStatistics;
     if(p.presentation.ambientOcclusionBuilder)
@@ -1791,6 +1793,7 @@ Statistics Device::Stats() const
     stats.frameInstances=p.presentation.frameInstances;stats.frameInstanceBytes=p.presentation.frameInstanceBytes;stats.frameDrawConstantBytes=p.presentation.frameDrawConstantBytes;
     stats.hdrCreations=p.presentation.hdrCreations;if(p.presentation.hdr){stats.hdrWidth=p.presentation.width;stats.hdrHeight=p.presentation.height;}
     stats.shadowCreations=p.presentation.shadowCreations;if(p.presentation.shadow)stats.shadowResolution=p.presentation.shadow->resolution;
+    stats.shadowCacheHits=p.presentation.shadowCacheHits;stats.shadowCacheMisses=p.presentation.shadowCacheMisses;
     stats.postCreations=p.presentation.postCreations;
     if(p.presentation.post){const auto& post=*p.presentation.post;stats.postWidth=post.width;stats.postHeight=post.height;stats.bloomWidth=post.bloomWidth;stats.bloomHeight=post.bloomHeight;stats.postResourceBytes=post.allocatedBytes;}
     stats.buffers=p.buffers.Count();stats.textures=p.textures.Count();stats.pipelines=p.pipelines.Count();
@@ -1799,6 +1802,7 @@ Statistics Device::Stats() const
     {
         const auto states=p.context.states->Stats();stats.trackedResources=states.resources;stats.trackedSubresources=states.subresources;
         stats.stateTransitions=states.transitions;stats.bufferDecays=states.bufferDecays;stats.stateActivations=states.activations;
+        stats.aliasBarriers=states.aliasBarriers;stats.aliasDiscards=states.discards;
     }
     for(const auto& frame:p.presentation.frames)
     {
@@ -1836,6 +1840,7 @@ Statistics Device::Stats() const
         stats.memoryResources=memory.resources;stats.memoryHeaps=memory.placedHeaps;stats.memoryCommittedResources=memory.committedResources;
         stats.memoryHeapCreations=memory.heapCreations;stats.memoryCommittedCreations=memory.committedCreations;
         stats.memoryResourceCreations=memory.resourceCreations;stats.memoryBudgetFailures=memory.budgetFailures;
+        stats.transientAliasedSlots=memory.aliasedSlots;stats.transientAliasedResources=memory.aliasedResources;stats.transientAliasedSavedBytes=memory.aliasedSavedBytes;
     }
     if(p.context.pipelines)
     {

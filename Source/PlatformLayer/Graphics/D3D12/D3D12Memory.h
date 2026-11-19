@@ -17,7 +17,9 @@ struct D3D12MemoryStatistics
 {
     UINT64 budget=0,reserved=0,used=0,free=0,peakReserved=0,peakUsed=0,largestFreeRange=0;
     UINT64 resources=0,placedHeaps=0,committedResources=0,heapCreations=0,committedCreations=0,resourceCreations=0,budgetFailures=0;
+    UINT64 aliasedSlots=0,aliasedResources=0,aliasedSavedBytes=0;
 };
+struct D3D12TransientAliasSlot;
 // DEFAULT 存储；实际资源私有元数据拥有 allocation lease，表中不持资源 COM 引用。
 class D3D12MemoryAllocator
 {
@@ -26,11 +28,18 @@ public:
     bool Configure(se::rhi::MemorySettings settings); // 无活跃资源时，创建 Presentation 前配置。
     HRESULT Create(const D3D12_RESOURCE_DESC& description,D3D12_RESOURCE_STATES initial,
         const D3D12_CLEAR_VALUE* clear,Microsoft::WRL::ComPtr<ID3D12Resource>& output,const std::string& name);
+    HRESULT CreateTransientSlot(UINT64 bytes,UINT64 alignment,D3D12MemoryCategory category,
+        std::shared_ptr<D3D12TransientAliasSlot>& output,const std::string& name);
+    HRESULT CreateAliasedResource(const std::shared_ptr<D3D12TransientAliasSlot>& slot,UINT64 intraSlotOffset,
+        const D3D12_RESOURCE_DESC& description,D3D12_RESOURCE_STATES initial,const D3D12_CLEAR_VALUE* clear,
+        Microsoft::WRL::ComPtr<ID3D12Resource>& output,const std::string& name);
+    bool IsPlacedMode() const noexcept;
     void Trim(); // 仅释放已无活跃 lease 的 heap，不搬迁资源。
     void SetName(ID3D12Resource& resource,const std::string& name);
     D3D12MemoryStatistics Stats() const;
     std::optional<D3D12AllocationInfo> Allocation(ID3D12Resource& resource) const;
     std::vector<D3D12AllocationInfo> Allocations() const;
 private:
+    friend struct D3D12TransientAliasSlot;
     struct Impl;std::shared_ptr<Impl> impl_;
 };

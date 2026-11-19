@@ -80,6 +80,8 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame,RenderDefaults de
         frame.diffuseProbeAsset=std::get<std::string>(get("render.diffuseProbe"));
         frame.gpuDriven=flag("render.gpuDriven");frame.meshletCulling=flag("render.meshletCulling");
         frame.gpuDrivenHiZ=flag("render.gpuDrivenHiZ");frame.preferMeshShader=flag("render.preferMeshShader");
+        frame.transientAliasing=flag("render.transientAliasing");frame.staticShadowCache=flag("render.staticShadowCache");
+        frame.staticBatching=flag("render.staticBatching");
         frame.clusteredLighting=flag("render.clusteredLighting");frame.clusterDebug=flag("render.clusterDebug");
         if(frame.instancing)frame.modelLod=false;
         frame.modelHlod=flag("render.hlod")&&!frame.instancing;frame.hlodRadius=number("render.hlodRadius");
@@ -104,6 +106,7 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame,RenderDefaults de
         {
             rhi::PostProcessSettings settings;settings.bloom=flag("render.bloom");settings.bloomThreshold=number("render.bloomThreshold");settings.bloomStrength=number("render.bloomStrength");
             settings.fxaa=flag("render.fxaa");settings.taa=flag("render.taa");settings.supersample4x=flag("render.supersample4x");settings.autoExposure=flag("render.autoExposure");settings.lutEnabled=flag("render.lutEnabled");
+            settings.transientAliasing=frame.transientAliasing;
             const auto lift=std::get<Vec3>(get("render.lutLift")),gamma=std::get<Vec3>(get("render.lutGamma")),gain=std::get<Vec3>(get("render.lutGain"));
             const float l[]{lift.x,lift.y,lift.z},g[]{gamma.x,gamma.y,gamma.z},n[]{gain.x,gain.y,gain.z};
             for(int i=0;i<3;++i){settings.lutLift[i]=l[i];settings.lutGamma[i]=g[i];settings.lutGain[i]=n[i];}

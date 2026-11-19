@@ -665,6 +665,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
 {
     presentation.cpuMeshSubmitMilliseconds=0.0;
     double meshSubmitMs=0.0;
+    double shadowRecordMs=0.0;
     struct MeshSubmitTimer
     {
         double& total;
@@ -1106,7 +1107,10 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     if(shadow)
     {
         if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,2);
-        if(!RecordD3D12Shadow(presentation,frame,content,states,localization)){presentation.commandList->Close();return false;}
+        {
+            MeshSubmitTimer shadowSlice(shadowRecordMs);
+            if(!RecordD3D12Shadow(presentation,frame,content,states,localization)){presentation.commandList->Close();return false;}
+        }
         if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,3);
         if(content.shadowCapture)
         {
@@ -1398,7 +1402,9 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     }
 
     presentation.cpuMeshSubmitMilliseconds=meshSubmitMs;
+    presentation.cpuShadowRecordMilliseconds=shadowRecordMs;
     if(presentation.cpuProfiler)presentation.cpuProfiler->RecordCpuDuration("CPU.MeshSubmit",meshSubmitMs,1);
+    if(presentation.cpuProfiler&&shadow)presentation.cpuProfiler->RecordCpuDuration("CPU.ShadowRecord",shadowRecordMs,1);
     recording.reset();
     se::CpuScope submission(presentation.cpuProfiler,"CPU.SubmitPresent");
     ID3D12CommandList* lists[] = { presentation.commandList.Get() };
@@ -1410,6 +1416,13 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     presentation.queue->ExecuteCommandLists(1, lists);
     if(trace)LogCheckpoint("GPU.Execute.End",{},diagnosticFrame);
     states.Commit();
+    if(frame.shadowCachePendingCommit&&frame.shadow)
+    {
+        frame.shadow->cachedCascadeHashes=frame.pendingShadowCacheHashes;
+        presentation.shadowCacheHits+=frame.pendingShadowCacheHits;
+        presentation.shadowCacheMisses+=frame.pendingShadowCacheMisses;
+        frame.shadowCachePendingCommit=false;
+    }
     if(trace)LogCheckpoint("GPU.Present.Begin",{},diagnosticFrame);
     const HRESULT presentResult = presentation.swapChain->Present(1, 0);
     if(trace||FAILED(presentResult))LogCheckpoint("GPU.Present.End","hr="+std::to_string(presentResult),diagnosticFrame);
@@ -1556,7 +1569,7 @@ void ReleaseD3D12Presentation(D3D12Presentation& presentation) noexcept
     presentation.depth.Reset();
     presentation.dsv.reset();
     presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.srvPool.reset();presentation.rtvPool.reset();
-    presentation.shadow.reset();presentation.shadowTargets.clear();presentation.clusterBuilder.reset();presentation.opaqueTemporal.reset();presentation.depthNormalBuilder.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionBuilder.reset();presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.shadingDefaults.reset();presentation.heterogeneousBuilder.reset();presentation.meshletBuilder.reset();presentation.heterogeneousHiZBuilder.reset();presentation.gpuDrivenStatistics={};presentation.cpuMeshSubmitMilliseconds=0;presentation.meshShaderTier1=false;presentation.clustered={};presentation.dsvPool.reset();
+    presentation.shadow.reset();presentation.shadowTargets.clear();presentation.shadowCacheHits=0;presentation.shadowCacheMisses=0;presentation.clusterBuilder.reset();presentation.opaqueTemporal.reset();presentation.depthNormalBuilder.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionBuilder.reset();presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.shadingDefaults.reset();presentation.heterogeneousBuilder.reset();presentation.meshletBuilder.reset();presentation.heterogeneousHiZBuilder.reset();presentation.gpuDrivenStatistics={};presentation.cpuMeshSubmitMilliseconds=0;presentation.cpuShadowRecordMilliseconds=0;presentation.meshShaderTier1=false;presentation.clustered={};presentation.dsvPool.reset();
     presentation.swapChain.Reset();
     if(presentation.states&&presentation.stateQueueBound)presentation.states->UnbindQueue(presentation.queue.Get());
     presentation.stateQueueBound=false;
@@ -1600,7 +1613,7 @@ bool BeginD3D12FrameCommands(D3D12Presentation& p,const Localization& text)
         ||!CheckGraphicsResult(p.commandList->Reset(frame.allocator.Get(),nullptr),text,"D3D12.ResetCommandListFailed"))
     {p.failed=true;if(DeviceWasRemoved(p))ReportDeviceRemoval(p,text);return false;}
     PollD3D12ClusterCounters(p);
-    frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.meshlet.reset();frame.heterogeneousSources.clear();frame.uploadDestinations.clear();frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.particleDescriptors.Reset();frame.shadowMaterialDescriptors.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.post.reset();frame.indoorHistory.reset();frame.constantCursor=0;
+    frame.coverage.reset();frame.depthNormals.reset();frame.ambientOcclusion.reset();frame.shading.reset();frame.shadingConstants={};frame.shadingMaterials.clear();frame.shadingDescriptorIncrement=0;frame.heterogeneous.reset();frame.meshlet.reset();frame.heterogeneousSources.clear();frame.uploadDestinations.clear();frame.drawConstants.clear();frame.materialConstants.clear();frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();frame.opaqueTemporalResolved=false;frame.opaqueTemporal.reset();frame.instanceSlices.clear();frame.uploads.Reset();frame.baselineConstants.Reset();frame.descriptors.Reset();frame.outputDescriptors.Reset();frame.environmentDescriptors.Reset();frame.postDescriptors.Reset();frame.guiDescriptors.Reset();frame.gameUiDescriptors.Reset();frame.particleDescriptors.Reset();frame.shadowMaterialDescriptors.Reset();frame.forwardConstants={};frame.shadowFilterConstants={};frame.shadow.reset();frame.shadowCachePendingCommit=false;frame.post.reset();frame.indoorHistory.reset();frame.constantCursor=0;
     CollectD3D12UploadReferences(p);return true;
 }
 bool BeginD3D12UploadBatch(D3D12Presentation& p,const Localization& text)

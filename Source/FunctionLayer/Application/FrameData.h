@@ -17,7 +17,15 @@ namespace se
 {
 class AssetStore;
 class Profiler;
-struct MeshInstance { StableEntityId entity; Mat4 world; MeshComponent mesh; std::vector<Mat4> skinPalette; };
+struct MeshInstance
+{
+    StableEntityId entity=0;
+    Mat4 world;
+    MeshComponent mesh;
+    std::vector<Mat4> skinPalette;
+    bool staticGeometry=true;
+    std::uint64_t spatialRevision=0;
+};
 struct LightInstance { StableEntityId entity; Mat4 world; LightComponent light; };
 struct RectangleLightInstance {StableEntityId entity=0;RectangleEmitter emitter;};
 struct DirectionalShadowView
@@ -107,6 +115,7 @@ struct FrameData
     bool depthNormals=false,gtao=false,contactShadows=false;
     float aoRadius=.6f,aoIntensity=.8f,contactLength=.5f;
     bool diffuseSh=false,localDiffuseSh=false,gpuDriven=false,meshletCulling=false,gpuDrivenHiZ=false,preferMeshShader=true;
+    bool transientAliasing=false,staticShadowCache=false,staticBatching=false;
     std::string diffuseProbeAsset; // 项目资产ID；无局部资产时只能使用全局环境SH。
     bool clusteredLighting=false,clusterDebug=false; // RG104-07：默认保留旧8点光路径。
     bool instancing=false; // 当前仅 PBR/Benchmark，单例也使用实例管线。

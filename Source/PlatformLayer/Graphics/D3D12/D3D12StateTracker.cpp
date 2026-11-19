@@ -98,6 +98,17 @@ HRESULT D3D12StateRegistry::Register(ID3D12Resource& resource,D3D12_RESOURCE_STA
     if(FAILED(result))return result;
     records_.insert_or_assign(&resource,record);return S_OK;
 }
+HRESULT D3D12StateRegistry::RegisterAliased(ID3D12Resource& resource,std::shared_ptr<D3D12AliasSlotState> slot,
+    D3D12_RESOURCE_STATES initial,std::string name)
+{
+    if(!slot)return E_INVALIDARG;
+    const auto hr=Register(resource,initial,D3D12TrackedHeap::Default,std::move(name));
+    if(FAILED(hr))return hr;
+    const auto record=Lookup(resource);
+    if(!record)return E_UNEXPECTED;
+    record->aliasSlot=std::move(slot);
+    return S_OK;
+}
 std::shared_ptr<D3D12StateRecord> D3D12StateRegistry::Lookup(ID3D12Resource& resource) const
 {
     const auto found=records_.find(&resource);if(found==records_.end())return {};
@@ -119,7 +130,7 @@ void D3D12StateRegistry::Collect()
 {std::erase_if(records_,[](const auto& entry){const auto value=entry.second.lock();return !value||!value->attached.load(std::memory_order_acquire);});}
 D3D12StateStatistics D3D12StateRegistry::Stats() const
 {
-    D3D12StateStatistics stats;stats.submissions=submissions_;stats.transitions=transitions_;stats.bufferDecays=decays_;stats.activations=activations_;stats.uavBarriers=uavBarriers_;
+    D3D12StateStatistics stats;stats.submissions=submissions_;stats.transitions=transitions_;stats.bufferDecays=decays_;stats.activations=activations_;stats.uavBarriers=uavBarriers_;stats.aliasBarriers=aliasBarriers_;stats.discards=discards_;
     for(const auto& [_,weak]:records_)if(const auto record=weak.lock();record&&record->attached.load(std::memory_order_acquire))
     {++stats.resources;stats.subresources+=record->states.size();}
     return stats;
@@ -139,7 +150,36 @@ HRESULT D3D12StateRecording::Use(ID3D12GraphicsCommandList& commands,ID3D12Resou
     auto& local=found->second;if(!ValidUsage(*local.record,desired))return E_INVALIDARG;
     if(count==UINT_MAX){if(first)return E_INVALIDARG;count=static_cast<UINT>(local.states.size());}
     if(!count||first>=local.states.size()||count>local.states.size()-first)return E_INVALIDARG;
-    if(local.record->activationPending&&!local.activate)
+
+    bool needAliasDiscard=false;
+    if(local.record->aliasSlot)
+    {
+        auto* slotPtr=local.record->aliasSlot.get();
+        auto slotIt=localSlots_.find(slotPtr);
+        if(slotIt==localSlots_.end())
+        {
+            ID3D12Resource* livePrev=nullptr;
+            std::shared_ptr<D3D12StateRecord> livePrevRecord=slotPtr->activeOwnerRecord.lock();
+            if(livePrevRecord&&livePrevRecord->attached.load(std::memory_order_acquire))
+                livePrev=slotPtr->activeOwner;
+            else
+                livePrevRecord.reset();
+            slotIt=localSlots_.emplace(slotPtr,LocalSlotOwner{local.record->aliasSlot,livePrev,std::move(livePrevRecord)}).first;
+        }
+        if(slotIt->second.owner!=&resource)
+        {
+            D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
+            barrier.Aliasing={slotIt->second.owner,&resource};
+            commands.ResourceBarrier(1,&barrier);
+            slotIt->second.owner=&resource;
+            slotIt->second.ownerRecord=local.record;
+            local.activate=true;
+            needAliasDiscard=(local.record->description.Flags&(D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET|D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL))!=0;
+            events_.push_back({local.record->serial,0,local.record->name,pass,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+                local.states[0],local.states[0],false,false,false,true});
+        }
+    }
+    else if(local.record->activationPending&&!local.activate)
     {
         D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_ALIASING;barrier.Aliasing={nullptr,&resource};
         commands.ResourceBarrier(1,&barrier);local.activate=true;
@@ -158,7 +198,13 @@ HRESULT D3D12StateRecording::Use(ID3D12GraphicsCommandList& commands,ID3D12Resou
         if(uniform){std::fill(local.states.begin(),local.states.end(),desired);break;}
         local.states[index]=desired;
     }
-    if(!barriers.empty())commands.ResourceBarrier(static_cast<UINT>(barriers.size()),barriers.data());return S_OK;
+    if(!barriers.empty())commands.ResourceBarrier(static_cast<UINT>(barriers.size()),barriers.data());
+    if(needAliasDiscard)
+    {
+        commands.DiscardResource(&resource,nullptr);
+        ++pendingDiscards_;
+    }
+    return S_OK;
 }
 HRESULT D3D12StateRecording::UavBarrier(ID3D12GraphicsCommandList& commands,ID3D12Resource& resource,const char* pass)
 {
@@ -192,7 +238,19 @@ void D3D12StateRecording::Commit()
             std::fill(local.record->states.begin(),local.record->states.end(),D3D12_RESOURCE_STATE_COMMON);
         }
     }
-    for(const auto& event:events_)if(event.activation)++registry_.activations_;else if(event.uav)++registry_.uavBarriers_;else ++registry_.transitions_;
+    for(auto& [_,slotOwner]:localSlots_)
+    {
+        slotOwner.slot->activeOwner=slotOwner.owner;
+        slotOwner.slot->activeOwnerRecord=slotOwner.ownerRecord;
+    }
+    registry_.discards_+=pendingDiscards_;
+    for(const auto& event:events_)
+    {
+        if(event.activation)++registry_.activations_;
+        else if(event.aliasSwitch){++registry_.activations_;++registry_.aliasBarriers_;}
+        else if(event.uav)++registry_.uavBarriers_;
+        else ++registry_.transitions_;
+    }
     for(auto& event:events_)
     {event.submission=submission;registry_.events_.push_back(std::move(event));if(registry_.events_.size()>256)registry_.events_.pop_front();}
     for(auto& event:decays)

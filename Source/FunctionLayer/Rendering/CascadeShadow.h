@@ -1,7 +1,9 @@
 #pragma once
+#include "CoreLayer/Math/Bounds.h"
 #include "CoreLayer/Math/Projection.h"
 #include <array>
 #include <cstdint>
+#include <span>
 
 namespace se
 {
@@ -34,4 +36,20 @@ struct CascadeSelection
 };
 // viewDepth 为沿相机前向的正距离；超出最后一级时钳制到最后一级。
 CascadeSelection SelectCascade(const CascadeShadowSettings& settings,float viewDepth);
+
+// RG104-18：纯数学层逐级静态阴影投射物集合哈希（零 D3D12 依赖）。
+struct StaticShadowCasterInput
+{
+    std::uint64_t entityId=0;
+    std::uint64_t geometryKey=0;
+    Mat4 world=Mat4::Identity();
+    Aabb worldBounds{};
+    bool hasWorldBounds=false;
+    std::uint64_t maskMaterialHash=0;
+};
+std::uint64_t HashShadowTransform(const Mat4& world) noexcept;
+std::uint64_t HashShadowMaskMaterial(std::uint64_t textureKey,float alphaCutoff,float alphaScale=1.f,bool doubleSided=false) noexcept;
+std::array<std::uint64_t,CascadeShadowMaximumCascades> ComputeCascadeStaticShadowHashes(
+    std::span<const Mat4> cascadeClipFromWorld,const Vec3& directionToLight,std::uint32_t resolution,
+    std::span<const StaticShadowCasterInput> staticCasters);
 }

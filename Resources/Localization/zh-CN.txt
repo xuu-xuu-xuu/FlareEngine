@@ -1841,3 +1841,6 @@ Feature.Render.PreferMeshShader=优先使用硬件网格着色器
 D3D12.MeshShaderInitializeFailed=网格着色器管线初始化失败，已自动回退间接提交路径。
 D3D12.MeshShaderRecordFailed=录制网格着色器调度命令失败。
 Shader.DxcUnavailable=未找到 Windows SDK DXC 编译器（dxcompiler.dll / dxil.dll）。
+Feature.Render.TransientAliasing=瞬态显存物理别名
+Feature.Render.StaticShadowCache=静态级联阴影缓存
+Feature.Render.StaticBatching=静态网格空间合批
