@@ -709,13 +709,18 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     }
     if(result&&!forward){result=commands->BeginPass({se::rhi::PassKind::Clear,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Clear"});if(result)result=commands->EndPass();}
     const auto viewProjectionBase=camera_?camera_->viewProjection:se::Mat4{};
+    const auto projectionBase=camera_?camera_->projection:se::Mat4{};
     const auto framebufferScale=editor?frame.data->editorGui.framebufferScale:se::Vec2{1,1};
     const auto sceneWidth=editor?static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.width*(framebufferScale.x>0?framebufferScale.x:1)))):frame.surface.width;
     const auto sceneHeight=editor?static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.height*(framebufferScale.y>0?framebufferScale.y:1)))):frame.surface.height;
     const auto geometryScale=se::rhi::SceneRasterScale(postFrame&&frame.data&&frame.data->post&&frame.data->post->supersample4x,sceneWidth,sceneHeight);
     const bool taaFrame=taaEnabled_&&postFrame&&frame.surface.width&&frame.surface.height;
+    const auto taaJitter=se::HaltonJitter(static_cast<std::uint32_t>(frame.updateIndex));
     const auto viewProjection=taaFrame?se::ApplyProjectionJitter(viewProjectionBase,
-        se::HaltonJitter(static_cast<std::uint32_t>(frame.updateIndex)),sceneWidth*geometryScale,sceneHeight*geometryScale):viewProjectionBase;
+        taaJitter,sceneWidth*geometryScale,sceneHeight*geometryScale):viewProjectionBase;
+    // 直接基于相机原始投影矩阵施加抖动，避免 (P*V)*V^-1 在大远近比下放大 float32 远裁面舍入误差。
+    const auto clipFromView=taaFrame?se::ApplyProjectionJitter(projectionBase,
+        taaJitter,sceneWidth*geometryScale,sceneHeight*geometryScale):projectionBase;
     if(result&&forward)result=commands->ConfigureView(viewProjection);
     if(result&&forward&&frame.data&&!frame.data->particles.batches.empty())
     {
@@ -733,7 +738,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if(frame.data&&camera_&&(frame.data->gtao||frame.data->contactShadows))
     {
         screenSettings.emplace();screenSettings->gtao=frame.data->gtao;screenSettings->contactShadows=frame.data->contactShadows;
-        screenSettings->view=camera_->view;screenSettings->clipFromView=viewProjection*camera_->inverseView;
+        screenSettings->view=camera_->view;screenSettings->clipFromView=clipFromView;
         screenSettings->radius=frame.data->aoRadius;screenSettings->intensity=frame.data->aoIntensity;screenSettings->contactLength=frame.data->contactLength;
     }
     if(result&&scene_==SandboxScene::Triangle&&(!frame.data||frame.data->cameras.empty()||camera_))
@@ -1370,7 +1375,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     const auto indoorSceneToken=ComputeIndoorSceneToken(scene_,frame.data);
                     lighting.indoor=frame.data->indoor;
                     lighting.indoor.view=camera_->view;
-                    lighting.indoor.clipFromView=viewProjection*camera_->inverseView;
+                    lighting.indoor.clipFromView=clipFromView;
                     lighting.indoor.previousClipFromWorld=previousViewProjection_;
                     lighting.indoor.frameIndex=static_cast<std::uint32_t>(frame.updateIndex);
                     lighting.indoor.sceneToken=indoorSceneToken;
@@ -1398,7 +1403,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 lighting.cluster.debug=frame.data->clusterDebug;
                 lighting.cluster.counterReadback=true;
                 lighting.cluster.view=camera_->view;
-                lighting.cluster.clipFromView=viewProjection*camera_->inverseView;
+                lighting.cluster.clipFromView=clipFromView;
                 lighting.cluster.nearPlane=camera_->lens.nearPlane;lighting.cluster.farPlane=camera_->lens.farPlane;
             }
             if(frame.data&&frame.data->sky.enabled)

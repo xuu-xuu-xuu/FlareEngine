@@ -18,6 +18,8 @@ struct EditorHierarchyNode
     bool hasChildren = false;
     bool expanded = true;
     std::string label;
+    bool enabled = true;
+    bool prefab = false;
 
     bool operator==(const EditorHierarchyNode&) const = default;
 };
@@ -25,7 +27,7 @@ struct EditorHierarchyNode
 class EditorHierarchyModel
 {
 public:
-    void SetNodes(std::vector<EditorHierarchyNode> nodes);
+    bool SetNodes(std::vector<EditorHierarchyNode> nodes);
     [[nodiscard]] const std::vector<EditorHierarchyNode>& Nodes() const noexcept;
     [[nodiscard]] std::vector<std::size_t> VisibleRows() const;
     bool Toggle(std::size_t index);
@@ -109,6 +111,8 @@ public:
     void SetEntries(std::vector<EditorAssetEntry> entries);
     [[nodiscard]] const std::vector<EditorAssetEntry>& Entries() const noexcept;
     void SetFilter(std::string_view filter);
+    void SetTypeFilter(std::string_view type);
+    [[nodiscard]] const std::string& TypeFilter() const noexcept { return typeFilter_; }
     [[nodiscard]] const std::vector<EditorAssetEntry>& Filtered() const noexcept;
     [[nodiscard]] std::vector<EditorAssetEntry> VisibleRange(std::size_t offset, float viewportHeight,
                                                             float rowHeight, std::size_t bufferRows) const;
@@ -117,9 +121,11 @@ public:
     [[nodiscard]] const std::string& SelectedPath() const noexcept;
 
 private:
+    void RebuildFiltered();
     std::vector<EditorAssetEntry> entries_;
     std::vector<EditorAssetEntry> filtered_;
     std::string filter_;
+    std::string typeFilter_;
     std::string selected_;
 };
 

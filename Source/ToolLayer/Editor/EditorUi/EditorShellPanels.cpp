@@ -5,6 +5,7 @@
 #include "ToolLayer/Editor/FlarePalette.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <string>
 #include <utility>
@@ -12,6 +13,20 @@
 namespace se::ui::editor
 {
 using namespace detail;
+
+namespace
+{
+std::uint64_t NowMilliseconds() noexcept
+{
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+bool ContainsToken(std::string_view text, std::string_view token) noexcept
+{
+    return text.find(token) != std::string_view::npos;
+}
+} // namespace
 
 void EditorShell::BuildPanelContent(PanelSlot& slot)
 {
@@ -30,11 +45,17 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
         {
             hierarchyList_->SetRowBackgroundProvider([this](int index) {
                 const auto rows = hierarchyModel_.VisibleRows();
-                return index >= 0 && static_cast<std::size_t>(index) < rows.size() &&
-                    hierarchyModel_.Nodes()[rows[index]].id == inspectorModel_.Target()
-                    ? UiInk(activePanel_ == EditorPanelId::Hierarchy ? flare::workspace::Selection
-                                                                     : flare::workspace::InactiveSelection)
-                    : UiColor{0, 0, 0, 0};
+                if (index < 0 || static_cast<std::size_t>(index) >= rows.size()) return UiColor{0, 0, 0, 0};
+                if (hierarchyModel_.Nodes()[rows[index]].id == inspectorModel_.Target())
+                {
+                    return UiInk(activePanel_ == EditorPanelId::Hierarchy ? flare::workspace::Selection
+                                                                          : flare::workspace::InactiveSelection);
+                }
+                if (index == hoveredHierarchyRow_)
+                {
+                    return UiInk(flare::workspace::Hover, 0.55f);
+                }
+                return UiColor{0, 0, 0, 0};
             });
             hierarchyList_->SetRowTextProvider([this](int index) {
                 const auto rows = hierarchyModel_.VisibleRows();
@@ -44,7 +65,11 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 }
                 const EditorHierarchyNode& node =
                     hierarchyModel_.Nodes()[rows[static_cast<std::size_t>(index)]];
-                return std::string(node.depth * 2, ' ') + node.label;
+                std::string prefix(node.depth * 2, ' ');
+                prefix += node.hasChildren ? (node.expanded ? "▾ " : "▸ ") : "  ";
+                if (node.prefab) prefix += "◆ ";
+                std::string suffix = node.enabled ? std::string{} : Text("EditorUi.DisabledSuffix", " (Disabled)");
+                return prefix + node.label + suffix;
             });
         }
         dispatcher_.AddHandler(slot.content, UiEventType::PointerDown, [this](UiInputEvent& event) {
@@ -65,29 +90,46 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             if (row >= 0 && static_cast<std::size_t>(row) < rows.size())
             {
                 const std::size_t nodeIndex = rows[static_cast<std::size_t>(row)];
-                dragHierarchyId_ = hierarchyModel_.Nodes()[nodeIndex].id;
+                const auto& node = hierarchyModel_.Nodes()[nodeIndex];
+                dragHierarchyId_ = node.id;
                 hierarchyDragStartX_ = event.x;
                 hierarchyDragStartY_ = event.y;
                 draggingHierarchy_ = false;
-                if (event.x - rect.x <= 18.0f && hierarchyModel_.Nodes()[nodeIndex].hasChildren)
+                const float arrowRight = 18.0f + static_cast<float>(node.depth) * 12.0f;
+                if (event.x - rect.x <= arrowRight && node.hasChildren)
                 {
                     hierarchyModel_.Toggle(nodeIndex);
                     if (hierarchyList_)
                     {
                         hierarchyList_->Invalidate();
                         hierarchyList_->SetItemCount(static_cast<int>(hierarchyModel_.VisibleRows().size()));
+                        hierarchyList_->Sync();
                     }
-                    Frame();
                     event.handled = true;
                     return;
                 }
-                const std::uint64_t id = hierarchyModel_.Nodes()[nodeIndex].id;
+                const std::uint64_t id = node.id;
+                const std::uint64_t now = NowMilliseconds();
+                const bool doubleClick = (id == lastHierarchyClickId_) && (now - lastHierarchyClickTick_ <= 380);
+                lastHierarchyClickId_ = id;
+                lastHierarchyClickTick_ = doubleClick ? 0 : now;
                 hierarchyModel_.Select(id);
                 if (selectionHandler_) selectionHandler_(id);
+                if (doubleClick && viewportAction_) viewportAction_("Frame");
             }
             event.handled = true;
         }, UiEventPhase::Bubble);
         dispatcher_.AddHandler(slot.content, UiEventType::PointerMove, [this](UiInputEvent& event) {
+            const UiRect rect = layout_.Rect(Slot(EditorPanelId::Hierarchy).content);
+            const float offset = hierarchyList_ ? hierarchyList_->Offset() : 0.0f;
+            const int nextHover = (event.x >= rect.x && event.x < rect.x + rect.width &&
+                                   event.y >= rect.y && event.y < rect.y + rect.height)
+                ? static_cast<int>((event.y - rect.y + offset) / 20.0f) : -1;
+            if (nextHover != hoveredHierarchyRow_)
+            {
+                hoveredHierarchyRow_ = nextHover;
+                if (hierarchyList_) { hierarchyList_->Invalidate(); hierarchyList_->Sync(); }
+            }
             if (dragHierarchyId_ == 0) return;
             if (std::abs(event.x - hierarchyDragStartX_) + std::abs(event.y - hierarchyDragStartY_) > 4.0f)
             {
@@ -147,10 +189,17 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
         {
             assetsList_->SetRowBackgroundProvider([this](int index) {
                 const auto& entries = assetsModel_.Filtered();
-                if (index < 0 || static_cast<std::size_t>(index) >= entries.size() ||
-                    !assetsModel_.Selected(entries[index].path)) return UiColor{0, 0, 0, 0};
-                return UiInk(activePanel_ == EditorPanelId::Assets ? flare::workspace::Selection
-                                                                   : flare::workspace::InactiveSelection);
+                if (index < 0 || static_cast<std::size_t>(index) >= entries.size()) return UiColor{0, 0, 0, 0};
+                if (assetsModel_.Selected(entries[index].path))
+                {
+                    return UiInk(activePanel_ == EditorPanelId::Assets ? flare::workspace::Selection
+                                                                       : flare::workspace::InactiveSelection);
+                }
+                if (index == hoveredAssetRow_)
+                {
+                    return UiInk(flare::workspace::Hover, 0.55f);
+                }
+                return UiColor{0, 0, 0, 0};
             });
             assetsList_->SetRowTextProvider([this](int index) {
                 const auto& entries = assetsModel_.Filtered();
@@ -160,7 +209,49 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 }
                 const EditorAssetEntry& entry = entries[static_cast<std::size_t>(index)];
                 const auto separator = entry.path.find_last_of("/\\");
-                return entry.path.substr(separator == std::string::npos ? 0 : separator + 1);
+                std::string fileName = entry.path.substr(separator == std::string::npos ? 0 : separator + 1);
+                if (fileName.ends_with(".material.json")) fileName.erase(fileName.size() - 14);
+                else if (fileName.ends_with(".prefab.json")) fileName.erase(fileName.size() - 12);
+                else if (fileName.ends_with(".scene.json")) fileName.erase(fileName.size() - 11);
+
+                std::string badge;
+                if (entry.type == "model") badge = Text("EditorUi.AssetBadgeModel", "[3D]") + " ";
+                else if (entry.type == "material") badge = Text("EditorUi.AssetBadgeMaterial", "[Mat]") + " ";
+                else if (entry.type == "texture") badge = Text("EditorUi.AssetBadgeTexture", "[Tex]") + " ";
+                else if (entry.type == "prefab") badge = Text("EditorUi.AssetBadgePrefab", "[Prefab]") + " ";
+                else if (entry.type == "C#") badge = "[C#] ";
+                else if (entry.type == "audio") badge = Text("EditorUi.AssetBadgeAudio", "[Audio]") + " ";
+                else if (entry.type == "scene") badge = Text("EditorUi.AssetBadgeScene", "[Scene]") + " ";
+                else if (entry.type == "shader") badge = "[HLSL] ";
+                else if (!entry.type.empty()) badge = "• ";
+
+                std::string folderHint;
+                if (separator != std::string::npos && separator > 0)
+                {
+                    const auto parentSep = entry.path.find_last_of("/\\", separator - 1);
+                    const std::string parentDir = entry.path.substr(
+                        parentSep == std::string::npos ? 0 : parentSep + 1,
+                        separator - (parentSep == std::string::npos ? 0 : parentSep + 1));
+                    if (!parentDir.empty() && parentDir != "." && parentDir != "Content")
+                        folderHint = "  · " + parentDir;
+                }
+                return badge + fileName + folderHint;
+            });
+        }
+        assetsTypeElement_ = document_.CreateElement(UiElementKind::Button);
+        if (document_.SetParent(assetsTypeElement_, slot.panel))
+        {
+            document_.SetStyle(assetsTypeElement_, ButtonStyle(0.0f, 1.0f, 64.0f, 22.0f, kSurfaceRaised));
+            document_.SetText(assetsTypeElement_, Text("EditorUi.FilterAll", "All") + " ▾");
+            dispatcher_.AddHandler(assetsTypeElement_, UiEventType::PointerDown, [this](UiInputEvent& event) {
+                if (event.button != 0) return;
+                if (openMenu_ == "@asset-type") CloseMenu();
+                else
+                {
+                    const auto bounds = layout_.Rect(assetsTypeElement_);
+                    OpenAssetTypeMenu(bounds.x, bounds.y + bounds.height);
+                }
+                event.handled = true;
             });
         }
         assetsFilterElement_ = document_.CreateElement(UiElementKind::TextEdit);
@@ -260,10 +351,22 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             if (event.button != 0 && event.button != 1) return;
             if (row >= 0 && static_cast<std::size_t>(row) < entries.size())
             {
-                const std::string& path = entries[static_cast<std::size_t>(row)].path;
+                const std::string path = entries[static_cast<std::size_t>(row)].path;
                 SelectAsset(path);
                 if (event.button == 0)
                 {
+                    const std::uint64_t now = NowMilliseconds();
+                    const bool doubleClick = (path == lastAssetClickPath_) && (now - lastAssetClickTick_ <= 380);
+                    if (doubleClick)
+                    {
+                        lastAssetClickPath_.clear();
+                        lastAssetClickTick_ = 0;
+                        if (assetActivateHandler_) assetActivateHandler_(path);
+                        event.handled = true;
+                        return;
+                    }
+                    lastAssetClickPath_ = path;
+                    lastAssetClickTick_ = now;
                     if (!assetDrag_) assetDrag_ = std::make_unique<EditorAssetDragState>();
                     assetDrag_->assetPath = path;
                     assetDrag_->startX = event.x;
@@ -275,6 +378,16 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             event.handled = true;
         }, UiEventPhase::Bubble);
         dispatcher_.AddHandler(slot.content, UiEventType::PointerMove, [this](UiInputEvent& event) {
+            const UiRect rect = layout_.Rect(Slot(EditorPanelId::Assets).content);
+            const float offset = assetsList_ ? assetsList_->Offset() : 0.0f;
+            const int nextHover = (event.x >= rect.x && event.x < rect.x + rect.width &&
+                                   event.y >= rect.y && event.y < rect.y + rect.height)
+                ? static_cast<int>((event.y - rect.y + offset) / 20.0f) : -1;
+            if (nextHover != hoveredAssetRow_)
+            {
+                hoveredAssetRow_ = nextHover;
+                if (assetsList_) { assetsList_->Invalidate(); assetsList_->Sync(); }
+            }
             if (!assetDrag_ || assetDrag_->assetPath.empty()) return;
             const float dx = event.x - assetDrag_->startX;
             const float dy = event.y - assetDrag_->startY;
@@ -326,11 +439,35 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
         makeList(console_);
         if (console_)
         {
+            console_->SetRowBackgroundProvider([this](int index) {
+                if (index < 0 || static_cast<std::size_t>(index) >= lines_.size()) return UiColor{0, 0, 0, 0};
+                const std::string_view line = lines_[static_cast<std::size_t>(index)];
+                if (ContainsToken(line, "[Error]"))
+                    return UiColor{0.42f, 0.11f, 0.13f, 0.42f};
+                if (ContainsToken(line, "[Warning]"))
+                    return UiColor{0.42f, 0.28f, 0.07f, 0.36f};
+                return (index % 2 == 1) ? UiColor{1.0f, 1.0f, 1.0f, 0.018f} : UiColor{0, 0, 0, 0};
+            });
             console_->SetRowTextProvider([this](int index) {
                 return index >= 0 && static_cast<std::size_t>(index) < lines_.size()
                     ? lines_[static_cast<std::size_t>(index)] : std::string{};
             });
             console_->SetItemCount(0);
+        }
+        consoleClearButton_ = document_.CreateElement(UiElementKind::Button);
+        if (document_.SetParent(consoleClearButton_, slot.panel))
+        {
+            auto clearStyle = ButtonStyle(0.0f, 2.0f, 50.0f, 20.0f, kSurfaceRaised);
+            clearStyle.fontSize = 12.0f;
+            clearStyle.borderWidth = 1.0f;
+            clearStyle.borderColor = kBorder;
+            document_.SetStyle(consoleClearButton_, clearStyle);
+            document_.SetText(consoleClearButton_, Text("EditorUi.ClearConsole", "Clear"));
+            dispatcher_.AddHandler(consoleClearButton_, UiEventType::PointerDown, [this](UiInputEvent& event) {
+                if (event.button != 0) return;
+                ClearConsole();
+                event.handled = true;
+            });
         }
         dispatcher_.AddHandler(slot.content, UiEventType::PointerWheel, [this](UiInputEvent& event) {
             if (console_)
@@ -377,9 +514,9 @@ void EditorShell::BuildScrollThumb(EditorPanelId panel)
     style.position = UiPosition::Absolute;
     style.left = UiLength::Px(0.0f);
     style.top = UiLength::Px(0.0f);
-    style.width = UiLength::Px(4.0f);
+    style.width = UiLength::Px(6.0f);
     style.height = UiLength::Px(20.0f);
-    style.background = UiInk(flare::Muted, 0.85f);
+    style.background = UiInk(flare::Silver, 0.72f);
     style.borderColor = kBorder;
     style.borderWidth = 1.0f;
     document_.SetStyle(thumb, style);
@@ -456,7 +593,7 @@ void EditorShell::UpdateScrollThumbs()
         const float thumbHeight = std::max(20.0f, viewport * viewport / content);
         const float progress = std::clamp(list->Offset() / maximumOffset, 0.0f, 1.0f);
         const UiRect contentRect = layout_.Rect(Slot(panel).content);
-        const float left = std::max(0.0f, contentRect.width - 6.0f);
+        const float left = std::max(0.0f, contentRect.width - 7.0f);
         const float top = progress * std::max(0.0f, viewport - thumbHeight);
         UiStyle style = document_.Style(thumb);
         // 只在几何变化时 SetStyle，避免空闲帧把 layout 标脏（UiPerf 要求 stable layout=0）。
@@ -474,10 +611,9 @@ void EditorShell::UpdateScrollThumbs()
 
 void EditorShell::SetHierarchy(std::vector<EditorHierarchyNode> nodes)
 {
-    // EditorApplication 每帧重建同样的列表；内容未变时不要销毁行元素，
-    // 否则新行在当帧没有布局矩形，会被画成零尺寸。
-    if (nodes == hierarchyModel_.Nodes()) return;
-    hierarchyModel_.SetNodes(std::move(nodes));
+    // EditorApplication 每帧重建同样的列表；内容未变（含保留的折叠状态）时不要销毁行元素，
+    // 否则新行在当帧没有布局矩形，且破坏稳定帧零布局契约。
+    if (!hierarchyModel_.SetNodes(std::move(nodes))) return;
     if (hierarchyList_)
     {
         hierarchyList_->Invalidate();

@@ -22,8 +22,9 @@ bool Fit(const std::array<Vec3,4>& nearCorners,const std::array<Vec3,4>& farCorn
     std::uint32_t count,std::uint32_t resolution,float casterPadding,float filterGuardTexels,float filterGuardWorld,CascadeShadowSettings& output)
 {
     if(count<1||count>CascadeShadowMaximumCascades||resolution<256||resolution>4096
-        ||!ValidDepth(nearPlane)||!ValidDepth(actualNear)||!ValidDepth(actualFar)||actualFar<=actualNear
-        ||!ValidDepth(shadowDistance)||shadowDistance<=nearPlane||shadowDistance>actualFar*1.002f
+        ||!ValidDepth(nearPlane)||!ValidDepth(actualNear)||!ValidDepth(actualFar)||actualFar<=actualNear)return false;
+    const float farTolerance=std::clamp((actualFar/actualNear)*2e-6f,.002f,.05f);
+    if(!ValidDepth(shadowDistance)||shadowDistance<=nearPlane||shadowDistance>actualFar*(1.f+farTolerance)
         ||!IsFinite(directionToLight)||!std::isfinite(casterPadding)||casterPadding<0||casterPadding>10000
         ||!std::isfinite(filterGuardTexels)||filterGuardTexels<3||filterGuardTexels>65||2*filterGuardTexels>=resolution
         ||!std::isfinite(filterGuardWorld)||filterGuardWorld<0||filterGuardWorld>.25f)return false;
@@ -99,8 +100,9 @@ bool PrepareCascadeShadows(const Mat4& view,const Mat4& projection,float nearPla
         nearCorners[i]={aw.x,aw.y,aw.z};farCorners[i]={bw.x,bw.y,bw.z};
     }
     // 仅用归一深度误差不足以核对 far（透视深度在远端高度压缩）。
-    // 这里比实际反投影的视深，允许 float 矩阵在 1000 m 处的小量精度损失。
-    if(std::abs(actualNear-nearPlane)>nearPlane*.002f||std::abs(actualFar-farPlane)>farPlane*.002f)return false;
+    // 这里比实际反投影的视深，容差随远近比反映 float32 投影逆矩阵的 ULP 量化下界。
+    const float farTolerance=std::clamp((farPlane/nearPlane)*2e-6f,.002f,.05f);
+    if(std::abs(actualNear-nearPlane)>nearPlane*.002f||std::abs(actualFar-farPlane)>farPlane*farTolerance)return false;
     return Fit(nearCorners,farCorners,actualNear,actualFar,nearPlane,shadowDistance,directionToLight,count,resolution,casterPadding,filterGuardTexels,filterGuardWorld,output);
 }
 bool PrepareCascadeShadows(const Mat4& viewProjection,float nearPlane,float farPlane,const Vec3& directionToLight,

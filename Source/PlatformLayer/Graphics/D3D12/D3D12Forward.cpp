@@ -81,8 +81,8 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
         const auto& config=lighting.cluster;
         base.viewDepth={-config.view(2,0),-config.view(2,1),-config.view(2,2),-config.view(2,3)};
         clusteredFrame.view=config.view;
-        const auto inverseView=se::Inverse(config.view);if(!inverseView)return false;
-        clusteredFrame.projection=content.viewProjection * *inverseView;
+        // 直接使用 ConfigureForward 已校验的相机投影矩阵，避免 viewProjection * Inverse(view) 产生大远近比浮点抵消误差。
+        clusteredFrame.projection=config.clipFromView;
         if(!ValidD3D12ClusterProjection(clusteredFrame.projection,config.nearPlane,config.farPlane))return CheckGraphicsResult(E_INVALIDARG,text,"Rhi.BackendFailure");
         const auto inverseProjection=se::Inverse(clusteredFrame.projection);if(!inverseProjection)return false;
         clusteredFrame.inverseProjection=*inverseProjection;
@@ -101,8 +101,7 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
             p.clusterBuilder=std::move(builder);
         }
         if(!frame.clusters&&!CheckGraphicsResult(p.clusterBuilder->CreateOutput(frame.clusters),text,"Rhi.BackendFailure"))return false;
-        auto actual=config;actual.clipFromView=clusteredFrame.projection;
-        if(!CheckGraphicsResult(p.clusterBuilder->Prepare(*frame.clusters,actual),text,"Rhi.BackendFailure"))return false;
+        if(!CheckGraphicsResult(p.clusterBuilder->Prepare(*frame.clusters,config),text,"Rhi.BackendFailure"))return false;
         frame.clusterDescriptorIncrement=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     }
     if(content.meshPipeline&&se::rhi::IsShadowFilterLayout(content.meshPipeline->prepared->program->source.layoutVersion))

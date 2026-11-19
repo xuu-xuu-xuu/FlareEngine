@@ -46,20 +46,26 @@ bool ContainsInsensitive(std::string_view text, std::string_view needle)
 }
 } // namespace
 
-void EditorHierarchyModel::SetNodes(std::vector<EditorHierarchyNode> nodes)
+bool EditorHierarchyModel::SetNodes(std::vector<EditorHierarchyNode> nodes)
 {
     const std::uint64_t previous = selected_;
     std::unordered_map<std::uint64_t, bool> expanded;
     for (const EditorHierarchyNode& node : nodes_) expanded[node.id] = node.expanded;
-    nodes_ = std::move(nodes);
-    for (EditorHierarchyNode& node : nodes_)
+    for (EditorHierarchyNode& node : nodes)
     {
         const auto found = expanded.find(node.id);
         if (found != expanded.end()) node.expanded = found->second;
     }
-    selected_ = std::none_of(nodes_.begin(), nodes_.end(), [previous](const EditorHierarchyNode& node) {
+    const std::uint64_t nextSelected = std::none_of(nodes.begin(), nodes.end(), [previous](const EditorHierarchyNode& node) {
         return node.id == previous;
     }) ? 0 : previous;
+    if (nodes == nodes_ && nextSelected == selected_)
+    {
+        return false;
+    }
+    nodes_ = std::move(nodes);
+    selected_ = nextSelected;
+    return true;
 }
 
 const std::vector<EditorHierarchyNode>& EditorHierarchyModel::Nodes() const noexcept
@@ -250,16 +256,29 @@ const std::vector<EditorAssetEntry>& EditorAssetsModel::Entries() const noexcept
 void EditorAssetsModel::SetEntries(std::vector<EditorAssetEntry> entries)
 {
     entries_ = std::move(entries);
-    SetFilter(filter_);
+    RebuildFiltered();
 }
 
 void EditorAssetsModel::SetFilter(std::string_view filter)
 {
     filter_.assign(filter);
+    RebuildFiltered();
+}
+
+void EditorAssetsModel::SetTypeFilter(std::string_view type)
+{
+    typeFilter_.assign(type);
+    RebuildFiltered();
+}
+
+void EditorAssetsModel::RebuildFiltered()
+{
     filtered_.clear();
     for (const EditorAssetEntry& entry : entries_)
     {
-        if (filter_.empty() || ContainsInsensitive(entry.path, filter_))
+        const bool textMatch = filter_.empty() || ContainsInsensitive(entry.path, filter_);
+        const bool typeMatch = typeFilter_.empty() || entry.type == typeFilter_;
+        if (textMatch && typeMatch)
         {
             filtered_.push_back(entry);
         }

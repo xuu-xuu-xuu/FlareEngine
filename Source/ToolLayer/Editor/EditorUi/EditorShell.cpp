@@ -260,6 +260,17 @@ bool EditorShell::Initialize(float width, float height)
     BuildChromeMenus();
     BuildChrome();
     chrome_.SetStatus(Text("EditorUi.Ready", "Ready"));
+    if (!commands_.CanExecute(EditorCommandId::TogglePanel))
+    {
+        commands_.Register(EditorCommandId::TogglePanel, [this](const EditorCommand& command) {
+            if (command.argument.starts_with("@layout:"))
+                return ApplyLayoutPreset(std::string_view(command.argument).substr(8));
+            EditorPanelId panel = EditorPanelId::None;
+            if (!EditorPanelFromName(command.argument, panel)) return false;
+            TogglePanel(panel);
+            return true;
+        });
+    }
     RegisterDefaultShortcuts();
     initialized_ = true;
     if (!layoutPath_.empty())
@@ -373,7 +384,7 @@ void EditorShell::Frame()
         list->SetViewportHeight(std::max(0.0f, panelHeight(panel) - reserved));
         list->Sync();
     };
-    syncContent(EditorPanelId::Console, console_, 0.0f);
+    syncContent(EditorPanelId::Console, console_, 24.0f);
     syncContent(EditorPanelId::Hierarchy, hierarchyList_, 0.0f);
     syncContent(EditorPanelId::Assets, assetsList_, assetsPreviewImage_.empty() ? 48.0f : 124.0f);
     syncContent(EditorPanelId::Inspector, inspectorList_, 0.0f);

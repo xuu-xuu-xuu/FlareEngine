@@ -53,8 +53,16 @@ FieldGeometry FieldAt(float width, int count, int cell, bool axis, bool rgb = fa
     const float labelEnd = rgb ? std::min(50.0f, right * 0.22f) : std::min(119.0f, right * 0.36f);
     const float span = (right - labelEnd) / count;
     const float axisStart = labelEnd + cell * span;
-    const float axisWidth = axis ? std::min(14.0f, span * 0.25f) : 0.0f;
+    const float axisWidth = axis ? std::min(15.0f, span * 0.26f) : 0.0f;
     return {labelEnd, axisStart, axisStart + axisWidth, std::max(0.0f, span - axisWidth - 2.0f)};
+}
+
+flare::Color AxisBadgeColor(char axis) noexcept
+{
+    if (axis == 'X' || axis == 'R') return flare::workspace::AxisX;
+    if (axis == 'Y' || axis == 'G') return flare::workspace::AxisY;
+    if (axis == 'Z' || axis == 'B') return flare::workspace::AxisZ;
+    return flare::workspace::Header;
 }
 }
 
@@ -188,32 +196,38 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
         document_.SetText(element, text);
     };
     auto check = [&](const EditorProperty& p, float x) {
-        auto style = CellStyle(x, (RowHeight - 16) * 0.5f, 16, 16, UiInk(flare::workspace::Field));
+        const bool checked = p.value == "true";
+        auto style = CellStyle(x, (RowHeight - 16) * 0.5f, 16, 16,
+                               UiInk(checked && !p.readOnly ? flare::workspace::Selection : flare::workspace::Field));
         style.padding = {2,0,0,0};
         style.borderWidth = 1;
-        style.borderColor = UiInk(flare::workspace::Divider);
+        style.borderColor = UiInk(checked && !p.readOnly ? flare::workspace::Focus : flare::workspace::Divider);
         style.color = UiInk(p.readOnly ? flare::Disabled : flare::Heading);
-        add(p.value == "true" ? "✓" : "", style);
+        add(checked ? "✓" : "", style);
     };
     if (item.header)
     {
         if (item.title == Text("EditorUi.AddComponent", "Add Component"))
         {
-            const float width = std::max(0.0f, std::min(210.0f, right - 2 * LeftInset));
-            auto style = CellStyle((right-width)*0.5f, 1, width, RowHeight - 2, UiInk(flare::workspace::Header));
-            const auto caption = item.title + (item.closed ? "  ▾" : "  ▴");
+            const float width = std::max(0.0f, std::min(220.0f, right - 2 * LeftInset));
+            auto style = CellStyle((right-width)*0.5f, 1, width, RowHeight - 2, UiInk(flare::workspace::Selection));
+            const auto caption = "＋ " + item.title + (item.closed ? "  ▾" : "  ▴");
             style.padding.left = std::max(3.0f, (width - MeasuredWidth(caption, 13.0f))*0.5f);
             style.borderWidth = 1;
-            style.borderColor = UiInk(flare::workspace::Divider);
+            style.borderColor = UiInk(flare::workspace::Focus);
+            style.color = UiInk(flare::Heading);
             add(caption, style);
             return;
         }
         auto background = document_.Style(row);
         background.background = UiInk(flare::workspace::Header);
+        background.borderWidth = 1.0f;
+        background.borderColor = UiInk(flare::workspace::Divider);
         document_.SetStyle(row, background);
         auto disclosure = CellStyle(LeftInset, 0, 15, RowHeight, Transparent);
         disclosure.padding = {};
         disclosure.fontSize = 10;
+        disclosure.color = UiInk(flare::Silver);
         add(item.closed ? "▶" : "▼", disclosure);
         float left = LeftInset + 15;
         if (!item.fields.empty())
@@ -234,6 +248,8 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
         auto style = CellStyle((right-width)*0.5f, 1, width, RowHeight - 2, UiInk(flare::workspace::Header));
         style.padding.left = std::max(4.0f, (width - MeasuredWidth(first.label, 13.0f))*0.5f);
         style.color = UiInk(first.readOnly ? flare::Disabled : flare::Heading);
+        style.borderWidth = 1.0f;
+        style.borderColor = UiInk(flare::workspace::Divider);
         add(first.label, style);
         return;
     }
@@ -258,10 +274,14 @@ void EditorShell::BuildInspectorRow(int index, UiElementHandle row)
         const auto cell = FieldAt(inspectorWidth_, count, i, field.axis != 0, RgbAxis(field.axis));
         if (field.axis)
         {
-            auto style = CellStyle(cell.axisStart, 0, cell.valueStart-cell.axisStart, RowHeight, Transparent);
-            style.color = UiInk(field.overridden ? flare::workspace::Focus : flare::Muted);
-            style.padding = {};
-            add(std::string(1, field.axis), style);
+            const float pillW = std::max(0.0f, cell.valueStart - cell.axisStart);
+            auto style = CellStyle(cell.axisStart, 2.0f, pillW, RowHeight - 4.0f,
+                                   UiInk(AxisBadgeColor(field.axis), field.readOnly ? 0.45f : 0.92f));
+            style.color = UiInk(flare::Heading);
+            style.fontSize = 11.5f;
+            const std::string axisStr(1, field.axis);
+            style.padding = {std::max(1.0f, (pillW - MeasuredWidth(axisStr, 11.5f)) * 0.5f), 0.0f, 0.0f, 0.0f};
+            add(axisStr, style);
         }
         if (field.type == EditorPropertyType::Boolean)
         {

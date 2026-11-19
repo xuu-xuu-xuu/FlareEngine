@@ -19,18 +19,18 @@ namespace se::ui::editor::detail
 
 inline constexpr float kTabHeight = 24.0f;
 inline constexpr float kMinimumGroupSize = 80.0f;
-inline constexpr float kSplitterReach = 4.0f;
+inline constexpr float kSplitterReach = 4.5f;
 inline constexpr float kTabArrowWidth = 18.0f;
 
 inline const auto kBackground = UiInk(flare::Background);
 inline const auto kSurface = UiInk(flare::workspace::Field);
 inline const auto kSurfaceRaised = UiInk(flare::workspace::Header);
-inline const auto kSurfaceActive = UiInk(flare::workspace::InactiveSelection);
+inline const auto kSurfaceActive = UiInk(flare::workspace::Selection);
 inline const auto kContent = UiInk(flare::workspace::Panel);
 inline const auto kBorder = UiInk(flare::workspace::Divider);
 inline const auto kText = UiInk(flare::Text);
 inline const auto kMuted = UiInk(flare::Muted);
-inline const auto kAccent = UiInk(flare::Silver);
+inline const auto kAccent = UiInk(flare::workspace::Focus);
 
 [[nodiscard]] inline std::array<UiRect, 2> SplitDockRects(const DockNode& node, const UiRect& rect)
 {

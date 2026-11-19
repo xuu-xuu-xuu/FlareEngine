@@ -11,8 +11,8 @@ namespace se
 namespace
 {
 using namespace Gdiplus;
-constexpr float FadeStartMs = 3300.0f;
-constexpr float DurationMs = 3700.0f;
+constexpr float FadeStartMs = 640.0f;
+constexpr float DurationMs = 900.0f;
 float Ease(float t)
 {
     t = std::clamp(t, 0.0f, 1.0f);
@@ -57,14 +57,14 @@ void DrawMark(Graphics& g, float time, BYTE opacity)
 {
     const auto gold = flare::Gold;
     SolidBrush brush(Color(opacity, gold.r, gold.g, gold.b));
-    DrawRing(g, brush, Ease((time - 120.0f) / 1350.0f));
+    DrawRing(g, brush, Ease((time - 20.0f) / 360.0f));
 
-    const float starTime = time - 1600.0f;
+    const float starTime = time - 340.0f;
     if (starTime <= 0.0f) return;
-    const float scale = Ease(starTime / 640.0f);
+    const float scale = Ease(starTime / 220.0f);
     const auto transform = g.Save();
     g.TranslateTransform(65.0f, -59.0f);
-    g.RotateTransform(-397.5f * (1.0f - Ease(starTime / 1300.0f)));
+    g.RotateTransform(-397.5f * (1.0f - Ease(starTime / 340.0f)));
     g.ScaleTransform(25.0f * scale, 29.0f * scale);
     GraphicsPath flarePath;
     flarePath.AddBezier(0.f,-1.f, .06f,-.18f, .18f,-.06f, 1.f,0.f);
@@ -72,7 +72,7 @@ void DrawMark(Graphics& g, float time, BYTE opacity)
     flarePath.AddBezier(0.f,1.f, -.06f,.18f, -.18f,.06f, -1.f,0.f);
     flarePath.AddBezier(-1.f,0.f, -.18f,-.06f, -.06f,-.18f, 0.f,-1.f);
     flarePath.CloseFigure();
-    SolidBrush highlight(Color(static_cast<BYTE>(opacity * Ease(starTime / 550.0f)), gold.r, gold.g, gold.b));
+    SolidBrush highlight(Color(static_cast<BYTE>(opacity * Ease(starTime / 180.0f)), gold.r, gold.g, gold.b));
     g.FillPath(&highlight, &flarePath);
     g.Restore(transform);
 }
@@ -107,7 +107,15 @@ void LauncherIntro::Start(HWND window)
     DeleteDC(dc);
     page_ = page;
     if (!SetTimer(window, Timer, 16, nullptr)) { Release(); return; }
-    for (HWND h = GetWindow(window, GW_CHILD); h; h = GetWindow(h, GW_HWNDNEXT)) ShowWindow(h, SW_HIDE);
+    hiddenControls_.clear();
+    for (HWND h = GetWindow(window, GW_CHILD); h; h = GetWindow(h, GW_HWNDNEXT))
+    {
+        if (IsWindowVisible(h))
+        {
+            hiddenControls_.push_back(h);
+            ShowWindow(h, SW_HIDE);
+        }
+    }
     start_ = GetTickCount64();
 }
 
@@ -158,7 +166,11 @@ void LauncherIntro::Finish(HWND window)
     if (!Active()) return;
     KillTimer(window, Timer);
     Release();
-    for (HWND h = GetWindow(window, GW_CHILD); h; h = GetWindow(h, GW_HWNDNEXT)) ShowWindow(h, SW_SHOWNA);
+    for (HWND h : hiddenControls_)
+    {
+        if (IsWindow(h)) ShowWindow(h, SW_SHOWNA);
+    }
+    hiddenControls_.clear();
     RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
     SetFocus(GetNextDlgTabItem(window, nullptr, FALSE));
 }

@@ -62,15 +62,15 @@ void LaunchToolkitImportPlan(ToolkitAppState& state, AssetImportPlan plan)
 
 void OpenToolkitImportConfirm(ToolkitAppState& state, std::vector<std::filesystem::path> sources)
 {
-    auto report = [&state](const char* key, const std::string& detail = {}) {
+    auto report = [&state](const char* key, const std::string& detail = {}, const char* tag = "") {
         state.importStatus = state.text.GetText(key) + (detail.empty() ? std::string{} : ": " + detail);
         state.shell->SetStatus(state.importStatus);
         state.shell->SetAssetsPreviewText(state.importStatus);
-        state.shell->AppendConsoleLine(state.importStatus);
+        state.shell->AppendConsoleLine(std::string(tag) + state.importStatus);
     };
     if (sources.empty()) return;
-    if (state.importTask.valid() || state.host.ExportBusy()) { report("Editor.AssetOperationBusy"); return; }
-    if (state.session.IsPlaying()) { report("Editor.EditWhilePlaying"); return; }
+    if (state.importTask.valid() || state.host.ExportBusy()) { report("Editor.AssetOperationBusy", {}, "[Warning] "); return; }
+    if (state.session.IsPlaying()) { report("Editor.EditWhilePlaying", {}, "[Warning] "); return; }
 
     const auto plan = AssetImportService::Plan({std::move(sources), state.assets.SourceRoot(), {}});
     std::string detail;
@@ -97,14 +97,14 @@ void OpenToolkitImportConfirm(ToolkitAppState& state, std::vector<std::filesyste
 
 bool BrowseAndImportToolkitAsset(ToolkitAppState& state)
 {
-    auto report = [&state](const char* key, const std::string& detail = {}) {
+    auto report = [&state](const char* key, const std::string& detail = {}, const char* tag = "") {
         state.importStatus = state.text.GetText(key) + (detail.empty() ? std::string{} : ": " + detail);
         state.shell->SetStatus(state.importStatus);
         state.shell->SetAssetsPreviewText(state.importStatus);
-        state.shell->AppendConsoleLine(state.importStatus);
+        state.shell->AppendConsoleLine(std::string(tag) + state.importStatus);
     };
-    if (state.importTask.valid() || state.host.ExportBusy()) { report("Editor.AssetOperationBusy"); return false; }
-    if (state.session.IsPlaying()) { report("Editor.EditWhilePlaying"); return false; }
+    if (state.importTask.valid() || state.host.ExportBusy()) { report("Editor.AssetOperationBusy", {}, "[Warning] "); return false; }
+    if (state.session.IsPlaying()) { report("Editor.EditWhilePlaying", {}, "[Warning] "); return false; }
 
     std::filesystem::path source;
     if (state.hooks && state.hooks->chooseAssetImportSource)
@@ -126,7 +126,7 @@ bool BrowseAndImportToolkitAsset(ToolkitAppState& state)
         if (!GetOpenFileNameW(&dialog))
         {
             const DWORD error = CommDlgExtendedError();
-            if (error) report("Editor.AssetImportFailed", std::to_string(error));
+            if (error) report("Editor.AssetImportFailed", std::to_string(error), "[Error] ");
             return false;
         }
         source = file;
@@ -202,7 +202,7 @@ void PollBackgroundImportAndExport(ToolkitAppState& state)
                     for (const auto& issue : issues)
                     {
                         const auto message = state.text.GetText(issue.key) + ": " + issue.detail;
-                        state.shell->AppendConsoleLine(message);
+                        state.shell->AppendConsoleLine("[Warning] " + message);
                         Log(LogLevel::Warning, message);
                     }
                 }
@@ -211,7 +211,7 @@ void PollBackgroundImportAndExport(ToolkitAppState& state)
         if (result.key.empty()) result.key = result.success ? "Editor.AssetImportSucceeded" : "Editor.AssetImportFailed";
         state.importStatus = state.text.GetText(result.key) + (result.detail.empty() ? std::string{} : ": " + result.detail);
         state.shell->SetAssetsPreviewText(state.importStatus);
-        state.shell->AppendConsoleLine(state.importStatus);
+        state.shell->AppendConsoleLine((result.success ? std::string{} : std::string("[Error] ")) + state.importStatus);
         Log(result.success ? LogLevel::Info : LogLevel::Warning, state.importStatus);
         state.shell->FocusPanel(EditorPanelId::Assets);
     }
@@ -290,7 +290,13 @@ void SyncToolkitHierarchyAssetsAndInspector(ToolkitAppState& state)
         node.depth = item.depth;
         node.hasChildren = item.hasChildren;
         node.expanded = true;
-        if (const EntityRecord* record = editWorld.Get(editWorld.FindByStableId(item.id))) node.label = record->name;
+        const EntityHandle handle = editWorld.FindByStableId(item.id);
+        if (const EntityRecord* record = editWorld.Get(handle))
+        {
+            node.label = record->name;
+            node.enabled = editWorld.IsEnabled(handle);
+            node.prefab = editWorld.GetPrefabLink(handle) != nullptr;
+        }
         else node.label = "Entity " + std::to_string(item.id);
         hierarchy.push_back(std::move(node));
     }
@@ -309,6 +315,7 @@ void SyncToolkitHierarchyAssetsAndInspector(ToolkitAppState& state)
         if (extension == ".fbx" || extension == ".gltf" || extension == ".glb") type = "model";
         else if (IsPrefabDocumentPath(resolved)) type = "prefab";
         else if (IsMaterialDocumentPath(resolved)) type = "material";
+        else if (asset_io::Utf8(resolved).ends_with(".scene.json")) type = "scene";
         else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".tga") type = "texture";
         else if (extension == ".wav" || extension == ".ogg") type = "audio";
         else if (extension == ".hlsl" || extension == ".hlsli") type = "shader";
@@ -429,6 +436,63 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         OpenToolkitImportConfirm(state, std::move(sources));
     };
     state.shell->SetAssetImportHandler([&state]() { BrowseAndImportToolkitAsset(state); });
+    state.shell->SetAssetActivateHandler([&state](const std::string& path) {
+        if (state.session.IsPlaying()) return;
+        const std::filesystem::path target = asset_io::FromUtf8(path);
+        std::string ext = asset_io::Utf8(target.extension());
+        for (char& ch : ext) if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+        if (path.ends_with(".scene.json"))
+        {
+            if (state.session.Dirty()) { state.shell->SetStatus(state.text.GetText("EditorUi.SaveFirst")); return; }
+            if (state.session.Open(target, true))
+            {
+                state.assetState.assetName.clear();
+                state.externalChange.Reset(state.session.Path());
+                state.shell->FocusPanel(EditorPanelId::Viewport);
+            }
+            return;
+        }
+        if (ext == ".cs")
+        {
+            CodeEditorSettings settings;
+            settings.executable = asset_io::FromUtf8(state.host.Preferences().externalEditor);
+            if (!state.scriptWorkflow.OpenSelected(settings))
+                state.shell->SetStatus(state.scriptWorkflow.Status());
+            return;
+        }
+        if (IsMaterialDocumentPath(target))
+        {
+            state.shell->FocusPanel(EditorPanelId::Material);
+            return;
+        }
+        if (IsPrefabDocumentPath(target) && !state.assetState.modelId.empty())
+        {
+            std::string error;
+            StableEntityId rootId = 0;
+            PrefabDocument doc;
+            Transform rootTransform{};
+            if (ReadPrefabDocument(state.assets.Resolve(state.assetState.modelId), doc, error))
+                rootTransform.scale = PrefabRootAuthoredScale(doc);
+            if (InstantiatePrefabIntoScene(state.session, state.assets, state.assetState.modelId,
+                                           rootTransform, rootId, error, state.hooks))
+            {
+                state.assetState.assetName.clear();
+                state.viewportController.Action("Frame", state.session, state.assets);
+                state.shell->FocusPanel(EditorPanelId::Viewport);
+            }
+            return;
+        }
+        if ((ext == ".fbx" || ext == ".glb" || ext == ".gltf") && !state.assetState.modelId.empty())
+        {
+            std::string error;
+            if (AddModelToScene(state.session, state.assets, state.assetState.modelId, error))
+            {
+                state.assetState.assetName.clear();
+                state.viewportController.Action("Frame", state.session, state.assets);
+                state.shell->FocusPanel(EditorPanelId::Viewport);
+            }
+        }
+    });
     state.shell->SetAssetDragHandler([&state](const std::string& path, float x, float y, bool active) {
         if (!active || !state.camera || state.session.IsPlaying())
         {
@@ -457,7 +521,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         {
             const std::string msg = LocalizedToolkitStatus(state.text, error, "EditorUi.DropFailed");
             state.shell->SetStatus(msg);
-            state.shell->AppendConsoleLine(msg);
+            state.shell->AppendConsoleLine("[Error] " + msg);
             return false;
         }
         state.assetState.assetName.clear();
@@ -683,7 +747,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             {
                 const std::string msg = LocalizedToolkitStatus(state.text, error, "EditorUi.SaveFailed");
                 state.shell->SetStatus(msg);
-                state.shell->AppendConsoleLine(msg);
+                state.shell->AppendConsoleLine("[Error] " + msg);
             }
             return saved;
         }
@@ -704,7 +768,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
                         if (state.shell)
                         {
                             state.shell->SetStatus(msg);
-                            state.shell->AppendConsoleLine(msg);
+                            state.shell->AppendConsoleLine("[Error] " + msg);
                         }
                         return;
                     }
@@ -731,7 +795,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             {
                 const std::string msg = LocalizedToolkitStatus(state.text, bakeError, "Navigation.BakeFailed");
                 state.shell->SetStatus(msg);
-                state.shell->AppendConsoleLine(msg);
+                state.shell->AppendConsoleLine("[Error] " + msg);
             }
             return started;
         }
@@ -747,7 +811,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         {
             state.importStatus = LocalizedToolkitStatus(state.text, error, "Editor.AssetImportFailed");
             state.shell->SetStatus(state.importStatus);
-            state.shell->AppendConsoleLine(state.importStatus);
+            state.shell->AppendConsoleLine("[Error] " + state.importStatus);
         }
         return saved;
     });
@@ -768,6 +832,8 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         return !state.assetState.inspectUi && state.shell && state.shell->BeginRename();
     });
     commands.Register(EditorCommandId::TogglePanel, [&state](const EditorCommand& command) {
+        if (command.argument.starts_with("@layout:"))
+            return state.shell->ApplyLayoutPreset(std::string_view(command.argument).substr(8));
         if (command.argument == "ui-designer") state.assetState.inspectUi = true;
         EditorPanelId panel = EditorPanelId::None;
         if (!EditorPanelFromName(command.argument, panel)) return false;

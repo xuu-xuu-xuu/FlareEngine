@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Windows.h>
+#include <vector>
 
 namespace se
 {
@@ -23,5 +24,6 @@ private:
     ULONG_PTR graphics_ = 0;
     ULONGLONG start_ = 0;
     SIZE size_{};
+    std::vector<HWND> hiddenControls_;
 };
 }

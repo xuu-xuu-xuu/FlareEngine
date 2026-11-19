@@ -52,6 +52,8 @@ struct DockNode
 };
 
 [[nodiscard]] DockNode DefaultEditorDockLayout();
+[[nodiscard]] DockNode StandardShelfDockLayout();
+[[nodiscard]] DockNode WideViewportDockLayout();
 [[nodiscard]] const char* EditorPanelName(EditorPanelId panel) noexcept;
 [[nodiscard]] bool EditorPanelFromName(std::string_view name, EditorPanelId& panel) noexcept;
 

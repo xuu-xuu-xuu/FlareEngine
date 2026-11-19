@@ -74,6 +74,12 @@ void EditorShell::BuildChromeMenus()
         chrome_.AddMenu(panels, PanelLabel(panel), EditorCommandId::TogglePanel, EditorPanelName(panel));
     }
     chrome_.AddMenu(panels, Text("EditorUi.FocusViewport", "Focus Viewport"), EditorCommandId::FocusViewport);
+    chrome_.AddMenu(panels, Text("EditorUi.LayoutStandard", "Standard Shelf Layout (Unity)"),
+                    EditorCommandId::TogglePanel, "@layout:standard");
+    chrome_.AddMenu(panels, Text("EditorUi.LayoutWide", "Wide Viewport Layout (UE)"),
+                    EditorCommandId::TogglePanel, "@layout:wide");
+    chrome_.AddMenu(panels, Text("EditorUi.LayoutReset", "Reset Default Layout"),
+                    EditorCommandId::TogglePanel, "@layout:reset");
     const std::string help = Text("EditorUi.Help", "Help");
     chrome_.AddMenu(help, Text("EditorUi.About", "About"), EditorCommandId::TogglePanel, "about");
     chrome_.AddMenu(help, Text("EditorUi.Diagnostics", "Diagnostics"), EditorCommandId::TogglePanel, "diagnostics");
@@ -188,6 +194,47 @@ void EditorShell::BuildChrome()
         });
         toolbarButtons_.push_back(button);
     }
+
+    const auto addQuickButton = [this](std::string action, std::string label, EditorCommandId cmd,
+                                       std::string arg, bool rightAligned) {
+        const UiElementHandle button = document_.CreateElement(UiElementKind::Button);
+        if (!document_.SetParent(button, toolbar_)) return;
+        const std::size_t idx = quickButtons_.size();
+        dispatcher_.AddHandler(button, UiEventType::PointerDown, [this, idx](UiInputEvent& event) {
+            if (event.button != 0) return;
+            const auto& q = quickButtons_[idx];
+            const auto bounds = layout_.Rect(q.button);
+            if (q.action == "create")
+            {
+                if (openMenu_ == "@create") CloseMenu();
+                else OpenCreateMenu(EditorPanelId::None, bounds.x, menuHeight_ + toolbarHeight_);
+            }
+            else if (q.action == "layout")
+            {
+                if (openMenu_ == "@layout") CloseMenu();
+                else OpenLayoutMenu(bounds.x, menuHeight_ + toolbarHeight_);
+            }
+            else if (!commands_.CanExecute(q.command))
+            {
+                SetStatus(Text("EditorUi.CommandUnavailable", "Command unavailable") + ": " + q.label);
+            }
+            else
+            {
+                commands_.Execute(EditorCommand{q.command, q.argument});
+            }
+            event.handled = true;
+        });
+        quickButtons_.push_back({button, std::move(action), std::move(label), cmd, std::move(arg), rightAligned});
+    };
+    addQuickButton("save", Text("EditorUi.Save", "Save"), EditorCommandId::Save, {}, false);
+    addQuickButton("undo", "↶", EditorCommandId::Undo, {}, false);
+    addQuickButton("redo", "↷", EditorCommandId::Redo, {}, false);
+    addQuickButton("create", Text("EditorUi.QuickCreate", "+ Create") + " ▾", EditorCommandId::CreateEntity, {}, false);
+    addQuickButton("import", Text("EditorUi.Import", "Import"), EditorCommandId::Import, {}, false);
+
+    addQuickButton("layout", Text("EditorUi.Layout", "Layout") + " ▾", EditorCommandId::TogglePanel, {}, true);
+    addQuickButton("build", Text("EditorUi.QuickBuild", "Build & Export"), EditorCommandId::TogglePanel, "build-export", true);
+    addQuickButton("settings", Text("EditorUi.ProjectSettings", "Project Settings"), EditorCommandId::OpenSettings, {}, true);
 
     viewportTools_ = document_.CreateElement(UiElementKind::Panel);
     document_.SetParent(viewportTools_, root_);
@@ -321,7 +368,11 @@ void EditorShell::BindRootInputHandlers()
                 insideDropdown = dropdown.x <= event.x && event.x < dropdown.x + dropdown.width &&
                     dropdown.y <= event.y && event.y < dropdown.y + dropdown.height;
             }
-            if (!insideDropdown && (!openMenu_.empty() && (openMenu_.front() == '@' || event.y >= menuHeight_ + toolbarHeight_)))
+            bool onPopupTrigger = (event.target == assetsTypeElement_);
+            for (const auto& q : quickButtons_)
+                if ((q.action == "create" || q.action == "layout") && event.target == q.button) onPopupTrigger = true;
+            if (!insideDropdown && !onPopupTrigger &&
+                (!openMenu_.empty() && (openMenu_.front() == '@' || event.y >= menuHeight_ + toolbarHeight_)))
             {
                 CloseMenu();
             }
@@ -354,6 +405,18 @@ void EditorShell::BindRootInputHandlers()
             DragSplitter(event.x, event.y);
             event.handled = true;
             event.StopPropagation();
+            return;
+        }
+        int nextHoveredSplitter = -1;
+        if (dragTabPanel_ == EditorPanelId::None && !MenuOpen() && !ColorPickerOpen() && !confirmOpen_)
+        {
+            if (const auto* handle = FindSplitter(event.x, event.y))
+                nextHoveredSplitter = static_cast<int>(handle - splitHandles_.data());
+        }
+        if (nextHoveredSplitter != hoveredSplitterIndex_)
+        {
+            hoveredSplitterIndex_ = nextHoveredSplitter;
+            if (initialized_) UpdateDockRects();
         }
     }, UiEventPhase::Capture);
 
@@ -464,11 +527,20 @@ void EditorShell::UpdateTransport()
     for (auto item = document_.FirstChild(menuDropdown_); item.IsValid(); item = document_.NextSibling(item))
     {
         auto style = document_.Style(item);
-        style.background = hoveredChrome_ == item ? UiInk(flare::workspace::Selection) : kSurface;
+        style.background = hoveredChrome_ == item ? UiInk(flare::workspace::Selection) : UiInk(flare::workspace::Panel);
         document_.SetStyle(item, style);
     }
-    constexpr float cellWidth = 35.0f;
-    const float left = std::floor((width_ - cellWidth * toolbarButtons_.size()) * 0.5f);
+    if (toolbar_.IsValid())
+    {
+        auto barStyle = document_.Style(toolbar_);
+        barStyle.background = previewPaused_ ? UiInk(flare::workspace::PauseTint)
+            : (previewPlaying_ ? UiInk(flare::workspace::PlayTint) : kSurface);
+        document_.SetStyle(toolbar_, barStyle);
+    }
+
+    constexpr float cellWidth = 38.0f;
+    const float transportSpan = cellWidth * static_cast<float>(toolbarButtons_.size());
+    const float left = std::floor((width_ - transportSpan) * 0.5f);
     for (std::size_t i = 0; i < toolbarButtons_.size(); ++i)
     {
         const auto button = toolbarButtons_[i];
@@ -478,17 +550,70 @@ void EditorShell::UpdateTransport()
         const bool enabled = play || (previewPlaying_ && (pause || previewPaused_));
         const bool active = (play && previewPlaying_) || (pause && previewPaused_);
         const char* icon = play ? (previewPlaying_ ? "■" : "▶") : (pause ? "Ⅱ" : "▸│");
-        const auto base = active || pressedTransport_ == button ? flare::workspace::Pressed :
-                          (hoveredChrome_ == button && enabled ? flare::workspace::Hover : flare::workspace::Header);
-        auto style = ButtonStyle(left + cellWidth * i, 4, cellWidth - 1, toolbarHeight_ - 8, UiInk(base));
-        style.color = enabled ? kText : kMuted;
-        // 传输区使用固定图标格；字符在不同字体中的宽度由文本服务测量。
-        style.padding.left = std::max(0.0f, (cellWidth - 1 - MeasuredWidth(icon, style.fontSize)) * 0.5f);
+        const auto activeColor = play ? flare::Success : flare::Warning;
+        const auto base = active ? activeColor :
+                          (pressedTransport_ == button ? flare::workspace::Pressed :
+                          (hoveredChrome_ == button && enabled ? flare::workspace::Hover : flare::workspace::Header));
+        auto style = ButtonStyle(left + cellWidth * i, 4, cellWidth - 2, toolbarHeight_ - 8, UiInk(base));
+        style.color = enabled ? UiInk(flare::Heading) : kMuted;
+        style.borderWidth = 1.0f;
+        style.borderColor = active ? UiInk(flare::Heading, 0.45f) : kBorder;
+        style.padding.left = std::max(0.0f, (cellWidth - 2 - MeasuredWidth(icon, style.fontSize)) * 0.5f);
         style.padding.right = 0.0f;
         document_.SetStyle(button, style);
         document_.SetText(button, icon);
         document_.SetEnabled(button, enabled);
     }
+
+    float leftX = 8.0f;
+    float rightX = width_ - 8.0f;
+    const float leftLimit = left - 10.0f;
+    const float rightLimit = left + transportSpan + 10.0f;
+    for (const auto& q : quickButtons_)
+    {
+        if (!q.button.IsValid()) continue;
+        std::string text = q.label;
+        if (q.action == "save" && dirty_) text += " ●";
+        const bool compactIcon = q.action == "undo" || q.action == "redo";
+        const float btnW = compactIcon ? 28.0f : (MeasuredWidth(text, 12.5f) + 16.0f);
+        float x = 0.0f;
+        bool fits = false;
+        if (!q.rightAligned)
+        {
+            fits = (leftX + btnW <= leftLimit);
+            x = leftX;
+            if (fits) leftX += btnW + 4.0f;
+        }
+        else
+        {
+            fits = (rightX - btnW >= rightLimit);
+            x = rightX - btnW;
+            if (fits) rightX -= btnW + 4.0f;
+        }
+        document_.SetVisible(q.button, fits);
+        if (!fits) continue;
+
+        const bool menuActive = (q.action == "create" && openMenu_ == "@create") ||
+                                (q.action == "layout" && openMenu_ == "@layout");
+        const bool accent = (q.action == "save" && dirty_) || menuActive;
+        const bool disabled = previewPlaying_ && (q.action == "create" || q.action == "import");
+        const auto fill = accent ? flare::workspace::Selection :
+                          (hoveredChrome_ == q.button && !disabled ? flare::workspace::Hover : flare::workspace::Header);
+        auto style = ButtonStyle(x, 4.0f, btnW, toolbarHeight_ - 8.0f, UiInk(fill));
+        style.fontSize = 12.5f;
+        style.color = disabled ? kMuted : UiInk(flare::Text);
+        style.borderWidth = 1.0f;
+        style.borderColor = accent ? UiInk(flare::workspace::Focus) : kBorder;
+        if (compactIcon)
+        {
+            style.padding.left = std::max(0.0f, (btnW - MeasuredWidth(text, 12.5f)) * 0.5f);
+            style.padding.right = 0.0f;
+        }
+        document_.SetText(q.button, text);
+        document_.SetStyle(q.button, style);
+        document_.SetEnabled(q.button, !disabled);
+    }
+
     for (std::size_t i = 0; i < menuButtons_.size(); ++i)
     {
         const auto button = menuButtons_[i];
@@ -506,52 +631,81 @@ void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, 
     previewPaused_ = playing && paused;
     const auto surface = SurfaceRoot(dock_.SurfaceFor(EditorPanelId::Viewport));
     const auto viewport = layout_.Rect(ViewportPanel());
-    const float available = std::max(0.f, viewport.width - 10);
-    const bool visible = !playing && document_.Visible(ViewportPanel());
+    const float available = std::max(0.f, viewport.width - 16.f);
+    const bool visible = !playing && document_.Visible(ViewportPanel()) && viewport.width > 48.f && viewport.height > 36.f;
     for (auto group : {viewportTools_, transformTools_})
     {
         document_.SetParent(group, surface.IsValid() ? surface : root_);
         document_.SetVisible(group, visible);
     }
+    if (!visible) return;
+
+    const bool wideTools = available >= 540.f;
     const std::string labels[] = {
-        "✥", "↔", "⟳", "⤢",
+        wideTools ? Text("EditorUi.ToolViewShort", "Hand Q") : "✥",
+        wideTools ? Text("EditorUi.ToolMoveShort", "Move W") : "↔",
+        wideTools ? Text("EditorUi.ToolRotateShort", "Rotate E") : "⟳",
+        wideTools ? Text("EditorUi.ToolScaleShort", "Scale R") : "⤢",
         Text(local ? "EditorUi.LocalSpace" : "EditorUi.WorldSpace", local ? "Local" : "World"),
         Text(center ? "EditorUi.Center" : "EditorUi.Pivot", center ? "Center" : "Pivot"),
-        Text("EditorUi.ViewportSky", "Sky"), Text("EditorUi.ViewportGrid", "Grid"),
-        Text("EditorUi.ViewportGizmos", "Gizmos"), Text("EditorUi.FrameAll", "Frame All")};
+        Text("EditorUi.ViewportSky", "Sky"),
+        Text("EditorUi.ViewportGrid", "Grid"),
+        Text("EditorUi.ViewportGizmos", "Gizmos"),
+        Text("EditorUi.FrameAll", "Frame All")};
     const bool active[] = {tool == 0, tool == 1, tool == 2, tool == 3, local, center, sky, grid, gizmos, false};
-    float x = 0, y = 0, maxWidth = 0;
-    for (std::size_t i = 0; i < viewportToolButtons_.size(); ++i)
+
+    constexpr float pillH = 24.f;
+    float tx = 1.f;
+    for (std::size_t i = 0; i < 4 && i < viewportToolButtons_.size(); ++i)
     {
         const auto button = viewportToolButtons_[i];
         const auto fill = active[i] ? flare::workspace::Selection :
             (hoveredChrome_ == button ? flare::workspace::Hover : flare::workspace::Header);
-        const float width = i < 4 ? 28.f : std::min(available, MeasuredWidth(labels[i], 13.f) + 16.f);
-        if (i >= 4 && x > 0 && x + width > available) { x = 0; y += 24; }
-        auto style = ButtonStyle(i < 4 ? 0 : x, i < 4 ? 24.0f * i : y, width, 23, UiInk(fill));
-        if (i < 4)
+        const float w = wideTools ? (MeasuredWidth(labels[i], 12.f) + 14.f) : 28.f;
+        auto style = ButtonStyle(tx, 1.f, w, pillH, UiInk(fill));
+        style.fontSize = 12.f;
+        style.color = active[i] ? UiInk(flare::Heading) : kText;
+        if (!wideTools)
         {
-            style.padding.left = std::max(0.0f, (width - MeasuredWidth(labels[i], 13.f)) * 0.5f);
-            style.padding.right = 0;
-        }
-        else
-        {
-            x += width + 1;
-            maxWidth = std::max(maxWidth, x - 1);
+            style.padding.left = std::max(0.0f, (w - MeasuredWidth(labels[i], 12.f)) * 0.5f);
+            style.padding.right = 0.0f;
         }
         document_.SetText(button, labels[i]);
         document_.SetStyle(button, style);
+        tx += w + 1.f;
     }
-    const float height = std::min(y + 23, std::max(0.f, viewport.height - 10));
-    auto bar = AbsoluteStyle(viewport.x + 5, viewport.y + 5, maxWidth, height);
-    bar.background = kBorder;
-    bar.overflow = UiOverflow::Hidden;
-    document_.SetStyle(viewportTools_, bar);
-    auto tools = AbsoluteStyle(viewport.x + 5, viewport.y + 10 + height, std::min(28.f, available),
-                               std::clamp(viewport.height - height - 15, 0.f, 95.f));
-    tools.background = kBorder;
+    const float transformW = std::min(tx, available);
+    auto tools = AbsoluteStyle(viewport.x + 8.f, viewport.y + 8.f, transformW, pillH + 2.f);
+    tools.background = UiInk(flare::workspace::Divider, 0.92f);
     tools.overflow = UiOverflow::Hidden;
     document_.SetStyle(transformTools_, tools);
+
+    float vx = 1.f, vy = 1.f, maxWidth = 0.f;
+    const float sameRowLimit = std::max(0.f, available - transformW - 8.f);
+    const bool placeNextToTransform = sameRowLimit >= 220.f;
+    const float rowBudget = placeNextToTransform ? sameRowLimit : available;
+    for (std::size_t i = 4; i < viewportToolButtons_.size(); ++i)
+    {
+        const auto button = viewportToolButtons_[i];
+        const auto fill = active[i] ? flare::workspace::Selection :
+            (hoveredChrome_ == button ? flare::workspace::Hover : flare::workspace::Header);
+        const float width = std::min(rowBudget, MeasuredWidth(labels[i], 12.f) + 14.f);
+        if (vx > 1.f && vx + width > rowBudget) { vx = 1.f; vy += pillH + 1.f; }
+        auto style = ButtonStyle(vx, vy, width, pillH, UiInk(fill));
+        style.fontSize = 12.f;
+        style.color = active[i] ? UiInk(flare::Heading) : kText;
+        vx += width + 1.f;
+        maxWidth = std::max(maxWidth, vx);
+        document_.SetText(button, labels[i]);
+        document_.SetStyle(button, style);
+    }
+    const float barX = placeNextToTransform ? (viewport.x + 8.f + transformW + 8.f) : (viewport.x + 8.f);
+    const float barY = placeNextToTransform ? (viewport.y + 8.f) : (viewport.y + 8.f + pillH + 6.f);
+    const float height = std::min(vy + pillH + 1.f, std::max(0.f, viewport.height - (barY - viewport.y) - 4.f));
+    auto bar = AbsoluteStyle(barX, barY, maxWidth, height);
+    bar.background = UiInk(flare::workspace::Divider, 0.92f);
+    bar.overflow = UiOverflow::Hidden;
+    document_.SetStyle(viewportTools_, bar);
 }
 
 void EditorShell::AppendConsoleLine(std::string line)
@@ -563,6 +717,33 @@ void EditorShell::AppendConsoleLine(std::string line)
         console_->SetItemCount(static_cast<int>(lines_.size()));
         console_->Sync();
     }
+}
+
+void EditorShell::ClearConsole()
+{
+    lines_.clear();
+    if (console_)
+    {
+        console_->SetScrollOffset(0.0f);
+        console_->Invalidate();
+        console_->SetItemCount(0);
+        console_->Sync();
+    }
+    SetStatus(Text("EditorUi.ConsoleCleared", "Console cleared"));
+}
+
+bool EditorShell::ApplyLayoutPreset(std::string_view preset)
+{
+    DockNode targetLayout = DefaultEditorDockLayout();
+    if (preset == "standard") targetLayout = StandardShelfDockLayout();
+    else if (preset == "wide") targetLayout = WideViewportDockLayout();
+    else if (preset != "reset" && preset != "default") return false;
+
+    dock_ = EditorDock(std::move(targetLayout));
+    if (!dock_.Find(activePanel_)) SetActivePanel(EditorPanelId::Viewport);
+    MarkDockDirty(true, true);
+    SetStatus(Text("EditorUi.LayoutApplied", "Workspace layout applied"));
+    return true;
 }
 
 void EditorShell::SetStatus(std::string status)
@@ -666,7 +847,39 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
         if (panel == EditorPanelId::Hierarchy && parent != 0)
             add("EditorUi.CreatePrefab", "Create Prefab", EditorCommandId::CreateAsset, "prefab");
     }
-    ShowMenu(SurfaceRoot(dock_.SurfaceFor(panel)), x, y, 190.0f, items, parent);
+    const UiElementHandle menuSurface = panel == EditorPanelId::None ? root_ : SurfaceRoot(dock_.SurfaceFor(panel));
+    ShowMenu(menuSurface, x, y, 210.0f, items, parent);
+}
+
+void EditorShell::OpenLayoutMenu(float x, float y)
+{
+    if (closeModalOpen_ || confirmOpen_) return;
+    CloseMenu();
+    openMenu_ = "@layout";
+    std::vector<EditorMenuItem> items{
+        {{}, Text("EditorUi.LayoutStandard", "Standard Shelf Layout (Unity)"), EditorCommandId::TogglePanel, "@layout:standard"},
+        {{}, Text("EditorUi.LayoutWide", "Wide Viewport Layout (UE)"), EditorCommandId::TogglePanel, "@layout:wide"},
+        {{}, Text("EditorUi.LayoutReset", "Reset Default Layout"), EditorCommandId::TogglePanel, "@layout:reset"},
+    };
+    ShowMenu(root_, x, y, 240.0f, items);
+}
+
+void EditorShell::OpenAssetTypeMenu(float x, float y)
+{
+    if (closeModalOpen_ || confirmOpen_) return;
+    CloseMenu();
+    openMenu_ = "@asset-type";
+    std::vector<EditorMenuItem> items{
+        {{}, Text("EditorUi.FilterAll", "All"), EditorCommandId::SetProperty, "@asset-type:"},
+        {{}, Text("EditorUi.DocumentScene", "Scene"), EditorCommandId::SetProperty, "@asset-type:scene"},
+        {{}, Text("EditorUi.AssetModel", "Model"), EditorCommandId::SetProperty, "@asset-type:model"},
+        {{}, Text("EditorUi.DocumentMaterial", "Material"), EditorCommandId::SetProperty, "@asset-type:material"},
+        {{}, Text("EditorUi.AssetTexture", "Texture"), EditorCommandId::SetProperty, "@asset-type:texture"},
+        {{}, Text("EditorUi.AssetPrefab", "Prefab"), EditorCommandId::SetProperty, "@asset-type:prefab"},
+        {{}, Text("EditorUi.AssetScript", "C# Script"), EditorCommandId::SetProperty, "@asset-type:C#"},
+        {{}, Text("EditorUi.AssetAudio", "Audio"), EditorCommandId::SetProperty, "@asset-type:audio"},
+    };
+    ShowMenu(SurfaceRoot(dock_.SurfaceFor(EditorPanelId::Assets)), x, y, 160.0f, items);
 }
 
 void EditorShell::ShowMenu(UiElementHandle surface, float x, float y, float width,
@@ -681,9 +894,9 @@ void EditorShell::ShowMenu(UiElementHandle surface, float x, float y, float widt
     menuDropdown_ = document_.CreateElement(UiElementKind::Panel);
     document_.SetParent(menuDropdown_, surface);
     auto panelStyle = AbsoluteStyle(left, top, width, height);
-    panelStyle.background = kSurface;
+    panelStyle.background = UiInk(flare::workspace::Panel);
     panelStyle.borderWidth = 1.0f;
-    panelStyle.borderColor = kBorder;
+    panelStyle.borderColor = UiInk(flare::workspace::Focus);
     document_.SetStyle(menuDropdown_, panelStyle);
     for (std::size_t i = 0; i < items.size(); ++i)
     {
@@ -691,13 +904,31 @@ void EditorShell::ShowMenu(UiElementHandle surface, float x, float y, float widt
         const auto button = document_.CreateElement(UiElementKind::Button);
         document_.SetParent(button, menuDropdown_);
         document_.SetStyle(button, ButtonStyle(4.0f, 4.0f + static_cast<float>(i) * 26.0f,
-                                               width - 8.0f, 24.0f, kSurface));
+                                               width - 8.0f, 24.0f, UiInk(flare::workspace::Panel)));
         document_.SetText(button, item.label);
         dispatcher_.AddHandler(button, UiEventType::PointerDown,
             [this, command = EditorCommand{item.command, item.argument, target}, label = item.label](UiInputEvent& event) {
                 event.handled = true;
                 if (event.button != 0) return;
                 CloseMenu();
+                if (command.argument.starts_with("@layout:"))
+                {
+                    ApplyLayoutPreset(std::string_view(command.argument).substr(8));
+                    return;
+                }
+                if (command.argument.starts_with("@asset-type:"))
+                {
+                    assetsModel_.SetTypeFilter(std::string_view(command.argument).substr(12));
+                    if (assetsList_)
+                    {
+                        assetsList_->SetScrollOffset(0.0f);
+                        assetsList_->Invalidate();
+                        assetsList_->SetItemCount(static_cast<int>(assetsModel_.Filtered().size()));
+                        assetsList_->Sync();
+                    }
+                    UpdatePanelContentRects();
+                    return;
+                }
                 if (!commands_.CanExecute(command.id))
                     SetStatus(Text("EditorUi.CommandUnavailable", "Command unavailable") + ": " + label);
                 else commands_.Execute(command);

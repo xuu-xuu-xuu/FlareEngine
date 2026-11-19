@@ -87,6 +87,8 @@ public:
     [[nodiscard]] std::string WindowLabel(std::uint32_t id) const;
 
     void AppendConsoleLine(std::string line);
+    void ClearConsole();
+    bool ApplyLayoutPreset(std::string_view preset);
     void SetHierarchy(std::vector<EditorHierarchyNode> nodes);
     void SetAssets(std::vector<EditorAssetEntry> entries);
     void SetInspector(std::uint64_t id, std::string label, std::vector<EditorProperty> properties);
@@ -104,6 +106,7 @@ public:
     void CancelPropertyInteraction();
     void SetReparentHandler(std::function<bool(std::uint64_t, std::uint64_t)> handler);
     void SetAssetSelectionHandler(std::function<void(std::string)> handler);
+    void SetAssetActivateHandler(std::function<void(std::string)> handler) { assetActivateHandler_ = std::move(handler); }
     void SetAssetImportHandler(std::function<void()> handler);
     void SetAssetDragHandler(std::function<void(const std::string&, float, float, bool)> handler);
     void SetAssetDropHandler(std::function<bool(const std::string&, float, float)> handler);
@@ -310,6 +313,8 @@ private:
     void UpdatePanelContentRects();
     void MarkDockDirty(bool structural, bool save);
     void OpenMenu(const std::string& menu);
+    void OpenLayoutMenu(float x, float y);
+    void OpenAssetTypeMenu(float x, float y);
     void ShowMenu(UiElementHandle surface, float x, float y, float width,
                   const std::vector<EditorMenuItem>& items, std::uint64_t target = 0);
     void CloseMenu();
@@ -403,13 +408,22 @@ private:
     std::unique_ptr<InspectorColor> inspectorColor_;
     std::function<bool(std::uint64_t, std::uint64_t)> reparentHandler_;
     std::function<void(std::string)> assetSelectionHandler_;
+    std::function<void(std::string)> assetActivateHandler_;
     std::function<void()> assetImportHandler_;
+    UiElementHandle assetsTypeElement_{};
     UiElementHandle assetsImportElement_{};
     UiElementHandle assetsPreview_{};
+    UiElementHandle consoleClearButton_{};
     void CancelAssetDrag();
     std::uint64_t dragHierarchyId_ = 0;
     float hierarchyDragStartX_ = 0.0f, hierarchyDragStartY_ = 0.0f;
     bool draggingHierarchy_ = false;
+    int hoveredHierarchyRow_ = -1;
+    int hoveredAssetRow_ = -1;
+    std::uint64_t lastHierarchyClickId_ = 0;
+    std::uint64_t lastHierarchyClickTick_ = 0;
+    std::string lastAssetClickPath_;
+    std::uint64_t lastAssetClickTick_ = 0;
     std::unique_ptr<EditorAssetDragState> assetDrag_;
     std::unique_ptr<UiTextEdit> inspectorEdit_;
     UiElementHandle inspectorEditElement_{};
@@ -447,9 +461,20 @@ private:
     UiElementHandle toolbar_{};
     UiElementHandle statusBar_{};
     UiElementHandle menuDropdown_{};
+    struct QuickToolButton
+    {
+        UiElementHandle button{};
+        std::string action;
+        std::string label;
+        EditorCommandId command = EditorCommandId::Save;
+        std::string argument;
+        bool rightAligned = false;
+    };
     std::vector<UiElementHandle> menuButtons_;
     std::vector<UiElementHandle> toolbarButtons_;
+    std::vector<QuickToolButton> quickButtons_;
     UiElementHandle hoveredChrome_;
+    int hoveredSplitterIndex_ = -1;
     UiElementHandle pressedTransport_;
     bool previewPlaying_ = false;
     bool previewPaused_ = false;

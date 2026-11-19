@@ -3,6 +3,7 @@
 #include "D3D12Shader.h"
 #include "D3D12Result.h"
 #include "D3D12Presentation.h"
+#include <algorithm>
 #include <cstring>
 #include <cmath>
 
@@ -171,6 +172,7 @@ bool ValidD3D12ClusterProjection(const se::Mat4& projection,float nearPlane,floa
     const auto nearPoint=*inverse*se::Vec4{0,0,0,1},farPoint=*inverse*se::Vec4{0,0,1,1};
     if(!se::IsFinite(nearPoint)||!se::IsFinite(farPoint)||std::abs(nearPoint.w)<1e-12f||std::abs(farPoint.w)<1e-12f)return false;
     const float actualNear=-nearPoint.z/nearPoint.w,actualFar=-farPoint.z/farPoint.w;
+    const float farTolerance=std::clamp((farPlane/nearPlane)*2e-6f,.002f,.05f);
     return se::IsFinite(actualNear)&&se::IsFinite(actualFar)&&std::abs(actualNear-nearPlane)<=nearPlane*.002f
-        &&std::abs(actualFar-farPlane)<=farPlane*.002f;
+        &&std::abs(actualFar-farPlane)<=farPlane*farTolerance;
 }

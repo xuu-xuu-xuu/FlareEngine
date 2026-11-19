@@ -64,6 +64,13 @@ std::optional<Aabb> EditorViewportController::SceneBounds(const World& w,AssetSt
 bool EditorViewportController::FrameSelection(EditorSession& s,AssetStore& assets,bool follow)
 {
     if(s.IsPlaying()||Captured())return false;
+    if(s.Selected()==0)
+    {
+        const auto all=SceneBounds(s.EditWorld(),assets);if(!all)return false;
+        pivot_=(all->minimum+all->maximum)*.5f;distance_=std::max(1.f,Length(all->maximum-all->minimum)*1.25f);
+        camera_.state.position=pivot_-Forward(camera_)*distance_;follow_=0;
+        return true;
+    }
     const auto e=s.EditWorld().FindByStableId(s.Selected());
     if(!e)return false;
     const auto b=EditorEntityBounds(s.EditWorld(),assets,e);if(!b)return false;
@@ -202,7 +209,12 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
     if(ev.type==PointerWheel&&(canStart||Flying()))
     {
         if(Flying()){clickPending_=false;speed_=std::clamp(speed_*std::exp(ev.wheel*.2f),.05f,1000.f);}
-        else {follow_=0;Dolly(-ev.wheel*.12f);}
+        else
+        {
+            follow_=0;
+            const float wheelFactor=(ev.shift?2.5f:1.f)*(ev.control?.3f:1.f);
+            Dolly(-ev.wheel*.12f*wheelFactor);
+        }
         return true;
     }
     if(ev.type==PointerDown&&canStart&&!Captured()&&snapshot_)
@@ -215,7 +227,7 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
         else if(ev.button==1)gesture_=Gesture::Fly;
         else if(ev.button==0)
         {
-            float nearest=9;const HandleSegment* hit=nullptr;
+            float nearest=12.f;const HandleSegment* hit=nullptr;
             for(const auto& h:handles_)if(const auto d=Distance(mouse,h.a,h.b);d<nearest){nearest=d;hit=&h;}
             if(hit)
             {
@@ -233,7 +245,7 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
     if(ev.type==PointerMove)
     {
         hoverAxis_=-1;
-        if(canStart)for(const auto& h:handles_)if(Distance(mouse,h.a,h.b)<8)hoverAxis_=h.axis;
+        if(canStart)for(const auto& h:handles_)if(Distance(mouse,h.a,h.b)<11.f)hoverAxis_=h.axis;
         if(!Captured())return false;
         if(clickPending_)
         {
@@ -330,11 +342,11 @@ void EditorViewportController::Draw(EditorSession& s,AssetStore& assets)
                 if(mode_==GizmoMode::Rotate)
                 {
                     const auto u=Normalize(Cross(direction,std::abs(direction.y)<.9f?Vec3{0,1,0}:Vec3{1,0,0})),v=Cross(direction,u);
-                    for(int i=0;i<64;++i){const float a=i*2*Pi/64,b=(i+1)*2*Pi/64;line(origin+(u*std::cos(a)+v*std::sin(a))*radius,origin+(u*std::cos(b)+v*std::sin(b))*radius,color,2.5f,axis);}
+                    for(int i=0;i<64;++i){const float a=i*2*Pi/64,b=(i+1)*2*Pi/64;line(origin+(u*std::cos(a)+v*std::sin(a))*radius,origin+(u*std::cos(b)+v*std::sin(b))*radius,color,3.0f,axis);}
                 }
                 else
                 {
-                    const auto end=origin+direction*radius;line(origin+direction*radius*.15f,end,color,3,axis);
+                    const auto end=origin+direction*radius;line(origin+direction*radius*.15f,end,color,3.5f,axis);
                     if(auto tip=ProjectWorldPoint(c,end);tip&&tip->z>0&&tip->z<1)
                     {
                         if(mode_==GizmoMode::Scale)

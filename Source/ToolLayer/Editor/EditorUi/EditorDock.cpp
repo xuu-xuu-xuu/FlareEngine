@@ -87,6 +87,67 @@ DockNode DefaultEditorDockLayout()
     return root;
 }
 
+DockNode StandardShelfDockLayout()
+{
+    DockNode topLeft = MakeTabs({EditorPanelId::Hierarchy});
+    DockNode topCenter = MakeTabs({EditorPanelId::Viewport, EditorPanelId::UiDesigner});
+    DockNode topArea;
+    topArea.kind = DockNode::Kind::Split;
+    topArea.axis = DockAxis::Horizontal;
+    topArea.ratio = 0.24f;
+    topArea.children = {std::move(topLeft), std::move(topCenter)};
+
+    DockNode bottomAssets = MakeTabs({EditorPanelId::Assets});
+    DockNode bottomConsole = MakeTabs({EditorPanelId::Console});
+    DockNode bottomShelf;
+    bottomShelf.kind = DockNode::Kind::Split;
+    bottomShelf.axis = DockAxis::Horizontal;
+    bottomShelf.ratio = 0.58f;
+    bottomShelf.children = {std::move(bottomAssets), std::move(bottomConsole)};
+
+    DockNode leftCenter;
+    leftCenter.kind = DockNode::Kind::Split;
+    leftCenter.axis = DockAxis::Vertical;
+    leftCenter.ratio = 0.69f;
+    leftCenter.children = {std::move(topArea), std::move(bottomShelf)};
+
+    DockNode rightInspector = MakeTabs({EditorPanelId::Inspector});
+
+    DockNode root;
+    root.kind = DockNode::Kind::Split;
+    root.axis = DockAxis::Horizontal;
+    root.ratio = 0.74f;
+    root.children = {std::move(leftCenter), std::move(rightInspector)};
+    return root;
+}
+
+DockNode WideViewportDockLayout()
+{
+    DockNode leftHierarchy = MakeTabs({EditorPanelId::Hierarchy});
+    DockNode viewportTabs = MakeTabs({EditorPanelId::Viewport, EditorPanelId::UiDesigner});
+    DockNode drawerTabs = MakeTabs({EditorPanelId::Assets, EditorPanelId::Console});
+
+    DockNode centerColumn;
+    centerColumn.kind = DockNode::Kind::Split;
+    centerColumn.axis = DockAxis::Vertical;
+    centerColumn.ratio = 0.73f;
+    centerColumn.children = {std::move(viewportTabs), std::move(drawerTabs)};
+
+    DockNode rightInspector = MakeTabs({EditorPanelId::Inspector});
+    DockNode centerRight;
+    centerRight.kind = DockNode::Kind::Split;
+    centerRight.axis = DockAxis::Horizontal;
+    centerRight.ratio = 0.72f;
+    centerRight.children = {std::move(centerColumn), std::move(rightInspector)};
+
+    DockNode root;
+    root.kind = DockNode::Kind::Split;
+    root.axis = DockAxis::Horizontal;
+    root.ratio = 0.17f;
+    root.children = {std::move(leftHierarchy), std::move(centerRight)};
+    return root;
+}
+
 const char* EditorPanelName(EditorPanelId panel) noexcept
 {
     switch (panel)

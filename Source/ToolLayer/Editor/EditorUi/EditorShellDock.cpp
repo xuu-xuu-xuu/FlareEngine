@@ -18,6 +18,7 @@ using namespace detail;
 void EditorShell::RebuildGroupViews()
 {
     if (splitterActive_) EndSplitter(false);
+    hoveredSplitterIndex_ = -1;
     for (const auto& handle : splitHandles_) document_.DestroyElement(handle.line);
     splitHandles_.clear();
     for (GroupView& group : groups_)
@@ -254,7 +255,8 @@ void EditorShell::UpdateDockRects()
         const UiRect first=children[0],second=children[1];
         if (splitIndex < splitHandles_.size())
         {
-            auto& handle = splitHandles_[splitIndex++];
+            const std::size_t currentSplitIdx = splitIndex++;
+            auto& handle = splitHandles_[currentSplitIdx];
             handle.path = path;
             handle.axis = node.axis;
             handle.ratio = node.ratio;
@@ -263,13 +265,15 @@ void EditorShell::UpdateDockRects()
             handle.rect = horizontal ? UiRect{second.x - kSplitterReach, rect.y, 2 * kSplitterReach, rect.height}
                                      : UiRect{rect.x, second.y - kSplitterReach, rect.width, 2 * kSplitterReach};
             const bool active = splitterActive_ && splitterSurface_ == surface && splitterPath_ == path;
-            const float stroke = active ? 2.0f : 1.0f;
+            const bool hovered = !splitterActive_ && hoveredSplitterIndex_ == static_cast<int>(currentSplitIdx);
+            const bool highlighted = active || hovered;
+            const float stroke = highlighted ? 2.0f : 1.0f;
             auto style = horizontal ? AbsoluteStyle(second.x - stroke * .5f, rect.y, stroke, rect.height)
                                     : AbsoluteStyle(rect.x, second.y - stroke * .5f, rect.width, stroke);
-            style.background = active ? UiInk(flare::workspace::Focus) : kBorder;
+            style.background = highlighted ? UiInk(flare::workspace::Focus) : kBorder;
             style.pointerEvents = UiPointerEvents::None;
             document_.SetStyle(handle.line, style);
-            document_.SetVisible(handle.line, active);
+            document_.SetVisible(handle.line, highlighted);
         }
         path.push_back(0);
         self(self, node.children[0], first);
@@ -329,7 +333,7 @@ void EditorShell::UpdatePanelContentRects()
         return 0.0f;
     };
     setContent(EditorPanelId::Hierarchy, 0.0f, panelHeight(EditorPanelId::Hierarchy));
-    setContent(EditorPanelId::Console, 0.0f, panelHeight(EditorPanelId::Console));
+    setContent(EditorPanelId::Console, 24.0f, std::max(0.0f, panelHeight(EditorPanelId::Console) - 24.0f));
     setContent(EditorPanelId::Inspector, 0.0f, panelHeight(EditorPanelId::Inspector));
     setContent(EditorPanelId::Assets, 24.0f, std::max(0.0f, panelHeight(EditorPanelId::Assets) -
         (assetsPreviewImage_.empty() ? 48.0f : 124.0f)));
@@ -353,13 +357,43 @@ void EditorShell::UpdatePanelContentRects()
         style.height = UiLength::Percent(100.0f);
         document_.SetStyle(designerCanvas_, style);
     }
+    const float assetsW = panelWidth(EditorPanelId::Assets);
+    const bool showTypeFilter = assetsTypeElement_.IsValid() && assetsW >= 196.0f;
+    if (assetsTypeElement_.IsValid())
+    {
+        document_.SetVisible(assetsTypeElement_, showTypeFilter);
+        if (showTypeFilter)
+        {
+            const std::string& tf = assetsModel_.TypeFilter();
+            std::string typeLabel = Text("EditorUi.FilterAll", "All");
+            if (tf == "scene") typeLabel = Text("EditorUi.DocumentScene", "Scene");
+            else if (tf == "model") typeLabel = Text("EditorUi.AssetModel", "Model");
+            else if (tf == "material") typeLabel = Text("EditorUi.DocumentMaterial", "Material");
+            else if (tf == "texture") typeLabel = Text("EditorUi.AssetTexture", "Texture");
+            else if (tf == "prefab") typeLabel = Text("EditorUi.AssetPrefab", "Prefab");
+            else if (tf == "C#") typeLabel = Text("EditorUi.AssetScript", "C#");
+            else if (tf == "audio") typeLabel = Text("EditorUi.AssetAudio", "Audio");
+            typeLabel += " ▾";
+            UiStyle style = document_.Style(assetsTypeElement_);
+            style.left = UiLength::Px(std::max(0.0f, assetsW - 134.0f));
+            style.top = UiLength::Px(1.0f);
+            style.width = UiLength::Px(64.0f);
+            style.height = UiLength::Px(22.0f);
+            style.background = !tf.empty() ? UiInk(flare::workspace::Selection) : kSurfaceRaised;
+            style.borderWidth = 1.0f;
+            style.borderColor = !tf.empty() ? UiInk(flare::workspace::Focus) : kBorder;
+            document_.SetText(assetsTypeElement_, typeLabel);
+            document_.SetStyle(assetsTypeElement_, style);
+        }
+    }
     if (assetsFilterElement_.IsValid())
     {
         UiStyle style = document_.Style(assetsFilterElement_);
         const bool focused = dispatcher_.Focus() == assetsFilterElement_;
         style.borderWidth = 1;
         style.borderColor = focused ? UiInk(flare::workspace::Focus) : kBorder;
-        style.width = UiLength::Px(std::max(0.0f, panelWidth(EditorPanelId::Assets) - 73.0f));
+        const float reserveRight = showTypeFilter ? 140.0f : 73.0f;
+        style.width = UiLength::Px(std::max(0.0f, assetsW - reserveRight));
         const bool placeholder = !focused && assetsFilter_->Text().empty();
         style.color = placeholder ? kMuted : kText;
         document_.SetText(assetsFilterElement_, placeholder ? Text("EditorUi.SearchAssets", "Search assets")
@@ -369,9 +403,25 @@ void EditorShell::UpdatePanelContentRects()
     if (assetsImportElement_.IsValid())
     {
         UiStyle style = document_.Style(assetsImportElement_);
-        style.left = UiLength::Px(std::max(0.0f, panelWidth(EditorPanelId::Assets) - 66.0f));
-        style.top = UiLength::Px(0.0f);
+        style.left = UiLength::Px(std::max(0.0f, assetsW - 66.0f));
+        style.top = UiLength::Px(1.0f);
+        style.height = UiLength::Px(22.0f);
         document_.SetStyle(assetsImportElement_, style);
+    }
+    if (consoleClearButton_.IsValid())
+    {
+        const float consoleW = panelWidth(EditorPanelId::Console);
+        const bool showClear = consoleW >= 120.0f;
+        document_.SetVisible(consoleClearButton_, showClear);
+        if (showClear)
+        {
+            UiStyle style = document_.Style(consoleClearButton_);
+            style.left = UiLength::Px(std::max(4.0f, consoleW - 58.0f));
+            style.top = UiLength::Px(2.0f);
+            style.width = UiLength::Px(50.0f);
+            style.height = UiLength::Px(20.0f);
+            document_.SetStyle(consoleClearButton_, style);
+        }
     }
     if (assetsPreviewImageElement_.IsValid())
     {
@@ -810,6 +860,7 @@ void EditorShell::DragSplitter(float x, float y)
 void EditorShell::EndSplitter(bool commit)
 {
     splitterActive_ = false;
+    hoveredSplitterIndex_ = -1;
     if (commit)
         SaveLayoutIfConfigured();
     else

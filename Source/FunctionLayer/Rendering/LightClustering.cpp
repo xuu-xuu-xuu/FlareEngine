@@ -128,7 +128,8 @@ bool BuildBoundedLightClusters(std::span<const rhi::PointLight> lights,std::span
     const auto nearPoint=*inverse*Vec4{0,0,0,1},farPoint=*inverse*Vec4{0,0,1,1};
     if(!IsFinite(nearPoint)||!IsFinite(farPoint)||std::abs(nearPoint.w)<1e-8f||std::abs(farPoint.w)<1e-8f)return false;
     const float actualNear=-nearPoint.z/nearPoint.w,actualFar=-farPoint.z/farPoint.w;
-    if(std::abs(actualNear-nearPlane)>nearPlane*.002f||std::abs(actualFar-farPlane)>farPlane*.002f)return false;
+    const float farTolerance=std::clamp((farPlane/nearPlane)*2e-6f,.002f,.05f);
+    if(std::abs(actualNear-nearPlane)>nearPlane*.002f||std::abs(actualFar-farPlane)>farPlane*farTolerance)return false;
     if(capacity==0)capacity=LightClusterCapacity;
     BoundedLightClusterData candidate;candidate.table.clusters.resize(LightClusterCount);candidate.rawCounts.resize(LightClusterCount);
     std::vector<std::uint32_t> global(lights.size());std::iota(global.begin(),global.end(),0);
