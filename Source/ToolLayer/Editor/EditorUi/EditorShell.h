@@ -82,12 +82,19 @@ public:
     [[nodiscard]] std::uint32_t SurfaceForElement(UiElementHandle element) const;
     [[nodiscard]] UiRect SurfaceDockRect(std::uint32_t id) const;
     [[nodiscard]] std::optional<DockAxis> SplitterCursorAt(float x, float y) const;
+    [[nodiscard]] bool SplitterActive() const noexcept { return splitterActive_; }
     [[nodiscard]] EditorPanelId DraggingPanel() const noexcept {return dragTabPanel_;}
     void SetFloatRequestHandler(std::function<void(EditorPanelId)> handler){floatRequest_=std::move(handler);}
     [[nodiscard]] std::string WindowLabel(std::uint32_t id) const;
 
     void AppendConsoleLine(std::string line);
     void ClearConsole();
+    [[nodiscard]] bool ConsoleClearOnPlay() const noexcept { return consoleClearOnPlay_; }
+    void SetConsoleClearOnPlay(bool enabled) noexcept { consoleClearOnPlay_ = enabled; }
+    void SetConsoleActivateHandler(std::function<void(const std::string&)> handler)
+    {
+        consoleActivateHandler_ = std::move(handler);
+    }
     bool ApplyLayoutPreset(std::string_view preset);
     void SetHierarchy(std::vector<EditorHierarchyNode> nodes);
     void SetAssets(std::vector<EditorAssetEntry> entries);
@@ -114,12 +121,32 @@ public:
     {
         assetEntityDropHandler_ = std::move(handler);
     }
+    void SetAssetInspectorSlotDropHandler(
+        std::function<bool(const std::string&, std::uint64_t, const std::string&)> handler)
+    {
+        assetInspectorSlotDropHandler_ = std::move(handler);
+    }
+    void SetHierarchyAssetDropHandler(std::function<bool(std::uint64_t)> handler)
+    {
+        hierarchyAssetDropHandler_ = std::move(handler);
+    }
+    void SetSuggestedScriptClassName(std::string name) { addCompDefaultClass_ = std::move(name); }
+    [[nodiscard]] bool AddComponentPopupOpen() const noexcept { return addCompPopup_.IsValid(); }
+    [[nodiscard]] UiElementHandle AddComponentPopup() const noexcept { return addCompPopup_; }
+    [[nodiscard]] UiElementHandle AddComponentSearchEdit() const noexcept { return addCompSearchElement_; }
     void SetScriptsDirty(bool dirty) noexcept { scriptsDirty_ = dirty; }
     void SetViewportImage(std::string image);
+    void SetGameViewportImage(std::string image);
     void SetGizmo(float x, float y, bool visible);
     void SetGizmoDragHandler(std::function<void(int, float, float)> handler);
     void SetViewportActionHandler(std::function<void(std::string_view)> handler){viewportAction_=std::move(handler);}
-    void SetViewportState(int tool,bool local,bool center,bool sky,bool grid,bool gizmos,bool playing,bool paused=false);
+    void SetViewportState(int tool,bool local,bool center,bool sky,bool grid,bool gizmos,bool playing,bool paused=false,bool sceneViewDuringPlay=false);
+    [[nodiscard]] bool MaximizeOnPlay() const noexcept { return dock_.MaximizeOnPlay(); }
+    void SetMaximizeOnPlay(bool enabled);
+    [[nodiscard]] bool GameMaximized() const noexcept { return gameMaximized_; }
+    void SetGameMaximized(bool maximized);
+    void ToggleGameMaximized() { SetGameMaximized(!gameMaximized_); }
+    [[nodiscard]] UiElementHandle GameToolButton(std::size_t index) const noexcept { return index < gameToolButtons_.size() ? gameToolButtons_[index] : UiElementHandle{}; }
 
     // 状态栏与面板开关；Chrome/菜单/快捷键共用同一命令总线。
     void SetStatus(std::string status);
@@ -145,6 +172,26 @@ public:
     void SetAssetsPreviewText(std::string text);
     // 程序化选择资产（测试/恢复用）；会同步列表、预览与选择回调。
     void SelectAsset(const std::string& path);
+    [[nodiscard]] const std::string& SelectedAssetPath() const noexcept { return assetsModel_.SelectedPath(); }
+    [[nodiscard]] const std::string& CurrentAssetFolder() const noexcept { return assetsModel_.CurrentFolder(); }
+    void SetCurrentAssetFolder(std::string folderPath);
+    void SetAssetRenameHandler(std::function<bool(const std::string&, const std::string&)> handler)
+    {
+        assetRenameHandler_ = std::move(handler);
+    }
+    void SetAssetFolderDropHandler(std::function<bool(const std::string&, const std::string&)> handler)
+    {
+        assetFolderDropHandler_ = std::move(handler);
+    }
+    void SetAssetContextActionHandler(std::function<void(const std::string&, std::string_view)> handler)
+    {
+        assetContextActionHandler_ = std::move(handler);
+    }
+    [[nodiscard]] bool BeginHierarchyRename(std::uint64_t id);
+    void EndHierarchyRename(bool commit);
+    [[nodiscard]] UiElementHandle HierarchyEdit() const noexcept { return hierarchyEditElement_; }
+    [[nodiscard]] bool BeginAssetRename(const std::string& path);
+    void EndAssetRename(bool commit);
     void OpenCreateMenu(EditorPanelId panel, float x, float y, std::uint64_t parent = 0);
     // 资产图片预览；空 image 隐藏。width/height 为源图尺寸（仅用于记录）。
     void SetAssetPreviewImage(std::string image,float width,float height);
@@ -213,6 +260,7 @@ public:
     [[nodiscard]] UiElementHandle HierarchyContent() const noexcept;
     [[nodiscard]] UiElementHandle AssetsContent() const noexcept;
     [[nodiscard]] UiElementHandle ViewportPanel() const noexcept;
+    [[nodiscard]] UiElementHandle GamePanel() const noexcept;
     [[nodiscard]] UiElementHandle InspectorContent() const noexcept;
     [[nodiscard]] UiElementHandle InspectorEdit() const noexcept;
     [[nodiscard]] UiElementHandle MenuBar() const noexcept;
@@ -266,7 +314,7 @@ private:
     using InspectorDrag = EditorInspectorDrag;
     using InspectorColor = EditorInspectorColor;
 
-    static constexpr std::size_t kPanelCount = 14;
+    static constexpr std::size_t kPanelCount = 15;
 
     PanelSlot& Slot(EditorPanelId panel);
     const PanelSlot& Slot(EditorPanelId panel) const;
@@ -285,6 +333,10 @@ private:
     void PaintInspectorEdit(float width);
     void ShowInspectorCombo(std::size_t index);
     void ShowInspectorPage(std::shared_ptr<const EditorProperty> field,std::uint64_t target,float x,float y,std::size_t first);
+    void OpenAddComponentPopup(float anchorX, float anchorY);
+    void RebuildAddComponentPopupItems();
+    void CloseAddComponentPopup();
+    [[nodiscard]] std::optional<std::size_t> InspectorSlotAt(float x, float y, bool entitySlotOnly = false) const;
     std::optional<std::size_t> InspectorNumericAt(float x, float y) const;
     void BeginInspectorDrag(std::size_t index, const UiInputEvent& event);
     void UpdateInspectorDrag(const UiInputEvent& event);
@@ -320,6 +372,13 @@ private:
     void OpenMenu(const std::string& menu);
     void OpenLayoutMenu(float x, float y);
     void OpenAssetTypeMenu(float x, float y);
+    void OpenAssetItemMenu(const std::string& path, const std::string& type, float x, float y);
+    void BuildHierarchyRow(int index, UiElementHandle row);
+    void BuildAssetRow(int index, UiElementHandle row);
+    void BuildAssetIcon(UiElementHandle parent, float x, float y, float size, const EditorAssetEntry& entry);
+    void RefreshAssetsBreadcrumb(float width);
+    void RebuildAssetsGrid(float width, float height);
+    [[nodiscard]] bool AssetsHasFolders() const noexcept;
     void ShowMenu(UiElementHandle surface, float x, float y, float width,
                   const std::vector<EditorMenuItem>& items, std::uint64_t target = 0);
     void CloseMenu();
@@ -365,6 +424,10 @@ private:
     UiElementHandle transformTools_{};
     std::vector<UiElementHandle> viewportToolButtons_;
     std::function<void(std::string_view)> viewportAction_;
+    UiElementHandle gameTools_{};
+    std::vector<UiElementHandle> gameToolButtons_;
+    bool gameMaximized_ = false;
+    void UpdateGameTools();
     std::vector<SplitHandle> splitHandles_;
     std::vector<UiElementHandle> pendingDestroy_;
     std::array<std::unique_ptr<FormPanel>, 5> forms_{};
@@ -401,8 +464,15 @@ private:
         bool header = false;
         bool closed = false;
         std::vector<std::size_t> fields;
+        std::vector<std::size_t> menuActions;
     };
     std::vector<InspectorRow> inspectorRows_;
+    std::vector<std::size_t> addComponentActions_;
+    UiElementHandle addCompPopup_{};
+    UiElementHandle addCompSearchElement_{};
+    std::unique_ptr<UiTextEdit> addCompSearch_;
+    std::vector<UiElementHandle> addCompItemButtons_;
+    std::string addCompDefaultClass_ = "NewBehaviour";
     std::unordered_map<std::string, bool> inspectorFolds_;
     float inspectorWidth_ = 0.0f;
     std::function<void(std::uint64_t)> selectionHandler_;
@@ -416,21 +486,78 @@ private:
     std::function<void(std::string)> assetActivateHandler_;
     std::function<void()> assetImportHandler_;
     std::function<bool(const std::string&, std::uint64_t, EditorPanelId)> assetEntityDropHandler_;
+    std::function<bool(const std::string&, std::uint64_t, const std::string&)> assetInspectorSlotDropHandler_;
+    std::function<bool(std::uint64_t)> hierarchyAssetDropHandler_;
+    std::function<void(const std::string&)> consoleActivateHandler_;
+    std::function<bool(const std::string&, const std::string&)> assetRenameHandler_;
+    std::function<bool(const std::string&, const std::string&)> assetFolderDropHandler_;
+    std::function<void(const std::string&, std::string_view)> assetContextActionHandler_;
     UiElementHandle assetsTypeElement_{};
     UiElementHandle assetsCreateElement_{};
     UiElementHandle assetsImportElement_{};
+    UiElementHandle assetsViewToggleElement_{};
+    UiElementHandle assetsBreadcrumbBar_{};
+    std::vector<UiElementHandle> assetsBreadcrumbButtons_;
+    std::vector<std::string> assetsBreadcrumbPaths_;
+    UiElementHandle assetsGridContainer_{};
+    std::vector<UiElementHandle> assetsGridCards_;
+    float assetsGridScroll_ = 0.0f;
+    float lastAssetsGridWidth_ = 0.0f;
+    float lastAssetsGridHeight_ = 0.0f;
+    bool assetsGridDirty_ = true;
     UiElementHandle assetsPreview_{};
     UiElementHandle consoleClearButton_{};
+    UiElementHandle consoleCollapseButton_{};
+    UiElementHandle consoleClearOnPlayButton_{};
+    UiElementHandle consoleInfoButton_{};
+    UiElementHandle consoleWarnButton_{};
+    UiElementHandle consoleErrorButton_{};
+    struct ConsoleDisplayRow
+    {
+        std::string text;
+        int level = 0;
+        std::size_t count = 1;
+        std::size_t rawIndex = 0;
+    };
+    std::vector<ConsoleDisplayRow> consoleDisplay_;
+    std::size_t consoleInfoCount_ = 0;
+    std::size_t consoleWarnCount_ = 0;
+    std::size_t consoleErrorCount_ = 0;
+    bool consoleCollapse_ = false;
+    bool consoleClearOnPlay_ = false;
+    bool consoleShowInfo_ = true;
+    bool consoleShowWarn_ = true;
+    bool consoleShowError_ = true;
+    int lastConsoleClickRow_ = -1;
+    std::uint64_t lastConsoleClickTick_ = 0;
+    void RebuildConsoleDisplay();
+    void LayoutConsoleToolbar(float panelWidth);
+    UiElementHandle gamePlaceholder_{};
     void CancelAssetDrag();
     std::uint64_t dragHierarchyId_ = 0;
     float hierarchyDragStartX_ = 0.0f, hierarchyDragStartY_ = 0.0f;
     bool draggingHierarchy_ = false;
     int hoveredHierarchyRow_ = -1;
     int hoveredAssetRow_ = -1;
+    int hoveredFolderDropRow_ = -1;
     std::uint64_t lastHierarchyClickId_ = 0;
     std::uint64_t lastHierarchyClickTick_ = 0;
+    std::uint64_t pendingHierarchyRenameId_ = 0;
+    std::uint64_t pendingHierarchyRenameTick_ = 0;
+    bool wasSelectedOnHierarchyDown_ = false;
+    std::unique_ptr<UiTextEdit> hierarchyEdit_;
+    UiElementHandle hierarchyEditElement_{};
+    std::uint64_t hierarchyEditingId_ = 0;
     std::string lastAssetClickPath_;
     std::uint64_t lastAssetClickTick_ = 0;
+    std::string pendingAssetRenamePath_;
+    std::uint64_t pendingAssetRenameTick_ = 0;
+    bool wasSelectedOnAssetDown_ = false;
+    std::unique_ptr<UiTextEdit> assetsRename_;
+    UiElementHandle assetsRenameElement_{};
+    std::string assetsRenamingPath_;
+    std::string menuTargetAssetPath_;
+    bool menuPressedFromBar_ = false;
     std::unique_ptr<EditorAssetDragState> assetDrag_;
     std::unique_ptr<UiTextEdit> inspectorEdit_;
     UiElementHandle inspectorEditElement_{};
@@ -461,6 +588,7 @@ private:
     float gizmoLastY_ = 0.0f;
     std::string editingKey_;
     std::string viewportImage_;
+    std::string gameImage_;
     std::vector<std::string> lines_;
 
     UiElementHandle root_{};

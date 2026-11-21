@@ -125,7 +125,8 @@ bool ReadProject(const fs::path& manifest,ProjectDescription& output,std::vector
     {
         std::string text;if(!ReadText(manifest,text,1024*1024))return Fail(diagnostics,"Project.ReadFailed",asset_io::Utf8(manifest));
         const auto json=Parse(text);ProjectDescription result;result.manifest=fs::canonical(manifest);result.root=result.manifest.parent_path();
-        if(!json.is_object()||json.at("format")!="SelfEngine.Project"||!json.at("version").is_number_integer()||json.at("version")!=1)return Fail(diagnostics,"Project.UnsupportedVersion");
+        const auto format=json.is_object()&&json.contains("format")&&json.at("format").is_string()?json.at("format").get<std::string>():std::string{};
+        if(!json.is_object()||(format!="FlareEngine.Project"&&format!="SelfEngine.Project")||!json.at("version").is_number_integer()||json.at("version")!=1)return Fail(diagnostics,"Project.UnsupportedVersion");
         const std::set<std::string> supported{"format","version","name","contentRoot","entryScene","scenes","ui","assets","replay"};
         for(auto entry=json.begin();entry!=json.end();++entry)if(!supported.contains(entry.key()))return Fail(diagnostics,"Project.UnsupportedField",entry.key());
         result.name=json.at("name").get<std::string>();if(result.name.empty()||result.name.size()>256)return Fail(diagnostics,"Project.InvalidManifest");

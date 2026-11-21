@@ -50,7 +50,7 @@ constexpr std::array<TemplateChoice, 4> templateChoices{{
     {ProjectTemplate::BlankScene, L"Blank Scene", "Editor.LauncherTemplateBlankDesc",
      L"Clean minimal scene with a main camera, directional light, and ground plane.", nullptr},
     {ProjectTemplate::Basic3D, L"Basic 3D Sample", "Editor.LauncherTemplateBasicDesc",
-     L"Starter 3D scene featuring meshes, PBR materials, UI canvas, and C# spin script.", "Sample"},
+     L"Standard 3D starter scene with a gray plane, gray cube, directional light, and main camera.", "Basic3D"},
     {ProjectTemplate::RenderingStudio, L"Rendering Studio", "Editor.LauncherTemplateStudioDesc",
      L"PBR showcase with material spheres, cascaded shadows (CSM), IBL, and ACES tonemapping.", "RenderingStudio"},
     {ProjectTemplate::IndoorGallery, L"Indoor Gallery", "Editor.LauncherTemplateIndoorDesc",
@@ -233,9 +233,18 @@ void ShowError(const LauncherStrings& strings, bool uiErrors, const std::wstring
     std::wcerr << L"[Error] launcher error\n";
     if (uiErrors) MessageBoxW(nullptr, detail.c_str(), L"Flare Engine", MB_ICONERROR | MB_OK);
 }
+void LayoutLauncher(LauncherState& s);
 void SetNote(LauncherState& state, const std::wstring& text)
 {
-    if (state.note) SetWindowTextW(state.note, text.c_str());
+    if (!state.note) return;
+    SetWindowTextW(state.note, text.c_str());
+    const bool wantVisible = !text.empty();
+    const bool wasVisible = (GetWindowLongPtrW(state.note, GWL_STYLE) & WS_VISIBLE) != 0;
+    if (wantVisible != wasVisible)
+    {
+        ShowWindow(state.note, wantVisible ? SW_SHOWNA : SW_HIDE);
+        LayoutLauncher(state);
+    }
 }
 bool PackageProject(const LauncherState& state, const std::filesystem::path& requested)
 {
@@ -338,35 +347,17 @@ void RefreshRecent(LauncherState& state)
     InvalidateRect(state.recentList, nullptr, FALSE);
     UpdateRecentActionButtons(state);
 
-    if (!state.safeMode)
-    {
-        if (recent.empty())
-        {
-            SetNote(state, state.strings.recentEmpty);
-            launcher_style::SetPlaceholder(state.recentList, state.strings.recentEmpty.c_str());
-        }
-        else if (state.filteredIndices.empty())
-        {
-            SetNote(state, state.strings.noMatch);
-            launcher_style::SetPlaceholder(state.recentList, state.strings.noMatch.c_str());
-        }
-        else
-        {
-            SetNote(state, state.strings.selectHint);
-            launcher_style::SetPlaceholder(state.recentList, nullptr);
-        }
-    }
-    else
-    {
-        launcher_style::SetPlaceholder(state.recentList,
-            recent.empty() ? state.strings.recentEmpty.c_str() :
-            (state.filteredIndices.empty() ? state.strings.noMatch.c_str() : nullptr));
-    }
+    launcher_style::SetPlaceholder(state.recentList,
+        recent.empty() ? state.strings.recentEmpty.c_str() :
+        (state.filteredIndices.empty() ? state.strings.noMatch.c_str() : nullptr));
+    if (state.safeMode)
+        SetNote(state, state.strings.safeMode);
 }
 
 bool StartWorker(const LauncherState& state, const std::filesystem::path& projectRoot, const std::wstring& extraArguments, HANDLE& process, DWORD& pid)
 {
     if (RejectPackageProject(state, projectRoot)) return false;
+    SetEnvironmentVariableW(L"FLARE_EDITOR_SAFE_MODE", state.safeMode ? L"1" : nullptr);
     SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SAFE_MODE", state.safeMode ? L"1" : nullptr);
     std::wstring command = L"\"" + state.executable.wstring() + L"\" --worker --project \"" + projectRoot.wstring() + L"\" --language " + Wide(state.locale);
     if (!extraArguments.empty()) command += L" " + extraArguments;
@@ -410,9 +401,12 @@ bool OpenProjectFlow(LauncherState& state, const std::filesystem::path& requeste
         ShowError(state, state.strings.workerFailed);
         return false;
     }
-    state.workspace.RecordOpened(check);
-    std::string saveError;
-    if (!state.workspace.Save(saveError)) SetNote(state, state.strings.preferenceFailed);
+    if (state.smokeCreateParent.empty())
+    {
+        state.workspace.RecordOpened(check);
+        std::string saveError;
+        if (!state.workspace.Save(saveError)) SetNote(state, state.strings.preferenceFailed);
+    }
     RefreshRecent(state);
     ShowWindow(state.window, SW_HIDE);
     DWORD exitCode = 0;
@@ -435,25 +429,23 @@ bool OpenProjectFlow(LauncherState& state, const std::filesystem::path& requeste
 
 const TemplateChoice* PickSample(const LauncherState& state)
 {
-    HMENU menu = CreatePopupMenu();
-    if (!menu) { ShowError(state, state.strings.openFailed); return nullptr; }
+    std::vector<launcher_style::PopupMenuItem> items;
+    items.reserve(templateChoices.size());
     for (size_t index = 0; index < templateChoices.size(); ++index)
     {
         const auto& choice = templateChoices[index];
         if (!choice.sampleCopyName) continue;
         const auto label = state.strings.Get(ProjectTemplateNameKey(choice.type), choice.fallbackLabel);
-        if (!AppendMenuW(menu, MF_STRING, index + 1, label.c_str()))
-        {
-            DestroyMenu(menu);
-            ShowError(state, state.strings.openFailed);
-            return nullptr;
-        }
+        items.push_back(launcher_style::PopupMenuItem{
+            static_cast<int>(index + 1), label, true, false, false
+        });
     }
+    if (items.empty()) { ShowError(state, state.strings.openFailed); return nullptr; }
     RECT button{};
     GetWindowRect(state.openSample, &button);
-    const auto command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN,
-        button.left, button.bottom, state.window, nullptr);
-    DestroyMenu(menu);
+    const int minWidth = static_cast<int>(button.right - button.left);
+    const int command = launcher_style::ShowPopupMenu(
+        state.window, button.left, button.bottom + ScaleWindow(state.window, 4), minWidth, items, state.bodyFont);
     if (command <= 0 || static_cast<size_t>(command) > templateChoices.size()) return nullptr;
     return &templateChoices[static_cast<size_t>(command) - 1];
 }
@@ -765,7 +757,7 @@ LRESULT CALLBACK NewProjectProcedure(HWND window, UINT message, WPARAM wParam, L
 bool RunNewProjectDialog(LauncherState& launcher, bool autoCreate)
 {
     const auto instance = GetModuleHandleW(nullptr);
-    const wchar_t* className = L"SelfEngineEditorNewProject";
+    const wchar_t* className = L"FlareEngineEditorNewProject";
     WNDCLASSEXW windowClass{sizeof(windowClass)};
     windowClass.style = CS_HREDRAW | CS_VREDRAW;
     windowClass.lpfnWndProc = NewProjectProcedure;
@@ -905,10 +897,11 @@ void LayoutLauncher(LauncherState& s)
     move(s.title, sidePad + sc(54), sc(22), sidebarW - sidePad - sc(62), sc(28));
     move(s.subtitle, sidePad + sc(54), sc(50), sidebarW - sidePad - sc(62), sc(20));
 
+    const int bottomBtnY = std::max(sc(260), static_cast<int>(r.bottom) - sidePad - sc(34));
     move(s.newProject, sidePad, sc(96), sideBtnW, sc(40));
     move(s.openProject, sidePad, sc(146), sideBtnW, sideBtnH);
     move(s.openSample, sidePad, sc(194), sideBtnW, sideBtnH);
-    move(s.quit, sidePad, std::max(sc(260), static_cast<int>(r.bottom) - sidePad - sc(34)), sideBtnW, sc(34));
+    move(s.quit, sidePad, bottomBtnY, sideBtnW, sc(34));
 
     // 右侧最近项目主工作区
     const int mainLeft = sidebarW + sc(26);
@@ -919,8 +912,12 @@ void LayoutLauncher(LauncherState& s)
     move(s.recentSearch, mainLeft + mainWidth - searchW + sc(10), sc(27), searchW - sc(20), sc(18));
 
     const int listTop = sc(74);
-    const int actionsY = std::max(listTop + sc(140), static_cast<int>(r.bottom) - sc(82));
-    move(s.recentList, mainLeft, listTop, mainWidth, actionsY - listTop - sc(12));
+    const int actionsY = std::max(listTop + sc(140), bottomBtnY);
+    const bool noteVisible = s.note && (GetWindowLongPtrW(s.note, GWL_STYLE) & WS_VISIBLE) != 0;
+    const int noteReserve = noteVisible ? sc(28) : 0;
+    move(s.recentList, mainLeft, listTop, mainWidth, actionsY - listTop - sc(14) - noteReserve);
+    if (s.note)
+        move(s.note, mainLeft, actionsY - sc(28), mainWidth, sc(22));
 
     const int btnH = sc(34), gap = sc(8);
     move(s.recentOpen, mainLeft, actionsY, sc(104), btnH);
@@ -928,7 +925,6 @@ void LayoutLauncher(LauncherState& s)
     move(s.recentRelocate, mainLeft + sc(232) + 2 * gap, actionsY, sc(116), btnH);
     move(s.recentRemove, mainLeft + sc(348) + 3 * gap, actionsY, sc(112), btnH);
 
-    move(s.note, mainLeft, actionsY + btnH + sc(10), mainWidth, sc(22));
     InvalidateRect(s.window, nullptr, FALSE);
 }
 
@@ -972,16 +968,15 @@ void ShowRecentContextMenu(LauncherState& state, int screenX, int screenY)
     if (index < 0) return;
     const bool available = state.workspace.Recent()[static_cast<std::size_t>(index)].available;
 
-    HMENU menu = CreatePopupMenu();
-    if (!menu) return;
-    AppendMenuW(menu, MF_STRING, ControlRecentOpen, state.strings.open.c_str());
-    AppendMenuW(menu, MF_STRING | (available ? 0 : MF_GRAYED), ControlRecentExplore, state.strings.showInExplorer.c_str());
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, ControlRecentRelocate, state.strings.relocate.c_str());
-    AppendMenuW(menu, MF_STRING, ControlRecentRemove, state.strings.remove.c_str());
-    const int cmd = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN,
-                                     clientPt.x, clientPt.y, state.window, nullptr);
-    DestroyMenu(menu);
+    const std::vector<launcher_style::PopupMenuItem> items{
+        {ControlRecentOpen, state.strings.open, true, false, false},
+        {ControlRecentExplore, state.strings.showInExplorer, available, false, false},
+        {0, L"", false, true, false},
+        {ControlRecentRelocate, state.strings.relocate, true, false, false},
+        {ControlRecentRemove, state.strings.remove, true, false, true},
+    };
+    const int cmd = launcher_style::ShowPopupMenu(
+        state.window, clientPt.x, clientPt.y, ScaleWindow(state.window, 168), items, state.bodyFont);
     if (cmd > 0) PostMessageW(state.window, WM_COMMAND, MAKEWPARAM(cmd, BN_CLICKED), 0);
 }
 
@@ -1057,7 +1052,24 @@ LRESULT CALLBACK LauncherProcedure(HWND window, UINT message, WPARAM wParam, LPA
         {
             PAINTSTRUCT ps{};
             const auto dc = BeginPaint(window, &ps);
-            PaintLauncherBackground(*state, dc);
+            RECT client{};
+            GetClientRect(window, &client);
+            const int w = client.right - client.left, h = client.bottom - client.top;
+            const HDC memDc = (w > 0 && h > 0) ? CreateCompatibleDC(dc) : nullptr;
+            const HBITMAP memBmp = memDc ? CreateCompatibleBitmap(dc, w, h) : nullptr;
+            if (memDc && memBmp)
+            {
+                const auto oldBmp = SelectObject(memDc, memBmp);
+                PaintLauncherBackground(*state, memDc);
+                BitBlt(dc, 0, 0, w, h, memDc, 0, 0, SRCCOPY);
+                SelectObject(memDc, oldBmp);
+            }
+            else
+            {
+                PaintLauncherBackground(*state, dc);
+            }
+            if (memBmp) DeleteObject(memBmp);
+            if (memDc) DeleteDC(memDc);
             EndPaint(window, &ps);
             return 0;
         }
@@ -1114,7 +1126,6 @@ LRESULT CALLBACK LauncherProcedure(HWND window, UINT message, WPARAM wParam, LPA
         {
         case ControlNewProject:
             if (RunNewProjectDialog(*state, false)) RefreshRecent(*state);
-            else SetNote(*state, state->strings.createFailed);
             return 0;
         case ControlOpenProject:
         {
@@ -1242,7 +1253,8 @@ bool CreateControls(LauncherState& state)
     if (!button(state.strings.relocate, ControlRecentRelocate, false, state.recentRelocate)) return false;
     if (!button(state.strings.remove, ControlRecentRemove, false, state.recentRemove, launcher_style::ButtonRole::Danger)) return false;
 
-    if (!make(L"STATIC", state.strings.selectHint, SS_LEFT | SS_ENDELLIPSIS, 0, 0, 600, 22, -1, state.note)) return false;
+    if (!make(L"STATIC", L"", SS_LEFT | SS_ENDELLIPSIS, 0, 0, 600, 22, -1, state.note)) return false;
+    ShowWindow(state.note, SW_HIDE);
 
     RefreshRecent(state);
     LayoutLauncher(state);
@@ -1291,7 +1303,7 @@ int RunLauncherWindow(LauncherState& state, const EditorLaunchOptions& options, 
 {
     EnableEngineDpiAwareness();
     const auto instance = GetModuleHandleW(nullptr);
-    const wchar_t* className = L"SelfEngineEditorLauncher";
+    const wchar_t* className = L"FlareEngineEditorLauncher";
     WNDCLASSEXW windowClass{sizeof(windowClass)};
     windowClass.style = CS_HREDRAW | CS_VREDRAW;
     windowClass.lpfnWndProc = LauncherProcedure;
@@ -1400,7 +1412,11 @@ int RunLauncherWindow(LauncherState& state, const EditorLaunchOptions& options, 
         else
         {
             if (GetMessageW(&message, nullptr, 0, 0) <= 0) break;
-            if (!IsDialogMessageW(state.window, &message)) { TranslateMessage(&message); DispatchMessageW(&message); }
+            if (state.intro.Active() || !IsDialogMessageW(state.window, &message))
+            {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
         }
     }
 finished:

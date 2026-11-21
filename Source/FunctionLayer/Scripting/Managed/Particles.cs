@@ -1,4 +1,4 @@
-namespace SelfEngine;
+namespace FlareEngine;
 
 public sealed class Particles
 {

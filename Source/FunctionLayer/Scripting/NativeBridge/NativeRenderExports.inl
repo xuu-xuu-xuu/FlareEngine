@@ -10,7 +10,7 @@ int32_t SE_CALL se_session_run_window(SE_Session handle, const char* locale, uin
             std::filesystem::create_directories(s->windowProfile.parent_path());
             if(!std::filesystem::create_directory(s->windowProfile))return Error(SE_INVALID_ARGUMENT,"Bridge.ProfileOutputExists");
         }
-        struct WindowGuard{Session& s;~WindowGuard(){s.windowRunning=false;s.input={};s.pointer={};s.inputActions.Reset();}} guard{*s};
+        struct WindowGuard{Session& s;~WindowGuard(){ReleaseSessionCursor(s);s.activeGameWindow=nullptr;s.activeGameScreenRect={};s.windowRunning=false;s.input={};s.pointer={};s.mouseDelta={};s.inputActions.Reset();}} guard{*s};
         s->windowRunning=true;s->stopWindow=false;
         const bool sequence=!s->captureSequence.empty()&&s->captureSequenceCount>0;
         if(sequence&&!s->windowCapture.empty())return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
@@ -45,9 +45,9 @@ int32_t SE_CALL se_session_run_window(SE_Session handle, const char* locale, uin
         const bool interactive=visible&&!sequence&&s->windowCapture.empty()&&s->windowProfile.empty();
         std::unique_ptr<se::PlayerQualityMenu> qualityMenu;
         HWND playerWindow=nullptr;
+        services.windowOpened=[&](HWND hwnd){playerWindow=hwnd;s->activeGameWindow=hwnd;s->activeGameScreenRect={};return true;};
         if(interactive&&s->playerQuality&&s->showPlayerQualityMenu){
             qualityMenu=std::make_unique<se::PlayerQualityMenu>(*s->playerQuality,s->localization,s->qualityProfiles);
-            services.windowOpened=[&](HWND hwnd){playerWindow=hwnd;return true;};
             services.messageHandler=[&](HWND hwnd,UINT msg,WPARAM w,LPARAM l){return qualityMenu->Message(hwnd,msg,w,l);};
         }
         services.input=[s,&qualityMenu](const InputState& input,bool consumed,bool pointerConsumed){
@@ -164,8 +164,17 @@ int32_t SE_CALL se_editor_inspector_apply(SE_Session handle,uint64_t entity,cons
 {
     return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
         if(!s->editor||!s->editorDataCallback)return Error(SE_INVALID_ARGUMENT,"Bridge.EditorNotRunning");
-        if(s->editor->IsPlaying())return Error(SE_BUSY,"Bridge.EditorReadOnly");
         if(!request||length>1024*1024||!ValidUtf8(request,length))return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidUtf8");
+        if(s->editor->IsPlaying())
+        {
+            bool liveEdit=false;
+            if(length>=2&&length<=65536)
+            {
+                const auto parsed=nlohmann::json::parse(request,request+length,nullptr,false);
+                liveEdit=parsed.is_object()&&parsed.value("Live",false);
+            }
+            if(!liveEdit)return Error(SE_BUSY,"Bridge.EditorReadOnly");
+        }
         const bool prior=s->stepping;s->stepping=true;
         struct Restore{Session& s;bool prior;~Restore(){sessionsMutex.lock();s.stepping=prior;}} restore{*s,prior};
         sessionsMutex.unlock();uint32_t required=0;const auto result=s->editorDataCallback(handle,entity,request,length,nullptr,0,&required,s->editorDataContext);
@@ -255,10 +264,16 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
             callbackFailed|=!ok;return ok;
         };
         hooks.playStopping=[&](se::World&,se::UiTree&){
+            ReleaseSessionCursor(*s);s->cursorLocked=false;s->cursorVisible=true;s->cursorLockPausedByEsc=false;s->activeGameWindow=nullptr;s->activeGameScreenRect={};s->mouseDelta={};
             if(s->editorCallback&&s->editorCallback(handle,1,s->editorContext)!=0)callbackFailed=true;
             s->appearance=appearanceBeforePlay;
             clearRuntime();s->inputActions.Reset();s->borrowedWorld=nullptr;s->borrowedEnvironment=nullptr;s->borrowedUi=nullptr;
             CloseEventPublishers(handle);s->eventSubscriptions.clear();
+        };
+        hooks.syncPlayCursor=[s](void* wnd,const int (&rect)[4]){
+            s->activeGameWindow=static_cast<HWND>(wnd);
+            s->activeGameScreenRect={rect[0],rect[1],rect[2],rect[3]};
+            return s->cursorLocked&&!s->cursorLockPausedByEsc;
         };
         hooks.input=[s](const InputState& input,bool keyboard,bool pointer){CaptureInput(*s,input,keyboard,pointer);};
         hooks.frame=[s](se::EditorSession& editor,double){
@@ -305,9 +320,18 @@ int32_t SE_CALL se_session_run_editor(SE_Session handle,const char* root,uint32_
         };
         hooks.scriptApply=[handle](uint64_t entity,const std::string& command,std::string& error){
             if(se_editor_inspector_apply(handle,entity,command.data(),static_cast<uint32_t>(command.size()))!=SE_OK)
-            {error="Script.FieldValueInvalid";return false;}
+            {error=lastError[0]?std::string(lastError.data()):std::string("Script.FieldValueInvalid");return false;}
             return true;
         };
+        if(s->editorDataCallback)
+        {
+            hooks.drainScriptLogs=[s,handle](std::vector<std::string>& outLogs){
+                nlohmann::json value;std::string ignored;
+                if(!EditorDocumentRequest(handle,*s,{{"Document","DrainLogs"}},true,value,ignored))return;
+                if(value.contains("Logs")&&value["Logs"].is_array())
+                    for(const auto& item:value["Logs"])if(item.is_string())outLogs.push_back(item.get<std::string>());
+            };
+        }
         hooks.closing=[s](se::EditorSession& editor,se::UiTree& ui){s->environment.Clear();s->world=editor.EditWorld();s->environment.Scenes().SynchronizeIdle();s->ui=ui;s->editor=nullptr;};
         // 编辑器 Play 也必须解析蒙皮资产：没有解析器时姿态系统直接返回，角色会停在绑定姿态，
         // 于是“编辑器 Play”与“导出运行”在同一 tick 上对不上。

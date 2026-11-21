@@ -14,6 +14,8 @@ class EditorViewportController
 public:
     explicit EditorViewportController(EditorViewportCamera& camera):camera_(camera){}
     void Prepare(EditorSession&,AssetStore&,ui::UiRect,std::uint64_t frame);
+    void SetSceneViewDuringPlay(bool enabled)noexcept{sceneViewDuringPlay_=enabled;}
+    [[nodiscard]] bool SceneViewDuringPlay()const noexcept{return sceneViewDuringPlay_;}
     void Update(double seconds,EditorSession&,AssetStore&);
     bool Handle(ui::UiInputEvent&,EditorSession&,AssetStore&,bool canStart);
     std::optional<Vec2> TakeContextClick();
@@ -42,6 +44,7 @@ private:
     void Draw(EditorSession&,AssetStore&);
     void SelectAt(Vec2 mouse, EditorSession&, AssetStore&, PickIntent intent = PickIntent::Surface);
     void Dolly(float amount);
+    const World& ActiveWorld(const EditorSession&)const noexcept;
     Vec3 Pivot(const World&,AssetStore&,EntityHandle)const;
     std::optional<Aabb> SceneBounds(const World&,AssetStore&)const;
     EditorViewportCamera& camera_;
@@ -55,7 +58,7 @@ private:
     Gesture gesture_=Gesture::None;
     GizmoMode mode_=GizmoMode::Translate;
     GizmoSpace space_=GizmoSpace::World;
-    bool focused_=false,viewTool_=false,center_=false,sky_=true,grid_=true,gizmos_=true,initialized_=false;
+    bool focused_=false,viewTool_=false,center_=false,sky_=true,grid_=true,gizmos_=true,initialized_=false,sceneViewDuringPlay_=false;
     int dragAxis_=-1,hoverAxis_=-1;
     std::uint8_t dragButton_=0;
     Vec2 lastMouse_{};

@@ -6,12 +6,14 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 public enum EventPhase:uint {NextFrame,AfterPhysics,AfterLogic}
 public enum EventPostResult:uint {Accepted,Closed,UnknownType,UnsupportedVersion,InvalidScope,InvalidTarget,Full,TooLarge,SequenceExhausted}
 [AttributeUsage(AttributeTargets.Struct,Inherited=false)]
-public sealed class EventIdAttribute(string key,uint version=1):Attribute {public string Key{get;}=key;public uint Version{get;}=version;}
+public class F_EventAttribute(string key,uint version=1):Attribute {public string Key{get;}=key;public uint Version{get;}=version;}
+[AttributeUsage(AttributeTargets.Struct,Inherited=false)]
+public class EventIdAttribute(string key,uint version=1):F_EventAttribute(key,version);
 public readonly record struct SceneStateChanged(bool Active,uint FormatVersion);
 [StructLayout(LayoutKind.Sequential)]
 public readonly struct EventHeader
@@ -58,7 +60,7 @@ public sealed class ScriptEventPublisher<T>
 public sealed unsafe class ScriptEvents
 {
     private sealed record Codec<T>(ulong Id,string Key,uint Version,uint Maximum,Func<T,byte[]> Encode,Func<byte[],T> Decode);
-    private sealed record Subscription(Behaviour Owner);
+    private sealed record Subscription(F_Behaviour Owner);
     private sealed class Token(ScriptEvents registry,ulong id):IDisposable
     {
         private readonly WeakReference<ScriptEvents> registry=new(registry);
@@ -83,8 +85,8 @@ public sealed unsafe class ScriptEvents
     }
     public EventPostResult Publish<T>(T value,EventPhase phase=EventPhase.AfterLogic,ulong source=0,ulong sourceStableId=0,ulong target=0,ulong scene=0) where T:notnull
         =>closed?EventPostResult.Closed:CreatePublisher<T>().Publish(value,phase,source,sourceStableId,target,scene);
-    public IDisposable Subscribe<T>(Behaviour owner,Action<T> handler)=>Subscribe<T>(owner,(_,value)=>handler(value));
-    public IDisposable Subscribe<T>(Behaviour owner,Action<EventHeader,T> handler,ulong target=0,ulong scene=0)
+    public IDisposable Subscribe<T>(F_Behaviour owner,Action<T> handler)=>Subscribe<T>(owner,(_,value)=>handler(value));
+    public IDisposable Subscribe<T>(F_Behaviour owner,Action<EventHeader,T> handler,ulong target=0,ulong scene=0)
     {
         ArgumentNullException.ThrowIfNull(handler);
         if(closed||owner.Owner!=system)throw new ArgumentException("Script.NotAttached");
@@ -107,7 +109,7 @@ public sealed unsafe class ScriptEvents
         if(!subscriptions.Remove(id))return;system.Session.EventHandlers.Remove(id);
         if(!system.Session.IsDisposed)system.Session.Invoke(handle=>{EngineSession.Check(NativeMethods.EventUnsubscribe(handle,id));return 0;});
     }
-    internal void Remove(Behaviour owner){foreach(var id in subscriptions.Where(pair=>pair.Value.Owner==owner).Select(pair=>pair.Key).ToArray())Release(id);}
+    internal void Remove(F_Behaviour owner){foreach(var id in subscriptions.Where(pair=>pair.Value.Owner==owner).Select(pair=>pair.Key).ToArray())Release(id);}
     internal void Clear()
     {
         closed=true;publisher?.Dispose();publisher=null;
@@ -142,7 +144,7 @@ public sealed unsafe class ScriptEvents
         }
         else
         {
-            var type=typeof(T);var attribute=type.GetCustomAttribute<EventIdAttribute>();
+            var type=typeof(T);var attribute=type.GetCustomAttribute<F_EventAttribute>();
             var properties=type.GetProperties(BindingFlags.Instance|BindingFlags.Public).OrderBy(property=>property.Name,StringComparer.Ordinal).ToArray();
             if(attribute is null||!type.IsValueType||!UiBinding.ValidName(attribute.Key)||attribute.Version==0||type.GetFields(BindingFlags.Instance|BindingFlags.Public).Length!=0
                 ||properties.Any(property=>!Scalar(property.PropertyType)||property.GetIndexParameters().Length!=0||property.GetMethod is null||property.SetMethod is null))throw new ArgumentException("Event.UnsupportedPayload");

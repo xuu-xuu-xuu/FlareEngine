@@ -1,18 +1,18 @@
 <Project>
   <!-- 自包含发布与普通构建共用既有输出位置。普通构建不能沿用旧的 app-local host，
        否则 apphost 会把输出目录误认为 .NET 安装根。仅处理两份可再生成的宿主文件，先备份。 -->
-  <Target Name="SelfEngineIsolateStaleRuntimeHost" AfterTargets="Build"
+  <Target Name="FlareEngineIsolateStaleRuntimeHost" AfterTargets="Build"
           Condition="'$(SelfContained)' != 'true' and ('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe')">
     <PropertyGroup>
-      <SelfEngineRuntimeHostBackup>$(SelfEngineRepositoryRoot)out\runtime-host-backup\$(MSBuildProjectName)\$(Configuration)\$(TargetFramework)\</SelfEngineRuntimeHostBackup>
+      <FlareEngineRuntimeHostBackup>$(FlareEngineRepositoryRoot)out\runtime-host-backup\$(MSBuildProjectName)\$(Configuration)\$(TargetFramework)\</FlareEngineRuntimeHostBackup>
     </PropertyGroup>
     <ItemGroup>
-      <_SelfEngineStaleRuntimeHost Include="$(TargetDir)hostfxr.dll" Condition="Exists('$(TargetDir)hostfxr.dll')" />
-      <_SelfEngineStaleRuntimeHost Include="$(TargetDir)hostpolicy.dll" Condition="Exists('$(TargetDir)hostpolicy.dll')" />
+      <_FlareEngineStaleRuntimeHost Include="$(TargetDir)hostfxr.dll" Condition="Exists('$(TargetDir)hostfxr.dll')" />
+      <_FlareEngineStaleRuntimeHost Include="$(TargetDir)hostpolicy.dll" Condition="Exists('$(TargetDir)hostpolicy.dll')" />
     </ItemGroup>
-    <MakeDir Directories="$(SelfEngineRuntimeHostBackup)" Condition="'@(_SelfEngineStaleRuntimeHost)' != ''" />
-    <Copy SourceFiles="@(_SelfEngineStaleRuntimeHost)" DestinationFolder="$(SelfEngineRuntimeHostBackup)" SkipUnchangedFiles="true" Condition="'@(_SelfEngineStaleRuntimeHost)' != ''" />
-    <Delete Files="@(_SelfEngineStaleRuntimeHost)" Condition="'@(_SelfEngineStaleRuntimeHost)' != ''" />
-    <Message Text="Saved incompatible app-local runtime host files in $(SelfEngineRuntimeHostBackup)" Importance="High" Condition="'@(_SelfEngineStaleRuntimeHost)' != ''" />
+    <MakeDir Directories="$(FlareEngineRuntimeHostBackup)" Condition="'@(_FlareEngineStaleRuntimeHost)' != ''" />
+    <Copy SourceFiles="@(_FlareEngineStaleRuntimeHost)" DestinationFolder="$(FlareEngineRuntimeHostBackup)" SkipUnchangedFiles="true" Condition="'@(_FlareEngineStaleRuntimeHost)' != ''" />
+    <Delete Files="@(_FlareEngineStaleRuntimeHost)" Condition="'@(_FlareEngineStaleRuntimeHost)' != ''" />
+    <Message Text="Saved incompatible app-local runtime host files in $(FlareEngineRuntimeHostBackup)" Importance="High" Condition="'@(_FlareEngineStaleRuntimeHost)' != ''" />
   </Target>
 </Project>

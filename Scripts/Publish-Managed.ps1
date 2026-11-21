@@ -1,4 +1,4 @@
-param([ValidateSet('Debug','Release')][string]$Configuration = 'Release', [switch]$FrameworkDependent,[string]$OutputDirectory='',[string]$ManagedOutputRoot='')
+﻿param([ValidateSet('Debug','Release')][string]$Configuration = 'Release', [switch]$FrameworkDependent,[string]$OutputDirectory='',[string]$ManagedOutputRoot='')
 if([Console]::IsOutputRedirected){[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Copy-RendererResources.ps1')
@@ -20,7 +20,7 @@ $baseArgs=@()
 if($ManagedOutputRoot){
     $managedRoot=[IO.Path]::GetFullPath($ManagedOutputRoot)
     New-Item -ItemType Directory -Path $managedRoot -Force | Out-Null
-    $baseArgs=@("-p:SelfEngineManagedOutputRoot=$managedRoot/","-p:SelfEngineManagedIntermediateRoot=$managedRoot/obj/")
+    $baseArgs=@("-p:FlareEngineManagedOutputRoot=$managedRoot/","-p:FlareEngineManagedIntermediateRoot=$managedRoot/obj/")
 }
 dotnet restore Source/FunctionLayer/Scripting/Bootstrap/Bootstrap.csproj --runtime win-x64 --configfile BuildConfig/NuGet.Config --packages out/nuget/packages "-p:Configuration=$Configuration" "-p:SelfContained=$selfContained" @baseArgs --nologo
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -28,7 +28,7 @@ dotnet publish Source/FunctionLayer/Scripting/Bootstrap/Bootstrap.csproj --confi
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Copy-Item -LiteralPath $nativeLibrary -Destination (Join-Path $publishDirectory 'EngineNative.dll') -Force
 if (-not $FrameworkDependent) {
-    $runtimeConfig = Get-Content -LiteralPath (Join-Path $publishDirectory 'SelfEngine.Bootstrap.runtimeconfig.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $runtimeConfig = Get-Content -LiteralPath (Join-Path $publishDirectory 'FlareEngine.Bootstrap.runtimeconfig.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $runtime = @($runtimeConfig.runtimeOptions.includedFrameworks | Where-Object name -eq 'Microsoft.NETCore.App')
     if ($runtime.Count -ne 1 -or $runtime[0].version -notmatch '^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$') { throw 'Cannot identify the published .NET runtime version.' }
     $runtimePackage = Join-Path $projectRoot ('out/nuget/packages/microsoft.netcore.app.runtime.win-x64/' + $runtime[0].version)

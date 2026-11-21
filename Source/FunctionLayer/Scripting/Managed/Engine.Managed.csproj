@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>
-    <AssemblyName>SelfEngine.Managed</AssemblyName>
-    <RootNamespace>SelfEngine</RootNamespace>
+    <AssemblyName>FlareEngine.Managed</AssemblyName>
+    <RootNamespace>FlareEngine</RootNamespace>
+    <AssemblyTitle>Flare Engine Managed SDK</AssemblyTitle>
+    <Product>Flare Engine</Product>
   </PropertyGroup>
 </Project>

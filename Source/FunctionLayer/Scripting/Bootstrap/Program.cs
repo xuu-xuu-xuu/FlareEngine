@@ -1,4 +1,4 @@
-using SelfEngine;
+using FlareEngine;
 using System.Text.Json.Nodes;
 
 string failureText="Bootstrap.Failed"; // 语言表尚不可用时的启动回退。
@@ -23,7 +23,11 @@ try
         return 0;
     }
     string ProjectFile(string path)=>Path.IsPathRooted(path)?path:Path.Combine(projectRoot,path);
-    string assembly = Option("--project") is { } assemblyOption?ProjectFile(assemblyOption):Path.Combine(AppContext.BaseDirectory,"ProjectScripts","SelfEngine.ProjectScripts.dll");
+    string? assemblyOption = Option("--project");
+    bool editorMode=args.Contains("--editor");
+    string assembly = assemblyOption is not null
+        ? (string.IsNullOrWhiteSpace(assemblyOption) ? "" : ProjectFile(assemblyOption))
+        : Path.Combine(AppContext.BaseDirectory,"ProjectScripts","FlareEngine.ProjectScripts.dll");
     string script = Option("--script") ?? "sample.project_mover";
     if(Option("--inspect-scripts") is { } inspectPath)
     {
@@ -32,7 +36,6 @@ try
         File.WriteAllText(output,System.Text.Json.JsonSerializer.Serialize(new{schemaVersion=1,types}),new System.Text.UTF8Encoding(false));
         return 0;
     }
-    bool editorMode=args.Contains("--editor");
     diagnostics.Write("Managed.Session.Create.Begin");
     using var session = new EngineSession();
     diagnostics.Write("Managed.Session.Create.End");
@@ -41,8 +44,11 @@ try
     if(!editorMode&&File.Exists(playerManifest))
     {
         var manifest=JsonNode.Parse(File.ReadAllText(playerManifest))!;
+        var gameTitle=(string?)manifest["name"];
+        if(!string.IsNullOrWhiteSpace(gameTitle))
+            Environment.SetEnvironmentVariable("FLARE_WINDOW_TITLE",gameTitle);
         var settingsId=(string?)manifest["playerSettingsId"];
-        session.ConfigurePlayerQuality(string.IsNullOrWhiteSpace(settingsId)?(string?)manifest["name"]??script:settingsId,
+        session.ConfigurePlayerQuality(string.IsNullOrWhiteSpace(settingsId)?gameTitle??script:settingsId,
             (bool?)manifest["showPlayerQualityMenu"]??true,manifest["qualityProfiles"]?.ToJsonString());
     }
     failureText=session.Text("Bootstrap.Failed");
@@ -56,8 +62,12 @@ try
     if(editorMode)
     {
         // 独立候选的可执行文件不在项目/引擎根；原生编辑器按已导入的实际文件建立干净文档。
-        Environment.SetEnvironmentVariable("SELFENGINE_EDITOR_SCENE_FILE",scenePath is null?null:Path.GetFullPath(ProjectFile(scenePath)));
-        Environment.SetEnvironmentVariable("SELFENGINE_EDITOR_UI_FILE",Option("--ui") is { } editorUi?Path.GetFullPath(ProjectFile(editorUi)):null);
+        var resolvedScene=scenePath is null?null:Path.GetFullPath(ProjectFile(scenePath));
+        var resolvedUi=Option("--ui") is { } editorUi?Path.GetFullPath(ProjectFile(editorUi)):null;
+        Environment.SetEnvironmentVariable("FLARE_EDITOR_SCENE_FILE",resolvedScene);
+        Environment.SetEnvironmentVariable("SELFENGINE_EDITOR_SCENE_FILE",resolvedScene);
+        Environment.SetEnvironmentVariable("FLARE_EDITOR_UI_FILE",resolvedUi);
+        Environment.SetEnvironmentVariable("SELFENGINE_EDITOR_UI_FILE",resolvedUi);
     }
     if (scenePath is not null) session.ImportScene(File.ReadAllText(ProjectFile(scenePath)));
     if(Option("--ui") is { } uiPath)session.Ui.Load(File.ReadAllText(ProjectFile(uiPath)));
@@ -100,7 +110,7 @@ try
     var entity = fieldsPath is null&&!editorMode?session.CreateEntity("ManagedMover"):null;
     var defaultFields=new JsonObject();
     if(script=="sample.project_mover")defaultFields["Speed"]=new JsonObject{["Kind"]="f32",["Value"]=2};
-    var bindings = fieldsPath is not null ? File.ReadAllText(fieldsPath) : editorMode?"{\"Version\":1,\"Scripts\":[]}":new JsonObject
+    var bindings = fieldsPath is not null && (!editorMode || File.Exists(fieldsPath)) ? File.ReadAllText(fieldsPath) : editorMode?"{\"Version\":1,\"Scripts\":[]}":new JsonObject
     {
         ["Version"] = 1,
         ["Scripts"] = new JsonArray(new JsonObject { ["Type"] = script, ["Entity"] = entity!.StableId.ToString(), ["Enabled"] = true,
@@ -114,7 +124,7 @@ try
         Console.Error.WriteLine($"{session.Text(diagnostic.Key)}: entity={diagnostic.EntityHandle} type={diagnostic.ScriptType} phase={diagnostic.Phase} {diagnostic.Detail}");
         if(diagnostic.Key!="Script.FixedStepBudget")scriptFailed=true;
     };
-    var allowed = (editorMode?ScriptProject.DiscoverTypes(assembly):ScriptBindings.ScriptTypes(bindings)).ToList();
+    var allowed = (editorMode?(string.IsNullOrEmpty(assembly)||!File.Exists(assembly)?Array.Empty<string>():ScriptProject.DiscoverTypes(assembly)):ScriptBindings.ScriptTypes(bindings)).ToList();
     if (args.Contains("--menu")&&!menuDemo)
     {
         var menuEntity = session.CreateEntity("Menu");

@@ -1,10 +1,10 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 public enum TickPhase:uint {FrameBegin,PreTick,FixedPreTick,FixedPostTick,Tick,PostTick}
-public readonly record struct TickDependency(Behaviour Behaviour,TickPhase Phase,bool RequireFresh=false);
+public readonly record struct TickDependency(F_Behaviour Behaviour,TickPhase Phase,bool RequireFresh=false);
 public readonly record struct SimulationClockState(ulong Steps,double SimulationSeconds,double DroppedSeconds);
 internal enum EnvironmentPhase:uint {Prepare,FrameBegin,PreTick,FixedPreTick,BeforePhysics,AfterPhysics,FixedPostTick,Tick,AfterLogic,PostTick,FrameEnd,FixedEnd,PrepareFinished}
 

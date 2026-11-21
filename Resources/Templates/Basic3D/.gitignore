@@ -2,3 +2,5 @@ out/
 .cache/
 Scripts/bin/
 Scripts/obj/
+*.editor-ui.json
+*.editor-ui.json.bak

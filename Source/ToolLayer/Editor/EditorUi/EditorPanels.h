@@ -20,6 +20,7 @@ struct EditorHierarchyNode
     std::string label;
     bool enabled = true;
     bool prefab = false;
+    std::string iconKind;
 
     bool operator==(const EditorHierarchyNode&) const = default;
 };
@@ -51,6 +52,8 @@ enum class EditorPropertyType : std::uint8_t
     Color,
     Combo,
     Action,
+    Subheader,
+    EntityRef,
 };
 
 struct EditorProperty
@@ -73,6 +76,8 @@ struct EditorProperty
     std::optional<float> dragMinimum;
     std::optional<float> dragMaximum;
     bool overridden = false;
+    bool slider = false;
+    bool headerMenuAction = false;
 
     bool operator==(const EditorProperty&) const = default;
 };
@@ -101,6 +106,12 @@ struct EditorAssetEntry
 {
     std::string path;
     std::string type;
+    std::string relativeDir;
+    std::string displayName;
+    std::string thumbnail;
+    std::size_t depth = 0;
+    bool hasChildren = false;
+    bool expanded = true;
 
     bool operator==(const EditorAssetEntry&) const = default;
 };
@@ -111,8 +122,15 @@ public:
     void SetEntries(std::vector<EditorAssetEntry> entries);
     [[nodiscard]] const std::vector<EditorAssetEntry>& Entries() const noexcept;
     void SetFilter(std::string_view filter);
+    [[nodiscard]] const std::string& Filter() const noexcept { return filter_; }
     void SetTypeFilter(std::string_view type);
     [[nodiscard]] const std::string& TypeFilter() const noexcept { return typeFilter_; }
+    void SetCurrentFolder(std::string folderPath);
+    [[nodiscard]] const std::string& CurrentFolder() const noexcept { return currentFolder_; }
+    bool ToggleFolder(std::string_view folderPath);
+    [[nodiscard]] bool IsFolderExpanded(std::string_view folderPath) const;
+    void SetGridMode(bool grid) noexcept { gridMode_ = grid; }
+    [[nodiscard]] bool GridMode() const noexcept { return gridMode_; }
     [[nodiscard]] const std::vector<EditorAssetEntry>& Filtered() const noexcept;
     [[nodiscard]] std::vector<EditorAssetEntry> VisibleRange(std::size_t offset, float viewportHeight,
                                                             float rowHeight, std::size_t bufferRows) const;
@@ -124,9 +142,12 @@ private:
     void RebuildFiltered();
     std::vector<EditorAssetEntry> entries_;
     std::vector<EditorAssetEntry> filtered_;
+    std::vector<std::pair<std::string, bool>> folderExpansion_;
     std::string filter_;
     std::string typeFilter_;
+    std::string currentFolder_;
     std::string selected_;
+    bool gridMode_ = false;
 };
 
 } // namespace se::ui::editor

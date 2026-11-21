@@ -1,4 +1,4 @@
-namespace SelfEngine;
+namespace FlareEngine;
 
 // 原生只保存受控标识；实际 Behaviour 和委托仍由 ScriptSystem 管理。
 internal sealed class ScriptComponentBinding

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true)][string]$ProjectRoot,
     [Parameter(Mandatory=$true)][string]$NativeDirectory,
     [Parameter(Mandatory=$true)][string]$OperationDirectory,
@@ -81,7 +81,7 @@ function ReadCandidate([string]$Path) {
     $operationRoot=Split-Path -Parent $OperationDirectory
     if(!$root.StartsWith($operationRoot+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Editor.ScriptCandidateInvalid'}
     $document=Get-Content -LiteralPath (Join-Path $root 'candidate.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    if($document.schemaVersion -ne 1 -or $document.kind -ne 'SelfEngine.EditorScriptCandidate' -or $document.projectRoot -ne $ProjectRoot -or $document.configuration -ne $Configuration){throw 'Editor.ScriptCandidateInvalid'}
+    if($document.schemaVersion -ne 1 -or $document.kind -notin @('FlareEngine.EditorScriptCandidate','SelfEngine.EditorScriptCandidate') -or $document.projectRoot -ne $ProjectRoot -or $document.configuration -ne $Configuration){throw 'Editor.ScriptCandidateInvalid'}
     $runtimeCheck=Get-Content -LiteralPath (Join-Path $root 'runtime-check.json') -Raw -Encoding UTF8|ConvertFrom-Json
     if($runtimeCheck.schemaVersion -ne 1 -or !$runtimeCheck.success -or !$runtimeCheck.privateRuntime){throw 'Editor.ScriptCandidateInvalid'}
     foreach($file in $document.files){
@@ -107,7 +107,7 @@ try {
     $buildPath=ProjectFile 'build.json';$manifestPath=ProjectFile 'project.json'
     $build=Get-Content -LiteralPath $buildPath -Raw -Encoding UTF8|ConvertFrom-Json
     $manifest=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8|ConvertFrom-Json
-    if($build.format -ne 'SelfEngine.Build' -or $build.version -ne 1 -or !$build.scriptsProject -or !$build.bindings){throw 'Preview.InvalidProject'}
+    if($build.format -notin @('FlareEngine.Build','SelfEngine.Build') -or $build.version -ne 1 -or !$build.scriptsProject -or !$build.bindings){throw 'Preview.InvalidProject'}
     $scriptProject=ProjectFile $build.scriptsProject
     if([IO.Path]::GetExtension($scriptProject) -ne '.csproj'){throw 'Preview.InvalidProject'}
     [void](ProjectFile $build.bindings);[void](ProjectFile $manifest.entryScene)
@@ -176,7 +176,7 @@ try {
     foreach($name in @('System.IO.Pipelines.dll','System.Text.Json.dll','coreclr.dll','hostfxr.dll','hostpolicy.dll')){
         if(!(Test-Path -LiteralPath (Join-Path $runtime $name) -PathType Leaf)){throw ('Preview.BuildFailed runtime missing '+$name)}
     }
-    $runtimeConfig=Get-Content -LiteralPath (Join-Path $runtime 'SelfEngine.Bootstrap.runtimeconfig.json') -Raw -Encoding UTF8|ConvertFrom-Json
+    $runtimeConfig=Get-Content -LiteralPath (Join-Path $runtime 'FlareEngine.Bootstrap.runtimeconfig.json') -Raw -Encoding UTF8|ConvertFrom-Json
     if(!$runtimeConfig.runtimeOptions.includedFrameworks -or $runtimeConfig.runtimeOptions.framework){throw 'Preview.BuildFailed runtime must be self-contained'}
     if(!$packageMode){
         $runtimeVersion=@($runtimeConfig.runtimeOptions.includedFrameworks|Where-Object {$_.name -eq 'Microsoft.NETCore.App'})[0].version
@@ -185,7 +185,7 @@ try {
         foreach($name in @('LICENSE.TXT','THIRD-PARTY-NOTICES.TXT')){Copy-Item -LiteralPath (Join-Path $runtimePackage $name) -Destination (Join-Path $notices $name)}
     }
     $runtimeReport=Join-Path $stage 'runtime-check.json'
-    Step 'verify_runtime' (Join-Path $runtime 'SelfEngine.Bootstrap.exe') @('--project-root',$ProjectRoot,'--verify-runtime',$runtimeReport)
+    Step 'verify_runtime' (Join-Path $runtime 'FlareEngine.Bootstrap.exe') @('--project-root',$ProjectRoot,'--verify-runtime',$runtimeReport)
     $verified=Get-Content -LiteralPath $runtimeReport -Raw -Encoding UTF8|ConvertFrom-Json
     if($verified.schemaVersion -ne 1 -or !$verified.success -or !$verified.privateRuntime){throw 'Preview.BuildFailed runtime verification failed'}
     if($precompiled){Get-ChildItem -LiteralPath $precompiled.Directory|Copy-Item -Destination $scripts -Recurse -Force;$assemblyName=$precompiled.Assembly}
@@ -194,18 +194,23 @@ try {
         $sdkRoot=if($packageMode){$engineRoot}else{$OperationDirectory}
         if(!$packageMode){
             New-Item -ItemType Directory -Path (Join-Path $sdkRoot 'SDK/Managed') -Force|Out-Null
-            Copy-Item -LiteralPath (Join-Path $runtime 'SelfEngine.Managed.dll') -Destination (Join-Path $sdkRoot 'SDK/Managed/SelfEngine.Managed.dll')
+            Copy-Item -LiteralPath (Join-Path $runtime 'FlareEngine.Managed.dll') -Destination (Join-Path $sdkRoot 'SDK/Managed/FlareEngine.Managed.dll')
+            if(Test-Path -LiteralPath (Join-Path $runtime 'SelfEngine.Managed.dll')){
+                Copy-Item -LiteralPath (Join-Path $runtime 'SelfEngine.Managed.dll') -Destination (Join-Path $sdkRoot 'SDK/Managed/SelfEngine.Managed.dll')
+            }
             $targets=@'
 <Project><ItemGroup>
-  <ProjectReference Remove="$(SelfEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(SelfEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj"/>
-  <Reference Remove="SelfEngine.Managed"/>
-  <Reference Include="SelfEngine.Managed"><HintPath>$(MSBuildThisFileDirectory)/Managed/SelfEngine.Managed.dll</HintPath><Private>false</Private></Reference>
+  <ProjectReference Remove="$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(FlareEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj;$(SelfEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(SelfEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj"/>
+  <Reference Remove="FlareEngine.Managed;SelfEngine.Managed"/>
+  <Reference Include="FlareEngine.Managed"><HintPath>$(MSBuildThisFileDirectory)/Managed/FlareEngine.Managed.dll</HintPath><Private>false</Private></Reference>
+  <Using Include="FlareEngine"/>
 </ItemGroup></Project>
 '@
+            [IO.File]::WriteAllText((Join-Path $sdkRoot 'SDK/FlareEngine.Scripts.targets'),$targets,$utf8)
             [IO.File]::WriteAllText((Join-Path $sdkRoot 'SDK/SelfEngine.Scripts.targets'),$targets,$utf8)
         }
         $properties=Get-EnginePackageScriptProperties $sdkRoot (Join-Path $OperationDirectory 'script-obj')
-        if(!$packageMode){$properties[0]='-p:SelfEngineRoot='+$engineRoot}
+        if(!$packageMode){$properties[0]='-p:FlareEngineRoot='+$engineRoot;$properties[1]='-p:SelfEngineRoot='+$engineRoot}
         # 多个用户 ProjectReference 不能共用一个 obj/project.assets.json。
         # 保留每个项目原有 Directory.Build.props，再为各项目分配独立中间目录。
         $scriptProps=Join-Path $OperationDirectory 'Candidate.Script.Directory.Build.props'
@@ -225,21 +230,21 @@ try {
         $assemblyName=(Get-Content -LiteralPath (Join-Path $OperationDirectory 'script_name.log') -Raw -Encoding UTF8).Trim()
         if(!$assemblyName -or $assemblyName.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0 -or $assemblyName -in @('.','..')){throw 'Preview.InvalidProject'}
         $failureKey='Preview.RestoreFailed'
-        Step 'restore_scripts' $dotnet (@('restore',$scriptProject,'--runtime','win-x64','--configfile',$nugetConfig,'--packages',(Join-Path $ProjectRoot 'out/nuget/packages'),('-p:Configuration='+$Configuration),'-p:SelfContained=false','--nologo')+$properties)
+        Step 'restore_scripts' $dotnet (@('restore',$scriptProject,'--configfile',$nugetConfig,'--packages',(Join-Path $ProjectRoot 'out/nuget/packages'),('-p:Configuration='+$Configuration),'-p:SelfContained=false','-p:UseAppHost=false','-p:NuGetAudit=false','--nologo')+$properties)
         $failureKey='Preview.BuildFailed'
-        Step 'build_scripts' $dotnet (@('publish',$scriptProject,'--configuration',$Configuration,'--runtime','win-x64','--self-contained','false','--output',$scripts,'-p:GenerateDependencyFile=true','--no-restore','--nologo')+$properties)
+        Step 'build_scripts' $dotnet (@('publish',$scriptProject,'--configuration',$Configuration,'--self-contained','false','--output',$scripts,'-p:UseAppHost=false','-p:NuGetAudit=false','-p:GenerateDependencyFile=true','--no-restore','--nologo')+$properties)
     }
     $assemblyRelative='Scripts/'+$assemblyName+'.dll';$assembly=Join-Path $stage $assemblyRelative
     if(!(Test-Path -LiteralPath $assembly) -or !(Test-Path -LiteralPath (Join-Path $scripts ($assemblyName+'.deps.json')))){throw 'Editor.ScriptCandidateInvalid'}
     # 只装载并验证类型目录，不调用脚本生命周期，也不要求旧字段已迁移为新 schema。
-    Step 'inspect_scripts' (Join-Path $runtime 'SelfEngine.Bootstrap.exe') @('--project-root',$ProjectRoot,'--project',$assembly,'--inspect-scripts',(Join-Path $stage 'script-types.json'),'--locale',$Locale)
+    Step 'inspect_scripts' (Join-Path $runtime 'FlareEngine.Bootstrap.exe') @('--project-root',$ProjectRoot,'--project',$assembly,'--inspect-scripts',(Join-Path $stage 'script-types.json'),'--locale',$Locale)
     if((HashText (ConvertTo-Json -InputObject @(SourceInputs) -Depth 5 -Compress)) -ne $sourceIdentity){throw 'Export.SourceChanged'}
     foreach($file in $engineInputs){
         $path=if($file.path -eq 'EngineNative.dll'){$native}else{Join-Path $engineRoot $file.path}
         if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256){throw ('Export.SourceChanged '+$file.path)}
     }
     $files=@(Get-ChildItem -LiteralPath $stage -File -Recurse|Sort-Object FullName|ForEach-Object {[ordered]@{path=$_.FullName.Substring($stage.Length+1).Replace('\','/');bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})
-    $document=[ordered]@{schemaVersion=1;kind='SelfEngine.EditorScriptCandidate';projectRoot=$ProjectRoot;configuration=$Configuration;sourceIdentity=$sourceIdentity;engineIdentity=$engineIdentity;sourceFiles=$sourceFiles;buildSettings=$build;projectSettings=$manifest;runtimeExecutable='Runtime/SelfEngine.Bootstrap.exe';assembly=$assemblyRelative;files=$files}
+    $document=[ordered]@{schemaVersion=1;kind='FlareEngine.EditorScriptCandidate';projectRoot=$ProjectRoot;configuration=$Configuration;sourceIdentity=$sourceIdentity;engineIdentity=$engineIdentity;sourceFiles=$sourceFiles;buildSettings=$build;projectSettings=$manifest;runtimeExecutable='Runtime/FlareEngine.Bootstrap.exe';assembly=$assemblyRelative;files=$files}
     WriteJson (Join-Path $stage 'candidate.json') $document
     $candidate=ReadCandidate $stage
     UseCandidate $candidate 'ready' ''

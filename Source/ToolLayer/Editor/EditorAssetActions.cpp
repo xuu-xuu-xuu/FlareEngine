@@ -185,7 +185,8 @@ bool GatherReferences(const EditorAssetActionPlan& plan,const ProjectDescription
     {
         std::string text;if(!Safe(request.projectRoot,build)||!Read(build,text))return Issue(diagnostics,"Assets.ActionDocumentInvalid",build);
         const auto json=Parse(text);
-        if(!json.is_object()||json.value("format",std::string{})!="SelfEngine.Build"||json.value("version",0)!=1)return Issue(diagnostics,"Assets.ActionDocumentInvalid",build);
+        const auto buildFormat=json.is_object()?json.value("format",std::string{}):std::string{};
+        if((buildFormat!="FlareEngine.Build"&&buildFormat!="SelfEngine.Build")||json.value("version",0)!=1)return Issue(diagnostics,"Assets.ActionDocumentInvalid",build);
         for(const auto& [field,kind]:std::vector<std::pair<std::string,EditorAssetDocumentKind>>{{"bindings",EditorAssetDocumentKind::Bindings},{"entryUi",EditorAssetDocumentKind::Ui}})
         {const auto relative=json.value(field,std::string{});if(!relative.empty())add(Absolute(request.projectRoot/asset_io::FromUtf8(relative)),kind);}
     }
@@ -284,8 +285,24 @@ EditorAssetActionPlan EditorAssetActions::Plan(const EditorAssetActionRequest& r
             if(fs::exists(sidecar)&&!AddActionFile(plan,sidecar,targets[i].empty()?fs::path{}:Metadata(targets[i])))return plan;
         }
         if(!GatherReferences(plan,project,assets,plan.references,plan.diagnostics))return plan;
-        if(!plan.references.empty())
-        {for(const auto& reference:plan.references)plan.diagnostics.push_back({"Assets.ActionReferenced",reference.asset,reference});return plan;}
+        if(request.action==EditorAssetAction::Delete)
+        {
+            if(!plan.references.empty())
+            {for(const auto& reference:plan.references)plan.diagnostics.push_back({"Assets.ActionReferenced",reference.asset,reference});return plan;}
+        }
+        else
+        {
+            bool blockedByDependency=false;
+            for(const auto& reference:plan.references)
+            {
+                if(reference.pointer.starts_with("dependencies/"))
+                {
+                    plan.diagnostics.push_back({"Assets.ActionReferenced",reference.asset,reference});
+                    blockedByDependency=true;
+                }
+            }
+            if(blockedByDependency)return plan;
+        }
         if(request.action==EditorAssetAction::Delete)
         {
             auto& declarations=manifest["assets"];const auto before=declarations.size();

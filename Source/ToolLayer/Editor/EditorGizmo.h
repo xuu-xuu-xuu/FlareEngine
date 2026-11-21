@@ -5,7 +5,7 @@
 namespace se
 {
 enum class GizmoMode { Translate, Rotate, Scale };
-enum class GizmoAxis { X, Y, Z };
+enum class GizmoAxis { X, Y, Z, Uniform };
 enum class GizmoSpace { World,Local };
 Vec3 EditorGizmoAxis(const World& world,EntityHandle entity,GizmoAxis axis,GizmoSpace space);
 
@@ -17,7 +17,7 @@ public:
     bool Begin(EditorSession& editor, GizmoMode mode, GizmoAxis axis, Vec2 mouse,
         Vec2 screenDirection,float pixelsPerUnit=80,GizmoSpace space=GizmoSpace::World,const CameraSnapshot* camera=nullptr,
         const Vec3* pivot=nullptr);
-    bool Update(EditorSession& editor, Vec2 mouse);
+    bool Update(EditorSession& editor, Vec2 mouse, bool snap = false);
     bool End(EditorSession& editor, bool commit = true);
     bool Active() const noexcept { return active_; }
     bool ProjectionMatches(const std::optional<CameraSnapshot>& camera) const;

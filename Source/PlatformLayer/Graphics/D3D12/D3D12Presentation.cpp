@@ -187,9 +187,18 @@ bool ValidCapture(D3D12Presentation& presentation, UINT index, const D3D12FrameC
         return false;
     const auto source = resource?resource->GetDesc():hdr?presentation.hdr->GetDesc():presentation.backBuffers[index]->GetDesc();
     const auto destination = capture.readback->GetDesc();
+    const auto& actual = capture.footprint.Footprint;
+    auto footprintSource = source;
+    if (!resource && !hdr && source.DepthOrArraySize == 1 &&
+        actual.Width > 0 && actual.Height > 0 &&
+        actual.Width <= source.Width && actual.Height <= source.Height)
+    {
+        footprintSource.Width = actual.Width;
+        footprintSource.Height = actual.Height;
+    }
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT expected{};
     UINT64 required = 0;
-    device->GetCopyableFootprints(&source, 0, 1, 0, &expected, nullptr, nullptr, &required);
+    device->GetCopyableFootprints(&footprintSource, 0, 1, 0, &expected, nullptr, nullptr, &required);
     if(source.DepthOrArraySize>1)
     {
         if(capture.layerFootprints.size()!=source.DepthOrArraySize)return false;
@@ -202,7 +211,6 @@ bool ValidCapture(D3D12Presentation& presentation, UINT index, const D3D12FrameC
                 ||a.Footprint.Height!=b.Footprint.Height||a.Footprint.Depth!=b.Footprint.Depth||a.Footprint.RowPitch!=b.Footprint.RowPitch)return false;
         }
     }
-    const auto& actual = capture.footprint.Footprint;
     return destination.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && destination.Width >= required
         && capture.footprint.Offset == expected.Offset && actual.Format == expected.Footprint.Format
         && actual.Width == expected.Footprint.Width && actual.Height == expected.Footprint.Height
@@ -255,6 +263,7 @@ bool InitializeD3D12Presentation(D3D12Presentation& presentation,
         D3D12Presentation& value;bool published=false;
         ~InitialLifetime(){if(!published)ReleaseD3D12Presentation(value);}
     } lifetime{initialized};
+    initialized.window = hwnd;
     initialized.width = static_cast<UINT>(client.right - client.left);
     initialized.height = static_cast<UINT>(client.bottom - client.top);
 
@@ -272,7 +281,19 @@ bool InitializeD3D12Presentation(D3D12Presentation& presentation,
 
     if(!CheckGraphicsResult(initialized.states->BindQueue(*initialized.queue.Get()),localization,"D3D12.StateTrackingFailed"))return false;
     initialized.stateQueueBound=true;
-    initialized.queue->SetName(L"SelfEngine.Direct");
+    initialized.queue->SetName(L"FlareEngine.Direct");
+    BOOL tearingSupported = FALSE;
+    ComPtr<IDXGIFactory5> factory5;
+    if (SUCCEEDED(context.factory.As(&factory5)) && factory5)
+    {
+        if (FAILED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING,
+                &tearingSupported, sizeof(tearingSupported))))
+        {
+            tearingSupported = FALSE;
+        }
+    }
+    initialized.allowTearing = (tearingSupported != FALSE);
+
     DXGI_SWAP_CHAIN_DESC1 swapChainDescription{};
     swapChainDescription.Width = initialized.width;
     swapChainDescription.Height = initialized.height;
@@ -284,6 +305,7 @@ bool InitializeD3D12Presentation(D3D12Presentation& presentation,
     swapChainDescription.Scaling = DXGI_SCALING_NONE;
     swapChainDescription.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     swapChainDescription.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+    swapChainDescription.Flags = initialized.allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u;
 
     ComPtr<IDXGISwapChain1> swapChain;
     // D3D12 在这里传直接队列；两个 nullptr 分别表示窗口模式、不限制输出显示器。
@@ -1413,7 +1435,8 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         D3D12_TEXTURE_COPY_LOCATION source{};
         source.pResource = presentation.backBuffers[index].Get();
         source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        presentation.commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+        const D3D12_BOX box{0, 0, 0, capture->footprint.Footprint.Width, capture->footprint.Footprint.Height, 1};
+        presentation.commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, &box);
     }
     if(!use(presentation.backBuffers[index].Get(),D3D12_RESOURCE_STATE_PRESENT,"Present"))return false;
     if(presentation.timingEnabled)
@@ -1471,7 +1494,12 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         frame.shadowCachePendingCommit=false;
     }
     if(trace)LogCheckpoint("GPU.Present.Begin",{},diagnosticFrame);
-    const HRESULT presentResult = presentation.swapChain->Present(1, 0);
+    const bool interactiveResize = presentation.window && GetPropW(presentation.window, L"FlareInteractiveResize") != nullptr;
+    const bool immediatePresent = (capture != nullptr) || presentation.resizedSinceLastPresent || interactiveResize;
+    presentation.resizedSinceLastPresent = false;
+    const UINT syncInterval = immediatePresent ? 0u : 1u;
+    const UINT presentFlags = (immediatePresent && presentation.allowTearing) ? DXGI_PRESENT_ALLOW_TEARING : 0u;
+    const HRESULT presentResult = presentation.swapChain->Present(syncInterval, presentFlags);
     if(trace||FAILED(presentResult))LogCheckpoint("GPU.Present.End","hr="+std::to_string(presentResult),diagnosticFrame);
     // Present 失败也要尝试 Signal；不能丢掉已执行命令的寿命标记。
     const bool signaled = CheckGraphicsResult(SignalSubmittedWork(presentation, frame.fenceValue),
@@ -1560,7 +1588,8 @@ bool ResizeD3D12Presentation(D3D12Presentation& presentation, UINT width, UINT h
     presentation.coverage.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.indoorHistory.reset();ResetD3D12RayTracingTargets(presentation);presentation.depth.Reset();presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.gameUiRtvs.reset();
     presentation.width = presentation.height = 0;
     if (!CheckGraphicsResult(presentation.swapChain->ResizeBuffers(D3D12Presentation::bufferCount,
-        width, height, D3D12Presentation::bufferFormat, 0), localization, "D3D12.ResizeBuffersFailed"))
+        width, height, D3D12Presentation::bufferFormat,
+        presentation.allowTearing ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0u), localization, "D3D12.ResizeBuffersFailed"))
     { presentation.failed = true; return false; }
 
     ComPtr<ID3D12Device> device;
@@ -1583,6 +1612,7 @@ bool ResizeD3D12Presentation(D3D12Presentation& presentation, UINT width, UINT h
     presentation.height = height;
     presentation.frameCursor = 0;
     presentation.occluded = false;
+    presentation.resizedSinceLastPresent = true;
     return true;
 }
 
@@ -1622,6 +1652,7 @@ void ReleaseD3D12Presentation(D3D12Presentation& presentation) noexcept
     if(presentation.states&&presentation.stateQueueBound)presentation.states->UnbindQueue(presentation.queue.Get());
     presentation.stateQueueBound=false;
     presentation.queue.Reset();presentation.states.reset();presentation.memory.reset();
+    presentation.window = nullptr;
     presentation.width = 0;
     presentation.height = 0;
     presentation.nextFenceValue = 1;

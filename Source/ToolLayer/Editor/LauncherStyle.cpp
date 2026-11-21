@@ -355,9 +355,28 @@ bool DrawControl(const DRAWITEMSTRUCT& item)
     const bool list = item.CtlType == ODT_LISTBOX;
     if (!button && !list && item.CtlType != ODT_COMBOBOX) return false;
 
-    HDC dc = item.hDC;
+    const RECT targetRect = item.rcItem;
+    const int width = targetRect.right - targetRect.left;
+    const int height = targetRect.bottom - targetRect.top;
+    if (width <= 0 || height <= 0) return true;
+
+    const HDC memDc = CreateCompatibleDC(item.hDC);
+    const HBITMAP memBmp = memDc ? CreateCompatibleBitmap(item.hDC, width, height) : nullptr;
+    const HGDIOBJ oldBmp = (memDc && memBmp) ? SelectObject(memDc, memBmp) : nullptr;
+    HDC dc = oldBmp ? memDc : item.hDC;
+    RECT row = oldBmp ? RECT{0, 0, width, height} : targetRect;
     const int saved = SaveDC(dc);
-    RECT row = item.rcItem;
+    const auto finishDraw = [&] {
+        RestoreDC(dc, saved);
+        if (oldBmp)
+        {
+            BitBlt(item.hDC, targetRect.left, targetRect.top, width, height, memDc, 0, 0, SRCCOPY);
+            SelectObject(memDc, oldBmp);
+        }
+        if (memBmp) DeleteObject(memBmp);
+        if (memDc) DeleteDC(memDc);
+        return true;
+    };
     const bool selected = (item.itemState & ODS_SELECTED) != 0;
     const bool disabled = (item.itemState & ODS_DISABLED) != 0;
     const bool focused = (item.itemState & (ODS_FOCUS | ODS_NOFOCUSRECT)) == ODS_FOCUS;
@@ -416,8 +435,7 @@ bool DrawControl(const DRAWITEMSTRUCT& item)
                 SetTextColor(dc, flare::Native(active ? flare::Text : flare::Muted));
                 DrawTextW(dc, desc.c_str(), -1, &descRect, DT_WORDBREAK | DT_LEFT | DT_NOPREFIX);
             }
-            RestoreDC(dc, saved);
-            return true;
+            return finishDraw();
         }
 
         flare::Color bg = flare::Raised;
@@ -457,8 +475,7 @@ bool DrawControl(const DRAWITEMSTRUCT& item)
         SetTextColor(dc, flare::Native(textColor));
         InflateRect(&row, -ScaleForWindow(item.hwndItem, 10), 0);
         DrawTextW(dc, rawText, -1, &row, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
-        RestoreDC(dc, saved);
-        return true;
+        return finishDraw();
     }
 
     if (item.itemID != static_cast<UINT>(-1))
@@ -569,7 +586,315 @@ bool DrawControl(const DRAWITEMSTRUCT& item)
         }
     }
 
+    return finishDraw();
+}
+
+namespace
+{
+struct PopupMenuState
+{
+    const std::vector<PopupMenuItem>* items = nullptr;
+    std::vector<RECT> itemRects;
+    HFONT font = nullptr;
+    int width = 0;
+    int height = 0;
+    int pad = 5;
+    int hover = -1;
+    int selectedId = 0;
+    bool closing = false;
+    bool closed = false;
+};
+
+int HitPopupItem(const PopupMenuState& s, int x, int y)
+{
+    if (!s.items || x < 0 || y < 0 || x >= s.width || y >= s.height) return -1;
+    for (std::size_t i = 0; i < s.itemRects.size(); ++i)
+    {
+        const auto& item = (*s.items)[i];
+        if (item.separator || !item.enabled) continue;
+        const RECT& r = s.itemRects[i];
+        if (y >= r.top && y < r.bottom) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void StepPopupHover(PopupMenuState& s, HWND hwnd, int delta)
+{
+    if (!s.items || s.items->empty()) return;
+    const int n = static_cast<int>(s.items->size());
+    int idx = s.hover;
+    for (int step = 0; step < n; ++step)
+    {
+        idx = (idx + delta + n) % n;
+        if (!(*s.items)[static_cast<std::size_t>(idx)].separator && (*s.items)[static_cast<std::size_t>(idx)].enabled)
+        {
+            if (s.hover != idx)
+            {
+                s.hover = idx;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return;
+        }
+    }
+}
+
+void PaintPopupMenu(HWND hwnd, const PopupMenuState& s, HDC targetDc)
+{
+    if (s.width <= 0 || s.height <= 0 || !s.items) return;
+    const HDC memDc = CreateCompatibleDC(targetDc);
+    const HBITMAP memBmp = memDc ? CreateCompatibleBitmap(targetDc, s.width, s.height) : nullptr;
+    const HGDIOBJ oldBmp = (memDc && memBmp) ? SelectObject(memDc, memBmp) : nullptr;
+    HDC dc = oldBmp ? memDc : targetDc;
+    const int saved = SaveDC(dc);
+
+    RECT full{0, 0, s.width, s.height};
+    Fill(dc, full, flare::Surface);
+    Frame(dc, full, flare::Border, 1);
+    RECT topAccent{1, 1, s.width - 1, 2};
+    FadeLine(dc, topAccent, flare::Gold, 160);
+
+    if (s.font) SelectObject(dc, s.font);
+    SetBkMode(dc, TRANSPARENT);
+    const int rowRadius = ScaleForWindow(hwnd, 5);
+    const int textPadX = ScaleForWindow(hwnd, 12);
+
+    for (std::size_t i = 0; i < s.items->size(); ++i)
+    {
+        const auto& item = (*s.items)[i];
+        const RECT& r = s.itemRects[i];
+        if (item.separator)
+        {
+            const int midY = (r.top + r.bottom) / 2;
+            RECT line{r.left + ScaleForWindow(hwnd, 6), midY, r.right - ScaleForWindow(hwnd, 6), midY + 1};
+            Fill(dc, line, flare::Border);
+            continue;
+        }
+        const bool hovered = static_cast<int>(i) == s.hover && item.enabled;
+        if (hovered)
+        {
+            FillRound(dc, r, item.danger ? flare::Danger : flare::Hover, rowRadius);
+            if (!item.danger)
+            {
+                RECT pill{r.left + ScaleForWindow(hwnd, 3), r.top + ScaleForWindow(hwnd, 7),
+                          r.left + ScaleForWindow(hwnd, 6), r.bottom - ScaleForWindow(hwnd, 7)};
+                FillRound(dc, pill, flare::Gold, ScaleForWindow(hwnd, 2));
+            }
+        }
+        flare::Color textColor = flare::Text;
+        if (!item.enabled) textColor = flare::Disabled;
+        else if (hovered) textColor = flare::Heading;
+        else if (item.danger) textColor = flare::Danger;
+        SetTextColor(dc, flare::Native(textColor));
+
+        RECT labelRect{r.left + textPadX, r.top, r.right - textPadX, r.bottom};
+        DrawTextW(dc, item.label.c_str(), -1, &labelRect, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+
     RestoreDC(dc, saved);
-    return true;
+    if (oldBmp)
+    {
+        BitBlt(targetDc, 0, 0, s.width, s.height, memDc, 0, 0, SRCCOPY);
+        SelectObject(memDc, oldBmp);
+    }
+    if (memBmp) DeleteObject(memBmp);
+    if (memDc) DeleteDC(memDc);
+}
+
+void ClosePopupMenu(HWND hwnd, PopupMenuState* s, int selectedId = 0)
+{
+    if (!s || s->closing) return;
+    s->closing = true;
+    s->selectedId = selectedId;
+    s->closed = true;
+    if (GetCapture() == hwnd) ReleaseCapture();
+    if (IsWindow(hwnd)) DestroyWindow(hwnd);
+}
+
+LRESULT CALLBACK PopupMenuProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
+{
+    auto* s = reinterpret_cast<PopupMenuState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (message)
+    {
+    case WM_NCCREATE:
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+        return DefWindowProcW(hwnd, message, wp, lp);
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PRINTCLIENT:
+        if (s) PaintPopupMenu(hwnd, *s, reinterpret_cast<HDC>(wp));
+        return 0;
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps{};
+        const HDC dc = BeginPaint(hwnd, &ps);
+        if (s) PaintPopupMenu(hwnd, *s, dc);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE:
+        if (s)
+        {
+            const int hit = HitPopupItem(*s, static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp)));
+            if (hit != s->hover)
+            {
+                s->hover = hit;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        return 0;
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+        if (s)
+        {
+            const int x = static_cast<short>(LOWORD(lp));
+            const int y = static_cast<short>(HIWORD(lp));
+            if (x < 0 || y < 0 || x >= s->width || y >= s->height)
+                ClosePopupMenu(hwnd, s, 0);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+    case WM_RBUTTONUP:
+        if (s)
+        {
+            const int x = static_cast<short>(LOWORD(lp));
+            const int y = static_cast<short>(HIWORD(lp));
+            const int hit = HitPopupItem(*s, x, y);
+            if (hit >= 0)
+                ClosePopupMenu(hwnd, s, (*s->items)[static_cast<std::size_t>(hit)].id);
+            else if (x < 0 || y < 0 || x >= s->width || y >= s->height)
+                ClosePopupMenu(hwnd, s, 0);
+        }
+        return 0;
+    case WM_KEYDOWN:
+        if (s)
+        {
+            if (wp == VK_ESCAPE) { ClosePopupMenu(hwnd, s, 0); return 0; }
+            if (wp == VK_DOWN) { StepPopupHover(*s, hwnd, 1); return 0; }
+            if (wp == VK_UP) { StepPopupHover(*s, hwnd, -1); return 0; }
+            if ((wp == VK_RETURN || wp == VK_SPACE) && s->hover >= 0)
+            {
+                ClosePopupMenu(hwnd, s, (*s->items)[static_cast<std::size_t>(s->hover)].id);
+                return 0;
+            }
+        }
+        break;
+    case WM_ACTIVATE:
+        if (LOWORD(wp) == WA_INACTIVE && s)
+        {
+            ClosePopupMenu(hwnd, s, 0);
+            return 0;
+        }
+        break;
+    case WM_CAPTURECHANGED:
+        if (s && reinterpret_cast<HWND>(lp) != hwnd)
+        {
+            ClosePopupMenu(hwnd, s, 0);
+            return 0;
+        }
+        break;
+    default:
+        break;
+    }
+    return DefWindowProcW(hwnd, message, wp, lp);
+}
+} // namespace
+
+int ShowPopupMenu(HWND owner, int screenX, int screenY, int minWidth,
+                  const std::vector<PopupMenuItem>& items, HFONT font)
+{
+    if (items.empty()) return 0;
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    constexpr const wchar_t* className = L"FlareLauncherPopupMenu";
+    WNDCLASSEXW wc{sizeof(wc)};
+    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW;
+    wc.lpfnWndProc = PopupMenuProc;
+    wc.hInstance = instance;
+    wc.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
+    wc.lpszClassName = className;
+    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return 0;
+
+    const UINT dpi = owner ? GetDpiForWindow(owner) : 96u;
+    const auto sc = [dpi](int dip) { return MulDiv(dip, dpi ? static_cast<int>(dpi) : 96, 96); };
+    HFONT useFont = font;
+    if (!useFont && owner) useFont = reinterpret_cast<HFONT>(SendMessageW(owner, WM_GETFONT, 0, 0));
+    if (!useFont) useFont = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+
+    PopupMenuState state;
+    state.items = &items;
+    state.font = useFont;
+    state.pad = sc(5);
+    const int rowH = sc(32);
+    const int sepH = sc(9);
+    const int textPadX = sc(12);
+
+    int maxLabelW = 0;
+    const HDC screenDc = GetDC(owner);
+    const HDC measureDc = screenDc ? CreateCompatibleDC(screenDc) : nullptr;
+    if (measureDc)
+    {
+        const HGDIOBJ oldFont = SelectObject(measureDc, useFont);
+        for (const auto& item : items)
+        {
+            if (item.separator) continue;
+            RECT r{0, 0, 0, 0};
+            DrawTextW(measureDc, item.label.c_str(), -1, &r, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+            maxLabelW = std::max<int>(maxLabelW, r.right - r.left);
+        }
+        SelectObject(measureDc, oldFont);
+        DeleteDC(measureDc);
+    }
+    if (screenDc) ReleaseDC(owner, screenDc);
+
+    state.width = std::max(minWidth, maxLabelW + 2 * textPadX + 2 * state.pad + sc(8));
+    int curY = state.pad;
+    state.itemRects.reserve(items.size());
+    for (const auto& item : items)
+    {
+        const int h = item.separator ? sepH : rowH;
+        state.itemRects.push_back(RECT{state.pad, curY, state.width - state.pad, curY + h});
+        curY += h;
+    }
+    state.height = curY + state.pad;
+
+    POINT anchor{screenX, screenY};
+    MONITORINFO mi{sizeof(mi)};
+    const HMONITOR mon = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
+    if (mon && GetMonitorInfoW(mon, &mi))
+    {
+        if (anchor.x + state.width > mi.rcWork.right) anchor.x = std::max<LONG>(mi.rcWork.left, mi.rcWork.right - state.width);
+        if (anchor.y + state.height > mi.rcWork.bottom) anchor.y = std::max<LONG>(mi.rcWork.top, anchor.y - state.height);
+        if (anchor.x < mi.rcWork.left) anchor.x = mi.rcWork.left;
+        if (anchor.y < mi.rcWork.top) anchor.y = mi.rcWork.top;
+    }
+
+    HWND popup = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, className, L"", WS_POPUP,
+                                 anchor.x, anchor.y, state.width, state.height, owner, nullptr, instance, &state);
+    if (!popup) return 0;
+
+    ShowWindow(popup, SW_SHOW);
+    UpdateWindow(popup);
+    SetFocus(popup);
+    SetCapture(popup);
+
+    MSG msg{};
+    bool sawQuit = false;
+    int quitCode = 0;
+    while (!state.closed && IsWindow(popup))
+    {
+        const BOOL ret = GetMessageW(&msg, nullptr, 0, 0);
+        if (ret <= 0)
+        {
+            if (ret == 0) { sawQuit = true; quitCode = static_cast<int>(msg.wParam); }
+            ClosePopupMenu(popup, &state, 0);
+            break;
+        }
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    if (IsWindow(popup)) DestroyWindow(popup);
+    if (owner && IsWindow(owner)) SetForegroundWindow(owner);
+    if (sawQuit) PostQuitMessage(quitCode);
+    return state.selectedId;
 }
 } // namespace se::launcher_style

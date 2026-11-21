@@ -37,7 +37,7 @@ HRESULT D3D12DepthPrepass::Initialize(ID3D12Device& device,const std::filesystem
     ComPtr<ID3D12PipelineState> pipeline;
     const auto result=device.CreateGraphicsPipelineState(&description,IID_PPV_ARGS(pipeline.GetAddressOf()));
     if(FAILED(result)){CheckGraphicsResult(result,text,"D3D12.DepthPrepassFailed");return result;}
-    pipeline->SetName(L"SelfEngine.DepthPrepass");
+    pipeline->SetName(L"FlareEngine.DepthPrepass");
     root_=&root;pipeline_=std::move(pipeline);instanceParameter_=instanceParameter;return S_OK;
 }
 void D3D12DepthPrepass::Record(ID3D12GraphicsCommandList& commands,const D3D12Mesh& mesh,

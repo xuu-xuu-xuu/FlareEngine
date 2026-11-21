@@ -24,6 +24,7 @@
 #include "FunctionLayer/Input/InputActionMap.h"
 #include "CoreLayer/Localization.h"
 #include "CoreLayer/Log.h"
+#include "CoreLayer/Math/TransformDecomposition.h"
 #include "PlatformLayer/Windows/ProcessDiagnostics.h"
 #include "ToolLayer/Editor/EditorApplication.h"
 #include "ToolLayer/Editor/EditorRenderer.h"
@@ -77,6 +78,8 @@ struct Session
     }
     ~Session()
     {
+        if(cursorClipApplied){ClipCursor(nullptr);cursorClipApplied=false;}
+        if(cursorHiddenApplied){ShowCursor(TRUE);cursorHiddenApplied=false;}
         sceneNavigation.Clear();
         sceneParticles.Clear();
         sceneAudio.Clear(audio);
@@ -114,6 +117,12 @@ struct Session
     std::vector<se::UiEvent> uiEvents;
     SE_InputState input{};
     SE_PointerState pointer{};
+    SE_Vector2 mouseDelta{};
+    bool cursorLocked=false,cursorVisible=true,cursorLockPausedByEsc=false;
+    bool cursorClipApplied=false,cursorHiddenApplied=false;
+    HWND activeGameWindow=nullptr;
+    RECT activeGameScreenRect{};
+    POINT lockedCenterScreen{};
     se::InputActionMap inputActions{se::DefaultInputActionDocument()};
     std::unordered_map<SE_Entity,se::CharacterController> characters;
     Localization localization;
@@ -142,6 +151,8 @@ struct Session
     std::thread::id thread = std::this_thread::get_id();
     SE_UpdateCallback callback = nullptr;
     void* context = nullptr;
+    SE_UpdateCallback postStepCallback = nullptr;
+    void* postStepContext = nullptr;
     bool stepping = false;
     SE_TickCallback tickCallback=nullptr;
     void* tickContext=nullptr;
@@ -343,21 +354,86 @@ void SceneServices(Session& session,SE_Session handle)
         if(failed)throw std::runtime_error("Scene.CallbackFailed");
     });
 }
+void ReleaseSessionCursor(Session& session) noexcept
+{
+    if(session.cursorClipApplied){ClipCursor(nullptr);session.cursorClipApplied=false;}
+    if(session.cursorHiddenApplied){ShowCursor(TRUE);session.cursorHiddenApplied=false;}
+}
 void CaptureInput(Session& session,const InputState& input,bool consumed,bool pointerConsumed)
 {
             session.inputActions.Update(input, consumed, pointerConsumed);
             session.pointer={};session.pointer.x=input.mouseX;session.pointer.y=input.mouseY;session.pointer.consumed=pointerConsumed?1:0;
+            session.mouseDelta=pointerConsumed?SE_Vector2{0,0}:SE_Vector2{static_cast<float>(input.mouseDeltaX),static_cast<float>(input.mouseDeltaY)};
+            if(!consumed)
+            {
+                for(const auto& ev:input.keyEvents)
+                {
+                    if(ev.type==KeyEventType::Pressed&&ev.keyCode==VK_ESCAPE&&session.cursorLocked)
+                    {
+                        session.cursorLockPausedByEsc=true;
+                        ReleaseSessionCursor(session);
+                    }
+                }
+            }
             if(!pointerConsumed)
             {
                 for(size_t i=0;i<input.mouseButtons.size();++i)if(input.mouseButtons[i])session.pointer.down|=1u<<i;
                 for(const auto& event:input.pointerEvents)
                 {
-                    if(event.type==PointerEventType::Cancel){session.pointer.down=session.pointer.pressed=session.pointer.released=0;session.pointer.wheel=0;session.pointer.consumed=1;continue;}
+                    if(event.type==PointerEventType::Cancel){session.pointer.down=session.pointer.pressed=session.pointer.released=0;session.pointer.wheel=0;session.pointer.consumed=1;session.mouseDelta={0,0};ReleaseSessionCursor(session);continue;}
                     if(event.type==PointerEventType::Wheel)session.pointer.wheel+=event.wheel;
                     if(event.button>=3)continue;
-                    if(event.type==PointerEventType::Down)session.pointer.pressed|=1u<<event.button;
+                    if(event.type==PointerEventType::Down){session.pointer.pressed|=1u<<event.button;session.cursorLockPausedByEsc=false;}
                     if(event.type==PointerEventType::Up)session.pointer.released|=1u<<event.button;
                 }
+            }
+            const bool windowForeground=session.activeGameWindow!=nullptr&&IsWindow(session.activeGameWindow)&&GetForegroundWindow()==session.activeGameWindow;
+            const bool wantLock=session.cursorLocked&&!session.cursorLockPausedByEsc&&!pointerConsumed&&windowForeground;
+            if(wantLock)
+            {
+                RECT clip=session.activeGameScreenRect;
+                if(clip.right<=clip.left||clip.bottom<=clip.top)
+                {
+                    RECT client{};
+                    if(GetClientRect(session.activeGameWindow,&client))
+                    {
+                        POINT tl{client.left,client.top},br{client.right,client.bottom};
+                        ClientToScreen(session.activeGameWindow,&tl);
+                        ClientToScreen(session.activeGameWindow,&br);
+                        clip={tl.x,tl.y,br.x,br.y};
+                    }
+                }
+                if((clip.right-clip.left)>=16&&(clip.bottom-clip.top)>=16)
+                {
+                    const POINT center{(clip.left+clip.right)/2,(clip.top+clip.bottom)/2};
+                    POINT cur{};
+                    if(GetCursorPos(&cur))
+                    {
+                        if(session.cursorClipApplied)
+                            session.mouseDelta={static_cast<float>(cur.x-session.lockedCenterScreen.x),static_cast<float>(cur.y-session.lockedCenterScreen.y)};
+                        if(cur.x!=center.x||cur.y!=center.y)
+                            SetCursorPos(center.x,center.y);
+                    }
+                    session.lockedCenterScreen=center;
+                    ClipCursor(&clip);
+                    session.cursorClipApplied=true;
+                }
+            }
+            else if(session.cursorClipApplied)
+            {
+                ClipCursor(nullptr);
+                session.cursorClipApplied=false;
+            }
+            const bool wantHidden=(!session.cursorVisible||(session.cursorLocked&&!session.cursorLockPausedByEsc))&&!pointerConsumed&&windowForeground;
+            if(wantHidden&&!session.cursorHiddenApplied)
+            {
+                ShowCursor(FALSE);
+                session.cursorHiddenApplied=true;
+            }
+            else if(!wantHidden&&session.cursorHiddenApplied)
+            {
+                ShowCursor(TRUE);
+                session.cursorHiddenApplied=false;
             }
             session.input={};session.input.keyboard_consumed=consumed?1:0;
             if(consumed)return;

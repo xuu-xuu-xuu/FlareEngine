@@ -1,16 +1,22 @@
-# 脚本反射、程序集卸载与 GC
+# 脚本反射、特性元数据、程序集卸载与 GC
 
-## 字段怎样进入属性面板
+## 字段与特性怎样进入属性面板
 
-[ExposeAttribute](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/Behaviour.cs#L9) 标记需要暴露的实例字段。[ScriptFields](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/ScriptFields.cs#L10) 用 .NET 反射枚举公开和非公开字段，筛选带标记、可写的实例字段。[Describe()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/ScriptFields.cs#L44) 生成字段描述，[Save()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/ScriptFields.cs#L48) 与 [Load()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/ScriptFields.cs#L69) 在可支持的字段值和 JSON 之间转换。C++ 组件对应[原生元数据](../runtime/metadata.md)。
+`[F_Expose]`（`F_ExposeAttribute`）标记需要序列化并暴露到编辑器属性面板的实例字段。`ScriptFields` 使用 .NET 反射沿继承链枚举公开与非公开的可写实例字段（包含基类私有 `[F_Expose]` 字段，同名字段产生诊断），支持 `bool`、`int`、`float`、`double`、`string`、`Vector2`、`Vector3`、`Vector4`、枚举、`EntityReference` 与 `AssetReference`。
+
+在此基础上，字段可叠加以下修饰特性驱动卡片式属性面板渲染：
+
+| 特性 | 作用 | 元数据传递方式 |
+| :--- | :--- | :--- |
+| `[F_Header(string title)]` | 在该字段上方插入金色分组小标题与分隔线 | 编码进 `ScriptFieldInfo` 描述前缀，由 `EditorInspector` 解析为 `SectionHeader` |
+| `[F_Range(float min, float max)]` | 将数值字段渲染为带实时填充条的拖拽滑块 + 精确输入框 | 写入 `PropertyMetadata::minValue / maxValue` 并在两侧钳制 |
+| `[F_Tooltip(string text)]` | 为字段提供编辑器提示文本 | 随字段描述表传递 |
+
+`ScriptFields.Describe()` 生成稳定排序的字段元数据，`Save()` 与 `Load()` 在字段值与 `.bindings.json` 之间无损转换，`CopyExposedFields()` 则在 `F_Scene.Instantiate()` 克隆实体时复制全部暴露字段值。C++ 原生组件对应[原生组件反射](../runtime/metadata.md)。
 
 ## ScriptProject
 
-[ScriptProject](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/ScriptProject.cs#L7) 为项目建立可卸载的 [ProjectContext](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/ScriptProject.cs#L9)。启动时加载候选程序集并解析允许的行为类型，停止时解除脚本引用并请求卸载上下文。托管 GC 在引用释放后回收对象，卸载请求与完成回收之间可以相隔多个 GC 周期。
-
-## 原生对象由谁释放
-
-脚本字段会沿继承链枚举，包含基类的私有 `[Expose]` 字段。字段名排序稳定，同名字段产生诊断。字段描述保留为普通数据，检查元数据时加载的上下文通过弱引用观察卸载。
+`ScriptProject` 为项目建立可回收的 `ProjectContext`（继承 `AssemblyLoadContext(isCollectible: true)`）。`RunEditor` 允许初始无脚本工程以空程序集启动编辑器外壳；每次编译或热重载时通过内存流 `LoadFromStream` 加载候选 DLL 与 PDB，绝不占用磁盘文件句柄。停止运行或完成原位 `ReloadAssembly` 热替换后，宿主解除旧委托、事件与实例引用并调用 `Unload()`，由 .NET GC 回收旧程序集上下文。检查元数据时仅通过 `WeakReference` 观察卸载状态，不阻断回收。
 
 ## 原生逻辑对象的追踪回收
 
@@ -18,6 +24,6 @@
 
 `World::CollectObjects()` 在世界更新完成的安全点执行非移动标记清扫。句柄包含堆身份、槽位和代数。编辑世界与播放世界各自拥有堆，清空世界时释放堆，即使外部仍保存旧根令牌也无法恢复旧对象。GPU 资源仍由对应后端等待 Fence。
 
-C# 可使用 `EngineSession.CreateLogicState()` 创建可相互 `Link()` 的逻辑状态，通过 `Retain()` 持有根令牌并在使用结束后 `Dispose()`。普通托管代理只携带弱令牌。`CollectLogicObjects()` 在安全点返回收集后的存活数，在更新回调内调用会被拒绝。当前回收采用显式安全点调用，单个场景卸载时先释放该场景拥有的根。
+C# 可使用 `EngineSession.CreateLogicState()` 创建可相互 `Link()` 的逻辑状态，通过 `Retain()` 持有根令牌并在使用结束后 `Dispose()`。普通托管代理只携带弱令牌。`CollectLogicObjects()` 在安全点返回收集后的存活数，在更新回调内调用会被拒绝。单个场景卸载时先释放该场景拥有的根。
 
-[EngineSession](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/EngineSession.cs#L25) 为回调分配弱 GC 句柄，通过 [NativeSessionHandle](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/NativeMethods.cs#L102) 持有原生会话。会话的 [Dispose()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/EngineSession.cs#L161) 走显式关闭路径，句柄的 [ReleaseHandle()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Scripting/Managed/NativeMethods.cs#L107) 收尾。实体和组件由[原生世界](../runtime/entities.md)管理，GPU 资源另受[提交 Fence](../render/device.md)约束。
+`EngineSession` 为回调分配弱 GC 句柄，通过 `NativeSessionHandle` 持有原生会话。会话的 `Dispose()` 走显式关闭路径，句柄的 `ReleaseHandle()` 收尾。实体和组件由[原生世界](../runtime/entities.md)管理，GPU 资源另受[提交 Fence](../render/device.md)约束。

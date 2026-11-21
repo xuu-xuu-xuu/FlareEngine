@@ -11,6 +11,7 @@ struct EditorScriptCreateRequest
 {
     std::filesystem::path projectRoot;
     std::string className,nameSpace="Game";
+    std::filesystem::path targetDirectory{};
 };
 struct EditorScriptCreateResult
 {

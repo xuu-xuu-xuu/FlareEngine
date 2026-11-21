@@ -69,7 +69,9 @@ public:
     bool IsAlive(EntityHandle entity) const;
     bool IsPending(EntityHandle entity)const{return IsKnown(entity)&&!IsAlive(entity);}
     const EntityRecord* Get(EntityHandle entity) const;
+    const EntityRecord* GetKnown(EntityHandle entity) const;
     EntityHandle FindByStableId(StableEntityId id) const;
+    EntityHandle FindKnownByStableId(StableEntityId id) const;
     EntityHandle ResolveReference(StableEntityId id) const; // 失败记录 World.UnresolvedReference。
     bool CanResolveReference(StableEntityId id)const;
     std::vector<StableEntityId> KnownStableIds() const;
@@ -86,9 +88,11 @@ public:
     bool SetPrefabLink(EntityHandle entity, std::optional<PrefabLink> link);
     bool SetParent(EntityHandle entity, EntityHandle parent); // 保持局部变换，不自动分解世界矩阵。
     Mat4 GetWorldMatrix(EntityHandle entity) const;
+    Mat4 GetKnownWorldMatrix(EntityHandle entity) const;
     std::uint64_t SpatialRevision()const noexcept{return spatialRevision_;}
     std::uint64_t EntitySpatialRevision(EntityHandle entity)const;
     const Transform* GetTransform(EntityHandle entity) const;
+    const Transform* GetKnownTransform(EntityHandle entity) const;
     // 快照保留已单位化的 float 位值；普通修改仍执行规范化。
     bool SetTransform(EntityHandle entity,const Transform& transform,TransformWriteMode mode=TransformWriteMode::Normalize);
     const CameraComponent* GetCamera(EntityHandle entity) const;
@@ -169,7 +173,7 @@ private:
     friend bool InstantiateScene(const SceneDocument&,World&,std::string&);
     bool CommitScene(World& candidate,std::span<const EntityHandle> remove,std::span<const StableEntityId> retiredIds,std::vector<EntityHandle>& added,const std::function<void()>& beforeRetire);
     enum class SlotState { Free, Reserved, Alive,DestroyPending };
-    struct Slot { std::uint32_t generation = 0; SlotState state = SlotState::Free; EntityRecord record;std::vector<ComponentHandle> components;std::uint64_t spatialRevision=0; };
+    struct Slot { std::uint32_t generation = 0; SlotState state = SlotState::Free; EntityRecord record; Transform pendingTransform{}; std::vector<ComponentHandle> components;std::uint64_t spatialRevision=0; };
     enum class ComponentSlotState {Free,Reserved,Alive,Removing};
     struct ComponentSlot {std::uint32_t generation=0;ComponentSlotState state=ComponentSlotState::Free;EntityHandle owner{};ComponentTypeId type=0;bool initialEnabled=true;};
     bool Fail(const char* key) const;

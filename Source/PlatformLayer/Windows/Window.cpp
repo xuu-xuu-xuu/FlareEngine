@@ -73,12 +73,28 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
                 return 0;
             break;
 
+        case WM_ERASEBKGND:
+            return 1;
+
         case WM_ENTERSIZEMOVE:
             state->interactiveResize = true;
+            SetPropW(hwnd, L"FlareInteractiveResize", reinterpret_cast<HANDLE>(1));
+            try { if (state->messageHandler) state->messageHandler(hwnd, message, wParam, lParam); }
+            catch (...) {}
             break;
 
         case WM_EXITSIZEMOVE:
             state->interactiveResize = false;
+            RemovePropW(hwnd, L"FlareInteractiveResize");
+            try { if (state->messageHandler) state->messageHandler(hwnd, message, wParam, lParam); }
+            catch (...) {}
+            if (state->drawable && !state->closeRequested && state->drawResizeFrame)
+            {
+                state->lastResizeDrawWidth = state->width;
+                state->lastResizeDrawHeight = state->height;
+                state->lastResizeDrawTick = GetTickCount64();
+                SendMessageW(hwnd, EngineWindowDrawResizeFrame, 0, 0);
+            }
             break;
 
         case EngineWindowDrawResizeFrame:
@@ -124,7 +140,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 			}
 
             if (state->interactiveResize && state->drawable && state->drawResizeFrame)
-                SendMessageW(hwnd, EngineWindowDrawResizeFrame, 0, 0);
+            {
+                const ULONGLONG now = GetTickCount64();
+                if (now - state->lastResizeDrawTick >= 8 &&
+                    (state->width != state->lastResizeDrawWidth || state->height != state->lastResizeDrawHeight))
+                {
+                    state->lastResizeDrawWidth = state->width;
+                    state->lastResizeDrawHeight = state->height;
+                    state->lastResizeDrawTick = now;
+                    SendMessageW(hwnd, EngineWindowDrawResizeFrame, 0, 0);
+                }
+            }
 			return 0;
 		}
 
@@ -145,6 +171,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 
 		case WM_NCDESTROY:
 		{
+            RemovePropW(hwnd, L"FlareInteractiveResize");
 			// 系统窗口销毁时解除借用，WindowState 仍由调用者持有。
 			SetLastError(ERROR_SUCCESS);
 			if (SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) == 0 && GetLastError() != ERROR_SUCCESS)
@@ -203,16 +230,16 @@ bool CreateEngineWindow(WindowState& window, bool showWindow)
 		Log(LogLevel::Error, "获取程序模块句柄失败，错误码：" + std::to_string(error));
 		return false;
 	}
-	const wchar_t windowClassName[] = L"SelfEngineWindowClass";
+	const wchar_t windowClassName[] = L"FlareEngineWindowClass";
 	WNDCLASSW windowClass{};
 	// 登记窗口过程的函数地址，供 Windows 回调。
 	windowClass.lpfnWndProc = WindowProc;
 	windowClass.hInstance = instance;
 	windowClass.lpszClassName = windowClassName;
 
-	// 设置系统箭头光标和窗口背景色。
+	// 设置系统箭头光标；背景由交换链直接覆盖，置空防止拖边闪烁。
 	windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
-	windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+	windowClass.hbrBackground = nullptr;
 
 
 	// 注册窗口类的创建规则；返回 0 表示失败。

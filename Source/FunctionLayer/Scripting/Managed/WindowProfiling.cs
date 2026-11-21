@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 public sealed partial class EngineSession
 {

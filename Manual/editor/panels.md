@@ -1,15 +1,16 @@
-# 面板模型、默认场景与界面合成
+# 面板模型、默认布局与界面合成
 
-## 共享选择状态
+## 默认 2×3 布局与共享选择状态
 
-[EditorContext](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorContext.h#L52) 将当前项目、文档、选择和资产状态提供给外壳。[EditorHierarchyModel](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorPanels.h#L24) 将节点展开成可见行，[EditorInspectorModel](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorPanels.h#L64) 管理选中对象的属性。实体复制由 [Duplicate()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSession.cpp#L146) 完成，新场景则从 [CreateDefaultScene()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/SceneDefaults.cpp#L21) 建立默认对象。
+编辑器默认采用符合直觉的 2×3 停靠布局：左侧上下分置 **场景视口**（与 **UI 设计** 同组）和 **摄像机视口**（与 **控制台** 同组），中部上下分置 **场景层级** 与 **资源**，右侧通栏为 **属性**。`EditorContext` 将当前项目、文档、选中实体/资产与运行预览状态同步给各面板；`EditorHierarchyModel` 按树形缩进与类型徽标展开实体行，支持直接将实体拖入属性引用槽或拖入资源面板生成 `.prefab.json`。新场景由 `CreateDefaultScene()` 创建默认主相机、方向光、平面与立方体。
 
-## 菜单、工具栏与替代绘制路径
+## 摄像机视口与控制台面板
 
-[EditorChrome](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorChrome.h#L26) 按命令组织菜单、工具栏与状态文字。ImGui 路径从 [EditorPanels()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorPanelRegistry.cpp#L19) 查询面板描述，[CopyImGuiGeometry()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/ImGuiGeometry.cpp#L6) 复制顶点、索引与裁剪命令，交给 [GuiRenderer](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/GuiRenderer.h#L6) 记录 GPU 绘制。窗口、加载和编辑界面颜色来自[共享色表](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/FlarePalette.h)。
+- **摄像机视口**：顶栏提供 **窗口预览** 与 **全屏预览** 模式切换（`previewFullscreen`）。点击运行预览时，游戏画面直接在摄像机视口运行（或按全屏模式铺满编辑区，按 `Esc` 释放捕获/退出全屏预览），不会劫持编辑用场景视口镜头。
+- **控制台面板**：顶栏集成 **清空**、**折叠重复**、**运行清空** 开关以及右侧 **信息 / 警告 / 错误** 实时计数过滤按钮；同时接收引擎诊断、异步 `dotnet build` 编译结果与 C# `F_Log` 输出，双击含 `File.cs(line,col)` 的日志行可直接调用外部代码编辑器定位到对应行列。
 
-## 未保存的多个文档
+## 资源面板与统一保存
 
-[EditorExternalDocuments](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorExternalDocuments.h#L13) 将材质、UI 或脚本绑定文档的保存与恢复操作提供给编辑器。[WriteRecoveryGroup()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSessionStore.cpp#L320) 将会话恢复文件按组写入；构建完成需重启时，[WriteBuildRestartRequest()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/BuildRestartRequest.cpp#L7) 将请求写给启动流程。
+`EditorAssetsModel` 支持多级目录树浏览、面包屑导航、`+` 新建文件夹、关键词即时过滤，并为场景、材质、模型、纹理、预制体、音频、导航网格与 C# 脚本绘制专属彩色类型徽标。
 
-资产面板通过 [EditorAssetsModel::SetFilter()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorPanels.cpp#L256) 更新过滤结果，再按滚动位置取可见行。
+`EditorChrome` 组织顶部菜单、播放控制与状态栏，界面配色统一取自黑曜金 `FlarePalette`。按下 `Ctrl+S`（`SaveAll`）原子保存当前场景、C# 脚本绑定（`.bindings.json`）以及材质/UI 等 `EditorExternalDocuments` 外部文档；崩溃恢复快照由 `EditorSessionStore::WriteRecoveryGroup()` 维护。

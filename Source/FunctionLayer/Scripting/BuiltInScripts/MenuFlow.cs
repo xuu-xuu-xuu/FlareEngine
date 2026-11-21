@@ -1,22 +1,22 @@
-using SelfEngine;
+using FlareEngine;
 using System.Numerics;
 
 namespace ProjectScripts;
 
 public enum MenuFlowState { MainMenu, Playing, Paused, Settings }
-[EventId("sample.menu_flow_changed")] public readonly record struct MenuFlowChanged(MenuFlowState State);
-[EventId("sample.menu_settings_changed")] public readonly record struct MenuSettingsChanged(float MoveSpeed,float LookSensitivity);
+[F_Event("sample.menu_flow_changed")] public readonly record struct MenuFlowChanged(MenuFlowState State);
+[F_Event("sample.menu_settings_changed")] public readonly record struct MenuSettingsChanged(float MoveSpeed,float LookSensitivity);
 public readonly record struct MenuInteractionCommand(EntityReference Target);
-[EventId("sample.menu_interaction_completed")] public readonly record struct MenuInteractionCompleted(EntityReference Target);
-[EventId("sample.menu_game_started")] public readonly record struct MenuGameStarted;
+[F_Event("sample.menu_interaction_completed")] public readonly record struct MenuInteractionCompleted(EntityReference Target);
+[F_Event("sample.menu_game_started")] public readonly record struct MenuGameStarted;
 
-[ScriptId("sample.menu_flow")]
-public sealed class MenuFlow : Behaviour
+[F_Script("sample.menu_flow")]
+public sealed class MenuFlow : F_Behaviour
 {
-    [Expose] public EntityReference ViewEntity;
-    [Expose] public float InteractionRange=4;
-    [Expose] public float MoveSpeed=4;
-    [Expose] public float LookSensitivity=0.003f;
+    [F_Expose] public EntityReference ViewEntity;
+    [F_Expose] public float InteractionRange=4;
+    [F_Expose] public float MoveSpeed=4;
+    [F_Expose] public float LookSensitivity=0.003f;
     public override bool UpdateWhenPaused => true;
     public MenuFlowState State { get; private set; }=MenuFlowState.MainMenu;
     public EntityReference Target { get; private set; }
@@ -28,7 +28,7 @@ public sealed class MenuFlow : Behaviour
     private MenuFlowState settingsReturn=MenuFlowState.MainMenu;
     private bool previousPause,created;
 
-    public override void OnCreate()
+    public override void F_Awake()
     {
         if(!float.IsFinite(InteractionRange)||InteractionRange<=0||InteractionRange>100
             ||!ValidSettings(MoveSpeed,LookSensitivity))throw new ArgumentException("MenuFlow.InvalidSettings");
@@ -61,15 +61,15 @@ public sealed class MenuFlow : Behaviour
         var help=Label(hud,"MenuFlow.GameControls");var helpStyle=UiStyle.Default;helpStyle.AnchorMin=new(0,1);helpStyle.AnchorMax=Vector2.One;helpStyle.Pivot=new(0,1);helpStyle.Offset=new(16,-12);helpStyle.Size=new(-32,48);help.SetStyle(helpStyle);
         created=true;
     }
-    public override void OnEnable(){if(created)ApplyState();}
-    public override void OnDisable()
+    public override void F_Enable(){if(created)ApplyState();}
+    public override void F_Disable()
     {
         if(!created||Entity.Session.IsDisposed)return;
         foreach(var root in roots)
         {try{root.CancelTransitions();root.SetEnabled(false);root.SetVisible(false);}catch(EngineException exception)when(exception.Key=="Bridge.InvalidUi"){/* 文档已被外部替换，仍须恢复暂停状态。 */}}
         Scripts.SimulationPaused=previousPause;
     }
-    public override void OnDestroy()
+    public override void F_Destroy()
     {
         if(!Entity.Session.IsDisposed)foreach(var root in roots)
         {try{root.Remove();}catch(EngineException){/* UI 文档可能已被外部场景切换替换。 */}}
@@ -133,9 +133,9 @@ public sealed class MenuFlow : Behaviour
         foreach(var item in new[]{(mainPanel,MenuFlowState.MainMenu),(pausePanel,MenuFlowState.Paused),(settingsPanel,MenuFlowState.Settings)})
             if(item.Item1 is { } panel&&State!=item.Item2&&(!visuals.TryGetValue(panel.Id,out var visual)||visual.Opacity==0))panel.SetVisible(false);
     }
-    public override void OnUpdate(double seconds)
+    public override void F_Update(float delta)
     {
-        _=seconds;
+        _=delta;
         HideFinishedPanels();
         if(Input.Pressed(27))
         {

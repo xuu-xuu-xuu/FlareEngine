@@ -56,34 +56,113 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
     document_.SetStyle(form.listContent, listStyle);
     form.list = std::make_unique<UiListView>(document_, form.listContent);
     form.list->SetRowTextColor(kText);
-    form.list->SetRowTextLayout(UiTextFlow::SingleLineEllipsis, {6, 0, 6, 0});
-    form.list->SetRowHeight(20.0f);
-    form.list->SetRowTextProvider([&form](int index) {
-        if (index < 0 || static_cast<std::size_t>(index) >= form.properties.size())
-        {
-            return std::string{};
-        }
+    form.list->SetRowTextLayout(UiTextFlow::SingleLineEllipsis, {10, 0, 10, 0});
+    form.list->SetRowHeight(26.0f);
+    const EditorPanelId panelId = slot.id;
+    form.list->SetRowBuilder([this, &form, panelId](int index, UiElementHandle row) {
+        if (index < 0 || static_cast<std::size_t>(index) >= form.properties.size()) return;
         const EditorProperty& property = form.properties[static_cast<std::size_t>(index)];
-        const std::string suffix = property.type == EditorPropertyType::Combo ? " [v]" : "";
-        std::string display=property.displayValue.empty()?property.value:property.displayValue;
-        for(std::size_t i=0;i<property.options.size()&&i<property.optionLabels.size();++i)
-            if(property.options[i]==property.value)display=property.optionLabels[i];
-        if(property.type==EditorPropertyType::Action)return property.label;
-        return property.label + ": " + display + suffix;
+        std::string display = property.displayValue.empty() ? property.value : property.displayValue;
+        for (std::size_t i = 0; i < property.options.size() && i < property.optionLabels.size(); ++i)
+            if (property.options[i] == property.value) display = property.optionLabels[i];
+
+        float width = 320.0f;
+        for (const GroupView& group : groups_)
+        {
+            if (std::find(group.tabs.begin(), group.tabs.end(), panelId) != group.tabs.end())
+            {
+                width = std::max(160.0f, group.rect.width);
+                break;
+            }
+        }
+        if (property.type == EditorPropertyType::Color)
+        {
+            document_.SetText(row, property.label + "   " + display);
+            return;
+        }
+        if (property.type == EditorPropertyType::Action)
+        {
+            const auto pill = document_.CreateElement(UiElementKind::Label);
+            if (document_.SetParent(pill, row))
+            {
+                const float btnW = std::min(width - 20.0f, std::max(140.0f, MeasuredWidth(property.label, 12.5f) + 28.0f));
+                auto s = ButtonStyle(10.0f, 2.0f, btnW, 22.0f, kSurfaceRaised);
+                s.cornerRadius = 5.0f;
+                s.borderWidth = 1.0f;
+                s.borderColor = kBorder;
+                s.color = UiInk(flare::Gold);
+                s.pointerEvents = UiPointerEvents::None;
+                document_.SetStyle(pill, s);
+                document_.SetText(pill, property.label);
+            }
+            return;
+        }
+        if (width < 320.0f)
+        {
+            const std::string suffix = property.type == EditorPropertyType::Combo ? " ▾" : "";
+            document_.SetText(row, property.label + ": " + display + suffix);
+            return;
+        }
+        const float labelW = std::clamp(width * 0.40f, 130.0f, 260.0f);
+        const float fieldX = labelW + 12.0f;
+        const float fieldW = std::max(60.0f, width - fieldX - 16.0f);
+        const auto lbl = document_.CreateElement(UiElementKind::Label);
+        if (document_.SetParent(lbl, row))
+        {
+            auto ls = ButtonStyle(10.0f, 1.0f, labelW - 6.0f, 24.0f, UiColor{0, 0, 0, 0});
+            ls.color = property.readOnly ? kMuted : kText;
+            ls.fontSize = 12.5f;
+            ls.padding = {2.0f, 0.0f, 4.0f, 0.0f};
+            ls.pointerEvents = UiPointerEvents::None;
+            document_.SetStyle(lbl, ls);
+            document_.SetText(lbl, property.label);
+        }
+        const auto val = document_.CreateElement(UiElementKind::Label);
+        if (document_.SetParent(val, row))
+        {
+            if (property.type == EditorPropertyType::Boolean)
+            {
+                const bool checked = (property.value == "true");
+                auto vs = ButtonStyle(fieldX, 3.0f, 20.0f, 20.0f, checked ? kSurfaceActive : kSurface);
+                vs.cornerRadius = 4.0f;
+                vs.borderWidth = 1.0f;
+                vs.borderColor = checked ? UiInk(flare::workspace::Focus) : kBorder;
+                vs.color = checked ? UiInk(flare::Gold) : kMuted;
+                vs.padding = {3.0f, 0.0f, 0.0f, 0.0f};
+                vs.pointerEvents = UiPointerEvents::None;
+                document_.SetStyle(val, vs);
+                document_.SetText(val, checked ? "✓" : "");
+            }
+            else
+            {
+                const std::string textVal = property.type == EditorPropertyType::Combo ? (display + "  ▾") : display;
+                auto vs = ButtonStyle(fieldX, 2.0f, fieldW, 22.0f,
+                                      property.readOnly ? UiColor{0, 0, 0, 0} : kSurface);
+                vs.cornerRadius = 4.0f;
+                vs.borderWidth = property.readOnly ? 0.0f : 1.0f;
+                vs.borderColor = kBorder;
+                vs.color = property.readOnly ? kMuted : kText;
+                vs.fontSize = 12.5f;
+                vs.padding = {8.0f, 0.0f, 8.0f, 0.0f};
+                vs.pointerEvents = UiPointerEvents::None;
+                document_.SetStyle(val, vs);
+                document_.SetText(val, textVal);
+            }
+        }
     });
     dispatcher_.AddHandler(form.listContent, UiEventType::PointerWheel, [this, &form](UiInputEvent& event) {
         if (form.list)
         {
-            form.list->SetScrollOffset(form.list->Offset() + event.wheel * 48.0f);
+            form.list->SetScrollOffset(form.list->Offset() - event.wheel * 52.0f);
             form.list->Sync();
         }
         event.handled = true;
     }, UiEventPhase::Bubble);
-    const EditorPanelId panelId = slot.id;
     dispatcher_.AddHandler(form.listContent, UiEventType::PointerDown, [this, &form, panelId](UiInputEvent& event) {
         const UiRect rect = layout_.Rect(form.listContent);
+        const float rowH = form.list ? form.list->RowHeight() : 26.0f;
         const float offset = form.list ? form.list->Offset() : 0.0f;
-        const int row = static_cast<int>((event.y - rect.y + offset) / 20.0f);
+        const int row = static_cast<int>((event.y - rect.y + offset) / rowH);
         if (row < 0 || static_cast<std::size_t>(row) >= form.properties.size() ||
             form.properties[static_cast<std::size_t>(row)].readOnly)
         {
@@ -122,6 +201,18 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
         form.editingKey = form.properties[static_cast<std::size_t>(row)].key;
         if (form.edit && form.editElement.IsValid())
         {
+            const float contentW = std::max(120.0f, rect.width);
+            const bool twoCol = contentW >= 320.0f;
+            const float labelW = twoCol ? std::clamp(contentW * 0.40f, 130.0f, 260.0f) : 0.0f;
+            const float editX = twoCol ? (labelW + 12.0f) : 6.0f;
+            const float editW = twoCol ? std::max(60.0f, contentW - editX - 16.0f) : (contentW - 12.0f);
+            const UiRect contentRect = layout_.Rect(Slot(panelId).content);
+            const float editY = (rect.y - contentRect.y) + static_cast<float>(row) * rowH - offset + 1.0f;
+            auto editStyle = ButtonStyle(editX, editY, editW, rowH - 2.0f, kSurface);
+            editStyle.cornerRadius = 4.0f;
+            editStyle.borderWidth = 1.0f;
+            editStyle.borderColor = UiInk(flare::workspace::Focus);
+            document_.SetStyle(form.editElement, editStyle);
             form.edit->SetText(form.properties[static_cast<std::size_t>(row)].value);
             document_.SetVisible(form.editElement, true);
             dispatcher_.SetFocus(form.editElement);
@@ -132,7 +223,12 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
     form.saveButton = document_.CreateElement(UiElementKind::Button);
     if (document_.SetParent(form.saveButton, slot.content))
     {
-        document_.SetStyle(form.saveButton, ButtonStyle(0.0f, 0.0f, 80.0f, 24.0f, kSurfaceActive));
+        auto saveStyle = ButtonStyle(4.0f, 3.0f, 80.0f, 24.0f, kSurfaceActive);
+        saveStyle.cornerRadius = 5.0f;
+        saveStyle.borderWidth = 1.0f;
+        saveStyle.borderColor = UiInk(flare::workspace::Focus, 0.65f);
+        saveStyle.color = UiInk(flare::Gold);
+        document_.SetStyle(form.saveButton, saveStyle);
         document_.SetText(form.saveButton, Text("EditorUi.Save", "Save"));
         dispatcher_.AddHandler(form.saveButton, UiEventType::PointerDown, [this, &form](UiInputEvent& event) {
             if (form.save && form.save())
@@ -150,7 +246,11 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
     form.actionButton = document_.CreateElement(UiElementKind::Button);
     if (document_.SetParent(form.actionButton, slot.content))
     {
-        document_.SetStyle(form.actionButton, ButtonStyle(84.0f, 0.0f, 80.0f, 24.0f, kSurfaceRaised));
+        auto actStyle = ButtonStyle(88.0f, 3.0f, 84.0f, 24.0f, kSurfaceRaised);
+        actStyle.cornerRadius = 5.0f;
+        actStyle.borderWidth = 1.0f;
+        actStyle.borderColor = kBorder;
+        document_.SetStyle(form.actionButton, actStyle);
         document_.SetText(form.actionButton, "Action");
         document_.SetVisible(form.actionButton, false);
         dispatcher_.AddHandler(form.actionButton, UiEventType::PointerDown, [this, &form](UiInputEvent& event) {
@@ -165,7 +265,7 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
     form.statusLabel = document_.CreateElement(UiElementKind::Label);
     if (document_.SetParent(form.statusLabel, slot.content))
     {
-        UiStyle statusStyle = ButtonStyle(168.0f, 0.0f, 100.0f, 24.0f, kContent);
+        UiStyle statusStyle = ButtonStyle(178.0f, 3.0f, 100.0f, 24.0f, kContent);
         statusStyle.color = kMuted;
         statusStyle.fontSize = 12.0f;
         document_.SetStyle(form.statusLabel, statusStyle);
@@ -309,12 +409,17 @@ void EditorShell::ShowFormCombo(EditorPanelId panel, FormPanel& form, int row)
     const UiRect panelRect = layout_.Rect(Slot(panel).panel);
     const UiRect listRect = layout_.Rect(form.listContent);
     const float rowTop = listRect.y + static_cast<float>(row) * form.list->RowHeight() - form.list->Offset();
-    const float popupWidth = std::max(80.0f, std::min(200.0f, panelRect.width - 8.0f));
+    const bool twoCol = panelRect.width >= 320.0f;
+    const float comboLeft = twoCol ? (std::clamp(panelRect.width * 0.40f, 130.0f, 260.0f) + 12.0f) : 4.0f;
+    const float popupWidth = twoCol
+        ? std::max(100.0f, panelRect.width - comboLeft - 16.0f)
+        : std::max(80.0f, std::min(220.0f, panelRect.width - 8.0f));
     UiStyle popup = document_.Style(form.comboPopup);
-    popup.left = UiLength::Px(4.0f);
+    popup.left = UiLength::Px(comboLeft);
     popup.top = UiLength::Px(std::max(0.0f, rowTop + form.list->RowHeight() - panelRect.y));
     popup.width = UiLength::Px(popupWidth);
     popup.height = UiLength::Px(static_cast<float>(property.options.size()) * 22.0f);
+    popup.cornerRadius = 5.0f;
     document_.SetStyle(form.comboPopup, popup);
     document_.SetVisible(form.comboPopup, true);
     form.comboRow = row;
@@ -408,24 +513,18 @@ void EditorShell::UpdateFormRects(EditorPanelId panel)
     }
     listStyle.top = UiLength::Px(32.0f+previewHeight);
     listStyle.width = UiLength::Percent(100.0f);
-    listStyle.height = UiLength::Px(std::max(0.0f, height - 56.0f-previewHeight));
+    listStyle.height = UiLength::Px(std::max(0.0f, height - 36.0f-previewHeight));
     document_.SetStyle(form.listContent, listStyle);
     if (form.list)
     {
-        form.list->SetViewportHeight(std::max(0.0f, height - 56.0f-previewHeight));
+        form.list->SetViewportHeight(std::max(0.0f, height - 36.0f-previewHeight));
         form.list->Sync();
-    }
-    if (form.editElement.IsValid())
-    {
-        UiStyle style = document_.Style(form.editElement);
-        style.top = UiLength::Px(std::max(0.0f, height - 24.0f));
-        style.width = UiLength::Percent(100.0f);
-        document_.SetStyle(form.editElement, style);
     }
     if (form.statusLabel.IsValid())
     {
         UiStyle style = document_.Style(form.statusLabel);
-        style.width = UiLength::Px(std::max(0.0f, width - 168.0f));
+        style.left = UiLength::Px(form.actionLabel.empty() ? 92.0f : 178.0f);
+        style.width = UiLength::Px(std::max(0.0f, width - (form.actionLabel.empty() ? 98.0f : 184.0f)));
         document_.SetStyle(form.statusLabel, style);
     }
 }

@@ -1,14 +1,19 @@
 <Project>
   <PropertyGroup>
-    <SelfEngineRepositoryRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))</SelfEngineRepositoryRoot>
+    <FlareEngineRepositoryRoot Condition="'$(FlareEngineRepositoryRoot)' == ''">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))</FlareEngineRepositoryRoot>
+    <SelfEngineRepositoryRoot Condition="'$(SelfEngineRepositoryRoot)' == ''">$(FlareEngineRepositoryRoot)</SelfEngineRepositoryRoot>
     <DirectoryBuildTargetsPath Condition="'$(DirectoryBuildTargetsPath)' == ''">$(MSBuildThisFileDirectory)Directory.Build.targets</DirectoryBuildTargetsPath>
     <RestoreConfigFile>$(MSBuildThisFileDirectory)NuGet.Config</RestoreConfigFile>
-    <RestorePackagesPath>$(SelfEngineRepositoryRoot)out\nuget\packages</RestorePackagesPath>
+    <RestorePackagesPath>$(FlareEngineRepositoryRoot)out\nuget\packages</RestorePackagesPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
-    <SelfEngineManagedOutputRoot Condition="'$(SelfEngineManagedOutputRoot)' == ''">$(SelfEngineRepositoryRoot)out\managed\</SelfEngineManagedOutputRoot>
-    <SelfEngineManagedIntermediateRoot Condition="'$(SelfEngineManagedIntermediateRoot)' == ''">$(SelfEngineRepositoryRoot)out\obj\</SelfEngineManagedIntermediateRoot>
-    <BaseOutputPath>$(SelfEngineManagedOutputRoot)$(MSBuildProjectName)\</BaseOutputPath>
-    <BaseIntermediateOutputPath>$(SelfEngineManagedIntermediateRoot)$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <FlareEngineManagedOutputRoot Condition="'$(FlareEngineManagedOutputRoot)' == '' And '$(SelfEngineManagedOutputRoot)' != ''">$(SelfEngineManagedOutputRoot)</FlareEngineManagedOutputRoot>
+    <FlareEngineManagedOutputRoot Condition="'$(FlareEngineManagedOutputRoot)' == ''">$(FlareEngineRepositoryRoot)out\managed\</FlareEngineManagedOutputRoot>
+    <SelfEngineManagedOutputRoot Condition="'$(SelfEngineManagedOutputRoot)' == ''">$(FlareEngineManagedOutputRoot)</SelfEngineManagedOutputRoot>
+    <FlareEngineManagedIntermediateRoot Condition="'$(FlareEngineManagedIntermediateRoot)' == '' And '$(SelfEngineManagedIntermediateRoot)' != ''">$(SelfEngineManagedIntermediateRoot)</FlareEngineManagedIntermediateRoot>
+    <FlareEngineManagedIntermediateRoot Condition="'$(FlareEngineManagedIntermediateRoot)' == ''">$(FlareEngineRepositoryRoot)out\obj\</FlareEngineManagedIntermediateRoot>
+    <SelfEngineManagedIntermediateRoot Condition="'$(SelfEngineManagedIntermediateRoot)' == ''">$(FlareEngineManagedIntermediateRoot)</SelfEngineManagedIntermediateRoot>
+    <BaseOutputPath>$(FlareEngineManagedOutputRoot)$(MSBuildProjectName)\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(FlareEngineManagedIntermediateRoot)$(MSBuildProjectName)\</BaseIntermediateOutputPath>
     <TargetFramework>net10.0</TargetFramework>
     <PlatformTarget>x64</PlatformTarget>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -16,4 +21,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <Using Include="FlareEngine" />
+  </ItemGroup>
 </Project>

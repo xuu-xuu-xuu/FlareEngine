@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 /// <summary>逻辑状态的弱引用。跨收集点保存时可显式 Retain，释放令牌后允许回收。</summary>
 public sealed class LogicState

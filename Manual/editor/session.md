@@ -1,13 +1,15 @@
-# 编辑会话、撤销与播放
+# 编辑会话、运行态实时调参与撤销
 
 ## EditorSession
 
-[EditorSession](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSession.h#L18) 持有编辑世界、当前选择和事务历史。层级视图通过 [BuildEditorHierarchy()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSession.cpp#L14) 展平父子关系。连续拖动属性时用 [BeginEdit()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSession.cpp#L182) 和 [CommitEdit()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSession.cpp#L189) 将多次变化合成一个历史项，[Undo()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSession.cpp#L201)、[Redo()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSession.cpp#L207) 恢复对应快照。
+`EditorSession` 持有编辑世界（`EditWorld`）、当前选择和统一事务历史。层级视图通过 `BuildEditorHierarchy()` 展平父子关系。连续拖动数值框、`[F_Range]` 滑条或视口变换手柄时，用 `BeginEdit()` 与 `CommitEdit()` 将整段手势合并为单个历史项，`Undo()` 与 `Redo()` 同步覆盖原生场景变换、组件属性与 C# 脚本绑定变更。
 
-## 播放世界
+## 播放世界与运行态实时调参
 
-[EditorSession::StartPlay()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSession.cpp#L288) 创建独立运行环境，复制编辑世界，同步场景与昼夜系统后才启动回调。[EditorPlaybackController](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorPlayback.h#L10) 表达播放、暂停、恢复、单步和停止。[EditorPlayInput](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorPlayInput.h#L15) 根据当前视口和捕获状态转交游戏输入。[StopPlay()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSession.h#L22) 释放播放状态，后续编辑继续落在编辑世界。
+`EditorSession::StartPlay()` 创建独立的运行环境与 `PlayWorld`，深拷贝编辑世界并同步昼夜、物理、音频与脚本实例后启动运行预览。`EditorPlaybackController` 驱动播放、暂停、恢复、单步和停止；`EditorPlayInput` 依据 **摄像机视口**（窗口预览或全屏预览区域）的焦点和指针捕获状态向游戏转发键鼠输入。
+
+在运行预览（Play Mode）期间，属性面板保持可编辑：修改实体变换、灯光/相机/刚体参数或存活 `F_Behaviour` 的 `[F_Expose]` 字段会实时作用于 `PlayWorld` 与运行期托管脚本实例，方便边玩边调手感与光影；点击 `StopPlay()` 释放播放状态后，所有临时改动自动还原为进入播放前的 `EditWorld` 快照，不会污染已保存场景。
 
 ## 场景文档与恢复
 
-[SceneFileWorkflow](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/SceneFileWorkflow.h#L9) 管理打开、另存、未保存修改和外部覆盖决定。[ExternalChangeMonitor](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/ExternalChangeMonitor.h#L8) 监视当前文件时间和大小；[EditorSessionStore](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorSessionStore.h#L31) 保存偏好、会话与恢复组，[ApplyRecoveryScene()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/RecoveryApply.cpp#L7) 把恢复内容交回场景会话。
+`SceneFileWorkflow` 管理场景打开、另存、未保存提示与外部覆盖决策。`ExternalChangeMonitor` 监视场景文件时间戳，而编辑器窗口重新激活（`WM_ACTIVATEAPP`）时同步扫描项目 `Scripts/` 目录变更以触发零重启 C# 增量编译；`EditorSessionStore` 与 `ApplyRecoveryScene()` 负责异常退出后的会话恢复。

@@ -233,6 +233,9 @@ struct EditorInspectorDrag
     double original = 0, value = 0, applied = 0;
     float startX = 0, lastX = 0;
     bool active = false;
+    bool sliderTrack = false;
+    float sliderLeft = 0.0f;
+    float sliderWidth = 1.0f;
 };
 
 struct EditorInspectorColor

@@ -25,6 +25,7 @@ struct RenderFrame
     std::uint64_t updateIndex = 0;  // 包含不可绘制期间的更新，不等于呈现帧数。
     const se::FrameData* data = nullptr; // 仅在本次 Render 调用期间有效；异步使用须自行复制。
     se::Profiler* profiler=nullptr; // 可选 CPU 采集，生命周期覆盖本次 Render。
+    bool interactiveResize = false;
 };
 
 enum class RenderResult { Success, Occluded, Failed };

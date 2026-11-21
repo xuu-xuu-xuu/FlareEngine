@@ -88,7 +88,9 @@ void ConfigureSessionAndWorkspace(ToolkitAppState& state,
         if (!profile) error = failures.empty() ? "TOD.ResolveFailed" : failures.back().key;
         return profile;
     });
-    const bool managedDefaultScene = GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_FILE", nullptr, 0) > 0 &&
+    const bool managedDefaultScene = (GetEnvironmentVariableW(L"FLARE_EDITOR_SCENE_FILE", nullptr, 0) > 0 ||
+        GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_FILE", nullptr, 0) > 0) &&
+        GetEnvironmentVariableW(L"FLARE_EDITOR_SCENE_EXPLICIT", nullptr, 0) == 0 &&
         GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_EXPLICIT", nullptr, 0) == 0;
     if (hasRestoredSession && (state.session.Path().empty() || managedDefaultScene) && !restoredSession.documents.empty())
     {
@@ -127,12 +129,48 @@ void ConfigureSessionAndWorkspace(ToolkitAppState& state,
             state.playUi = std::make_unique<UiTree>(state.ui);
             state.playUi->CancelInput();
             if (state.playInput) state.playInput->Attach(state.playUi.get());
+            const bool gamePreview = !state.hidden || GetEnvironmentVariableW(L"FLARE_RENDER_GAME_VIEWPORT", nullptr, 0) > 0;
+            if (gamePreview && state.shell)
+            {
+                const auto* gameGroup = state.shell->Dock().Find(ui::editor::EditorPanelId::Game);
+                state.prePlayGameGroupTab = (gameGroup && gameGroup->active != ui::editor::EditorPanelId::Game)
+                                                ? gameGroup->active
+                                                : ui::editor::EditorPanelId::None;
+                state.shell->FocusPanel(ui::editor::EditorPanelId::Game);
+                if (state.shell->MaximizeOnPlay() && !state.shell->GameMaximized())
+                {
+                    state.enteredMaximizedOnPlay = true;
+                    state.shell->SetGameMaximized(true);
+                }
+                else
+                {
+                    state.enteredMaximizedOnPlay = false;
+                }
+                state.shell->Frame();
+            }
+            state.pendingActivatePlayInput = gamePreview;
             return !state.hooks || !state.hooks->playStarted || state.hooks->playStarted(world, *state.playUi);
         },
         [&state](World& world) {
             state.sceneNavigation.Clear();
             state.authoredScenePhysics.Clear(state.authoredPhysics);
+            state.pendingActivatePlayInput = false;
             if (state.playInput) state.playInput->Attach(nullptr);
+            if (state.shell)
+            {
+                if (state.enteredMaximizedOnPlay || (state.shell->MaximizeOnPlay() && state.shell->GameMaximized()))
+                {
+                    state.shell->SetGameMaximized(false);
+                }
+                state.enteredMaximizedOnPlay = false;
+                if (state.prePlayGameGroupTab != ui::editor::EditorPanelId::None &&
+                    state.shell->Dock().Find(state.prePlayGameGroupTab))
+                {
+                    state.shell->Dock().SelectTab(state.prePlayGameGroupTab);
+                    state.shell->Frame();
+                }
+                state.prePlayGameGroupTab = ui::editor::EditorPanelId::None;
+            }
             struct ClearUi { std::unique_ptr<UiTree>& value; ~ClearUi() { value.reset(); } } clearUi{state.playUi};
             if (state.hooks && state.hooks->playStopping && state.playUi) state.hooks->playStopping(world, *state.playUi);
         });
@@ -156,12 +194,24 @@ void ConfigureSessionAndWorkspace(ToolkitAppState& state,
             const float dpi = state.input ? state.input->DpiScale() : 1.0f;
             const auto hit = ui::UiHitTest(state.shell->Document(), state.shell->Layout())
                 .Hit(state.shell->CurrentInputRoot(), point.x / dpi, point.y / dpi).target;
-            return hit == state.shell->ViewportPanel();
+            const bool gamePreview = !state.hidden || GetEnvironmentVariableW(L"FLARE_RENDER_GAME_VIEWPORT", nullptr, 0) > 0;
+            if (gamePreview && state.shell->Document().Visible(state.shell->GamePanel()))
+            {
+                return hit == state.shell->PanelContent(ui::editor::EditorPanelId::Game);
+            }
+            return hit == state.shell->ViewportPanel() || hit == state.shell->GamePanel();
         },
-        [&state]() { if (state.shell) state.shell->FocusPanel(ui::editor::EditorPanelId::Viewport); },
+        [&state]() {
+            if (!state.shell) return;
+            const bool gamePreview = !state.hidden || GetEnvironmentVariableW(L"FLARE_RENDER_GAME_VIEWPORT", nullptr, 0) > 0;
+            state.shell->FocusPanel((gamePreview && state.shell->Document().Visible(state.shell->GamePanel()))
+                                        ? ui::editor::EditorPanelId::Game
+                                        : ui::editor::EditorPanelId::Viewport);
+        },
         [&state]() {
             return state.shell && (state.shell->CloseModalOpen() || state.shell->ConfirmOpen() ||
-                                   state.shell->MenuOpen() || state.shell->ColorPickerOpen());
+                                   state.shell->MenuOpen() || state.shell->ColorPickerOpen() ||
+                                   state.shell->AddComponentPopupOpen());
         });
 
     if (state.hooks) state.host.SetExternalDocuments(state.hooks->externalDocuments);
@@ -173,8 +223,8 @@ void ConfigureSessionAndWorkspace(ToolkitAppState& state,
             std::string failure;
             return state.text.Load(state.resourceDirectory / "Localization" / (language + ".txt"), failure);
         });
-    state.host.SetDocumentPaths(state.assetsRoot / "Scenes" / "Untitled.scene.json",
-                                state.assetsRoot / "UI" / "Untitled.ui.json");
+    state.host.SetDocumentPaths(state.root / "Scenes" / "Untitled.scene.json",
+                                state.root / "UI" / "Untitled.ui.json");
     if (state.hooks && state.hooks->configure) state.hooks->configure(state.host);
     if (hasRestoredSession)
     {
@@ -224,7 +274,8 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
         crashGuard.active = EditorSessionStore::WriteCrashMarker(crashGuard.directory, marker, markerError);
         if (!crashGuard.active) Log(LogLevel::Warning, markerError);
 
-        const bool safeMode = GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SAFE_MODE", nullptr, 0) > 0;
+        const bool safeMode = GetEnvironmentVariableW(L"FLARE_EDITOR_SAFE_MODE", nullptr, 0) > 0 ||
+            GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SAFE_MODE", nullptr, 0) > 0;
         EditorPreferences preferences;
         std::string preferencesError;
         EditorSessionStore::LoadPreferences(EditorSessionStore::UserDataDirectory(), preferences, preferencesError);
@@ -306,6 +357,16 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
             state.closeApproved = state.shell && state.shell->CloseApproved();
             Log(LogLevel::Info, "EditorUi.ToolkitClosing");
             state.viewportController.Blur(state.session);
+            if (state.gameRenderer)
+            {
+                state.gameRenderer->Shutdown();
+                state.gameRenderer.reset();
+            }
+            if (state.gameSurfaceWindow)
+            {
+                DestroyWindow(state.gameSurfaceWindow);
+                state.gameSurfaceWindow = nullptr;
+            }
             state.featureTools.reset();
             state.floatingWindows.reset();
             state.input.reset();
@@ -332,8 +393,21 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
                 {
                     gameplay.gamepads = input.gamepads;
                 }
-                const ui::editor::ViewportRectF viewportMath{state.viewportRect.x, state.viewportRect.y,
-                                                             state.viewportRect.width, state.viewportRect.height};
+                const ui::UiRect& activePlayRect = state.playViewportRect.width > 0.0f ? state.playViewportRect : state.viewportRect;
+                if (state.hooks->syncPlayCursor && state.hostWindow != nullptr)
+                {
+                    POINT tl{static_cast<LONG>(std::lround(activePlayRect.x * dpi)),
+                             static_cast<LONG>(std::lround(activePlayRect.y * dpi))};
+                    POINT br{static_cast<LONG>(std::lround((activePlayRect.x + activePlayRect.width) * dpi)),
+                             static_cast<LONG>(std::lround((activePlayRect.y + activePlayRect.height) * dpi))};
+                    ClientToScreen(state.hostWindow, &tl);
+                    ClientToScreen(state.hostWindow, &br);
+                    const int screenRect[4]{tl.x, tl.y, br.x, br.y};
+                    const bool cursorCaptured = state.hooks->syncPlayCursor(state.hostWindow, screenRect);
+                    if (state.playInput) state.playInput->SetCursorCaptured(cursorCaptured);
+                }
+                const ui::editor::ViewportRectF viewportMath{activePlayRect.x, activePlayRect.y,
+                                                             activePlayRect.width, activePlayRect.height};
                 float mouseX = static_cast<float>(gameplay.mouseX), mouseY = static_cast<float>(gameplay.mouseY);
                 ui::editor::ViewportOffsetPlayInput(viewportMath, dpi, mouseX, mouseY);
                 gameplay.mouseX = static_cast<int>(std::lround(mouseX));

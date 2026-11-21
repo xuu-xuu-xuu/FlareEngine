@@ -45,6 +45,8 @@ public:
     bool ProfileExportSucceeded() const noexcept {return !profileExportFailed_;}
     void SetCaptureOutput(std::filesystem::path path,std::uint64_t frame){captureOutput_=std::move(path);captureFrame_=frame;captured_=false;}
     bool CaptureSucceeded() const noexcept {return captureOutput_.empty()||captured_;}
+    void SetMemoryCapture(bool enabled) noexcept {memoryCaptureRequested_=enabled;}
+    const se::rhi::Image& LatestMemoryCapture() const noexcept {return latestMemoryCapture_;}
     se::rhi::Statistics Statistics() const {return device_?device_->Stats():se::rhi::Statistics{};}
     std::vector<std::string> DebugMessages()const{return device_?device_->DebugMessages():std::vector<std::string>{};}
     const se::RenderTelemetry& Telemetry() const noexcept {return telemetry_;}
@@ -205,5 +207,7 @@ private:
     std::filesystem::path captureOutput_;
     std::uint64_t captureFrame_=0;
     bool captured_=false;
+    bool memoryCaptureRequested_=false;
+    se::rhi::Image latestMemoryCapture_;
     SandboxDrawStatistics drawStatistics_;
 };

@@ -15,6 +15,7 @@
 #include <iostream>
 #include <exception>
 #include <cmath>
+#include <chrono>
 
 namespace
 {
@@ -114,6 +115,12 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
     {
         return 1;
     }
+    {
+        wchar_t customTitle[512]{};
+        const DWORD titleLen = GetEnvironmentVariableW(L"FLARE_WINDOW_TITLE", customTitle, 512);
+        if (titleLen > 0 && titleLen < 512)
+            SetWindowTextW(window.hwnd, customTitle);
+    }
 
     LogCheckpoint("Window.Create.End");
     int exitCode = 0;
@@ -158,6 +165,19 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
         SandboxDiagnostics diagnostics(window.input);
         constexpr double maxUpdateDeltaSeconds = 0.1;
         RenderResult result = RenderResult::Success;
+        UINT paddedSurfW = 0;
+        UINT paddedSurfH = 0;
+        if (services && services->liveWindowResize && showWindow && window.hwnd)
+        {
+            MONITORINFO mi{sizeof(mi)};
+            if (GetMonitorInfoW(MonitorFromWindow(window.hwnd, MONITOR_DEFAULTTONEAREST), &mi))
+            {
+                const UINT monW = static_cast<UINT>(std::max<LONG>(1L, mi.rcMonitor.right - mi.rcMonitor.left));
+                const UINT monH = static_cast<UINT>(std::max<LONG>(1L, mi.rcMonitor.bottom - mi.rcMonitor.top));
+                paddedSurfW = std::min(4096u, (monW + 255u) & ~255u);
+                paddedSurfH = std::min(4096u, (monH + 255u) & ~255u);
+            }
+        }
         auto drawFrame = [&]() -> bool {
             if (!UpdateFrameTimer(timer))
             {
@@ -191,9 +211,22 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
             {
                 se::FrameData data;
                 {se::CpuScope extract(profiler,"CPU.Extract");if (services && services->extract) services->extract(data);}
+                UINT surfW = window.width;
+                UINT surfH = window.height;
+                if (services && services->liveWindowResize && showWindow && data.editorGuiEnabled)
+                {
+                    if (paddedSurfW < window.width || paddedSurfH < window.height)
+                    {
+                        paddedSurfW = std::max(paddedSurfW, std::min(8192u, (window.width + 512u) & ~511u));
+                        paddedSurfH = std::max(paddedSurfH, std::min(8192u, (window.height + 512u) & ~511u));
+                    }
+                    surfW = paddedSurfW;
+                    surfH = paddedSurfH;
+                }
                 const RenderFrame frame{
-                    { window.hwnd, window.width, window.height },
-                    updateDeltaSeconds, timer.deltaSeconds, timer.totalSeconds, timer.frameCount, services ? &data : nullptr,profiler };
+                    { window.hwnd, surfW, surfH },
+                    updateDeltaSeconds, timer.deltaSeconds, timer.totalSeconds, timer.frameCount,
+                    services ? &data : nullptr, profiler, window.interactiveResize };
                 const bool trace=SampleDiagnosticFrame(timer.frameCount);
                 if(trace)LogCheckpoint("Renderer.Frame.Begin",{},timer.frameCount);
                 result = renderer.Render(frame, localization);
@@ -237,7 +270,9 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
             pumping = false;
             se::PollWindowsGamepads(window.input.gamepads);
             if (!running || finished || window.closeRequested || !drawFrame()) break;
-            Sleep(!window.drawable || result == RenderResult::Occluded ? 16 : 1);
+            if (!window.drawable) Sleep(16);
+            else if (window.interactiveResize) Sleep(0);
+            else if (result == RenderResult::Occluded) Sleep(16);
         }
         window.drawResizeFrame = {};
     }

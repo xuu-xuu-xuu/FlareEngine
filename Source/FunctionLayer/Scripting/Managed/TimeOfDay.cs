@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 public readonly record struct EnvironmentVector(float X,float Y,float Z);
 public sealed record EnvironmentSnapshot(bool Active,ulong FrameIndex,long Day,double Time,double SimulationSeconds,double Rate,

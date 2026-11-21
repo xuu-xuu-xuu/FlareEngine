@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 public enum UiKind { Panel, Label, Image, Button, Checkbox, Slider, ProgressBar, ScrollView, TextInput }
 public enum UiLayout { Absolute, Horizontal, Vertical }
@@ -69,14 +69,14 @@ public sealed class UiElement
         Check();ArgumentNullException.ThrowIfNull(binding);ArgumentNullException.ThrowIfNull(binding.Script);ArgumentNullException.ThrowIfNull(binding.Action);
         owner.Session.Invoke(session=>{EngineSession.Check(NativeMethods.UiBind(session,Id,(int)binding.Event,binding.Entity,binding.Script,checked((uint)Encoding.UTF8.GetByteCount(binding.Script)),binding.Action,checked((uint)Encoding.UTF8.GetByteCount(binding.Action))));return 0;});
     }
-    public void Bind(UiEventKind kind,Behaviour target,string action)
+    public void Bind(UiEventKind kind,F_Behaviour target,string action)
     {
         ArgumentNullException.ThrowIfNull(target);if(target.Owner is null||target.Entity.Session!=owner.Session)throw new ArgumentException("Script.NotAttached");
         SetBinding(new(kind,target.Entity.StableId,ScriptRegistry.IdOf(target.GetType()),action));
     }
     public void Unbind(UiEventKind kind)
     {Check();owner.Session.Invoke(session=>{EngineSession.Check(NativeMethods.UiBind(session,Id,(int)kind,0,null,0,null,0));return 0;});}
-    public IDisposable Subscribe(Behaviour ownerBehaviour, UiEventKind kind, Action<UiEvent> action)
+    public IDisposable Subscribe(F_Behaviour ownerBehaviour, UiEventKind kind, Action<UiEvent> action)
     {
         Check();
         if (ownerBehaviour.Entity.Session != owner.Session) throw new ArgumentException("Bridge.InvalidUi");
@@ -120,7 +120,7 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library, EntryPoint="se_ui_remove")]
     internal static partial int UiRemove(ulong session,ulong id);
     [LibraryImport(Library, EntryPoint="se_ui_set_style")]
-    internal static partial int UiStyle(ulong session,ulong id,in SelfEngine.UiStyle style);
+    internal static partial int UiStyle(ulong session,ulong id,in FlareEngine.UiStyle style);
     [LibraryImport(Library, EntryPoint="se_ui_set_text", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int UiText(ulong session,ulong id,string text,uint length);
     [LibraryImport(Library, EntryPoint="se_ui_set_image", StringMarshalling=StringMarshalling.Utf8)]

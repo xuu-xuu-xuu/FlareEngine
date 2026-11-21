@@ -14,6 +14,9 @@ struct InputState
     bool isLeftDown = false;
     std::array<bool,3> mouseButtons{};
     int mouseX = 0, mouseY = 0;
+    int mouseDeltaX = 0, mouseDeltaY = 0;
+    bool hasLastMouse = false;
+    int lastMouseX = 0, lastMouseY = 0;
 
     // 消息处理期间追加，主循环读取后清空；状态表本身不按帧清空。
     std::vector<KeyEvent> keyEvents;
@@ -23,6 +26,8 @@ struct InputState
     // 本轮所有消费者读取后清理事件；保留持续按住状态。
     void ClearEvents()
     {
+        mouseDeltaX = 0;
+        mouseDeltaY = 0;
         keyEvents.clear();
         textEvents.clear();
         pointerEvents.clear();

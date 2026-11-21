@@ -116,18 +116,18 @@ HRESULT D3D12Taa::Initialize(ID3D12Device& device,D3D12MemoryAllocator& memory,
         const auto created=device.CreateGraphicsPipelineState(&description,IID_PPV_ARGS(outputState.GetAddressOf()));
         if(SUCCEEDED(created))outputState->SetName(name);return created;
     };
-    if(SUCCEEDED(result))result=createVelocity(legacyInput,legacy,L"SelfEngine.TaaVelocityLegacy");
-    if(SUCCEEDED(result))result=createVelocity(compressedInput,compressed,L"SelfEngine.TaaVelocityCompressed");
+    if(SUCCEEDED(result))result=createVelocity(legacyInput,legacy,L"FlareEngine.TaaVelocityLegacy");
+    if(SUCCEEDED(result))result=createVelocity(compressedInput,compressed,L"FlareEngine.TaaVelocityCompressed");
     ComPtr<ID3D12PipelineState> resolveState;
     if(SUCCEEDED(result))
     {
         D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline{};
         pipeline.pRootSignature=resolveRoot.Get();pipeline.CS={resolveCode->GetBufferPointer(),resolveCode->GetBufferSize()};
         result=device.CreateComputePipelineState(&pipeline,IID_PPV_ARGS(resolveState.GetAddressOf()));
-        if(SUCCEEDED(result))resolveState->SetName(L"SelfEngine.TaaResolve");
+        if(SUCCEEDED(result))resolveState->SetName(L"FlareEngine.TaaResolve");
     }
     if(FAILED(result)){CheckGraphicsResult(result,text,"D3D12.TaaShaderFailed");return result;}
-    velocityRoot->SetName(L"SelfEngine.TaaVelocityRoot");resolveRoot->SetName(L"SelfEngine.TaaResolveRoot");
+    velocityRoot->SetName(L"FlareEngine.TaaVelocityRoot");resolveRoot->SetName(L"FlareEngine.TaaResolveRoot");
     device_=&device;memory_=&memory;velocityRoot_=std::move(velocityRoot);resolveRoot_=std::move(resolveRoot);
     velocityLegacy_=std::move(legacy);velocityCompressed_=std::move(compressed);resolve_=std::move(resolveState);return S_OK;
 }
@@ -181,7 +181,7 @@ HRESULT D3D12Taa::CreateOutput(ID3D12Resource& hdr,ID3D12Resource& depth,UINT wi
     heap.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;heap.NodeMask=1;
     result=device_->CreateDescriptorHeap(&heap,IID_PPV_ARGS(candidate.descriptors.GetAddressOf()));
     if(FAILED(result))return result;
-    candidate.descriptors->SetName(L"SelfEngine.TaaDescriptors");
+    candidate.descriptors->SetName(L"FlareEngine.TaaDescriptors");
     const auto increment=device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     const auto cpu=candidate.descriptors->GetCPUDescriptorHandleForHeapStart();
     const auto gpu=candidate.descriptors->GetGPUDescriptorHandleForHeapStart();

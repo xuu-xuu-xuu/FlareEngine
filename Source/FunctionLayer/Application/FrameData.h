@@ -78,6 +78,7 @@ struct FrameData
         std::uint32_t width = 0, height = 0;
         const unsigned char* rgba8 = nullptr;
         std::size_t bytes = 0;
+        std::uint64_t revision = 0;
     };
     // 本帧借用的编辑器图像（资产缩略图等）；token 由宿主分配，宿主保证像素存活到本帧结束。
     std::vector<UiImageSource> editorUiImages;

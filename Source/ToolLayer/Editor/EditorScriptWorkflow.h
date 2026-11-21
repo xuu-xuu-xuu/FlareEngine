@@ -4,6 +4,8 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <future>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,17 +28,41 @@ public:
         std::filesystem::file_time_type modified{};
     };
 
+    struct HotReloadResult
+    {
+        bool finished = false;
+        bool success = false;
+        std::uint64_t attachedEntity = 0;
+        std::string attachedDisplayName;
+        std::string statusMessage;
+        std::vector<std::string> consoleLines;
+    };
+
     EditorScriptWorkflow(std::filesystem::path root, EditorApplicationHooks* hooks, const Localization& text);
-    void AppendRows(std::uint64_t entity, bool playing, std::vector<ui::editor::EditorProperty>& rows);
+    ~EditorScriptWorkflow();
+    void AppendRows(std::uint64_t entity, bool playing, std::vector<ui::editor::EditorProperty>& rows,
+                    const std::function<std::string(std::uint64_t)>& resolveEntityName = {});
     bool Apply(std::uint64_t entity, bool playing, const std::string& key, const std::string& value,
                const CodeEditorSettings& settings);
     const std::string& Status() const noexcept { return status_; }
     bool Dirty() const;
     bool Save();
+    bool HasUndo() const noexcept { return !undo_.empty(); }
+    bool HasRedo() const noexcept { return !redo_.empty(); }
+    bool Undo() { return Restore(false); }
+    bool Redo() { return Restore(true); }
+
     const std::vector<std::filesystem::path>& Sources();
     void RefreshSources() { scanned_ = {}; }
     bool SourcesNeedCompile();
     void MarkSourcesCompiled();
+    std::string NextSuggestedClassName();
+
+    [[nodiscard]] bool CanHotReloadInProcess() const noexcept;
+    [[nodiscard]] bool IsCompiling() const noexcept { return compileTask_.valid(); }
+    [[nodiscard]] bool HasCompileError() const noexcept { return hasCompileError_; }
+    bool StartInProcessCompile(std::uint64_t attachEntity = 0, std::string attachScriptId = {});
+    HotReloadResult PollInProcessCompile();
 
     std::string DisplayName(std::string_view scriptId);
     std::string ScriptIdForSource(const std::filesystem::path& sourcePath);
@@ -54,14 +80,28 @@ public:
     bool ConsumePendingAttachOnStartup(const std::filesystem::path& crashDir, std::uint64_t& outEntity,
                                        std::string& outDisplayName);
 
-    bool OpenSelected(const CodeEditorSettings& settings) { return Open(selectedSource_, settings); }
+    bool OpenSelected(const CodeEditorSettings& settings) { return Open(selectedSource_, 1, 1, settings); }
+    bool OpenSourceAtLine(const std::filesystem::path& sourceOrRelative, std::uint32_t line, std::uint32_t column,
+                          const CodeEditorSettings& settings);
     void SelectSource(std::filesystem::path path)
     {
         selectedSource_ = path.extension() == ".cs" ? std::move(path) : std::filesystem::path{};
     }
 
 private:
-    bool Open(const std::filesystem::path& source, const CodeEditorSettings& settings);
+    struct AsyncBuildOutput
+    {
+        bool success = false;
+        std::filesystem::path dllPath;
+        std::filesystem::path outDir;
+        std::string logText;
+        std::string errorKey;
+        std::uint64_t attachEntity = 0;
+        std::string attachScriptId;
+    };
+
+    bool Open(const std::filesystem::path& source, std::uint32_t line, std::uint32_t column,
+              const CodeEditorSettings& settings);
     bool Snapshot(RecoveryDocument& document) const;
     bool Restore(bool redo);
     std::string ComputeSourcesSignature();
@@ -82,9 +122,12 @@ private:
     std::chrono::steady_clock::time_point scanned_{};
     std::string compiledSignature_;
     bool compiledSignatureInitialized_ = false;
+    bool hasCompileError_ = false;
 
     std::uint64_t pendingAttachEntity_ = 0;
     std::string pendingAttachScriptId_;
     std::filesystem::path pendingCreatedSource_;
+    std::uint64_t hotReloadSeq_ = 0;
+    std::future<AsyncBuildOutput> compileTask_;
 };
 }

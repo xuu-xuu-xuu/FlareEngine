@@ -22,7 +22,8 @@ std::optional<double> AxisParameter(const CameraSnapshot& camera,Vec2 mouse,Vec3
 }
 Vec3 EditorGizmoAxis(const World& world,EntityHandle entity,GizmoAxis axis,GizmoSpace space)
 {
-    if(!world.IsAlive(entity)||static_cast<unsigned>(axis)>2||static_cast<unsigned>(space)>1)return {};
+    if(!world.IsAlive(entity)||static_cast<unsigned>(axis)>3||static_cast<unsigned>(space)>1)return {};
+    if(axis==GizmoAxis::Uniform)return Vec3{1,1,1};
     if(space==GizmoSpace::World)return Axis(axis);
     Quat orientation;
     for(auto cursor=entity;cursor;cursor=world.Get(cursor)->parent)orientation=Normalize(world.GetTransform(cursor)->rotation*orientation);
@@ -33,7 +34,8 @@ bool EditorGizmo::Begin(EditorSession& editor, GizmoMode mode, GizmoAxis axis,
 {
     if (active_ || editor.IsPlaying() || !std::isfinite(pixelsPerUnit) || pixelsPerUnit <= 0
         || !std::isfinite(mouse.x) || !std::isfinite(mouse.y)
-        || static_cast<unsigned>(mode)>2 || static_cast<unsigned>(axis)>2||static_cast<unsigned>(space)>1)return Fail("Editor.InvalidGizmo");
+        || static_cast<unsigned>(mode)>2 || static_cast<unsigned>(axis)>3||static_cast<unsigned>(space)>1
+        || (axis==GizmoAxis::Uniform&&mode!=GizmoMode::Scale))return Fail("Editor.InvalidGizmo");
     const float length = std::hypot(screenDirection.x,screenDirection.y);
     if (!std::isfinite(length) || length < 0.001f)return Fail("Editor.InvalidGizmo");
     const auto& world = editor.EditWorld();
@@ -63,7 +65,7 @@ bool EditorGizmo::ProjectionMatches(const std::optional<CameraSnapshot>& camera)
     const auto a=camera_->viewport,b=camera->viewport;
     return a.x==b.x&&a.y==b.y&&a.width==b.width&&a.height==b.height&&camera_->viewProjection.values==camera->viewProjection.values;
 }
-bool EditorGizmo::Update(EditorSession& editor, Vec2 mouse)
+bool EditorGizmo::Update(EditorSession& editor, Vec2 mouse, bool snap)
 {
     if(!active_||!std::isfinite(mouse.x)||!std::isfinite(mouse.y))return Fail("Editor.InvalidGizmo");
     float amount=((mouse.x-mouse_.x)*direction_.x+(mouse.y-mouse_.y)*direction_.y)/pixelsPerUnit_;
@@ -73,6 +75,11 @@ bool EditorGizmo::Update(EditorSession& editor, Vec2 mouse)
         if(!parameter)return Fail("Editor.InvalidGizmo");amount=static_cast<float>(*parameter-initialAxisParameter_);
     }
     if(!IsFinite(amount))return Fail("Editor.InvalidGizmo");
+    if(snap)
+    {
+        const float step=mode_==GizmoMode::Translate?0.25f:(mode_==GizmoMode::Rotate?(15.0f*(Pi/180.0f)):0.1f);
+        amount=std::round(amount/step)*step;
+    }
     Transform value=initial_;
     if(mode_==GizmoMode::Translate)value.position+=TransformVector(parentInverse_,axisDirection_*amount);
     else if(space_==GizmoSpace::Local&&mode_==GizmoMode::Rotate)
@@ -81,16 +88,17 @@ bool EditorGizmo::Update(EditorSession& editor, Vec2 mouse)
         const auto origin=TransformPoint(initialWorld_,{});
         value.position=TransformPoint(parentInverse_,pivot_+Rotate(AxisAngle(axisDirection_,amount),origin-pivot_));
     }
-    else if(space_==GizmoSpace::Local)
+    else if(space_==GizmoSpace::Local||axis_==GizmoAxis::Uniform)
     {
         const float factor=std::max(0.001f,1.0f+amount);
-        if(axis_==GizmoAxis::X)value.scale.x*=factor;
-        if(axis_==GizmoAxis::Y)value.scale.y*=factor;
-        if(axis_==GizmoAxis::Z)value.scale.z*=factor;
+        if(axis_==GizmoAxis::X||axis_==GizmoAxis::Uniform)value.scale.x*=factor;
+        if(axis_==GizmoAxis::Y||axis_==GizmoAxis::Uniform)value.scale.y*=factor;
+        if(axis_==GizmoAxis::Z||axis_==GizmoAxis::Uniform)value.scale.z*=factor;
         const auto inverseWorld=Inverse(initialWorld_);
         const auto localPivot=inverseWorld?TransformPoint(*inverseWorld,pivot_):Vec3{};
-        value.position=initial_.position+TransformVector(initial_.Matrix(),localPivot-TransformVector(Scaling(
-            axis_==GizmoAxis::X?Vec3{factor,1,1}:axis_==GizmoAxis::Y?Vec3{1,factor,1}:Vec3{1,1,factor}),localPivot));
+        const Vec3 scaleVec=axis_==GizmoAxis::Uniform?Vec3{factor,factor,factor}:
+            (axis_==GizmoAxis::X?Vec3{factor,1,1}:axis_==GizmoAxis::Y?Vec3{1,factor,1}:Vec3{1,1,factor});
+        value.position=initial_.position+TransformVector(initial_.Matrix(),localPivot-TransformVector(Scaling(scaleVec),localPivot));
     }
     else
     {

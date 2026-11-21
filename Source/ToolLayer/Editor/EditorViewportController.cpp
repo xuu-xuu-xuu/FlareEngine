@@ -1,6 +1,7 @@
 #include "EditorViewportController.h"
 #include "EditorSceneGizmos.h"
 #include "PrefabWorkflow.h"
+#include "CoreLayer/Math/TransformDecomposition.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -42,6 +43,10 @@ float Distance(Vec2 p,Vec2 a,Vec2 b)
 Vec3 Forward(const EditorViewportCamera& c){return Rotate(FreeCameraTransform(c.state).rotation,{0,0,-1});}
 }
 
+const World& EditorViewportController::ActiveWorld(const EditorSession& s)const noexcept
+{
+    return (s.IsPlaying()&&s.PlayWorld())?*s.PlayWorld():s.EditWorld();
+}
 Vec3 EditorViewportController::Pivot(const World& w,AssetStore& assets,EntityHandle e)const
 {
     if(center_)if(auto b=EditorEntityBounds(w,assets,e))return (b->minimum+b->maximum)*.5f;
@@ -63,17 +68,18 @@ std::optional<Aabb> EditorViewportController::SceneBounds(const World& w,AssetSt
 }
 bool EditorViewportController::FrameSelection(EditorSession& s,AssetStore& assets,bool follow)
 {
-    if(s.IsPlaying()||Captured())return false;
+    if((s.IsPlaying()&&!sceneViewDuringPlay_)||Captured())return false;
+    const World& world=ActiveWorld(s);
     if(s.Selected()==0)
     {
-        const auto all=SceneBounds(s.EditWorld(),assets);if(!all)return false;
+        const auto all=SceneBounds(world,assets);if(!all)return false;
         pivot_=(all->minimum+all->maximum)*.5f;distance_=std::max(1.f,Length(all->maximum-all->minimum)*1.25f);
         camera_.state.position=pivot_-Forward(camera_)*distance_;follow_=0;
         return true;
     }
-    const auto e=s.EditWorld().FindByStableId(s.Selected());
+    const auto e=world.FindByStableId(s.Selected());
     if(!e)return false;
-    const auto b=EditorEntityBounds(s.EditWorld(),assets,e);if(!b)return false;
+    const auto b=EditorEntityBounds(world,assets,e);if(!b)return false;
     pivot_=(b->minimum+b->maximum)*.5f;
     const float aspect=viewport_.height>0?viewport_.width/viewport_.height:1;
     // 默认镜头垂直 FOV 60 度，窄视口也必须容纳整个包围球。
@@ -102,7 +108,7 @@ std::optional<Vec2> EditorViewportController::TakeContextClick()
 
 void EditorViewportController::SelectAt(Vec2 mouse, EditorSession& session, AssetStore& assets, PickIntent intent)
 {
-    const auto& world = session.EditWorld();
+    const auto& world = ActiveWorld(session);
     const auto mesh = PickEditorBounds(world, assets, *snapshot_,
         (mouse.x - viewport_.x) / viewport_.width, (mouse.y - viewport_.y) / viewport_.height);
     // 图标可能直接盖在立方体上。首次点中实体表面，重复点同一位置可依次选中图标。
@@ -143,11 +149,11 @@ void EditorViewportController::SelectAt(Vec2 mouse, EditorSession& session, Asse
 void EditorViewportController::Blur(EditorSession& s){Cancel(s);focused_=false;}
 bool EditorViewportController::Action(std::string_view action,EditorSession& s,AssetStore& assets)
 {
-    if(s.IsPlaying())return false;
+    if(s.IsPlaying()&&!sceneViewDuringPlay_)return false;
     if(Captured())Cancel(s);
     if(action=="Q")viewTool_=true;
     else if(action=="W"||action=="E"||action=="R")
-    {viewTool_=false;mode_=action=="W"?GizmoMode::Translate:action=="E"?GizmoMode::Rotate:GizmoMode::Scale;}
+    {if(s.IsPlaying())return false;viewTool_=false;mode_=action=="W"?GizmoMode::Translate:action=="E"?GizmoMode::Rotate:GizmoMode::Scale;}
     else if(action=="X")space_=Local()?GizmoSpace::World:GizmoSpace::Local;
     else if(action=="Z")center_=!center_;
     else if(action=="Sky")sky_=!sky_;
@@ -156,23 +162,46 @@ bool EditorViewportController::Action(std::string_view action,EditorSession& s,A
     else if(action=="Frame")return FrameSelection(s,assets);
     else if(action=="FrameAll")
     {
-        auto b=SceneBounds(s.EditWorld(),assets);if(!b)return false;
+        auto b=SceneBounds(ActiveWorld(s),assets);if(!b)return false;
         pivot_=(b->minimum+b->maximum)*.5f;distance_=std::max(1.f,Length(b->maximum-b->minimum)*1.25f);
         camera_.state.position=pivot_-Forward(camera_)*distance_;follow_=0;
+    }
+    else if(action=="AlignWithView")
+    {
+        if(s.IsPlaying()||s.Selected()==0)return false;
+        const auto& world=s.EditWorld();
+        const auto entity=world.FindByStableId(s.Selected());
+        const auto* current=world.GetTransform(entity);
+        const auto* record=world.Get(entity);
+        if(!current||!record)return false;
+        Transform worldTarget=FreeCameraTransform(camera_.state);
+        worldTarget.scale=current->scale;
+        Transform localTarget=worldTarget;
+        if(record->parent)
+        {
+            const auto inv=Inverse(world.GetWorldMatrix(record->parent));
+            if(!inv)return false;
+            Transform decomposed{};
+            if(!TryDecomposeTrs((*inv)*worldTarget.Matrix(),decomposed))return false;
+            decomposed.scale=current->scale;
+            localTarget=decomposed;
+        }
+        return s.SetTransform(s.Selected(),localTarget);
     }
     else return false;
     return true;
 }
 void EditorViewportController::Update(double seconds,EditorSession& s,AssetStore& assets)
 {
-    if(s.IsPlaying()){Blur(s);return;}
+    if(s.IsPlaying()&&!sceneViewDuringPlay_){Blur(s);return;}
     if(follow_)
     {
-        const auto e=s.EditWorld().FindByStableId(follow_);
+        const World& world=ActiveWorld(s);
+        const auto e=world.FindByStableId(follow_);
         if(!e||s.Selected()!=follow_)follow_=0;
         else
         {
-            const auto b=EditorEntityBounds(s.EditWorld(),assets,e);
+            const auto b=EditorEntityBounds(world,assets,e);
             if(b){const auto p=(b->minimum+b->maximum)*.5f;camera_.state.position+=p-followPosition_;pivot_+=p-followPosition_;followPosition_=p;}
         }
     }
@@ -187,7 +216,7 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
 {
     using enum ui::UiEventType;
     if(ev.type==FocusLost||ev.type==PointerCaptureLost){Blur(s);return false;}
-    if(s.IsPlaying())return false;
+    if(s.IsPlaying()&&!sceneViewDuringPlay_)return false;
     if(ev.type==KeyUp)
     {if(ev.key<keys_.size())keys_[ev.key]=false;return Captured();}
     if(ev.type==KeyDown)
@@ -227,14 +256,17 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
         else if(ev.button==1)gesture_=Gesture::Fly;
         else if(ev.button==0)
         {
-            float nearest=12.f;const HandleSegment* hit=nullptr;
-            for(const auto& h:handles_)if(const auto d=Distance(mouse,h.a,h.b);d<nearest){nearest=d;hit=&h;}
-            if(hit)
+            if(!s.IsPlaying())
             {
-                const auto e=s.EditWorld().FindByStableId(s.Selected());const auto origin=Pivot(s.EditWorld(),assets,e);
-                const Vec2 direction{hit->b.x-hit->a.x,hit->b.y-hit->a.y};
-                if(gizmo_.Begin(s,mode_,static_cast<GizmoAxis>(hit->axis),mouse,direction,80,space_,&*snapshot_,&origin))
-                {gesture_=Gesture::Gizmo;dragAxis_=hit->axis;return true;}
+                float nearest=12.f;const HandleSegment* hit=nullptr;
+                for(const auto& h:handles_)if(const auto d=Distance(mouse,h.a,h.b);d<nearest){nearest=d;hit=&h;}
+                if(hit)
+                {
+                    const auto e=s.EditWorld().FindByStableId(s.Selected());const auto origin=Pivot(s.EditWorld(),assets,e);
+                    const Vec2 direction=hit->axis==3?Vec2{1.0f,-0.5f}:Vec2{hit->b.x-hit->a.x,hit->b.y-hit->a.y};
+                    if(gizmo_.Begin(s,mode_,static_cast<GizmoAxis>(hit->axis),mouse,direction,80,space_,&*snapshot_,&origin))
+                    {gesture_=Gesture::Gizmo;dragAxis_=hit->axis;return true;}
+                }
             }
             SelectAt(mouse,s,assets);
             clickPending_=false;
@@ -253,7 +285,7 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
             clickPending_=false;lastPick_.reset();
         }
         const Vec2 delta{mouse.x-lastMouse_.x,mouse.y-lastMouse_.y};lastMouse_=mouse;
-        if(gesture_==Gesture::Gizmo){gizmo_.Update(s,mouse);return true;}
+        if(gesture_==Gesture::Gizmo){gizmo_.Update(s,mouse,ev.control);return true;}
         if(gesture_==Gesture::Fly||gesture_==Gesture::Orbit)
         {
             camera_.Update({{},delta,ev.shift},0);
@@ -294,7 +326,7 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
             if(gesture_==Gesture::Fly)
             {
                 SelectAt(mouse,s,assets,PickIntent::Context);
-                contextClick_=mouse;
+                if(!s.IsPlaying())contextClick_=mouse;
             }
             else if(gesture_==Gesture::Pan)SelectAt(mouse,s,assets);
             else if(gesture_==Gesture::Gizmo)SelectAt(mouse,s,assets,PickIntent::Handle);
@@ -307,7 +339,8 @@ void EditorViewportController::Prepare(EditorSession& s,AssetStore& assets,ui::U
 {
     if(!initialized_){pivot_=camera_.state.position+Forward(camera_)*distance_;initialized_=true;}
     viewport_=rect;overlay_.Clear();sceneLines_.clear();handles_.clear();
-    snapshot_=s.IsPlaying()?std::nullopt:camera_.Snapshot({rect.x,rect.y,rect.width,rect.height},frame);
+    if(s.IsPlaying()&&gizmo_.Active())Cancel(s);
+    snapshot_=(s.IsPlaying()&&!sceneViewDuringPlay_)?std::nullopt:camera_.Snapshot({rect.x,rect.y,rect.width,rect.height},frame);
     if(gizmo_.Active()&&!gizmo_.ProjectionMatches(snapshot_))Cancel(s);
     if(snapshot_)Draw(s,assets);
 }
@@ -325,8 +358,9 @@ void EditorViewportController::Draw(EditorSession& s,AssetStore& assets)
         // XZ 网格由渲染器解析无限平面，单位固定；这里只保留原点的 Y 轴标记。
         line({0,0,0},{0,1,0},colors[1],2);
     }
-    if(gizmos_)AppendEditorSceneGizmos(s.EditWorld(),s.Selected(),c,overlay_,sceneLines_);
-    const auto e=s.EditWorld().FindByStableId(s.Selected());
+    const World& world=ActiveWorld(s);
+    if(gizmos_)AppendEditorSceneGizmos(world,s.Selected(),c,overlay_,sceneLines_);
+    const auto e=s.IsPlaying()?EntityHandle{}:s.EditWorld().FindByStableId(s.Selected());
     if(e)
     {
         // 实体的可见轮廓由渲染器按实际网格和场景深度生成，不再叠加包围盒背面边线。
@@ -365,6 +399,13 @@ void EditorViewportController::Draw(EditorSession& s,AssetStore& assets)
                         }
                     }
                 }
+            }
+            if(mode_==GizmoMode::Scale)
+            {
+                const UiColor centerColor=(dragAxis_==3||hoverAxis_==3)?UiColor{1,1,.3f,1}:UiColor{.92f,.92f,.95f,1};
+                const float half=radius*.075f;Vec3 corners[8];
+                for(int i=0;i<8;++i)corners[i]=origin+Vec3{i&1?half:-half,i&2?half:-half,i&4?half:-half};
+                for(int i=0;i<8;++i)for(int bit=1;bit<=4;bit*=2)if(!(i&bit))line(corners[i],corners[i|bit],centerColor,2.5f,3);
             }
         }
     }

@@ -6,14 +6,15 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 // 编辑态仅保留 JSON/字符串元数据，不永久保留项目 Type，允许停止后重编译 DLL。
 public sealed class ScriptBindings
 {
-    private readonly string assemblyPath;
+    private string assemblyPath;
     private readonly HashSet<string> allowed;
     private readonly Dictionary<string,JsonArray> schemas = new(StringComparer.Ordinal);
+    private readonly Dictionary<string,string> classNames = new(StringComparer.Ordinal);
     private DateTime schemaStamp;
     private long schemaLength;
     private JsonObject document;
@@ -38,7 +39,7 @@ public sealed class ScriptBindings
     }
     public ScriptBindings(string assemblyPath,IEnumerable<string> allowedScriptIds,string json)
     {
-        this.assemblyPath=Path.GetFullPath(assemblyPath);allowed=new(allowedScriptIds,StringComparer.Ordinal);
+        this.assemblyPath=string.IsNullOrWhiteSpace(assemblyPath)?"":Path.GetFullPath(assemblyPath);allowed=new(allowedScriptIds,StringComparer.Ordinal);
         document=JsonNode.Parse(json)?.AsObject()??throw new JsonException("Script.DocumentInvalid");
         if(document["Version"]?.GetValue<int>()!=1||document["Scripts"] is not JsonArray)throw new JsonException("Script.DocumentInvalid");
         savedDocument=(JsonObject)document.DeepClone();
@@ -125,25 +126,33 @@ public sealed class ScriptBindings
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void LoadSchema()
     {
+        if(string.IsNullOrEmpty(assemblyPath)||!File.Exists(assemblyPath)){schemas.Clear();schemaStamp=default;schemaLength=0;return;}
         var file=new FileInfo(assemblyPath);
         if(schemas.Count!=0&&file.LastWriteTimeUtc==schemaStamp&&file.Length==schemaLength)return;
         var next=new Dictionary<string,JsonArray>(StringComparer.Ordinal);
+        var nextNames=new Dictionary<string,string>(StringComparer.Ordinal);
         var context=new ScriptProject.ProjectContext(assemblyPath);
         try
         {
             using var stream=File.OpenRead(assemblyPath);
-            foreach(var type in context.LoadFromStream(stream).GetTypes().Where(t=>t.IsPublic&&!t.IsAbstract&&typeof(Behaviour).IsAssignableFrom(t)))
+            foreach(var type in context.LoadFromStream(stream).GetTypes().Where(t=>t.IsPublic&&!t.IsAbstract&&typeof(F_Behaviour).IsAssignableFrom(t)))
             {
                 var id=ScriptRegistry.IdOf(type);if(!allowed.Contains(id))continue;
-                if(Activator.CreateInstance(type) is not Behaviour instance)continue;
+                if(Activator.CreateInstance(type) is not F_Behaviour instance)continue;
                 var fields=new JsonArray();
                 foreach(var field in ScriptFields.Describe(instance))
                 {
                     var value=field.Value is EntityReference reference?JsonValue.Create(reference.StableId.ToString(CultureInfo.InvariantCulture))
                         :JsonSerializer.SerializeToNode(field.Value,field.Value?.GetType()??typeof(string),Options);
-                    fields.Add(new JsonObject{["Name"]=field.Name,["Kind"]=field.Kind,["Value"]=value});
+                    var item=new JsonObject{["Name"]=field.Name,["Kind"]=field.Kind,["Value"]=value};
+                    if(!string.IsNullOrEmpty(field.Header))item["Header"]=field.Header;
+                    if(!string.IsNullOrEmpty(field.Tooltip))item["Tooltip"]=field.Tooltip;
+                    if(field.Min.HasValue)item["Min"]=field.Min.Value;
+                    if(field.Max.HasValue)item["Max"]=field.Max.Value;
+                    fields.Add(item);
                 }
                 if(!next.TryAdd(id,fields))throw new InvalidOperationException("Script.DuplicateType");
+                nextNames[id]=type.Name;
             }
         }
         finally
@@ -152,7 +161,34 @@ public sealed class ScriptBindings
             context.Unload();
         }
         schemas.Clear();foreach(var pair in next)schemas.Add(pair.Key,pair.Value);
+        classNames.Clear();foreach(var pair in nextNames)classNames.Add(pair.Key,pair.Value);
         schemaStamp=file.LastWriteTimeUtc;schemaLength=file.Length;
+    }
+
+    public void ReloadAssembly(string newAssemblyPath,IEnumerable<string> allowedScriptIds)
+    {
+        var previousNames=new Dictionary<string,string>(classNames,StringComparer.Ordinal);
+        assemblyPath=string.IsNullOrWhiteSpace(newAssemblyPath)?"":Path.GetFullPath(newAssemblyPath);
+        allowed.Clear();foreach(var id in allowedScriptIds)allowed.Add(id);
+        schemas.Clear();classNames.Clear();schemaStamp=default;schemaLength=-1;
+        if(documentPath is not null&&sourceDigest.Length==0&&File.Exists(documentPath))sourceDigest=HashFile(documentPath);
+        LoadSchema();
+        if(schemas.Count>0&&document["Scripts"] is JsonArray existing&&existing.Count>0)
+        {
+            var next=(JsonObject)document.DeepClone();var list=next["Scripts"]!.AsArray();bool migrated=false;
+            foreach(var entry in list.OfType<JsonObject>())
+            {
+                var oldType=entry["Type"]?.GetValue<string>();
+                if(string.IsNullOrEmpty(oldType)||schemas.ContainsKey(oldType))continue;
+                var simple=previousNames.TryGetValue(oldType,out var prev)&&prev.Length>0?prev:(oldType.LastIndexOf('.') is >=0 and var dot?oldType[(dot+1)..]:oldType);
+                var matches=classNames.Where(kv=>kv.Value==simple).Select(kv=>kv.Key).ToArray();
+                if(matches.Length!=1)continue;
+                var entityId=entry["Entity"]?.GetValue<string>();
+                if(list.OfType<JsonObject>().Any(other=>other!=entry&&other["Entity"]?.GetValue<string>()==entityId&&other["Type"]?.GetValue<string>()==matches[0]))continue;
+                entry["Type"]=matches[0];migrated=true;
+            }
+            if(migrated)ReplaceDocument(next);
+        }
     }
     public string Describe(ulong entityStableId,ScriptSystem? running=null)=>Describe(entityStableId,running,null);
     public string Describe(ulong entityStableId,ScriptSystem? running,Func<ulong,bool>? referenceExists)
@@ -183,15 +219,34 @@ public sealed class ScriptBindings
                 }
             }
             else Warn("Script.TypeMissing","");
-            scripts.Add(new JsonObject{["Type"]=type,["Enabled"]=entry["Enabled"]?.GetValue<bool>()??true,["Missing"]=!schemas.ContainsKey(type),["Fields"]=fields,["Diagnostics"]=diagnostics});
+            scripts.Add(new JsonObject{["Type"]=type,["ClassName"]=classNames.GetValueOrDefault(type,""),["Enabled"]=entry["Enabled"]?.GetValue<bool>()??true,["Missing"]=!schemas.ContainsKey(type),["Fields"]=fields,["Diagnostics"]=diagnostics});
         }
-        return new JsonObject{["Scripts"]=scripts,["Available"]=new JsonArray(schemas.Keys.Order().Select(id=>(JsonNode?)JsonValue.Create(id)).ToArray())}.ToJsonString();
+        var availNames=new JsonObject();
+        foreach(var kv in classNames)availNames[kv.Key]=kv.Value;
+        return new JsonObject{["Scripts"]=scripts,["Available"]=new JsonArray(schemas.Keys.Order().Select(id=>(JsonNode?)JsonValue.Create(id)).ToArray()),["AvailableNames"]=availNames}.ToJsonString();
     }
     public void Apply(ulong entityStableId,string request)
     {
         LoadSchema();var change=JsonNode.Parse(request)?.AsObject()??throw new JsonException("Script.DocumentInvalid");
+        var next=(JsonObject)document.DeepClone();var list=next["Scripts"]!.AsArray();
+        if(change["RenameFrom"]?.GetValue<string>() is { Length: > 0 } renameFrom&&change["RenameTo"]?.GetValue<string>() is { Length: > 0 } renameTo)
+        {
+            bool changed=false;
+            foreach(var item in list.OfType<JsonObject>().Where(e=>e["Type"]?.GetValue<string>()==renameFrom))
+            {item["Type"]=renameTo;changed=true;}
+            if(changed)ReplaceDocument(next);
+            return;
+        }
+        if(change["PurgeType"]?.GetValue<string>() is { Length: > 0 } purgeType)
+        {
+            bool removed=false;
+            for(int i=list.Count-1;i>=0;--i)
+                if(list[i]?["Type"]?.GetValue<string>()==purgeType){list.RemoveAt(i);removed=true;}
+            if(removed)ReplaceDocument(next);
+            return;
+        }
         var type=change["Type"]?.GetValue<string>()??throw new JsonException("Script.TypeMissing");
-        var next=(JsonObject)document.DeepClone();var list=next["Scripts"]!.AsArray();var id=entityStableId.ToString(CultureInfo.InvariantCulture);
+        var id=entityStableId.ToString(CultureInfo.InvariantCulture);
         var entry=list.OfType<JsonObject>().FirstOrDefault(e=>e["Entity"]?.GetValue<string>()==id&&e["Type"]?.GetValue<string>()==type);
         if(change["Remove"]?.GetValue<bool>()==true){if(entry is not null)list.Remove(entry);ReplaceDocument(next);return;}
         if(!schemas.TryGetValue(type,out var schema))throw new InvalidOperationException("Script.TypeMissing");
@@ -260,6 +315,7 @@ public sealed class ScriptBindings
         {
             operation=command["Document"]?.GetValue<string>()??throw new JsonException("Script.DocumentInvalid");
             if(operation=="Snapshot")return SnapshotDocument();
+            if(operation=="DrainLogs")return new JsonObject{["Logs"]=new JsonArray(F_Log.Drain().Select(item=>(JsonNode?)JsonValue.Create(item)).ToArray())}.ToJsonString();
             if(readOnly&&(operation is "Save" or "Restore"))throw new InvalidOperationException("Bridge.EditorReadOnly");
             if(operation=="Save")SaveDocument(command["AllowOverwrite"]?.GetValue<bool>()??false);
             else if(operation is "Restore" or "ValidateRestore")

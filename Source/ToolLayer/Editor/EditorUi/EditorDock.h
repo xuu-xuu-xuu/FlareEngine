@@ -24,6 +24,7 @@ enum class EditorPanelId : std::uint8_t
     About,
     Diagnostics,
     AssetTools,
+    Game,
 };
 
 // Horizontal = 子节点左右排列；Vertical = 子节点上下排列。
@@ -81,7 +82,9 @@ public:
     bool SetWindowBounds(std::uint32_t id,int x,int y,int width,int height);
     bool CloseWindow(std::uint32_t id);
     bool RestoreWindows(std::vector<FloatingDockWindow> windows);
-    bool operator==(const EditorDock& other) const {return root_==other.root_&&windows_==other.windows_;}
+    [[nodiscard]] bool MaximizeOnPlay() const noexcept { return maximizeOnPlay_; }
+    void SetMaximizeOnPlay(bool enabled) noexcept { maximizeOnPlay_ = enabled; }
+    bool operator==(const EditorDock& other) const {return root_==other.root_&&windows_==other.windows_&&maximizeOnPlay_==other.maximizeOnPlay_;}
 
     [[nodiscard]] const DockNode* Find(EditorPanelId panel) const noexcept;
     bool SelectTab(EditorPanelId panel);
@@ -108,6 +111,7 @@ private:
     DockNode root_;
     std::vector<FloatingDockWindow> windows_;
     std::uint32_t nextWindowId_=1; // 同一会话不复用，避免帧边界前关闭/新建命中旧 HWND。
+    bool maximizeOnPlay_=false;
 };
 
 } // namespace se::ui::editor

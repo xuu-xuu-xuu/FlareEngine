@@ -45,7 +45,7 @@ HRESULT D3D12UploadArena::Allocate(UINT64 bytes,UINT64 alignment,D3D12UploadSlic
     void* mapped=nullptr;const D3D12_RANGE noRead{0,0};
     if(SUCCEEDED(result))result=page.resource->Map(0,&noRead,&mapped);
     if(FAILED(result)){++stats_.failures;return result;}
-    page.mapped=static_cast<std::byte*>(mapped);page.resource->SetName(L"SelfEngine.FrameUploadPage");
+    page.mapped=static_cast<std::byte*>(mapped);page.resource->SetName(L"FlareEngine.FrameUploadPage");
     pages_.push_back(std::move(page));stats_.reservedBytes+=capacity;++stats_.pagesCreated;
     allocate(pages_.back(),0);return S_OK;
 }

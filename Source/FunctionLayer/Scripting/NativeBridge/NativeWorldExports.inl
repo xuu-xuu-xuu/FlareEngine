@@ -18,7 +18,7 @@ int32_t SE_CALL se_entity_is_alive(SE_Session handle, SE_Entity entity, int32_t*
 }
 int32_t SE_CALL se_entity_get_enabled(SE_Session handle,SE_Entity entity,int32_t* enabled)noexcept
 {
-    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();if(!enabled)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");const auto* value=s->ReadWorld().Get(se::EntityHandle::FromPacked(entity));if(!value)return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");*enabled=value->enabled?1:0;return SE_OK;});
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();if(!enabled)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");const auto* value=s->ReadWorld().GetKnown(se::EntityHandle::FromPacked(entity));if(!value)return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");*enabled=value->enabled?1:0;return SE_OK;});
 }
 int32_t SE_CALL se_entity_set_enabled(SE_Session handle,SE_Entity entity,int32_t enabled)noexcept
 {
@@ -49,7 +49,7 @@ int32_t SE_CALL se_entity_get_transform(SE_Session handle, SE_Entity entity, SE_
     return Protect([&]() -> int32_t {
         Session* session = Find(handle); if (!session) return MissingSession();
         if (!output) return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidArgument");
-        const auto* t = session->ReadWorld().GetTransform(se::EntityHandle::FromPacked(entity));
+        const auto* t = session->ReadWorld().GetKnownTransform(se::EntityHandle::FromPacked(entity));
         if (!t) return Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
         *output = {t->position.x,t->position.y,t->position.z,t->rotation.x,t->rotation.y,t->rotation.z,t->rotation.w,t->scale.x,t->scale.y,t->scale.z};
         return SE_OK;
@@ -60,12 +60,18 @@ int32_t SE_CALL se_entity_set_transform(SE_Session handle, SE_Entity entity, con
     return Protect([&]() -> int32_t {
         Session* session = Find(handle); if (!session) return MissingSession();
         if (!value || !ValidTransform(*value)) return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidTransform");
-        const auto* record=session->WorldRef().Get(se::EntityHandle::FromPacked(entity));
-        if (!record&&!session->WorldRef().IsPending(se::EntityHandle::FromPacked(entity))) return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");
+        const auto targetHandle = se::EntityHandle::FromPacked(entity);
+        const auto* record=session->WorldRef().Get(targetHandle);
+        if (!record&&!session->WorldRef().IsPending(targetHandle)) return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");
         if (record&&HasBody(*session,record->stableId)) return Error(SE_BUSY,"Bridge.PhysicsOwnsTransform");
-        if(session->characters.contains(entity))return Error(SE_BUSY,"Bridge.CharacterOwnsTransform");
+        if (session->characters.contains(entity))
+        {
+            const auto* old = session->WorldRef().GetKnownTransform(targetHandle);
+            if (!old || old->position.x != value->px || old->position.y != value->py || old->position.z != value->pz)
+                return Error(SE_BUSY,"Bridge.CharacterOwnsTransform");
+        }
         const se::Transform transform{{value->px,value->py,value->pz},{value->qx,value->qy,value->qz,value->qw},{value->sx,value->sy,value->sz}};
-        return session->WorldRef().SetTransform(se::EntityHandle::FromPacked(entity), transform) ? SE_OK
+        return session->WorldRef().SetTransform(targetHandle, transform) ? SE_OK
             : Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
     });
 }
@@ -79,6 +85,39 @@ se::EntityHandle FindByStableId(const se::World& world,std::uint64_t stable)
         if(record&&record->stableId==stable)return candidate;
     }
     return {};
+}
+se::EntityHandle FindPrimaryOrCamera(const se::World& world,std::uint64_t cameraStableId)
+{
+    if(cameraStableId!=0)return FindByStableId(world,cameraStableId);
+    se::EntityHandle fallback{};
+    for(auto candidate:world.Entities())
+    {
+        if(!world.IsEnabled(candidate))continue;
+        if(const auto* cam=world.GetCamera(candidate))
+        {
+            if(cam->primary)return candidate;
+            if(!fallback)fallback=candidate;
+        }
+    }
+    return fallback;
+}
+template<class T> bool CloneRegisteredFeature(const se::World& source,se::EntityHandle from,se::World& target,se::EntityHandle to,
+    const std::unordered_map<se::StableEntityId,se::StableEntityId>& idMap)
+{
+    const auto comp=source.FindComponent(from,T::TypeId);
+    if(!comp)return true;
+    const auto* typed=source.GetRegisteredComponent<T>(comp);
+    if(!typed)return true;
+    T copy=*typed;
+    for(auto& val:copy.values)
+    {
+        if(auto* ref=std::get_if<se::PropertyEntityReference>(&val))
+        {
+            if(const auto it=idMap.find(ref->stableId);it!=idMap.end())
+                ref->stableId=it->second;
+        }
+    }
+    return static_cast<bool>(target.AttachRegisteredComponent(to,copy,typed->Enabled()));
 }
 }
 int32_t SE_CALL se_entity_actor_play(SE_Session handle,uint64_t entity_stable_id,const char* clip,uint32_t length,float speed,int32_t loop) noexcept
@@ -135,10 +174,11 @@ int32_t SE_CALL se_camera_project_direction(SE_Session handle,uint64_t camera_st
         if(!screen_uv||!in_front||!std::isfinite(direction.x)||!std::isfinite(direction.y)||!std::isfinite(direction.z))
             return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
         *in_front=0;
-        const auto entity=FindByStableId(s->WorldRef(),camera_stable_id);
+        const auto entity=FindPrimaryOrCamera(s->WorldRef(),camera_stable_id);
         const auto* camera=entity?s->WorldRef().GetCamera(entity):nullptr;
         if(!camera)return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");
-        const se::CameraInstance instance{camera_stable_id,s->WorldRef().GetWorldMatrix(entity),*camera,true};
+        const auto* rec=s->WorldRef().Get(entity);
+        const se::CameraInstance instance{rec?rec->stableId:camera_stable_id,s->WorldRef().GetWorldMatrix(entity),*camera,true};
         // 游戏窗口和编辑器 Play 都按实际游戏视口布局 UI。无窗口时保留已请求的尺寸或单位视口。
         auto size=s->UiRef().ViewportSize();
         if(size.x<=0||size.y<=0)
@@ -152,6 +192,27 @@ int32_t SE_CALL se_camera_project_direction(SE_Session handle,uint64_t camera_st
         if(!projected)return SE_OK;
         screen_uv->x=projected->x/size.x;screen_uv->y=projected->y/size.y;
         *in_front=1;
+        return SE_OK;});
+}
+int32_t SE_CALL se_camera_screen_point_to_ray(SE_Session handle,uint64_t camera_stable_id,SE_Vector2 screen_pixel,SE_Vector3* origin,SE_Vector3* direction) noexcept
+{
+    return Protect([&]() -> int32_t {auto* s=Find(handle);if(!s)return MissingSession();
+        if(!origin||!direction||!std::isfinite(screen_pixel.x)||!std::isfinite(screen_pixel.y))
+            return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        const auto entity=FindPrimaryOrCamera(s->ReadWorld(),camera_stable_id);
+        const auto* camera=entity?s->ReadWorld().GetCamera(entity):nullptr;
+        if(!camera)return Error(SE_INVALID_HANDLE,"Bridge.InvalidEntity");
+        const auto* rec=s->ReadWorld().Get(entity);
+        const se::CameraInstance instance{rec?rec->stableId:camera_stable_id,s->ReadWorld().GetWorldMatrix(entity),*camera,true};
+        auto size=s->UiRef().ViewportSize();
+        if(size.x<=0||size.y<=0)
+            size=s->windowWidth?se::UiPoint{float(s->windowWidth),float(s->windowHeight)}:se::UiPoint{1280,720};
+        se::CameraSnapshot snapshot;se::CameraError error{};
+        if(!se::BuildCameraSnapshot(instance,{0,0,size.x,size.y},0,snapshot,error))return Error(SE_INVALID_ARGUMENT,"Camera.InvalidTransform");
+        const auto ray=se::ViewportPointToRay(snapshot,{screen_pixel.x,screen_pixel.y},true);
+        if(!ray)return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidArgument");
+        *origin={ray->origin.x,ray->origin.y,ray->origin.z};
+        *direction={ray->direction.x,ray->direction.y,ray->direction.z};
         return SE_OK;});
 }
 int32_t SE_CALL se_session_set_sky(SE_Session handle,const char* json,uint32_t length) noexcept
@@ -186,7 +247,7 @@ int32_t SE_CALL se_entity_get_stable_id(SE_Session handle, SE_Entity entity, uin
     return Protect([&]() -> int32_t {
         Session* session = Find(handle); if (!session) return MissingSession();
         if (!stableId) return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidArgument");
-        const auto* record = session->ReadWorld().Get(se::EntityHandle::FromPacked(entity));
+        const auto* record = session->ReadWorld().GetKnown(se::EntityHandle::FromPacked(entity));
         if (!record) return Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
         *stableId = record->stableId; return SE_OK;
     });
@@ -196,18 +257,193 @@ int32_t SE_CALL se_entity_find(SE_Session handle, uint64_t stableId, SE_Entity* 
     return Protect([&]() -> int32_t {
         Session* session = Find(handle); if (!session) return MissingSession();
         if (!entity) return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidArgument");
-        const auto found = session->ReadWorld().FindByStableId(stableId);
-        if (!session->ReadWorld().IsAlive(found)) return Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
+        const auto found = session->ReadWorld().FindKnownByStableId(stableId);
+        if (!found) return Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
         *entity = found.Pack(); return SE_OK;
+    });
+}
+int32_t SE_CALL se_entity_find_by_name(SE_Session handle, const char* name_utf8, uint32_t length, SE_Entity* entity, int32_t* found) noexcept
+{
+    return Protect([&]() -> int32_t {
+        Session* session = Find(handle); if (!session) return MissingSession();
+        if (!entity || !found || !name_utf8 || length > 4096 || !ValidUtf8(name_utf8, length))
+            return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidArgument");
+        *entity = 0; *found = 0;
+        const std::string_view target(name_utf8, length);
+        const auto& world = session->ReadWorld();
+        for (const auto candidate : world.Entities())
+        {
+            const auto* rec = world.Get(candidate);
+            if (rec && rec->name == target)
+            {
+                *entity = candidate.Pack();
+                *found = 1;
+                return SE_OK;
+            }
+        }
+        return SE_OK;
     });
 }
 int32_t SE_CALL se_entity_get_name(SE_Session handle, SE_Entity entity, char* buffer, uint32_t capacity, uint32_t* required) noexcept
 {
     return Protect([&]() -> int32_t {
         Session* session = Find(handle); if (!session) return MissingSession();
-        const auto* record = session->ReadWorld().Get(se::EntityHandle::FromPacked(entity));
+        const auto* record = session->ReadWorld().GetKnown(se::EntityHandle::FromPacked(entity));
         if (!record) return Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
         return CopyText(record->name, buffer, capacity, required);
+    });
+}
+int32_t SE_CALL se_entity_get_world_transform(SE_Session handle, SE_Entity entity, SE_Transform* output) noexcept
+{
+    return Protect([&]() -> int32_t {
+        Session* session = Find(handle); if (!session) return MissingSession();
+        if (!output) return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidArgument");
+        const auto target = se::EntityHandle::FromPacked(entity);
+        const auto& world = session->ReadWorld();
+        if (!world.GetKnown(target)) return Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
+        const se::Mat4 m = world.GetKnownWorldMatrix(target);
+        se::Transform decomposed{};
+        if (!se::TryDecomposeTrs(m, decomposed))
+        {
+            const auto* local = world.GetKnownTransform(target);
+            if (!local) return Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
+            decomposed = *local;
+            decomposed.position = {m(0, 3), m(1, 3), m(2, 3)};
+        }
+        *output = {decomposed.position.x, decomposed.position.y, decomposed.position.z,
+                   decomposed.rotation.x, decomposed.rotation.y, decomposed.rotation.z, decomposed.rotation.w,
+                   decomposed.scale.x, decomposed.scale.y, decomposed.scale.z};
+        return SE_OK;
+    });
+}
+int32_t SE_CALL se_entity_get_parent(SE_Session handle, SE_Entity entity, SE_Entity* parent) noexcept
+{
+    return Protect([&]() -> int32_t {
+        Session* session = Find(handle); if (!session) return MissingSession();
+        if (!parent) return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidArgument");
+        const auto* record = session->ReadWorld().GetKnown(se::EntityHandle::FromPacked(entity));
+        if (!record) return Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
+        *parent = record->parent ? record->parent.Pack() : 0;
+        return SE_OK;
+    });
+}
+int32_t SE_CALL se_entity_set_parent(SE_Session handle, SE_Entity entity, SE_Entity parent, int32_t keep_world) noexcept
+{
+    return Protect([&]() -> int32_t {
+        Session* session = Find(handle); if (!session) return MissingSession();
+        if (session->editor && !session->borrowedWorld) return Error(SE_BUSY, "Bridge.EditorReadOnly");
+        auto& world = session->WorldRef();
+        const auto child = se::EntityHandle::FromPacked(entity);
+        const auto nextParent = parent ? se::EntityHandle::FromPacked(parent) : se::EntityHandle{};
+        if (!world.GetKnown(child) || (parent && !world.GetKnown(nextParent)))
+            return Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
+        const se::Mat4 childWorld = keep_world ? world.GetKnownWorldMatrix(child) : se::Mat4{};
+        if (!world.SetParent(child, nextParent))
+            return Error(SE_INVALID_ARGUMENT, world.LastError().c_str());
+        if (keep_world)
+        {
+            const auto invParent = nextParent ? se::Inverse(world.GetKnownWorldMatrix(nextParent)) : std::optional<se::Mat4>(se::Mat4{});
+            se::Transform local{};
+            if (invParent && se::TryDecomposeTrs(*invParent * childWorld, local))
+                (void)world.SetTransform(child, local);
+        }
+        return SE_OK;
+    });
+}
+int32_t SE_CALL se_entity_duplicate(SE_Session handle, SE_Entity sourceHandle, const SE_Vector3* override_pos,
+    const float* override_rot_xyzw, uint64_t* out_source_stable_ids, SE_Entity* out_cloned_entities,
+    uint32_t capacity, uint32_t* out_count) noexcept
+{
+    return Protect([&]() -> int32_t {
+        Session* session = Find(handle); if (!session) return MissingSession();
+        if (!out_count) return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidArgument");
+        if (session->editor && !session->borrowedWorld) return Error(SE_BUSY, "Bridge.EditorReadOnly");
+        auto& world = session->WorldRef();
+        const auto root = se::EntityHandle::FromPacked(sourceHandle);
+        if (!world.GetKnown(root)) return Error(SE_INVALID_HANDLE, "Bridge.InvalidEntity");
+
+        const auto all = world.Entities();
+        std::vector<se::EntityHandle> subtree;
+        subtree.push_back(root);
+        for (auto candidate : all)
+        {
+            if (candidate == root) continue;
+            for (auto cursor = world.GetKnown(candidate) ? world.GetKnown(candidate)->parent : se::EntityHandle{};
+                 cursor;
+                 cursor = world.GetKnown(cursor) ? world.GetKnown(cursor)->parent : se::EntityHandle{})
+            {
+                if (cursor == root) { subtree.push_back(candidate); break; }
+            }
+        }
+        *out_count = static_cast<uint32_t>(subtree.size());
+        if (capacity < subtree.size() || !out_source_stable_ids || !out_cloned_entities)
+            return SE_BUFFER_TOO_SMALL;
+
+        std::unordered_map<std::uint64_t, se::EntityHandle> handleMap;
+        std::unordered_map<se::StableEntityId, se::StableEntityId> stableMap;
+        for (std::size_t i = 0; i < subtree.size(); ++i)
+        {
+            const auto src = subtree[i];
+            const auto* rec = world.GetKnown(src);
+            const std::string cloneName = (src == root) ? (rec->name + " (Clone)") : rec->name;
+            const auto dst = world.Create(cloneName);
+            if (!dst) return Error(SE_INTERNAL_ERROR, "Bridge.WorldOperationFailed");
+            (void)world.SetEnabled(dst, rec->enabled);
+            handleMap.emplace(src.Pack(), dst);
+            const auto* dstRec = world.GetKnown(dst);
+            stableMap.emplace(rec->stableId, dstRec->stableId);
+            out_source_stable_ids[i] = rec->stableId;
+            out_cloned_entities[i] = dst.Pack();
+        }
+        for (auto src : subtree)
+        {
+            const auto dst = handleMap.at(src.Pack());
+            const auto* rec = world.GetKnown(src);
+            if (src != root && rec->parent)
+            {
+                if (const auto it = handleMap.find(rec->parent.Pack()); it != handleMap.end())
+                    (void)world.SetParent(dst, it->second);
+            }
+            else if (src == root && rec->parent && !override_pos && !override_rot_xyzw)
+            {
+                (void)world.SetParent(dst, rec->parent);
+            }
+            if (const auto* t = world.GetKnownTransform(src))
+            {
+                se::Transform nextT = *t;
+                if (src == root && (override_pos || override_rot_xyzw) && rec->parent)
+                {
+                    se::Transform worldT{};
+                    if (se::TryDecomposeTrs(world.GetKnownWorldMatrix(src), worldT))
+                        nextT = worldT;
+                }
+                if (src == root && override_pos)
+                    nextT.position = {override_pos->x, override_pos->y, override_pos->z};
+                if (src == root && override_rot_xyzw)
+                    nextT.rotation = se::Normalize(se::Quat{override_rot_xyzw[0], override_rot_xyzw[1], override_rot_xyzw[2], override_rot_xyzw[3]});
+                (void)world.SetTransform(dst, nextT);
+            }
+            if (const auto* mesh = world.GetMesh(src))
+                (void)world.SetMesh(dst, *mesh);
+            if (const auto* light = world.GetLight(src))
+                (void)world.SetLight(dst, *light);
+            if (const auto* cam = world.GetCamera(src))
+            {
+                auto copyCam = *cam;
+                copyCam.primary = false;
+                (void)world.SetCamera(dst, copyCam);
+            }
+            (void)CloneRegisteredFeature<se::PhysicsBodyComponent>(world, src, world, dst, stableMap);
+            (void)CloneRegisteredFeature<se::CharacterSettingsComponent>(world, src, world, dst, stableMap);
+            (void)CloneRegisteredFeature<se::ActorSettingsComponent>(world, src, world, dst, stableMap);
+            (void)CloneRegisteredFeature<se::RectangleLightComponent>(world, src, world, dst, stableMap);
+            (void)CloneRegisteredFeature<se::ColliderSettingsComponent>(world, src, world, dst, stableMap);
+            (void)CloneRegisteredFeature<se::AudioListenerComponent>(world, src, world, dst, stableMap);
+            (void)CloneRegisteredFeature<se::AudioSourceComponent>(world, src, world, dst, stableMap);
+            (void)CloneRegisteredFeature<se::ParticleEmitterComponent>(world, src, world, dst, stableMap);
+            (void)CloneRegisteredFeature<se::NavigationAgentComponent>(world, src, world, dst, stableMap);
+        }
+        return SE_OK;
     });
 }
 int32_t SE_CALL se_scene_export(SE_Session handle, char* buffer, uint32_t capacity, uint32_t* required) noexcept

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>SelfEngine.Managed</AssemblyName>
+    <RootNamespace>SelfEngine</RootNamespace>
+    <AssemblyTitle>Flare Engine Legacy Managed Compatibility</AssemblyTitle>
+    <Product>Flare Engine</Product>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(FlareEngineRepositoryRoot)Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,4 +1,4 @@
-﻿param([string]$Project='Resources/Templates/EmptyGame/project.json',[string]$Name='',[string]$ScriptProject='',[string]$ScriptType='',[string]$Bindings='',[string]$BuildSettings='',[string]$EntryUi='',[ValidateSet('zh-CN','en-US')][string]$Locale='zh-CN',[string]$EvidenceDirectory='',[string]$OutputDirectory='',[switch]$SkipLease,[switch]$SkipSmoke)
+﻿param([string]$Project='Resources/Templates/Basic3D/project.json',[string]$Name='',[string]$ScriptProject='',[string]$ScriptType='',[string]$Bindings='',[string]$BuildSettings='',[string]$EntryUi='',[ValidateSet('zh-CN','en-US')][string]$Locale='zh-CN',[string]$EvidenceDirectory='',[string]$OutputDirectory='',[switch]$SkipLease,[switch]$SkipSmoke)
 if([Console]::IsOutputRedirected){[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}
 $ErrorActionPreference='Stop'
 $workspace=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -51,7 +51,7 @@ try {
         # 开发环境 out 可能受 ACL 限制；UserDataDirectory 会回退到 .cache/Editor/User。
         $evidenceRoots=@([IO.Path]::GetFullPath((Join-Path $workspace 'out')),
             [IO.Path]::GetFullPath((Join-Path $workspace '.cache/Editor/User')))
-        if($packageMode){$evidenceRoots=@([IO.Path]::GetFullPath((Join-Path $projectRoot 'out')),[IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'SelfEngine/Editor')))}
+        if($packageMode){$evidenceRoots=@([IO.Path]::GetFullPath((Join-Path $projectRoot 'out')),[IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'FlareEngine/Editor')),[IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'SelfEngine/Editor')))}
         $candidate=[IO.Path]::GetFullPath($EvidenceDirectory)
         if(!@($evidenceRoots|Where-Object {$candidate.StartsWith($_.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)}).Count){Fail 'Export.PathOutsideRoot' $EvidenceDirectory}
         $case=$candidate
@@ -59,7 +59,7 @@ try {
     else{$case=Join-Path $(if($packageMode){$projectRoot}else{$workspace}) ('out/exports/'+[guid]::NewGuid().ToString('N'))}
     New-Item -ItemType Directory -Path $case -Force | Out-Null
     $report=[ordered]@{schema=1;success=$false;phase='input_validation';project=$Project;name=$Name;staging=$null;output=$null;output_root=$null;source_mode=$(if($packageMode){'editor_package'}else{'source'});steps=@()};Report
-    if(!$Name){$Name='SelfEngine-'+(Get-Date -Format 'yyyyMMdd-HHmmss')}
+    if(!$Name){$Name='FlareEngine-'+(Get-Date -Format 'yyyyMMdd-HHmmss')}
     if($Name -notmatch '^[A-Za-z0-9_-]+$'){Fail 'Export.InvalidSettings' 'Name'}
     $settings=Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
     $scriptOverrides=$PSBoundParameters.ContainsKey('ScriptProject') -or $PSBoundParameters.ContainsKey('ScriptType') -or $PSBoundParameters.ContainsKey('Bindings')
@@ -71,7 +71,7 @@ try {
     $videoSeconds=2
     if($BuildSettings){
         $BuildSettings=(Resolve-Path -LiteralPath $BuildSettings).Path;$build=Get-Content -LiteralPath $BuildSettings -Raw -Encoding UTF8 | ConvertFrom-Json
-        if($build.format -ne 'SelfEngine.Build' -or $build.version -ne 1){Fail 'Export.InvalidSettings' $BuildSettings}
+        if($build.format -notin @('FlareEngine.Build','SelfEngine.Build') -or $build.version -ne 1){Fail 'Export.InvalidSettings' $BuildSettings}
         foreach($property in $build.PSObject.Properties.Name){if($property -notin @('format','version','scriptsProject','scriptType','bindings','entryUi','recordVideo','videoResolution','videoFps','videoSeconds')){Fail 'Export.InvalidSettings' $property}}
         if($build.PSObject.Properties['recordVideo']){
             if($build.recordVideo -isnot [bool]){Fail 'Export.InvalidSettings' 'recordVideo'}
@@ -93,7 +93,18 @@ try {
     $customScripts=![string]::IsNullOrWhiteSpace($ScriptProject)
     if($customScripts -ne (![string]::IsNullOrWhiteSpace($ScriptType)) -or ($Bindings -and !$customScripts)){Fail 'Export.InvalidSettings' 'ScriptProject/ScriptType/Bindings'}
     if($customScripts){$ScriptProject=(Resolve-Path -LiteralPath $ScriptProject).Path;if([IO.Path]::GetExtension($ScriptProject) -ne '.csproj'){Fail 'Export.InvalidSettings' $ScriptProject}}
-    if($Bindings){$Bindings=(Resolve-Path -LiteralPath $Bindings).Path;$bindingDocument=Get-Content -LiteralPath $Bindings -Raw -Encoding UTF8 | ConvertFrom-Json;if($bindingDocument.Version -ne 1 -or @($bindingDocument.Scripts | Where-Object Type -eq $ScriptType).Count -eq 0){Fail 'Export.InvalidSettings' $Bindings}}
+    if($Bindings){
+        $Bindings=(Resolve-Path -LiteralPath $Bindings).Path
+        $bindingDocument=Get-Content -LiteralPath $Bindings -Raw -Encoding UTF8 | ConvertFrom-Json
+        if($bindingDocument.Version -ne 1){Fail 'Export.InvalidSettings' $Bindings}
+        if(@($bindingDocument.Scripts | Where-Object Type -eq $ScriptType).Count -eq 0){
+            if(!$PSBoundParameters.ContainsKey('ScriptType') -and @($bindingDocument.Scripts).Count -gt 0 -and ![string]::IsNullOrWhiteSpace([string]$bindingDocument.Scripts[0].Type)){
+                $ScriptType=[string]$bindingDocument.Scripts[0].Type
+            }else{
+                Fail 'Export.InvalidSettings' $Bindings
+            }
+        }
+    }
     if(!$EntryUi -and !$build -and !$PSBoundParameters.ContainsKey('EntryUi')){if(@($settings.ui).Count -gt 1){Fail 'Export.EntryUiRequired'};if(@($settings.ui).Count){$EntryUi=[string]$settings.ui[0]}}
     if($EntryUi){[void](SafeProjectFile $EntryUi);if($EntryUi.Replace('\','/') -notin @($settings.ui | ForEach-Object {$_.Replace('\','/')})){Fail 'Export.InvalidSettings' 'entryUi'}}
     $packages=if($OutputDirectory){[IO.Path]::GetFullPath($OutputDirectory)}else{Join-Path $(if($packageMode){$projectRoot}else{$workspace}) 'out/packages'}
@@ -138,7 +149,7 @@ try {
     New-Item -ItemType Directory -Path $stage | Out-Null
     Get-ChildItem -LiteralPath $runtimeOutput | Copy-Item -Destination $stage -Recurse -Force
     foreach($file in $(if($packageMode){@('ProjectTool.exe')}else{@('ProjectTool.exe')})){Copy-Item -LiteralPath (Join-Path $native $file) -Destination $stage}
-    $scriptAssembly='ProjectScripts/SelfEngine.ProjectScripts.dll';$scriptBindings=''
+    $scriptAssembly='ProjectScripts/FlareEngine.ProjectScripts.dll';$scriptBindings=''
     if($customScripts){
         $scriptInputs=@(Get-EngineScriptInputs $ScriptProject)
         $precompiled=if($packageMode){Find-EnginePrecompiledScripts $workspace $ScriptProject}else{$null}
@@ -154,13 +165,13 @@ try {
         $dotnet=$command.Source
         Step 'script_sdk' $dotnet @('--list-sdks')
         if((Get-Content -LiteralPath (Join-Path $case 'script_sdk.log') -Raw -Encoding UTF8) -notmatch '(?m)^10\.\d+\.\d+[^\r\n]*\['){Fail 'Export.SdkMissing'}
-        $scriptProperties=if($packageMode){Get-EnginePackageScriptProperties $workspace (Join-Path $case 'script-obj')}else{@('-p:SelfEngineRoot='+$workspace)}
-        Step 'script_name' $dotnet (@('msbuild',$ScriptProject,'-nologo','-getProperty:AssemblyName','-p:Configuration=Release','-p:RuntimeIdentifier=win-x64')+$scriptProperties)
+        $scriptProperties=if($packageMode){Get-EnginePackageScriptProperties $workspace (Join-Path $case 'script-obj')}else{@(('-p:FlareEngineRoot='+$workspace),('-p:SelfEngineRoot='+$workspace))}
+        Step 'script_name' $dotnet (@('msbuild',$ScriptProject,'-nologo','-getProperty:AssemblyName','-p:Configuration=Release','-p:SelfContained=false','-p:UseAppHost=false')+$scriptProperties)
         $assemblyName=(Get-Content -LiteralPath (Join-Path $case 'script_name.log') -Raw -Encoding UTF8).Trim()
         if(!$assemblyName -or $assemblyName.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0 -or $assemblyName -in @('.','..')){Fail 'Export.InvalidSettings' 'AssemblyName'}
         $nugetRoot=Join-Path $(if($packageMode){$projectRoot}else{$workspace}) 'out/nuget/packages'
-        Step 'restore_scripts' $dotnet (@('restore',$ScriptProject,'--runtime','win-x64','--configfile',$nugetConfig,'--packages',$nugetRoot,'-p:Configuration=Release','-p:SelfContained=false','--nologo')+$scriptProperties)
-        Step 'publish_scripts' $dotnet (@('publish',$ScriptProject,'--configuration','Release','--runtime','win-x64','--self-contained','false','--output',$custom,'-p:PublishSingleFile=false','-p:PublishTrimmed=false','-p:GenerateDependencyFile=true','--no-restore','--nologo')+$scriptProperties)
+        Step 'restore_scripts' $dotnet (@('restore',$ScriptProject,'--configfile',$nugetConfig,'--packages',$nugetRoot,'-p:Configuration=Release','-p:SelfContained=false','-p:UseAppHost=false','-p:NuGetAudit=false','--nologo')+$scriptProperties)
+        Step 'publish_scripts' $dotnet (@('publish',$ScriptProject,'--configuration','Release','--self-contained','false','--output',$custom,'-p:UseAppHost=false','-p:NuGetAudit=false','-p:PublishSingleFile=false','-p:PublishTrimmed=false','-p:GenerateDependencyFile=true','--no-restore','--nologo')+$scriptProperties)
         }
         $scriptAssembly='ProjectScripts/Custom/'+$assemblyName+'.dll'
         if(!(Test-Path -LiteralPath (Join-Path $stage $scriptAssembly)) -or !(Test-Path -LiteralPath (Join-Path $custom ($assemblyName+'.deps.json')))){Fail 'Export.StepFailed' 'script output'}
@@ -209,15 +220,15 @@ try {
     if(Test-Path -LiteralPath (Join-Path $workspace 'ThirdParty/README.md') -PathType Leaf){
         Copy-Item -LiteralPath (Join-Path $workspace 'ThirdParty/README.md') -Destination (Join-Path $stage 'ThirdParty/README.md')
     }
-    Write-EngineJson (Join-Path $stage 'runtime-dependencies.json') ([ordered]@{schema=1;architecture='win-x64';dotnet='self-contained multi-file publish; see SelfEngine.Bootstrap.runtimeconfig.json';sdk_required=$false;crt=$crtFiles;system='Windows 10/11 x64, installed D3D12-capable GPU driver, Windows WIC/DirectWrite/system fonts';clean_machine_tested=$false})
+    Write-EngineJson (Join-Path $stage 'runtime-dependencies.json') ([ordered]@{schema=1;architecture='win-x64';dotnet='self-contained multi-file publish; see FlareEngine.Bootstrap.runtimeconfig.json';sdk_required=$false;crt=$crtFiles;system='Windows 10/11 x64, installed D3D12-capable GPU driver, Windows WIC/DirectWrite/system fonts';clean_machine_tested=$false})
     Write-EngineJson (Join-Path $stage 'script-dependencies.json') ([ordered]@{schema=1;assembly=$scriptAssembly;scriptType=$ScriptType;files=@(Get-ChildItem -LiteralPath (Join-Path $stage 'ProjectScripts') -File -Recurse | Sort-Object FullName | ForEach-Object {[ordered]@{path=$_.FullName.Substring($stage.Length+1).Replace('\','/');bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})})
     Write-EngineJson (Join-Path $stage 'launch.json') ([ordered]@{schema=1;locale=$Locale;scene='Project/'+$settings.entryScene;ui=$(if($EntryUi){'Project/'+$EntryUi}else{''});manifest='Project/'+[IO.Path]::GetFileName($manifest);assetRoot='Project/'+$settings.contentRoot;assetCache='Project/.cache/assets';scriptAssembly=$scriptAssembly;scriptType=$ScriptType;bindings=$scriptBindings;menu=!$customScripts})
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Start-ExportedGame.ps1') -Destination (Join-Path $stage 'Start-Game.ps1')
     # .NET apphost 内含 Bootstrap 程序集名，独立入口可直接双击，不经过 PowerShell。
-    Copy-Item -LiteralPath (Join-Path $stage 'SelfEngine.Bootstrap.exe') -Destination (Join-Path $stage 'Play.exe')
+    Copy-Item -LiteralPath (Join-Path $stage 'FlareEngine.Bootstrap.exe') -Destination (Join-Path $stage 'Play.exe')
     $preflight=@('--project-root',$copiedProject,'--player-manifest',(Join-Path $copiedProject ([IO.Path]::GetFileName($manifest))),'--scene',(Join-Path $copiedProject $settings.entryScene),'--asset-root',(Join-Path $copiedProject $settings.contentRoot),'--asset-cache',$cache,'--project',(Join-Path $stage $scriptAssembly),'--script',$ScriptType,'--locale',$Locale,'--validate-bindings')
     if($scriptBindings){$preflight+=@('--bindings',(Join-Path $stage $scriptBindings))};if($EntryUi){$preflight+=@('--ui',(Join-Path $copiedProject $EntryUi))};if(!$customScripts){$preflight+='--menu'}
-    Step 'field_preflight' (Join-Path $stage 'SelfEngine.Bootstrap.exe') $preflight
+    Step 'field_preflight' (Join-Path $stage 'FlareEngine.Bootstrap.exe') $preflight
     Step 'packaged_content' (Join-Path $stage 'ProjectTool.exe') @('validate',(Join-Path $copiedProject ([IO.Path]::GetFileName($manifest))))
     if(!$SkipSmoke){
         Step 'headless_smoke' $powershell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $stage 'Start-Game.ps1'),'-Headless','-Frames','120','-Locale',$Locale)
@@ -254,7 +265,7 @@ try {
     $report.phase='manifest';Report
     $files=@(Get-ChildItem -LiteralPath $stage -File -Recurse | Sort-Object FullName | ForEach-Object {[ordered]@{path=$_.FullName.Substring($stage.Length+1).Replace('\','/');bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})
     [int64]$totalBytes=0;foreach($file in $files){$totalBytes+=[int64]$file.bytes}
-    Write-EngineJson (Join-Path $stage 'package-manifest.json') ([ordered]@{schema=1;kind='SelfEngine.Game';validated=$true;source_sha256=$source.source_sha256;configuration='Release';clean_machine_tested=$false;files=$files;file_count=$files.Count;total_bytes=$totalBytes})
+    Write-EngineJson (Join-Path $stage 'package-manifest.json') ([ordered]@{schema=1;kind='FlareEngine.Game';validated=$true;source_sha256=$source.source_sha256;configuration='Release';clean_machine_tested=$false;files=$files;file_count=$files.Count;total_bytes=$totalBytes})
     [IO.Directory]::Move($stage,$final) # 已检查的同卷输出路径；并发创建同名目标也不会覆盖。
     $report.success=$true;$report.phase='complete';Report;Write-Output ((Text 'Export.Completed')+': '+$final);$exitCode=0
 } catch {

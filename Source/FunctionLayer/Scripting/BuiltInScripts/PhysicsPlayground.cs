@@ -1,14 +1,14 @@
 using System.Numerics;
-using SelfEngine;
+using FlareEngine;
 
 namespace ProjectScripts;
 
-[ScriptId("sample.physics_playground")]
-public sealed class PhysicsPlayground : Behaviour
+[F_Script("sample.physics_playground")]
+public sealed class PhysicsPlayground : F_Behaviour
 {
-    [Expose] public EntityReference ViewEntity,Floor,Crate,LeftWall,RightWall,BackWall;
-    [Expose] public float InteractionImpulse=1,InteractionRange=4,LookSensitivity=.003f;
-    [Expose] public bool DestroyCrateOnContact;
+    [F_Expose] public EntityReference ViewEntity,Floor,Crate,LeftWall,RightWall,BackWall;
+    [F_Expose] public float InteractionImpulse=1,InteractionRange=4,LookSensitivity=.003f;
+    [F_Expose] public bool DestroyCrateOnContact;
     private readonly List<RigidBody> bodies=[];
     private CharacterController? character;
     private Entity? view,crate;
@@ -18,7 +18,7 @@ public sealed class PhysicsPlayground : Behaviour
     private float yaw,pitch=-.3f;
     private Vector2 lastPointer;
     private bool looking,debugChanged,previousDebug,drawing;
-    public override void OnCreate()
+    public override void F_Awake()
     {
         if(!float.IsFinite(InteractionImpulse)||InteractionImpulse<0||InteractionImpulse>2||!float.IsFinite(InteractionRange)||InteractionRange<=0||InteractionRange>10||!float.IsFinite(LookSensitivity)||LookSensitivity<.001f||LookSensitivity>.02f)
             throw new ArgumentException("Bridge.InvalidArgument");
@@ -37,24 +37,25 @@ public sealed class PhysicsPlayground : Behaviour
     }
     private Quaternion Rotation=>Quaternion.CreateFromYawPitchRoll(yaw,pitch,0);
     private void UpdateView(){if(view is not {IsAlive:true})return;var pose=view.Transform;pose.Rotation=Rotation;view.Transform=pose;}
-    public override void OnUpdate(double seconds)
+    public override void F_Update(float delta)
     {
+        _=delta;
         var pointer=Input.Pointer;
         if(pointer.Down(MouseButton.Right))
         {
-            if(looking){var delta=pointer.Position-lastPointer;yaw=MathF.IEEERemainder(yaw-delta.X*LookSensitivity,2*MathF.PI);pitch=Math.Clamp(pitch-delta.Y*LookSensitivity,-1.5f,1.5f);}
+            if(looking){var deltaPos=pointer.Position-lastPointer;yaw=MathF.IEEERemainder(yaw-deltaPos.X*LookSensitivity,2*MathF.PI);pitch=Math.Clamp(pitch-deltaPos.Y*LookSensitivity,-1.5f,1.5f);}
             lastPointer=pointer.Position;looking=true;
         }
         else looking=false;
         UpdateView();
     }
-    public override void OnFixedUpdate(double seconds)
+    public override void F_FixedUpdate(float fixedDelta)
     {
         if(character is null)return;
         if(Input.Pressed('G')){drawing=!drawing;Entity.Session.Physics.SetDebugDrawing(drawing);}
         if(Input.Pressed('R')){character.Teleport(spawn);if(crate is {IsAlive:true})crateBody!.Teleport(crateStart);yaw=0;pitch=-.3f;}
         var local=new Vector3((Input.Down('D')?1:0)-(Input.Down('A')?1:0),0,(Input.Down('S')?1:0)-(Input.Down('W')?1:0));
-        character.Move(Vector3.Transform(local,Quaternion.CreateFromAxisAngle(Vector3.UnitY,yaw)),Input.Pressed(32),seconds);UpdateView();
+        character.Move(Vector3.Transform(local,Quaternion.CreateFromAxisAngle(Vector3.UnitY,yaw)),Input.Pressed(32),fixedDelta);UpdateView();
         if(view is null)return;
         var direction=Vector3.Transform(-Vector3.UnitZ,Rotation);var origin=Entity.Transform.Position+view.Transform.Position;
         var hit=Entity.Session.Physics.Raycast(origin,direction,InteractionRange);
@@ -62,7 +63,7 @@ public sealed class PhysicsPlayground : Behaviour
         if(Input.Pressed('E')){target.Body.ApplyImpulse(direction*InteractionImpulse,target.Point);Console.WriteLine($"{Entity.Session.Text("Sample.PhysicsInteract")}: {target.Entity.Name}");}
         if(Input.Pressed('F')){target.Body.ApplyForce(direction*12,target.Point);Console.WriteLine($"{Entity.Session.Text("Sample.PhysicsForce")}: {target.Entity.Name}");}
     }
-    public override void OnDestroy()
+    public override void F_Destroy()
     {
         if(!Entity.Session.IsDisposed)
         {

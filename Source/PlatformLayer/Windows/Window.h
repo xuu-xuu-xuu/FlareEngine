@@ -22,6 +22,9 @@ struct WindowState
     UINT minimumClientWidthDip = 0, minimumClientHeightDip = 0;
     std::function<std::optional<LRESULT>(HWND,UINT,WPARAM,LPARAM)> messageHandler;
     bool interactiveResize = false;
+    ULONGLONG lastResizeDrawTick = 0;
+    UINT lastResizeDrawWidth = 0;
+    UINT lastResizeDrawHeight = 0;
     std::function<void()> drawResizeFrame;
 };
 

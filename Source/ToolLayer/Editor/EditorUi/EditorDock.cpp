@@ -53,11 +53,11 @@ bool FindParentOfLeaf(DockNode& node, const DockNode* target, DockNode*& parent,
 }
 } // namespace
 
-// 默认采用 Unity 经典的 2 by 3 布局：左侧上下双视窗（场景视口 + 控制台），右侧三列并排通高（层级 | 资源 | 属性）。
+// 默认采用 2 by 3 布局：左侧上下双视窗（场景视口 + 摄像机视口/控制台），右侧三列并排通高（层级 | 资源 | 属性）。
 DockNode DefaultEditorDockLayout()
 {
     DockNode leftTop = MakeTabs({EditorPanelId::Viewport, EditorPanelId::UiDesigner});
-    DockNode leftBottom = MakeTabs({EditorPanelId::Console});
+    DockNode leftBottom = MakeTabs({EditorPanelId::Game, EditorPanelId::Console});
     DockNode left;
     left.kind = DockNode::Kind::Split;
     left.axis = DockAxis::Vertical;
@@ -125,7 +125,7 @@ DockNode ClassicThreeColumnDockLayout()
 DockNode StandardShelfDockLayout()
 {
     DockNode topLeft = MakeTabs({EditorPanelId::Hierarchy});
-    DockNode topCenter = MakeTabs({EditorPanelId::Viewport, EditorPanelId::UiDesigner});
+    DockNode topCenter = MakeTabs({EditorPanelId::Viewport, EditorPanelId::Game, EditorPanelId::UiDesigner});
     DockNode topArea;
     topArea.kind = DockNode::Kind::Split;
     topArea.axis = DockAxis::Horizontal;
@@ -159,7 +159,7 @@ DockNode StandardShelfDockLayout()
 DockNode WideViewportDockLayout()
 {
     DockNode leftHierarchy = MakeTabs({EditorPanelId::Hierarchy});
-    DockNode viewportTabs = MakeTabs({EditorPanelId::Viewport, EditorPanelId::UiDesigner});
+    DockNode viewportTabs = MakeTabs({EditorPanelId::Viewport, EditorPanelId::Game, EditorPanelId::UiDesigner});
     DockNode drawerTabs = MakeTabs({EditorPanelId::Assets, EditorPanelId::Console});
 
     DockNode centerColumn;
@@ -201,6 +201,7 @@ const char* EditorPanelName(EditorPanelId panel) noexcept
     case EditorPanelId::About: return "about";
     case EditorPanelId::Diagnostics: return "diagnostics";
     case EditorPanelId::AssetTools: return "asset-tools";
+    case EditorPanelId::Game: return "game";
     }
     return "none";
 }
@@ -220,6 +221,7 @@ bool EditorPanelFromName(std::string_view name, EditorPanelId& panel) noexcept
     else if (name == "about") panel = EditorPanelId::About;
     else if (name == "diagnostics") panel = EditorPanelId::Diagnostics;
     else if (name == "asset-tools") panel = EditorPanelId::AssetTools;
+    else if (name == "game") panel = EditorPanelId::Game;
     else return false;
     return true;
 }

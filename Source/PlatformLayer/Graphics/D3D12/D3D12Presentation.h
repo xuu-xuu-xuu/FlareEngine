@@ -255,6 +255,9 @@ struct D3D12Presentation
     bool untrackedSubmission = false;
     bool failed = false;
     bool occluded = false;
+    bool allowTearing = false;
+    bool resizedSinceLastPresent = false;
+    HWND window = nullptr;
     UINT width = 0;
     UINT height = 0;
     std::shared_ptr<D3D12StateRegistry> states;

@@ -44,6 +44,10 @@ struct EditorFloatingWindows::Entry
     HWND window=nullptr;
     bool scene=false;
     bool interactiveResize=false;
+    unsigned paddedSurfW=0;
+    unsigned paddedSurfH=0;
+    ULONGLONG lastResizeDrawTick=0;
+    std::wstring lastTitle;
     EditorInputAdapter input;
     InputState rawInput;
     UiDirectWriteTextService text{L"Segoe UI"};
@@ -108,7 +112,7 @@ bool EditorFloatingWindows::Synchronize()
             Log(LogLevel::Info,"EditorUi.FloatingReady: "+text_.GetText("EditorUi.FloatingReady")+" "+std::to_string(entry->id));
         }
         const auto title=Wide(shell_.WindowLabel(saved.id)+" — "+text_.GetText("Editor.WindowTitle"));
-        SetWindowTextW(entry->window,title.c_str());
+        if(title!=entry->lastTitle){entry->lastTitle=title;SetWindowTextW(entry->window,title.c_str());}
         const bool enabled=!shell_.CloseModalOpen()&&!shell_.ConfirmOpen();
         if((IsWindowEnabled(entry->window)!=FALSE)!=enabled)
         {
@@ -143,7 +147,21 @@ bool EditorFloatingWindows::Render(const FrameData& base,ui::UiImageProvider& im
         data.editorGui.framebufferScale={dpi,dpi};
         if(!entry->scene)data.sceneViewport={0,0,1,1};
         const auto now=GetTickCount64();const double seconds=entry->lastTick?std::min(.25,(now-entry->lastTick)/1000.0):1.0/60;entry->lastTick=now;
-        const RenderFrame frame{{entry->window,static_cast<unsigned>(area.right),static_cast<unsigned>(area.bottom)},seconds,seconds,now/1000.0,++entry->frame,&data};
+        unsigned surfW=static_cast<unsigned>(area.right);
+        unsigned surfH=static_cast<unsigned>(area.bottom);
+        if(entry->interactiveResize)
+        {
+            entry->paddedSurfW=std::max(entry->paddedSurfW,std::min(8192u,(surfW+512u)&~511u));
+            entry->paddedSurfH=std::max(entry->paddedSurfH,std::min(8192u,(surfH+512u)&~511u));
+            surfW=entry->paddedSurfW;
+            surfH=entry->paddedSurfH;
+        }
+        else
+        {
+            entry->paddedSurfW=surfW;
+            entry->paddedSurfH=surfH;
+        }
+        const RenderFrame frame{{entry->window,surfW,surfH},seconds,seconds,now/1000.0,++entry->frame,&data,nullptr,entry->interactiveResize};
         if(entry->renderer->Render(frame,text_)==RenderResult::Failed)return false;
     }
     for(auto& entry:entries_)entry->rawInput.ClearEvents();
@@ -158,7 +176,8 @@ HWND EditorFloatingWindows::Window(std::uint32_t id)const
 {if(!id)return owner_;for(const auto& e:entries_)if(e->id==id)return e->window;return nullptr;}
 const InputState* EditorFloatingWindows::GameplayInput(float& dpi)const
 {
-    const auto id=shell_.Dock().SurfaceFor(EditorPanelId::Viewport);
+    auto id=shell_.Dock().SurfaceFor(EditorPanelId::Game);
+    if(id==UINT32_MAX)id=shell_.Dock().SurfaceFor(EditorPanelId::Viewport);
     for(const auto& e:entries_)if(e->id==id){dpi=e->input.DpiScale();return &e->rawInput;}
     return nullptr;
 }
@@ -208,13 +227,26 @@ LRESULT CALLBACK EditorFloatingWindows::WindowProc(HWND window,UINT message,WPAR
         try{if(auto result=entry->host->Message(*entry,message,w,l))return *result;}
         catch(const std::exception& e){Log(LogLevel::Error,e.what());PostMessageW(entry->host->owner_,WM_CLOSE,0,0);return 0;}
     }
-    if(message==WM_NCDESTROY)SetWindowLongPtrW(window,GWLP_USERDATA,0);
+    if(message==WM_NCDESTROY){RemovePropW(window,L"FlareInteractiveResize");SetWindowLongPtrW(window,GWLP_USERDATA,0);}
     return DefWindowProcW(window,message,w,l);
 }
 std::optional<LRESULT> EditorFloatingWindows::Message(Entry& entry,UINT message,WPARAM w,LPARAM l)
 {
     if(shuttingDown_)return {};
     if(message==WM_CLOSE){shell_.CloseFloatingWindow(entry.id);return 0;}
+    if(message==WM_KEYDOWN&&w==VK_ESCAPE&&!shell_.TextFieldFocused()&&!shell_.MenuOpen()&&!shell_.ColorPickerOpen())
+    {
+        if(const auto* node=shell_.Dock().Surface(entry.id);node&&node->kind==DockNode::Kind::Tabs&&node->tabs.size()==1)
+        {
+            const EditorPanelId p=node->tabs.front();
+            if(p==EditorPanelId::Preferences||p==EditorPanelId::ProjectSettings||p==EditorPanelId::BuildExport||
+               p==EditorPanelId::AssetTools||p==EditorPanelId::Material||p==EditorPanelId::About||p==EditorPanelId::Diagnostics)
+            {
+                shell_.CloseFloatingWindow(entry.id);
+                return 0;
+            }
+        }
+    }
     if(message==WM_ERASEBKGND)return 1;
     if(message==WM_PAINT){PAINTSTRUCT paint;BeginPaint(entry.window,&paint);EndPaint(entry.window,&paint);return 0;}
     if(message==WM_GETMINMAXINFO)
@@ -232,16 +264,26 @@ std::optional<LRESULT> EditorFloatingWindows::Message(Entry& entry,UINT message,
         if(bounds)SetWindowPos(entry.window,nullptr,bounds->left,bounds->top,bounds->right-bounds->left,bounds->bottom-bounds->top,SWP_NOZORDER|SWP_NOACTIVATE);
         return 0;
     }
-    if(message==WM_ENTERSIZEMOVE)entry.interactiveResize=true;
+    if(message==WM_ENTERSIZEMOVE){entry.interactiveResize=true;SetPropW(entry.window,L"FlareInteractiveResize",reinterpret_cast<HANDLE>(1));}
     if(message==WM_EXITSIZEMOVE)
     {
         entry.interactiveResize=false;
+        RemovePropW(entry.window,L"FlareInteractiveResize");
         RECT bounds{};GetWindowRect(entry.window,&bounds);shell_.SetFloatingBounds(entry.id,bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top);
+        entry.lastResizeDrawTick=GetTickCount64();
+        SendMessageW(owner_,EngineWindowDrawResizeFrame,0,0);
     }
     if(message==WM_SIZE)
     {
         if(entry.interactiveResize&&w!=SIZE_MINIMIZED&&LOWORD(l)&&HIWORD(l))
-            SendMessageW(owner_,EngineWindowDrawResizeFrame,0,0);
+        {
+            const ULONGLONG now=GetTickCount64();
+            if(now-entry.lastResizeDrawTick>=8)
+            {
+                entry.lastResizeDrawTick=now;
+                SendMessageW(owner_,EngineWindowDrawResizeFrame,0,0);
+            }
+        }
         return 0;
     }
     if(handler_&&message!=WM_NCCREATE&&message!=WM_NCDESTROY)

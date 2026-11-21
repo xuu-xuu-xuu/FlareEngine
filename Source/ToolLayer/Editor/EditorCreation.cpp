@@ -113,33 +113,66 @@ bool CreateEditorObject(EditorSession& session, std::string_view kind, StableEnt
 }
 
 bool CreateEditorAsset(std::string_view kind, const std::filesystem::path& project, AssetStore& assets,
-                       std::filesystem::path& created, std::string& error)
+                       std::filesystem::path& created, std::string& error,
+                       const std::filesystem::path& targetDirectory)
 {
     created.clear();
-    if (kind != "material" && kind != "script"&&kind!="tod") { error = "Editor.OperationFailed"; return false; }
+    if (kind != "folder" && kind != "material" && kind != "script" && kind != "tod")
+    {
+        error = "Editor.OperationFailed";
+        return false;
+    }
+    const auto resolveBaseDir = [&](const std::filesystem::path& defaultDir) {
+        if (!targetDirectory.empty() && std::filesystem::is_directory(targetDirectory) &&
+            asset_io::Within(defaultDir, targetDirectory))
+        {
+            return targetDirectory;
+        }
+        return defaultDir;
+    };
     for (unsigned index = 0; index < 10000; ++index)
     {
         const auto suffix = index ? std::to_string(index) : std::string{};
+        if (kind == "folder")
+        {
+            std::filesystem::path baseDir = assets.SourceRoot();
+            if (!targetDirectory.empty() && std::filesystem::is_directory(targetDirectory) &&
+                asset_io::Within(project, targetDirectory))
+            {
+                baseDir = targetDirectory;
+            }
+            const auto folderPath = baseDir / ("NewFolder" + suffix);
+            if (std::filesystem::exists(folderPath)) continue;
+            std::error_code ec;
+            if (!std::filesystem::create_directories(folderPath, ec) || ec)
+            {
+                error = "Assets.WriteFailed";
+                return false;
+            }
+            created = folderPath;
+            return true;
+        }
         if (kind == "script")
         {
             const auto name = "NewBehaviour" + suffix;
             EditorScriptCreateResult result;
             std::string detail;
-            if (EditorScriptTools::CreateBehaviour({project, name, "Game"}, result, error, detail))
+            if (EditorScriptTools::CreateBehaviour({project, name, "", targetDirectory}, result, error, detail))
             { created = result.source; return true; }
             if (error == "Script.TemplateConflict" && asset_io::FromUtf8(detail).filename() == name + ".cs") continue;
             return false;
         }
+        const auto contentDir = resolveBaseDir(assets.SourceRoot());
         if(kind=="tod")
         {
-            const auto path=assets.SourceRoot()/("DayCycle"+suffix+".tod");if(std::filesystem::exists(path))continue;
+            const auto path=contentDir/("DayCycle"+suffix+".tod");if(std::filesystem::exists(path))continue;
             if(!SaveTODProfile(path,TODProfile{},error))return false;AssetId id;std::vector<AssetDiagnostic> diagnostics;
             if(!assets.RegisterSource(path,{},id,diagnostics)){error=diagnostics.empty()?"Assets.WriteFailed":diagnostics.back().key;return false;}
             created=path;std::vector<EditorAssetIssue> issues;if(EditorAssetActions::SyncProjectAssets(project,assets,issues))return true;error=issues.empty()?"Assets.WriteFailed":issues.front().key;return false;
         }
         MaterialDocument material;
         material.name = "NewMaterial" + suffix;
-        const auto path = assets.SourceRoot() / (material.name + ".material.json");
+        const auto path = contentDir / (material.name + ".material.json");
         AssetId id;
         std::vector<AssetDiagnostic> diagnostics;
         if (!assets.SaveMaterialSource(path, material, id, diagnostics, false))

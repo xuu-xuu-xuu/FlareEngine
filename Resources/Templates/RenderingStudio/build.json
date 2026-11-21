@@ -1,8 +1,8 @@
 {
-  "format": "SelfEngine.Build",
+  "format": "FlareEngine.Build",
   "version": 1,
-  "scriptsProject": "Scripts/EmptyGame.Scripts.csproj",
-  "scriptType": "emptygame.spin",
+  "scriptsProject": "Scripts/FlareGame.Scripts.csproj",
+  "scriptType": "renderingstudio.spin",
   "bindings": "Scripts/Main.bindings.json",
   "entryUi": ""
 }

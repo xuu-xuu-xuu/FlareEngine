@@ -18,7 +18,7 @@ function Read-EngineEditorPackage([string]$Root) {
     $Root=[IO.Path]::GetFullPath($Root).TrimEnd('\')
     $manifestPath=Join-Path $Root 'editor-package.json'
     $manifest=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if($manifest.schema -ne 1 -or $manifest.kind -ne 'SelfEngine.EditorPackage' -or $manifest.export_contract -ne 1){throw 'Export.EditorPackageInvalid'}
+    if($manifest.schema -ne 1 -or $manifest.kind -notin @('FlareEngine.EditorPackage','SelfEngine.EditorPackage') -or $manifest.export_contract -ne 1){throw 'Export.EditorPackageInvalid'}
     $listed=@{}
     foreach($file in $manifest.files){
         if(!$file.path -or [IO.Path]::IsPathRooted($file.path) -or $listed.ContainsKey($file.path)){throw 'Export.EditorPackageInvalid'}
@@ -37,8 +37,8 @@ function Read-EngineEditorPackage([string]$Root) {
         $relative=$file.FullName.Substring($Root.Length+1).Replace('\','/')
         if($relative -ne 'editor-package.json' -and !$listed.ContainsKey($relative)){throw ('Export.EditorPackageInvalid '+$relative)}
     }
-    foreach($required in @('Tools/ProjectTool.exe','Player/SelfEngine.Bootstrap.exe','Player/EngineNative.dll','Player/SelfEngine.Managed.dll',
-        'Player/SelfEngine.Bootstrap.runtimeconfig.json','SDK/Managed/SelfEngine.Managed.dll','SDK/SelfEngine.Scripts.props','SDK/SelfEngine.Scripts.targets')){
+    foreach($required in @('Tools/ProjectTool.exe','Player/FlareEngine.Bootstrap.exe','Player/EngineNative.dll','Player/FlareEngine.Managed.dll',
+        'Player/FlareEngine.Bootstrap.runtimeconfig.json','SDK/Managed/FlareEngine.Managed.dll','SDK/FlareEngine.Scripts.props','SDK/FlareEngine.Scripts.targets')){
         if(!$listed.ContainsKey($required)){throw ('Export.EditorPackageInvalid '+$required)}
     }
     return [ordered]@{schema=1;identity='editor-package.json plus verified file hashes';git_head=$manifest.git_head;dirty=$manifest.source_dirty;
@@ -46,17 +46,17 @@ function Read-EngineEditorPackage([string]$Root) {
 }
 
 function Find-EnginePrecompiledScripts([string]$Root,[string]$ScriptProject) {
-    $directory=Join-Path $Root 'SDK/Precompiled/EmptyGame'
+    $directory=Join-Path $Root 'SDK/Precompiled/FlareGame'
     $path=Join-Path $directory 'manifest.json'
     if(!(Test-Path -LiteralPath $path -PathType Leaf)){return $null}
     $manifest=Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
-    if($manifest.schema -ne 1 -or $manifest.project -ne 'EmptyGame.Scripts.csproj' -or $manifest.project -ne [IO.Path]::GetFileName($ScriptProject)){return $null}
+    if($manifest.schema -ne 1 -or $manifest.project -ne 'FlareGame.Scripts.csproj' -or $manifest.project -ne [IO.Path]::GetFileName($ScriptProject)){return $null}
     $actual=@(Get-EngineScriptInputs $ScriptProject)
     if($actual.Count -ne @($manifest.source_files).Count){return $null}
     $expected=@{};foreach($file in $manifest.source_files){$expected[$file.path]=$file.sha256}
     # 仅固定模板的这份 JSON 是独立的运行时字段文档；它不参与程序集生成。
     # 工程和两份目录构建文件必须仍与包内模板逐字相同，不能把该例外推广给资源 JSON。
-    foreach($required in @('EmptyGame.Scripts.csproj','Directory.Build.props','Directory.Build.targets','Main.bindings.json')){
+    foreach($required in @('FlareGame.Scripts.csproj','Directory.Build.props','Directory.Build.targets','Main.bindings.json')){
         if(!$expected.ContainsKey($required)){return $null}
     }
     foreach($file in $actual){
@@ -69,9 +69,9 @@ function Find-EnginePrecompiledScripts([string]$Root,[string]$ScriptProject) {
 }
 
 function Get-EnginePackageScriptProperties([string]$Root,[string]$IntermediateDirectory) {
-    # CustomAfterMicrosoftCommonTargets 也兼容旧模板里的 Engine.Managed.csproj 引用。
+    # CustomAfterMicrosoftCommonTargets 也兼容旧模板里的 Engine.Managed.csproj 与 SelfEngine.Managed 引用。
     # 只替换引擎 API 引用，项目自己的 ProjectReference 不受影响。
-    return @(('-p:SelfEngineRoot='+$Root),('-p:CustomAfterMicrosoftCommonTargets='+(Join-Path $Root 'SDK/SelfEngine.Scripts.targets')),
+    return @(('-p:FlareEngineRoot='+$Root),('-p:SelfEngineRoot='+$Root),('-p:CustomAfterMicrosoftCommonTargets='+(Join-Path $Root 'SDK/FlareEngine.Scripts.targets')),
         ('-p:BaseIntermediateOutputPath='+([IO.Path]::GetFullPath($IntermediateDirectory).TrimEnd('\')+'\')),
         ('-p:MSBuildProjectExtensionsPath='+([IO.Path]::GetFullPath($IntermediateDirectory).TrimEnd('\')+'\')))
 }

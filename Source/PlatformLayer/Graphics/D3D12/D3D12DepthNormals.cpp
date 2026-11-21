@@ -151,7 +151,7 @@ bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,co
                     description.DepthStencilState.DepthEnable=TRUE;description.DepthStencilState.DepthWriteMask=D3D12_DEPTH_WRITE_MASK_ALL;description.DepthStencilState.DepthFunc=D3D12_COMPARISON_FUNC_LESS;
                     derived->pipeline.Reset();if(!CheckGraphicsResult(device->CreateGraphicsPipelineState(&description,IID_PPV_ARGS(derived->pipeline.GetAddressOf())),text,"D3D12.CreatePipelineFailed"))return false;
                     derived->description=description;derived->description.InputLayout={derived->inputElements.data(),static_cast<UINT>(derived->inputElements.size())};
-                    derived->pipeline->SetName(L"SelfEngine.DepthNormals.SameMainVertexShader");next->mesh={derived->rootSignature,derived->pipeline,derived};
+                    derived->pipeline->SetName(L"FlareEngine.DepthNormals.SameMainVertexShader");next->mesh={derived->rootSignature,derived->pipeline,derived};
                     pair=std::move(next);pipelines_.insert_or_assign(key,pair);++pipelineCreations_;
                 }
                 cached.pair=std::move(pair);

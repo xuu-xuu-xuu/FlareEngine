@@ -120,6 +120,7 @@ SE_API int32_t SE_CALL se_session_create(SE_Session* session) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_close(SE_Session session) SE_NOEXCEPT;
 // 除 close 外，session 只能由创建线程调用；回调同步发生在 step 的同一线程。
 SE_API int32_t SE_CALL se_session_set_update(SE_Session session, SE_UpdateCallback callback, void* context) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_session_set_post_step(SE_Session session, SE_UpdateCallback callback, void* context) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_step(SE_Session session, double delta_seconds) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_environment_set_callback(SE_Session session,SE_TickCallback callback,void* context) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_environment_configure(SE_Session session,double fixed_seconds,uint32_t maximum_steps,int32_t automatic,int32_t simulate_physics) SE_NOEXCEPT;
@@ -154,6 +155,9 @@ SE_API int32_t SE_CALL se_input_load_actions(SE_Session session, const char* jso
 SE_API int32_t SE_CALL se_input_action_button(SE_Session session, const char* action, uint32_t length, int32_t* down, int32_t* pressed) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_input_action_axis1d(SE_Session session, const char* action, uint32_t length, float* value) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_input_action_axis2d(SE_Session session, const char* action, uint32_t length, SE_Vector2* value) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_input_get_mouse_delta(SE_Session session, SE_Vector2* delta) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_input_set_cursor_mode(SE_Session session, int32_t locked, int32_t visible) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_input_get_cursor_mode(SE_Session session, int32_t* locked, int32_t* visible) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_run_window(SE_Session session, const char* locale, uint32_t length, int32_t visible, uint64_t maximum_frames) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_configure_quality(SE_Session session,const char* path,uint32_t length,int32_t show_menu) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_session_set_quality_profiles(SE_Session session,const char* json,uint32_t length) SE_NOEXCEPT;
@@ -206,11 +210,17 @@ SE_API int32_t SE_CALL se_entity_set_camera_fov(SE_Session session,uint64_t enti
 SE_API int32_t SE_CALL se_session_set_look(SE_Session session,float mode,float blend) SE_NOEXCEPT;
 // W07：世界方向投影到游戏相机的归一化屏幕坐标（左上原点，0..1）；不在前方时 in_front=0。
 SE_API int32_t SE_CALL se_camera_project_direction(SE_Session session,uint64_t camera_stable_id,SE_Vector3 world_direction,SE_Vector2* screen_uv,int32_t* in_front) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_camera_screen_point_to_ray(SE_Session session,uint64_t camera_stable_id,SE_Vector2 screen_pixel,SE_Vector3* origin,SE_Vector3* direction) SE_NOEXCEPT;
 // W07：程序化天空覆盖（JSON）；空长度清除并回到引擎默认天空。
 SE_API int32_t SE_CALL se_session_set_sky(SE_Session session,const char* json,uint32_t length) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_entity_get_stable_id(SE_Session session, SE_Entity entity, uint64_t* stable_id) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_entity_find(SE_Session session, uint64_t stable_id, SE_Entity* entity) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_entity_find_by_name(SE_Session session, const char* name_utf8, uint32_t length, SE_Entity* entity, int32_t* found) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_entity_get_name(SE_Session session, SE_Entity entity, char* buffer, uint32_t capacity, uint32_t* required) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_entity_get_world_transform(SE_Session session, SE_Entity entity, SE_Transform* transform) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_entity_get_parent(SE_Session session, SE_Entity entity, SE_Entity* parent) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_entity_set_parent(SE_Session session, SE_Entity entity, SE_Entity parent, int32_t keep_world) SE_NOEXCEPT;
+SE_API int32_t SE_CALL se_entity_duplicate(SE_Session session, SE_Entity source, const SE_Vector3* override_pos, const float* override_rot_xyzw, uint64_t* out_source_stable_ids, SE_Entity* out_cloned_entities, uint32_t capacity, uint32_t* out_count) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_scene_export(SE_Session session, char* buffer, uint32_t capacity, uint32_t* required) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_scene_import(SE_Session session, const char* json_utf8, uint32_t length) SE_NOEXCEPT;
 SE_API int32_t SE_CALL se_scene_set_callback(SE_Session session,SE_SceneCallback callback,void* context) SE_NOEXCEPT;

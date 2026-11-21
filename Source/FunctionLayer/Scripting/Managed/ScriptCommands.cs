@@ -1,9 +1,9 @@
-namespace SelfEngine;
+namespace FlareEngine;
 
 // 需要立即返回结果的控制走单一明确接收者，不广播成已经发生的事实。
 public sealed class ScriptCommands
 {
-    private sealed record Registration(ulong Id,Behaviour Owner,Type Type,Func<object,bool> Handler);
+    private sealed record Registration(ulong Id,F_Behaviour Owner,Type Type,Func<object,bool> Handler);
     private sealed class Token(ScriptCommands registry,string key,ulong id):IDisposable
     {
         private readonly WeakReference<ScriptCommands> registry=new(registry);
@@ -14,7 +14,7 @@ public sealed class ScriptCommands
     private ulong next;
     internal ScriptCommands(ScriptSystem system)=>this.system=system;
     public int Count=>registrations.Count;
-    public IDisposable Register<T>(Behaviour owner,string key,Func<T,bool> handler) where T:notnull
+    public IDisposable Register<T>(F_Behaviour owner,string key,Func<T,bool> handler) where T:notnull
     {
         ArgumentNullException.ThrowIfNull(handler);
         if(owner.Owner!=system||!UiBinding.ValidName(key))throw new ArgumentException("Script.CommandInvalid");
@@ -26,6 +26,6 @@ public sealed class ScriptCommands
         if(!registrations.TryGetValue(key,out var registration)||registration.Type!=typeof(T)||!system.CanRun(registration.Owner))return false;
         bool accepted=false;var success=system.InvokeEvent(registration.Owner,()=>accepted=registration.Handler(value),"Command");system.FlushMutations();return success&&accepted;
     }
-    internal void Remove(Behaviour owner){foreach(var key in registrations.Where(pair=>pair.Value.Owner==owner).Select(pair=>pair.Key).ToArray())registrations.Remove(key);}
+    internal void Remove(F_Behaviour owner){foreach(var key in registrations.Where(pair=>pair.Value.Owner==owner).Select(pair=>pair.Key).ToArray())registrations.Remove(key);}
     internal void Clear()=>registrations.Clear();
 }

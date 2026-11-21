@@ -1,13 +1,15 @@
 # 场景视口、变换手柄与选中描边
 
-## 从鼠标坐标到变换
+## 从鼠标坐标到变换与视角对齐
 
-[EditorViewportController](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorViewportController.h#L12) 协调相机导航、选取、聚焦和拖动。[EditorViewportCamera](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorViewportCamera.h#L8) 提供编辑相机快照，[PickEditorBounds()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorViewportCamera.cpp#L26) 从射线和包围盒产生选择。[EditorGizmo](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorGizmo.h#L14) 根据操作轴、坐标空间与投影计算移动、旋转或缩放，并通过[编辑事务](session.md)提交。
+`EditorViewportController` 协调编辑相机漫游（右键 + `WASD/QE`、滚轮调速、`Alt` + 左键环绕、中键平移、`F` 聚焦）、射线拾取、W/E/R 变换手柄与资产拖放落场。`EditorViewportCamera` 生成编辑镜头矩阵，`EditorGizmo` 按世界/局部坐标空间（`X`）与轴心/几何中心（`Z`）计算平移、旋转和缩放增量，并合成单条[编辑事务](session.md)以供撤销。
+
+选中任意实体、摄像机或光源后执行 **对齐当前视角**（快捷键 `Ctrl+Shift+F`，对应 `AlignSelectionWithView()`），控制器会将当前编辑观察相机的位置与朝向一次性写入目标实体的世界变换并推入撤销栈，便于“所见即所得”地布设机位和聚光方向。窗口拖拽缩放期间宿主结合 `InSystemMoveSize` 状态平滑节流交换链重建，消除拖边卡顿。
 
 ## 固定世界网格
 
-[PSGrid()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Resources/Shaders/SceneOverlay.hlsl#L41) 用相机射线与地面求交，按世界 XZ 坐标绘出 1 米细格与 10 米主格。导数控制抗锯齿宽度，交点深度参与遮挡，摄像机无需携带一张有限网格。
+`PSGrid()`（`Resources/Shaders/SceneOverlay.hlsl`）用相机射线与地面求交，按世界 XZ 坐标绘出 1 米细格与 10 米主格。屏幕空间导数控制抗锯齿线宽，交点深度参与场景深度遮挡，摄像机无需携带有限尺寸网格。
 
 ## 模型轮廓
 
-[D3D12SceneOverlay](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/PlatformLayer/Graphics/D3D12/D3D12SceneOverlay.h#L12) 记录选中物体掩码和叠加绘制。[PSOutline()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Resources/Shaders/SceneOverlay.hlsl#L64) 比较相邻像素的轮廓覆盖和可见性，将线条限制在可见轮廓边缘。
+`D3D12SceneOverlay` 分别记录选中物体的完整投影掩码与深度可见掩码；`PSOutline()` 比较邻域像素的覆盖与可见性，仅在模型自身可见轮廓边缘生成高亮描边，不污染遮挡物内部或视口裁剪边界。

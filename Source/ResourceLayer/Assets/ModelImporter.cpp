@@ -334,13 +334,20 @@ bool ValidateGltfLayers(const cgltf_data& data,std::vector<SubsurfaceParameters>
             }
         }
         // 应用专属 extras，只在显式声明时启用；不能把 KHR volume/transmission 自动当作皮肤。
-        if(const auto extras=material.find("extras");extras!=material.end()&&extras->is_object())if(const auto engine=extras->find("SelfEngine");engine!=extras->end())
+        if(const auto extras=material.find("extras");extras!=material.end()&&extras->is_object())
         {
-            if(!engine->is_object())return reject("extras.SelfEngine");
-            if(const auto skin=engine->find("subsurface");skin!=engine->end())
+            const bool hasFlare=extras->contains("FlareEngine");
+            const auto engine=hasFlare?extras->find("FlareEngine"):extras->find("SelfEngine");
+            const char* extPrefix=hasFlare?"extras.FlareEngine":"extras.SelfEngine";
+            if(engine!=extras->end())
             {
-                if(!skin->is_object())return reject("extras.SelfEngine.subsurface");auto& p=subsurface[index];
-                if(!number(*skin,"weight",0,1,&p.weight)||!number(*skin,"radius",0,1,&p.radius)||!color(*skin,"color",&p.color)||!IsValidMaterialLayer(p))return reject("extras.SelfEngine.subsurface");
+                if(!engine->is_object())return reject(extPrefix);
+                if(const auto skin=engine->find("subsurface");skin!=engine->end())
+                {
+                    const std::string subKey=std::string(extPrefix)+".subsurface";
+                    if(!skin->is_object())return reject(subKey.c_str());auto& p=subsurface[index];
+                    if(!number(*skin,"weight",0,1,&p.weight)||!number(*skin,"radius",0,1,&p.radius)||!color(*skin,"color",&p.color)||!IsValidMaterialLayer(p))return reject(subKey.c_str());
+                }
             }
         }
     }

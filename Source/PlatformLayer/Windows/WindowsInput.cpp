@@ -31,22 +31,27 @@ InputMessageResult ProcessWindowsInput(HWND hwnd,UINT message,WPARAM wParam,LPAR
             return InputMessageResult::Handled;
         }
         case WM_MOUSEMOVE:
-            input.mouseX=GET_X_LPARAM(lParam);input.mouseY=GET_Y_LPARAM(lParam);
+        {
+            const int mx=GET_X_LPARAM(lParam),my=GET_Y_LPARAM(lParam);
+            if(input.hasLastMouse){input.mouseDeltaX+=mx-input.lastMouseX;input.mouseDeltaY+=my-input.lastMouseY;}
+            input.lastMouseX=mx;input.lastMouseY=my;input.hasLastMouse=true;
+            input.mouseX=mx;input.mouseY=my;
             input.pointerEvents.push_back({PointerEventType::Move,input.mouseX,input.mouseY,0,0});return InputMessageResult::Handled;
+        }
         case WM_MOUSEWHEEL:
         {
             POINT point{GET_X_LPARAM(lParam),GET_Y_LPARAM(lParam)};ScreenToClient(hwnd,&point);
             input.pointerEvents.push_back({PointerEventType::Wheel,point.x,point.y,0,float(GET_WHEEL_DELTA_WPARAM(wParam))/WHEEL_DELTA});return InputMessageResult::Handled;
         }
         case WM_CAPTURECHANGED:case WM_CANCELMODE:
-            input.mouseButtons.fill(false);input.isLeftDown=false;
+            input.mouseButtons.fill(false);input.isLeftDown=false;input.hasLastMouse=false;
             input.pointerEvents.push_back({PointerEventType::Cancel,input.mouseX,input.mouseY,0,0});
             if(message==WM_CANCELMODE&&GetCapture()==hwnd)ReleaseCapture();
             return InputMessageResult::Handled;
         case WM_CHAR:
             input.textEvents.push_back({static_cast<char16_t>(wParam)});return InputMessageResult::Handled;
         case WM_KILLFOCUS:
-            input.hasFocus=false;
+            input.hasFocus=false;input.hasLastMouse=false;input.mouseDeltaX=0;input.mouseDeltaY=0;
             input.keysDown.fill(false);input.mouseButtons.fill(false);input.isLeftDown=false;
             input.keyEvents.push_back({KeyEventType::Reset,0});input.pointerEvents.push_back({PointerEventType::Cancel,input.mouseX,input.mouseY,0,0});
             if(GetCapture()==hwnd)ReleaseCapture();return InputMessageResult::Handled;

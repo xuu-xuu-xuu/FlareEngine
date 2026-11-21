@@ -40,4 +40,4 @@
 
 ## Navigation
 
-C# 脚本通过 `Session.Navigation`（`SelfEngine.Navigation`）执行同步路径查询或驱动导航代理：`FindPath(string, Vector3, Vector3)`、`SetDestination(Entity, Vector3)`、`Stop(Entity)` 与 `RemainingDistanceMeters(Entity)`。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/6f1fea505082d4a90a24b4d1779c45fbf8c6152d/Source/FunctionLayer/Scripting/Managed/Navigation.cs#L15)
+C# 脚本通过 `Session.Navigation`（`FlareEngine.Navigation`）执行同步路径查询或驱动导航代理：`FindPath(string, Vector3, Vector3)`、`SetDestination(Entity, Vector3)`、`Stop(Entity)` 与 `RemainingDistanceMeters(Entity)`。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/6f1fea505082d4a90a24b4d1779c45fbf8c6152d/Source/FunctionLayer/Scripting/Managed/Navigation.cs#L15)

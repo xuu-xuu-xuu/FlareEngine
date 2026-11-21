@@ -368,6 +368,7 @@ void EditorShell::TogglePanel(EditorPanelId panel)
     {
         return;
     }
+    gameMaximized_ = false;
     if (dock_.Find(panel) != nullptr)
     {
         const DockNode& group = *dock_.Find(panel);
@@ -401,7 +402,12 @@ void EditorShell::FocusPanel(EditorPanelId panel)
     {
         return;
     }
-    bool added = false;
+    bool dockChanged = false;
+    if (gameMaximized_ && panel != EditorPanelId::Game)
+    {
+        gameMaximized_ = false;
+        dockChanged = true;
+    }
     if (dock_.Find(panel) == nullptr)
     {
         EditorPanelId nearPanel = Slot(panel).openNear;
@@ -410,10 +416,10 @@ void EditorShell::FocusPanel(EditorPanelId panel)
         {
             nearPanel = EditorPanelId::Viewport;
         }
-        added = dock_.OpenTabNear(panel, nearPanel);
+        dockChanged = dock_.OpenTabNear(panel, nearPanel) || dockChanged;
     }
     SelectPanel(panel, true);
-    if (added)
+    if (dockChanged)
     {
         MarkDockDirty(true, false);
     }

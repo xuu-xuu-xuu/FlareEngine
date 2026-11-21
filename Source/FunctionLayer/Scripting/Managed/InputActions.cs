@@ -1,7 +1,7 @@
 using System.Numerics;
 using System.Text;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 public sealed class InputActions
 {

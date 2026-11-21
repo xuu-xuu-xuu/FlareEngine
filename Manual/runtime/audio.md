@@ -36,7 +36,7 @@
 
 ## Audio
 
-C# 脚本通过 `Session.Audio`（`SelfEngine.Audio`）触发一次性音效、3D 定位声源或控制实体上的 `AudioSource` 组件。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/6f1fea505082d4a90a24b4d1779c45fbf8c6152d/Source/FunctionLayer/Scripting/Managed/Audio.cs#L60)
+C# 脚本通过 `Session.Audio`（`FlareEngine.Audio`）触发一次性音效、3D 定位声源或控制实体上的 `AudioSource` 组件。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/6f1fea505082d4a90a24b4d1779c45fbf8c6152d/Source/FunctionLayer/Scripting/Managed/Audio.cs#L60)
 
 ### PlayOneShotAt
 

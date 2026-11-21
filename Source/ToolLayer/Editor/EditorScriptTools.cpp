@@ -65,30 +65,35 @@ Json ParseBuild(std::string_view text)
         else if(event==Json::parse_event_t::key&&!keys.empty()&&!keys.back().insert(value.get<std::string>()).second)duplicate=true;
         else if(event==Json::parse_event_t::object_end)keys.pop_back();return true;
     });
-    if(duplicate||!json.is_object()||json.value("format",std::string{})!="SelfEngine.Build"||json.value("version",0)!=1)
+    const auto format=json.value("format",std::string{});
+    if(duplicate||!json.is_object()||(format!="FlareEngine.Build"&&format!="SelfEngine.Build")||json.value("version",0)!=1)
         throw std::runtime_error("Project.InvalidBuildSettings");
     return json;
 }
 constexpr std::string_view ScriptProject=R"xml(<Project Sdk="Microsoft.NET.Sdk">
-  <Import Project="$(SelfEngineRoot)/SDK/SelfEngine.Scripts.props" Condition="Exists('$(SelfEngineRoot)/SDK/SelfEngine.Scripts.props')" />
+  <PropertyGroup>
+    <FlareEngineRoot Condition="'$(FlareEngineRoot)' == ''">$(SelfEngineRoot)</FlareEngineRoot>
+  </PropertyGroup>
+  <Import Project="$(FlareEngineRoot)/SDK/FlareEngine.Scripts.props" Condition="Exists('$(FlareEngineRoot)/SDK/FlareEngine.Scripts.props')" />
+  <Import Project="$(FlareEngineRoot)/SDK/SelfEngine.Scripts.props" Condition="!Exists('$(FlareEngineRoot)/SDK/FlareEngine.Scripts.props') And Exists('$(FlareEngineRoot)/SDK/SelfEngine.Scripts.props')" />
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PlatformTarget>x64</PlatformTarget>
-    <AssemblyName>Game.Scripts</AssemblyName>
+    <AssemblyName>FlareGame.Scripts</AssemblyName>
   </PropertyGroup>
-  <ItemGroup Condition="Exists('$(SelfEngineRoot)/SDK/Managed/SelfEngine.Managed.dll')">
-    <Reference Include="SelfEngine.Managed">
-      <HintPath>$(SelfEngineRoot)/SDK/Managed/SelfEngine.Managed.dll</HintPath>
+  <ItemGroup Condition="Exists('$(FlareEngineRoot)/SDK/Managed/FlareEngine.Managed.dll')">
+    <Reference Include="FlareEngine.Managed">
+      <HintPath>$(FlareEngineRoot)/SDK/Managed/FlareEngine.Managed.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
-  <ItemGroup Condition="!Exists('$(SelfEngineRoot)/SDK/Managed/SelfEngine.Managed.dll') And Exists('$(SelfEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj')">
-    <ProjectReference Include="$(SelfEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj" />
+  <ItemGroup Condition="!Exists('$(FlareEngineRoot)/SDK/Managed/FlareEngine.Managed.dll') And Exists('$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj')">
+    <ProjectReference Include="$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj" />
   </ItemGroup>
-  <Target Name="CheckSelfEngineApi" BeforeTargets="ResolveReferences">
-    <Error Condition="!Exists('$(SelfEngineRoot)/SDK/Managed/SelfEngine.Managed.dll') And !Exists('$(SelfEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj')" Text="Script.EngineApiMissing: SelfEngineRoot" />
+  <Target Name="CheckFlareEngineApi" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(FlareEngineRoot)/SDK/Managed/FlareEngine.Managed.dll') And !Exists('$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj')" Text="Script.EngineApiMissing: FlareEngineRoot" />
   </Target>
 </Project>
 )xml";
@@ -162,25 +167,30 @@ bool EditorScriptTools::CreateBehaviour(const EditorScriptCreateRequest& request
         buildPath=root/"build.json";
         if(!Safe(root,buildPath))return Fail(errorKey,detail,"Script.TemplatePathInvalid",buildPath);
         const bool hadBuild=fs::exists(buildPath);
-        Json build={{"format","SelfEngine.Build"},{"version",1}};
+        Json build={{"format","FlareEngine.Build"},{"version",1}};
         if(hadBuild){if(!Read(buildPath,buildOriginal))return Fail(errorKey,detail,"Script.TemplateProjectInvalid",buildPath);build=ParseBuild(buildOriginal);}
         const auto configured=build.value("scriptsProject",std::string{});const bool newProject=configured.empty();
         const auto scripts=root/"Scripts";
-        fs::path projectPath=newProject?scripts/"Game.Scripts.csproj":fs::absolute(root/asset_io::FromUtf8(configured)).lexically_normal();
+        fs::path projectPath=newProject?scripts/"FlareGame.Scripts.csproj":fs::absolute(root/asset_io::FromUtf8(configured)).lexically_normal();
         if(!Safe(root,projectPath)||projectPath.extension()!=L".csproj"||(!newProject&&!fs::is_regular_file(projectPath)))
             return Fail(errorKey,detail,"Script.TemplateProjectInvalid",projectPath);
         if(!asset_io::Within(scripts,projectPath.parent_path())&&!asset_io::Within(projectPath.parent_path(),scripts))
             return Fail(errorKey,detail,"Script.TemplateProjectInvalid",projectPath);
         if(newProject&&fs::exists(projectPath))return Fail(errorKey,detail,"Script.TemplateConflict",projectPath);
-        const auto sourceDirectory=asset_io::Within(scripts,projectPath.parent_path())?projectPath.parent_path():scripts;
+        fs::path sourceDirectory=asset_io::Within(scripts,projectPath.parent_path())?projectPath.parent_path():scripts;
+        if(!request.targetDirectory.empty())
+        {
+            const fs::path candDir=fs::absolute(request.targetDirectory.is_absolute()?request.targetDirectory:root/request.targetDirectory).lexically_normal();
+            if(Safe(root,candDir)&&asset_io::Within(scripts,candDir))
+                sourceDirectory=candDir;
+        }
         const auto source=sourceDirectory/asset_io::FromUtf8(request.className+".cs");
         if(!Safe(root,source)||!asset_io::Within(scripts,source))return Fail(errorKey,detail,"Script.TemplatePathInvalid",source);
         if(fs::exists(source))return Fail(errorKey,detail,"Script.TemplateConflict",source);
-        const auto token=asset_io::NewId();if(token.empty())return Fail(errorKey,detail,"Assets.IdCreationFailed");
-        const auto id="game."+token;
-        std::string text="using SelfEngine;\n\n";
+        const auto id=request.nameSpace.empty()?request.className:(request.nameSpace+"."+request.className);
+        std::string text="using FlareEngine;\n\n";
         if(!request.nameSpace.empty())text+="namespace "+request.nameSpace+";\n\n";
-        text+="[ScriptId(\""+id+"\")]\npublic sealed class "+request.className+" : Behaviour\n{\n    public override void OnCreate()\n    {\n    }\n\n    public override void OnUpdate(double deltaSeconds)\n    {\n    }\n}\n";
+        text+="public class "+request.className+" : F_Behaviour\n{\n    public override void F_Start()\n    {\n    }\n\n    public override void F_Update(float delta)\n    {\n    }\n}\n";
         const auto create=[&](const fs::path& path,std::string contents)
         {
             if(!Safe(root,path))return false;

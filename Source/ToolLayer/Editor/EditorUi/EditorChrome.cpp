@@ -10,9 +10,10 @@ EditorChrome::EditorChrome(EditorCommandRouter& router, EditorCommandBus& bus)
 {
 }
 
-void EditorChrome::AddMenu(std::string menu, std::string label, EditorCommandId command, std::string argument)
+void EditorChrome::AddMenu(std::string menu, std::string label, EditorCommandId command, std::string argument,
+                           std::string shortcut, bool separatorAfter)
 {
-    menus_.push_back({std::move(menu), std::move(label), command, std::move(argument)});
+    menus_.push_back({std::move(menu), std::move(label), command, std::move(argument), std::move(shortcut), separatorAfter});
 }
 
 void EditorChrome::AddToolbar(std::string label, EditorCommandId command)

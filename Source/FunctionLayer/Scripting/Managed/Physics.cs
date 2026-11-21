@@ -1,7 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 [StructLayout(LayoutKind.Sequential)]
 public struct BoxBodyDescription
@@ -50,7 +50,7 @@ public struct RigidBodyState
     public readonly bool Sleeping=>sleeping!=0;
 }
 
-public sealed class RigidBody
+public sealed partial class RigidBody
 {
     internal RigidBody(EngineSession session, ulong handle, Entity entity) { Session = session; Handle = handle; Entity = entity; }
     internal EngineSession Session { get; }

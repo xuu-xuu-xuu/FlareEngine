@@ -2,7 +2,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 [StructLayout(LayoutKind.Sequential)]
 public struct AudioPlayDescription

@@ -17,6 +17,8 @@ void InitializeProcessDiagnostics(const char* role) noexcept
     {
         static std::once_flag once;
         std::call_once(once,[role]{
+            SetConsoleOutputCP(CP_UTF8);
+            SetConsoleCP(CP_UTF8);
             std::filesystem::path directory;
             const auto length=GetEnvironmentVariableW(L"SELFENGINE_LOG_DIRECTORY",nullptr,0);
             if(length&&length<32768)

@@ -304,7 +304,9 @@ bool EditorDockState::Deserialize(std::string_view json, DockNode& layout, std::
 
 std::string EditorDockState::Serialize(const EditorDock& workspace)
 {
-    Json root;root["version"]=3;root["layout"]=ToJson(workspace.Root());root["floating"]=Json::array();
+    Json root;root["version"]=4;
+    if(workspace.MaximizeOnPlay())root["maximizeOnPlay"]=true;
+    root["layout"]=ToJson(workspace.Root());root["floating"]=Json::array();
     for(const auto& w:workspace.Windows())
         root["floating"].push_back({{"id",w.id},{"x",w.x},{"y",w.y},{"width",w.width},{"height",w.height},{"layout",ToJson(w.layout)}});
     return root.dump(2);
@@ -317,7 +319,7 @@ bool EditorDockState::Deserialize(std::string_view text,EditorDock& workspace,st
     {
         const auto json=Json::parse(text);
         const int version=json.value("version",0);
-        if(version<1||version>3){error="unsupported dock version";return false;}
+        if(version<1||version>4){error="unsupported dock version";return false;}
         DockNode main;
         if(!FromJson(json.at("layout"),main,error))return false;
         std::vector<FloatingDockWindow> windows;
@@ -337,7 +339,33 @@ bool EditorDockState::Deserialize(std::string_view text,EditorDock& workspace,st
         // 旧版未手动调整过的默认三栏布局在首次升级时平滑迁移为新版 2 by 3 默认布局。
         if(version<=2&&windows.empty()&&main==ClassicThreeColumnDockLayout())
             main=DefaultEditorDockLayout();
+        if(version<=3)
+        {
+            const auto hasPanel=[](const auto& self,const DockNode& node,EditorPanelId id)->bool{
+                if(std::find(node.tabs.begin(),node.tabs.end(),id)!=node.tabs.end())return true;
+                for(const auto& child:node.children)if(self(self,child,id))return true;
+                return false;
+            };
+            bool hasGame=hasPanel(hasPanel,main,EditorPanelId::Game);
+            for(const auto& w:windows)hasGame=hasGame||hasPanel(hasPanel,w.layout,EditorPanelId::Game);
+            if(!hasGame)
+            {
+                const auto injectGame=[](const auto& self,DockNode& node)->bool{
+                    if(node.kind==DockNode::Kind::Tabs&&
+                       std::find(node.tabs.begin(),node.tabs.end(),EditorPanelId::Console)!=node.tabs.end())
+                    {
+                        node.tabs.insert(node.tabs.begin(),EditorPanelId::Game);
+                        node.active=EditorPanelId::Game;
+                        return true;
+                    }
+                    for(auto& child:node.children)if(self(self,child))return true;
+                    return false;
+                };
+                injectGame(injectGame,main);
+            }
+        }
         EditorDock result(std::move(main));
+        result.SetMaximizeOnPlay(json.value("maximizeOnPlay",false));
         if(!result.RestoreWindows(std::move(windows))){error="invalid or duplicated floating panels";return false;}
         workspace=std::move(result);return true;
     }

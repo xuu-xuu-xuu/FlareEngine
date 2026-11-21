@@ -23,7 +23,7 @@ public:
     [[nodiscard]] static bool ValidFontPages(const FrameData& frame) noexcept;
     rhi::Result Configure(rhi::Device& device,rhi::CommandContext& commands,const FrameData& frame,
         rhi::TextureHandle scene,std::uint32_t width,std::uint32_t height,const std::filesystem::path& shaders);
-    void Clear(){fontPages_.clear();composite_.reset();white_.reset();pipeline_.reset();images_.clear();imageSizes_.clear();width_=height_=0;}
+    void Clear(){fontPages_.clear();composite_.reset();white_.reset();pipeline_.reset();images_.clear();imageSizes_.clear();imageRevisions_.clear();width_=height_=0;}
 private:
     struct FontPageTexture
     {
@@ -35,6 +35,7 @@ private:
     rhi::Texture composite_,white_;
     std::unordered_map<std::uint64_t, rhi::Texture> images_;
     std::unordered_map<std::uint64_t, std::pair<std::uint32_t, std::uint32_t>> imageSizes_;
+    std::unordered_map<std::uint64_t, std::uint64_t> imageRevisions_;
     rhi::Pipeline pipeline_;
     std::uint32_t width_=0,height_=0;
 };

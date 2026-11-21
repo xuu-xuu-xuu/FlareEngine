@@ -54,7 +54,10 @@ void EditorShell::OpenInspectorColor(std::size_t index)
     const auto field=inspectorModel_.Properties().at(index);
     if(field.readOnly||!propertyHandler_||!propertyEditHandler_)return;
     EndInspectorEdit(true);EndInspectorDrag(false);CloseInspectorColor(true);CloseMenu();
-    UiColor color{0,0,0,1};std::istringstream value(field.value);value.imbue(std::locale::classic());
+    UiColor color{0,0,0,1};
+    std::string cleanVal(field.value);
+    for(char& ch:cleanVal)if(ch==',')ch=' ';
+    std::istringstream value(cleanVal);value.imbue(std::locale::classic());
     if(!(value>>color.r>>color.g>>color.b)||!std::isfinite(color.r)||!std::isfinite(color.g)||!std::isfinite(color.b))return;
     if(!propertyEditHandler_(inspectorModel_.Target(),EditorPropertyEditPhase::Begin))return;
     inspectorColor_=std::make_unique<InspectorColor>();auto& picker=*inspectorColor_;

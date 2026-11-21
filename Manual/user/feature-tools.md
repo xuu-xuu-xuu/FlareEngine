@@ -8,14 +8,17 @@
 
 同一个对象只能由刚体或角色控制器中的一个管理。物理变换需要可分解的世界矩阵，缩放不能为零。
 
-C# 获取组件创建的物理对象：
+C# 脚本获取同实体挂载的物理对象：
 
 ```csharp
-var body = entity.Session.Physics.GetBody(entity);
-var controller = CharacterController.FromComponent(entity);
+var body = GetComponent<RigidBody>();
+if (TryGetComponent<CharacterController>(out var controller))
+{
+    // 驱动胶囊体移动
+}
 ```
 
-具体脚本上下文中的会话变量请沿用项目已有写法。
+在非 `F_Behaviour` 上下文中也可通过 `entity.GetComponent<RigidBody>()` 或 `entity.Session.Physics.GetBody(entity)` 获取。
 
 ## 场景渲染
 
@@ -40,7 +43,7 @@ LOD 要求模型具有足够的可简化几何；简单方块可能无法生成�
 
 资源与参考工具中的大气、雾、反射和遮蔽演示使用示例输入计算 CPU 参考结果。要在自己的场景中启用 GPU 环境遮蔽，选中 **场景渲染设置**，勾选 **间接光环境遮蔽（GTAO）**。同一面板中的 **方向光接触阴影** 控制物体接触处的方向光可见度。[用渲染工作室调光](rendering-studio.md)
 
-场景渲染设置还提供 **动态间接光（屏幕空间）**、**动态反射（屏幕空间）** 和 **体积雾**。在“室内展厅”中，选中 **室内光照设置** 即可编辑这些选项并运行预览。[给室内展厅布光](indoor-lighting.md)
+场景渲染设置还提供 **动态间接光（屏幕空间）**、**动态反射（屏幕空间）**、**体积雾** 以及 **启用硬件光线追踪 (DXR)**（含光追软阴影、RTAO、镜面/粗糙反射与 RTGI）。在“室内展厅”中，选中 **室内光照设置** 即可编辑这些选项并运行预览。[给室内展厅布光](indoor-lighting.md)
 
 ## UI 和昼夜配置
 

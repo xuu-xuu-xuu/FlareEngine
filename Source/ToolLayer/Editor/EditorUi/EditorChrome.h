@@ -15,6 +15,8 @@ struct EditorMenuItem
     std::string label;
     EditorCommandId command = EditorCommandId::Save;
     std::string argument;
+    std::string shortcut;
+    bool separatorAfter = false;
 };
 
 struct EditorToolbarItem
@@ -28,7 +30,8 @@ class EditorChrome
 public:
     EditorChrome(EditorCommandRouter& router, EditorCommandBus& bus);
 
-    void AddMenu(std::string menu, std::string label, EditorCommandId command, std::string argument = {});
+    void AddMenu(std::string menu, std::string label, EditorCommandId command, std::string argument = {},
+                 std::string shortcut = {}, bool separatorAfter = false);
     void AddToolbar(std::string label, EditorCommandId command);
     bool ActivateMenu(std::size_t index);
     bool ActivateToolbar(std::size_t index);

@@ -80,6 +80,7 @@ std::string EditorShell::PanelLabel(EditorPanelId panel) const
     case EditorPanelId::About: return Text("EditorUi.About", "About");
     case EditorPanelId::Diagnostics: return Text("EditorUi.Diagnostics", "Diagnostics");
     case EditorPanelId::AssetTools: return Text("Feature.Tools", "Asset and reference tools");
+    case EditorPanelId::Game: return Text("EditorUi.GameViewport", "Camera");
     default: return "Panel";
     }
 }
@@ -196,6 +197,11 @@ UiElementHandle EditorShell::ViewportPanel() const noexcept
     return Slot(EditorPanelId::Viewport).panel;
 }
 
+UiElementHandle EditorShell::GamePanel() const noexcept
+{
+    return Slot(EditorPanelId::Game).panel;
+}
+
 UiElementHandle EditorShell::InspectorContent() const noexcept
 {
     return Slot(EditorPanelId::Inspector).content;
@@ -263,11 +269,28 @@ bool EditorShell::Initialize(float width, float height)
     if (!commands_.CanExecute(EditorCommandId::TogglePanel))
     {
         commands_.Register(EditorCommandId::TogglePanel, [this](const EditorCommand& command) {
+            if (command.argument == "@maximize-on-play" ||
+                command.argument == "@preview-windowed" ||
+                command.argument == "@preview-fullscreen")
+            {
+                const bool next = command.argument == "@preview-fullscreen" ? true
+                                : command.argument == "@preview-windowed"   ? false
+                                                                            : !MaximizeOnPlay();
+                SetMaximizeOnPlay(next);
+                return true;
+            }
             if (command.argument.starts_with("@layout:"))
                 return ApplyLayoutPreset(std::string_view(command.argument).substr(8));
             EditorPanelId panel = EditorPanelId::None;
             if (!EditorPanelFromName(command.argument, panel)) return false;
             TogglePanel(panel);
+            return true;
+        });
+    }
+    if (!commands_.CanExecute(EditorCommandId::FocusViewport))
+    {
+        commands_.Register(EditorCommandId::FocusViewport, [this](const EditorCommand&) {
+            SetMaximizeOnPlay(!MaximizeOnPlay());
             return true;
         });
     }
@@ -334,6 +357,35 @@ void EditorShell::Frame()
     {
         return;
     }
+    const auto nowTick = static_cast<std::uint64_t>(GetTickCount64());
+    if (pendingHierarchyRenameId_ != 0)
+    {
+        if (draggingHierarchy_ || activePanel_ != EditorPanelId::Hierarchy ||
+            hierarchyModel_.Selected() != pendingHierarchyRenameId_)
+        {
+            pendingHierarchyRenameId_ = 0;
+        }
+        else if (nowTick >= pendingHierarchyRenameTick_ && nowTick - pendingHierarchyRenameTick_ >= 400)
+        {
+            const std::uint64_t targetId = pendingHierarchyRenameId_;
+            pendingHierarchyRenameId_ = 0;
+            BeginHierarchyRename(targetId);
+        }
+    }
+    if (!pendingAssetRenamePath_.empty())
+    {
+        if ((assetDrag_ && assetDrag_->dragging) || activePanel_ != EditorPanelId::Assets ||
+            assetsModel_.SelectedPath() != pendingAssetRenamePath_)
+        {
+            pendingAssetRenamePath_.clear();
+        }
+        else if (nowTick >= pendingAssetRenameTick_ && nowTick - pendingAssetRenameTick_ >= 420)
+        {
+            const std::string targetPath = pendingAssetRenamePath_;
+            pendingAssetRenamePath_.clear();
+            BeginAssetRename(targetPath);
+        }
+    }
     // 结构变化可能发生在事件处理期间；销毁元素统一延迟到帧边界，避免销毁正在分发的目标。
     for (const UiElementHandle element : pendingDestroy_)
     {
@@ -386,13 +438,16 @@ void EditorShell::Frame()
     };
     syncContent(EditorPanelId::Console, console_, 24.0f);
     syncContent(EditorPanelId::Hierarchy, hierarchyList_, 0.0f);
-    syncContent(EditorPanelId::Assets, assetsList_, assetsPreviewImage_.empty() ? 48.0f : 124.0f);
+    const float assetsTopBar = AssetsHasFolders() ? 44.0f : 24.0f;
+    const float assetsBottomImage = assetsPreviewImage_.empty() ? 0.0f : 100.0f;
+    syncContent(EditorPanelId::Assets, assetsList_, assetsTopBar + assetsBottomImage);
     syncContent(EditorPanelId::Inspector, inspectorList_, 0.0f);
     UpdatePanelContentRects();
     LayoutInspectorColor();
     RefreshStatus();
     layout_.Layout(layoutWidth, layoutHeight);
     UpdateScrollThumbs();
+    UpdateGameTools();
     // thumb 的 style 变化发生在首帧尾部；立即消化，避免下一帧空闲时仍报告 layout。
     layout_.Layout(layoutWidth, layoutHeight);
 }
@@ -429,10 +484,22 @@ void EditorShell::SetAssetImportHandler(std::function<void()> handler)
 
 void EditorShell::SetViewportImage(std::string image)
 {
+    if (viewportImage_ == image) return;
     viewportImage_ = std::move(image);
     if (initialized_)
     {
         Frame();
+    }
+}
+
+void EditorShell::SetGameViewportImage(std::string image)
+{
+    if (gameImage_ == image) return;
+    gameImage_ = std::move(image);
+    if (initialized_)
+    {
+        UpdateDockRects();
+        UpdatePanelContentRects();
     }
 }
 

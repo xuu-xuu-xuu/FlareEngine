@@ -145,7 +145,8 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
         // G15：显式 LUT 文件优先。文件暂时不可读时仍启用 LUT（退回 LGG 生成），
         // 之后文件出现/被修复时由逐帧轮询自动接上。
         wchar_t lutFileValue[1024]{};
-        if(GetEnvironmentVariableW(L"SELFENGINE_LUT_FILE",lutFileValue,1024)>0)
+        if(GetEnvironmentVariableW(L"FLARE_LUT_FILE",lutFileValue,1024)>0
+            ||GetEnvironmentVariableW(L"SELFENGINE_LUT_FILE",lutFileValue,1024)>0)
         {
             lutEnabled_=true;
             std::string error;
@@ -264,21 +265,25 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
         hlodAsync_=false;hlodLazyProxies_=false;hlodUploadBudget_=0;hlodVramBudget_=0;
         if(HlodSceneMode(scene_))
         {
+            const auto getEnv=[](const wchar_t* primary,const wchar_t* legacy,wchar_t* buffer,DWORD count)->DWORD{
+                const DWORD length=GetEnvironmentVariableW(primary,buffer,count);
+                return length>0?length:GetEnvironmentVariableW(legacy,buffer,count);
+            };
             wchar_t hlodValue[8]{};
-            const auto hlodLength=GetEnvironmentVariableW(L"SELFENGINE_HLOD",hlodValue,8);
+            const auto hlodLength=getEnv(L"FLARE_HLOD",L"SELFENGINE_HLOD",hlodValue,8);
             hlodEnabled_=hlodLength>0&&!(hlodLength==1&&hlodValue[0]==L'0');
             if(hlodEnabled_)
             {
                 wchar_t levelValue[8]{};
-                const auto levelLength=GetEnvironmentVariableW(L"SELFENGINE_HLOD_LEVEL",levelValue,8);
+                const auto levelLength=getEnv(L"FLARE_HLOD_LEVEL",L"SELFENGINE_HLOD_LEVEL",levelValue,8);
                 if(levelLength==1&&levelValue[0]>=L'0'&&levelValue[0]<=L'3')
                     hlodLevel_=static_cast<std::uint32_t>(levelValue[0]-L'0');
                 wchar_t fileValue[1024]{};
-                if(GetEnvironmentVariableW(L"SELFENGINE_HLOD_FILE",fileValue,1024)>0)hlodFilePath_=fileValue;
+                if(getEnv(L"FLARE_HLOD_FILE",L"SELFENGINE_HLOD_FILE",fileValue,1024)>0)hlodFilePath_=fileValue;
                 wchar_t saveValue[1024]{};
-                if(GetEnvironmentVariableW(L"SELFENGINE_HLOD_SAVE",saveValue,1024)>0)hlodSavePath_=saveValue;
+                if(getEnv(L"FLARE_HLOD_SAVE",L"SELFENGINE_HLOD_SAVE",saveValue,1024)>0)hlodSavePath_=saveValue;
                 wchar_t radiusValue[32]{};
-                if(GetEnvironmentVariableW(L"SELFENGINE_HLOD_RADIUS",radiusValue,32)>0)
+                if(getEnv(L"FLARE_HLOD_RADIUS",L"SELFENGINE_HLOD_RADIUS",radiusValue,32)>0)
                 {
                     const auto parsed=std::wcstod(radiusValue,nullptr);
                     if(std::isfinite(parsed)&&parsed>0)hlodResidentRadius_=static_cast<float>(parsed);
@@ -287,16 +292,16 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
                 {
                     // G05.13：异步读取；失败回退同步读取。显存预算与每帧上传上限为 0 时保持全量同步行为。
                     wchar_t asyncValue[8]{};
-                    const auto asyncLength=GetEnvironmentVariableW(L"SELFENGINE_HLOD_ASYNC",asyncValue,8);
+                    const auto asyncLength=getEnv(L"FLARE_HLOD_ASYNC",L"SELFENGINE_HLOD_ASYNC",asyncValue,8);
                     hlodAsync_=asyncLength>0&&!(asyncLength==1&&asyncValue[0]==L'0');
                     wchar_t budgetValue[32]{};
-                    if(GetEnvironmentVariableW(L"SELFENGINE_HLOD_VRAM_MB",budgetValue,32)>0)
+                    if(getEnv(L"FLARE_HLOD_VRAM_MB",L"SELFENGINE_HLOD_VRAM_MB",budgetValue,32)>0)
                     {
                         const auto parsed=std::wcstoull(budgetValue,nullptr,10);
                         if(parsed>0)hlodVramBudget_=static_cast<std::uint64_t>(parsed)*1024*1024;
                     }
                     wchar_t uploadValue[32]{};
-                    if(GetEnvironmentVariableW(L"SELFENGINE_HLOD_UPLOAD_BUDGET",uploadValue,32)>0)
+                    if(getEnv(L"FLARE_HLOD_UPLOAD_BUDGET",L"SELFENGINE_HLOD_UPLOAD_BUDGET",uploadValue,32)>0)
                     {
                         const auto parsed=std::wcstoull(uploadValue,nullptr,10);
                         if(parsed>0)hlodUploadBudget_=static_cast<std::uint32_t>(parsed);
@@ -304,7 +309,7 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
                     hlodLazyProxies_=hlodAsync_||hlodVramBudget_>0||hlodUploadBudget_>0;
                     std::uint32_t asyncDelayMs=0;
                     wchar_t delayValue[32]{};
-                    if(GetEnvironmentVariableW(L"SELFENGINE_HLOD_ASYNC_DELAY_MS",delayValue,32)>0)
+                    if(getEnv(L"FLARE_HLOD_ASYNC_DELAY_MS",L"SELFENGINE_HLOD_ASYNC_DELAY_MS",delayValue,32)>0)
                     {
                         const auto parsed=std::wcstoull(delayValue,nullptr,10);
                         if(parsed>0)asyncDelayMs=static_cast<std::uint32_t>(parsed);
@@ -679,8 +684,14 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     {
         se::CpuScope editorGuiScope(frame.profiler,"CPU.EditorGui");
         const auto scaleX=frame.data->editorGui.framebufferScale.x,scaleY=frame.data->editorGui.framebufferScale.y;
-        const auto width=static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.width*(scaleX>0?scaleX:1))));
-        const auto height=static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.height*(scaleY>0?scaleY:1))));
+        auto width=static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.width*(scaleX>0?scaleX:1))));
+        auto height=static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.height*(scaleY>0?scaleY:1))));
+        if(frame.interactiveResize)
+        {
+            const auto cur=editorTarget_?editorTarget_->Targets():se::rhi::SceneTargets{};
+            width=std::max(cur.width,std::min(8192u,(width+256u)&~255u));
+            height=std::max(cur.height,std::min(8192u,(height+256u)&~255u));
+        }
         if(!editorTarget_)editorTarget_=std::make_unique<se::EditorViewportTargetResource>(*device_,width,height);
         std::string targetError;
         if(!editorTarget_->Resize(width,height,targetError)){Log(LogLevel::Error,localization.GetText(targetError));return RenderResult::Failed;}
@@ -704,7 +715,9 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             &&!frame.data->editorGuiEnabled&&frame.data->debugLines.empty())
             hudVisuals=se::BuildOcclusionHud(device_->Stats().occlusion,localization,
                 frame.surface.width,frame.surface.height);
-        result=gameUi_.Configure(*device_,*commands,*frame.data,frame.surface.width,frame.surface.height,ResourceDirectory()/"Shaders",diagnostics,hudVisuals);
+        const auto gameUiW=editor?editorTarget_->Targets().width:(frame.data->editorGuiEnabled?0u:frame.surface.width);
+        const auto gameUiH=editor?editorTarget_->Targets().height:(frame.data->editorGuiEnabled?0u:frame.surface.height);
+        result=gameUi_.Configure(*device_,*commands,*frame.data,gameUiW,gameUiH,ResourceDirectory()/"Shaders",diagnostics,hudVisuals);
         for(const auto& diagnostic:diagnostics)if(reportedDiagnostics_.insert(diagnostic.key+":"+diagnostic.detail).second)
             Log(LogLevel::Warning,localization.GetText(diagnostic.key)+": "+diagnostic.detail);
     }
@@ -1632,7 +1645,8 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     preparation.reset();
     se::rhi::CompletionToken token;
     se::rhi::Image capture;const bool requested=!captureOutput_.empty()&&!captured_&&frame.updateIndex==captureFrame_;
-    if(result)result=device_->Submit(*commands,token,requested?&capture:nullptr);
+    const bool wantCapture=requested||memoryCaptureRequested_;
+    if(result)result=device_->Submit(*commands,token,wantCapture?&capture:nullptr);
     if(result)
     {
         const auto gpuStats=device_->Stats();
@@ -1680,6 +1694,11 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 +" ms, draws="+std::to_string(stats->drawCalls)
                 +", tris="+std::to_string(stats->triangles)
                 +", vram="+std::to_string(stats->vramUsedMiB)+" MiB");
+    if(result&&memoryCaptureRequested_&&capture.width>0&&capture.height>0&&!capture.rgba8.empty())
+    {
+        if(requested)latestMemoryCapture_=capture;
+        else latestMemoryCapture_=std::move(capture);
+    }
     if(result&&requested)
     {
         std::vector<se::AssetDiagnostic> diagnostics;
@@ -1865,5 +1884,6 @@ void SandboxRenderer::Shutdown() noexcept
     lastMultiplePrimary_ = lastRejectedPrimary_ = controlsReported_ = false;
     indoorHistoryValid_ = rayTracingHistoryValid_ = false;
     lastIndoorSceneToken_ = lastRayTracingSceneToken_ = 0;
+    latestMemoryCapture_ = {};
     reportedBc1Uploads_=0;
 }

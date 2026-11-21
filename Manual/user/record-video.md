@@ -8,7 +8,7 @@
 
 完成后点 **打开输出目录**，可以直接找到游戏入口 `Play.exe` 和无声视频 `clip.mp4`。例如选择 640 × 360、24 帧/秒、2 秒，会得到 48 帧。下方命令适用于需要保留每张原始帧或批量录制的情况。
 
-在 Windows 上完成[从源码构建 Release 版](build-from-source.md)，保存场景。在**引擎仓库根目录**打开 PowerShell，依次执行各段命令，保持同一个窗口。第一行提示输入时，粘贴项目的 `project.json` 完整路径（不加引号）；只想先试录，也可以输入仓库内的 `Resources\Templates\EmptyGame\project.json`。
+在 Windows 上完成[从源码构建 Release 版](build-from-source.md)，保存场景。在**引擎仓库根目录**打开 PowerShell，依次执行各段命令，保持同一个窗口。第一行提示输入时，粘贴项目的 `project.json` 完整路径（不加引号）；只想先试录，也可以输入仓库内的 `Resources\Templates\Basic3D\project.json`。
 
 ```powershell
 $project = (Resolve-Path -LiteralPath (Read-Host '项目的 project.json 路径')).Path

@@ -1,0 +1,124 @@
+{
+  "format": "SelfEngine.Scene",
+  "version": 2,
+  "retiredIds": [],
+  "entities": [
+    {
+      "id": "1",
+      "name": "Main Camera",
+      "enabled": true,
+      "parent": null,
+      "components": [
+        {
+          "type": "1",
+          "version": 1,
+          "enabled": true,
+          "properties": {
+            "position": [0, 1.85, 4.3],
+            "rotation": [-0.1391731, 0, 0, 0.9902681],
+            "scale": [1, 1, 1]
+          }
+        },
+        {
+          "type": "2",
+          "version": 1,
+          "enabled": true,
+          "properties": {
+            "fov": 1.0471976,
+            "near": 0.1,
+            "far": 1000,
+            "primary": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "name": "Directional Light",
+      "enabled": true,
+      "parent": null,
+      "components": [
+        {
+          "type": "1",
+          "version": 1,
+          "enabled": true,
+          "properties": {
+            "position": [1.4, 2.2, 0],
+            "rotation": [-0.7676829, 0.4386759, 0, 0.4671472],
+            "scale": [1, 1, 1]
+          }
+        },
+        {
+          "type": "4",
+          "version": 2,
+          "enabled": true,
+          "properties": {
+            "color": [1, 0.97, 0.92],
+            "intensity": 1.55,
+            "kind": "directional",
+            "range": 10,
+            "castsShadow": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "3",
+      "name": "Plane",
+      "enabled": true,
+      "parent": null,
+      "components": [
+        {
+          "type": "1",
+          "version": 1,
+          "enabled": true,
+          "properties": {
+            "position": [0, -0.05, 0],
+            "rotation": [0, 0, 0, 1],
+            "scale": [12, 0.1, 12]
+          }
+        },
+        {
+          "type": "3",
+          "version": 1,
+          "enabled": true,
+          "properties": {
+            "asset": "00000000000000000000000000000001",
+            "materials": [],
+            "castsShadow": false,
+            "receivesShadow": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "4",
+      "name": "Cube",
+      "enabled": true,
+      "parent": null,
+      "components": [
+        {
+          "type": "1",
+          "version": 1,
+          "enabled": true,
+          "properties": {
+            "position": [0, 0.5, 0],
+            "rotation": [0, 0, 0, 1],
+            "scale": [1, 1, 1]
+          }
+        },
+        {
+          "type": "3",
+          "version": 1,
+          "enabled": true,
+          "properties": {
+            "asset": "00000000000000000000000000000001",
+            "materials": [],
+            "castsShadow": true,
+            "receivesShadow": true
+          }
+        }
+      ]
+    }
+  ]
+}

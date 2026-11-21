@@ -228,7 +228,11 @@ void EditorShell::UpdateDockRects()
             GroupView& group = groups_[groupIndex++];
             group.rect = rect;
             group.active = node.active;
-            if (group.tabBar.IsValid()) LayoutTabBar(group);
+            if (group.tabBar.IsValid())
+            {
+                LayoutTabBar(group);
+                document_.SetVisible(group.tabBar, !(gameMaximized_ && surface == 0));
+            }
             for (const EditorPanelId panel : group.tabs)
             {
                 PanelSlot& slot = Slot(panel);
@@ -273,7 +277,7 @@ void EditorShell::UpdateDockRects()
             style.background = highlighted ? UiInk(flare::workspace::Focus) : kBorder;
             style.pointerEvents = UiPointerEvents::None;
             document_.SetStyle(handle.line, style);
-            document_.SetVisible(handle.line, highlighted);
+            document_.SetVisible(handle.line, highlighted && !(gameMaximized_ && surface == 0));
         }
         path.push_back(0);
         self(self, node.children[0], first);
@@ -285,11 +289,28 @@ void EditorShell::UpdateDockRects()
     walk(walk, dock_.Root(), dockRect_);
     for(const auto& window:dock_.Windows()){surface=window.id;walk(walk,window.layout,SurfaceDockRect(surface));}
     std::array<bool, kPanelCount> visible{};
-    for (const GroupView& group : groups_) visible[static_cast<std::size_t>(group.active)] = true;
+    for (const GroupView& group : groups_)
+    {
+        if (gameMaximized_ && group.surface == 0) continue;
+        visible[static_cast<std::size_t>(group.active)] = true;
+    }
+    if (gameMaximized_)
+    {
+        visible[static_cast<std::size_t>(EditorPanelId::Game)] = true;
+        PanelSlot& gameSlot = Slot(EditorPanelId::Game);
+        if (gameSlot.panel.IsValid())
+        {
+            document_.SetParent(gameSlot.panel, root_);
+            UiStyle style = PanelStyle({0.0f, menuHeight_ + toolbarHeight_, width_,
+                                        std::max(0.0f, height_ - menuHeight_ - toolbarHeight_)});
+            document_.SetStyle(gameSlot.panel, style);
+        }
+    }
     for (const PanelSlot& slot : slots_)
         if (slot.panel.IsValid()) document_.SetVisible(slot.panel, visible[static_cast<std::size_t>(slot.id)]);
     if (statusBar_.IsValid())
     {
+        document_.SetVisible(statusBar_, !gameMaximized_);
         UiStyle style = document_.Style(statusBar_);
         style.top = UiLength::Px(height_ - statusHeight_);
         style.width = UiLength::Percent(100.0f);
@@ -313,6 +334,10 @@ void EditorShell::UpdatePanelContentRects()
         document_.SetStyle(slot.content, style);
     };
     const auto panelHeight = [this](EditorPanelId panel) {
+        if (gameMaximized_ && panel == EditorPanelId::Game)
+        {
+            return std::max(0.0f, height_ - menuHeight_ - toolbarHeight_);
+        }
         for (const GroupView& group : groups_)
         {
             if (std::find(group.tabs.begin(), group.tabs.end(), panel) != group.tabs.end())
@@ -323,6 +348,10 @@ void EditorShell::UpdatePanelContentRects()
         return 0.0f;
     };
     const auto panelWidth = [this](EditorPanelId panel) {
+        if (gameMaximized_ && panel == EditorPanelId::Game)
+        {
+            return width_;
+        }
         for (const GroupView& group : groups_)
         {
             if (std::find(group.tabs.begin(), group.tabs.end(), panel) != group.tabs.end())
@@ -335,8 +364,43 @@ void EditorShell::UpdatePanelContentRects()
     setContent(EditorPanelId::Hierarchy, 0.0f, panelHeight(EditorPanelId::Hierarchy));
     setContent(EditorPanelId::Console, 24.0f, std::max(0.0f, panelHeight(EditorPanelId::Console) - 24.0f));
     setContent(EditorPanelId::Inspector, 0.0f, panelHeight(EditorPanelId::Inspector));
-    setContent(EditorPanelId::Assets, 24.0f, std::max(0.0f, panelHeight(EditorPanelId::Assets) -
-        (assetsPreviewImage_.empty() ? 48.0f : 124.0f)));
+    const bool hasFolders = AssetsHasFolders();
+    const float assetsTopBar = hasFolders ? 44.0f : 24.0f;
+    const float assetsBottomImage = assetsPreviewImage_.empty() ? 0.0f : 100.0f;
+    const float assetsContentH = std::max(0.0f, panelHeight(EditorPanelId::Assets) - assetsTopBar - assetsBottomImage);
+    setContent(EditorPanelId::Assets, assetsTopBar, assetsContentH);
+    constexpr float kGameToolbarHeight = 24.0f;
+    const float gameContentH = std::max(0.0f, panelHeight(EditorPanelId::Game) - kGameToolbarHeight);
+    setContent(EditorPanelId::Game, kGameToolbarHeight, gameContentH);
+    if (Slot(EditorPanelId::Game).content.IsValid())
+    {
+        const UiElementHandle gameContent = Slot(EditorPanelId::Game).content;
+        document_.SetVisible(gameContent, true);
+        UiStyle cs = document_.Style(gameContent);
+        cs.image = gameImage_;
+        document_.SetStyle(gameContent, cs);
+        const bool showNoCam = document_.Visible(Slot(EditorPanelId::Game).panel) && gameImage_.empty();
+        if (gamePlaceholder_.IsValid())
+        {
+            document_.SetVisible(gamePlaceholder_, showNoCam);
+            if (showNoCam)
+            {
+                const float gw = panelWidth(EditorPanelId::Game);
+                const std::string label = Text("EditorUi.NoActiveCamera", "No active camera in scene");
+                const float lw = std::min(std::max(80.0f, gw - 16.0f), MeasuredWidth(label, 13.0f) + 24.0f);
+                auto ps = ButtonStyle(std::max(8.0f, (gw - lw) * 0.5f),
+                                      std::max(8.0f, (gameContentH - 28.0f) * 0.5f),
+                                      lw, 28.0f, UiInk(flare::workspace::Header, 0.75f));
+                ps.cornerRadius = 6.0f;
+                ps.borderWidth = 1.0f;
+                ps.borderColor = kBorder;
+                ps.color = kMuted;
+                ps.padding.left = std::max(6.0f, (lw - MeasuredWidth(label, 13.0f)) * 0.5f);
+                document_.SetText(gamePlaceholder_, label);
+                document_.SetStyle(gamePlaceholder_, ps);
+            }
+        }
+    }
     for (EditorPanelId panel : {EditorPanelId::UiDesigner, EditorPanelId::Material,
                                 EditorPanelId::ProjectSettings, EditorPanelId::BuildExport,
                                 EditorPanelId::Preferences, EditorPanelId::About, EditorPanelId::Diagnostics,EditorPanelId::AssetTools})
@@ -360,7 +424,28 @@ void EditorShell::UpdatePanelContentRects()
     const float assetsW = panelWidth(EditorPanelId::Assets);
     const bool showCreateBtn = assetsCreateElement_.IsValid() && assetsW >= 128.0f;
     if (assetsCreateElement_.IsValid()) document_.SetVisible(assetsCreateElement_, showCreateBtn);
-    const bool showTypeFilter = assetsTypeElement_.IsValid() && assetsW >= 168.0f;
+    const bool showViewToggle = assetsViewToggleElement_.IsValid() && assetsW >= 360.0f;
+    if (assetsViewToggleElement_.IsValid())
+    {
+        document_.SetVisible(assetsViewToggleElement_, showViewToggle);
+        if (showViewToggle)
+        {
+            const bool grid = assetsModel_.GridMode();
+            const std::string viewLabel = grid ? Text("EditorUi.ViewGrid", "Grid") : Text("EditorUi.ViewList", "List");
+            UiStyle style = document_.Style(assetsViewToggleElement_);
+            style.left = UiLength::Px(std::max(0.0f, assetsW - 96.0f));
+            style.top = UiLength::Px(1.0f);
+            style.width = UiLength::Px(44.0f);
+            style.height = UiLength::Px(22.0f);
+            style.background = grid ? UiInk(flare::workspace::Selection) : kSurfaceRaised;
+            style.borderWidth = 1.0f;
+            style.borderColor = grid ? UiInk(flare::workspace::Focus) : kBorder;
+            style.color = grid ? UiInk(flare::Gold) : kText;
+            document_.SetText(assetsViewToggleElement_, viewLabel);
+            document_.SetStyle(assetsViewToggleElement_, style);
+        }
+    }
+    const bool showTypeFilter = assetsTypeElement_.IsValid() && assetsW >= 248.0f;
     if (assetsTypeElement_.IsValid())
     {
         document_.SetVisible(assetsTypeElement_, showTypeFilter);
@@ -376,10 +461,11 @@ void EditorShell::UpdatePanelContentRects()
             else if (tf == "C#") typeLabel = Text("EditorUi.AssetScript", "C#");
             else if (tf == "audio") typeLabel = Text("EditorUi.AssetAudio", "Audio");
             typeLabel += " ▾";
+            const float rightOffset = showViewToggle ? 160.0f : 112.0f;
             UiStyle style = document_.Style(assetsTypeElement_);
-            style.left = UiLength::Px(std::max(0.0f, assetsW - 104.0f));
+            style.left = UiLength::Px(std::max(0.0f, assetsW - rightOffset));
             style.top = UiLength::Px(1.0f);
-            style.width = UiLength::Px(52.0f);
+            style.width = UiLength::Px(60.0f);
             style.height = UiLength::Px(22.0f);
             style.background = !tf.empty() ? UiInk(flare::workspace::Selection) : kSurfaceRaised;
             style.borderWidth = 1.0f;
@@ -395,7 +481,7 @@ void EditorShell::UpdatePanelContentRects()
         style.borderWidth = 1;
         style.borderColor = focused ? UiInk(flare::workspace::Focus) : kBorder;
         const float filterLeft = showCreateBtn ? 28.0f : 3.0f;
-        const float reserveRight = showTypeFilter ? 107.0f : 52.0f;
+        const float reserveRight = showViewToggle ? 164.0f : (showTypeFilter ? 115.0f : 52.0f);
         style.left = UiLength::Px(filterLeft);
         style.width = UiLength::Px(std::max(0.0f, assetsW - filterLeft - reserveRight));
         const bool placeholder = !focused && assetsFilter_->Text().empty();
@@ -413,26 +499,29 @@ void EditorShell::UpdatePanelContentRects()
         style.height = UiLength::Px(22.0f);
         document_.SetStyle(assetsImportElement_, style);
     }
-    if (consoleClearButton_.IsValid())
+    RefreshAssetsBreadcrumb(assetsW);
+    const bool useGrid = showViewToggle && assetsModel_.GridMode();
+    if (assetsGridContainer_.IsValid())
     {
-        const float consoleW = panelWidth(EditorPanelId::Console);
-        const bool showClear = consoleW >= 120.0f;
-        document_.SetVisible(consoleClearButton_, showClear);
-        if (showClear)
+        document_.SetVisible(assetsGridContainer_, useGrid);
+        if (useGrid)
         {
-            UiStyle style = document_.Style(consoleClearButton_);
-            style.left = UiLength::Px(std::max(4.0f, consoleW - 58.0f));
-            style.top = UiLength::Px(2.0f);
-            style.width = UiLength::Px(50.0f);
-            style.height = UiLength::Px(20.0f);
-            document_.SetStyle(consoleClearButton_, style);
+            for (const auto row : assetsList_ ? assetsList_->Rows() : std::vector<UiElementHandle>{})
+                document_.SetVisible(row, false);
+            RebuildAssetsGrid(assetsW, assetsContentH);
+        }
+        else if (assetsList_)
+        {
+            for (const auto row : assetsList_->Rows())
+                document_.SetVisible(row, true);
         }
     }
+    LayoutConsoleToolbar(panelWidth(EditorPanelId::Console));
     if (assetsPreviewImageElement_.IsValid())
     {
         UiStyle style = document_.Style(assetsPreviewImageElement_);
-        style.top = UiLength::Px(std::max(0.0f, panelHeight(EditorPanelId::Assets) - 100.0f));
-        const float scale=std::min(68.0f / std::max(1.0f,assetsPreviewImageHeight_),
+        style.top = UiLength::Px(std::max(0.0f, panelHeight(EditorPanelId::Assets) - 96.0f));
+        const float scale=std::min(88.0f / std::max(1.0f,assetsPreviewImageHeight_),
             std::max(0.0f,panelWidth(EditorPanelId::Assets)-8.0f) / std::max(1.0f,assetsPreviewImageWidth_));
         style.width = UiLength::Px(assetsPreviewImageWidth_*scale);
         style.height = UiLength::Px(assetsPreviewImageHeight_*scale);
@@ -441,10 +530,7 @@ void EditorShell::UpdatePanelContentRects()
     }
     if (assetsPreview_.IsValid())
     {
-        UiStyle style = document_.Style(assetsPreview_);
-        style.top = UiLength::Px(std::max(0.0f, panelHeight(EditorPanelId::Assets) - 24.0f));
-        style.width = UiLength::Percent(100.0f);
-        document_.SetStyle(assetsPreview_, style);
+        document_.SetVisible(assetsPreview_, false);
     }
     LayoutInspector(panelWidth(EditorPanelId::Inspector));
 }
@@ -799,6 +885,7 @@ void EditorShell::ApplyTabDrop()
 
 const EditorShell::SplitHandle* EditorShell::FindSplitter(float x, float y) const
 {
+    if (gameMaximized_ && inputSurface_ == 0) return nullptr;
     const SplitHandle* closest = nullptr;
     float nearest = kSplitterReach + 1;
     for (const SplitHandle& handle : splitHandles_)

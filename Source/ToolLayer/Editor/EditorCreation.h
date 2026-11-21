@@ -14,5 +14,6 @@ bool SpawnModelEntity(World& world, AssetStore& assets, const std::string& asset
                       StableEntityId& createdId, std::string& error);
 bool AddModelToScene(EditorSession& session, AssetStore& assets, const std::string& asset, std::string& error);
 bool CreateEditorAsset(std::string_view kind, const std::filesystem::path& project, AssetStore& assets,
-                       std::filesystem::path& created, std::string& error);
+                       std::filesystem::path& created, std::string& error,
+                       const std::filesystem::path& targetDirectory = {});
 }

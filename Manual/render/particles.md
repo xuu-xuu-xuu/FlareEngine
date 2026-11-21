@@ -32,4 +32,4 @@
 
 ## Particles
 
-C# 脚本通过 `Session.Particles`（`SelfEngine.Particles`）控制粒子爆发、启停与清空：`EmitBurst(Entity, uint)`、`SetPlaying(Entity, bool)`、`Clear(Entity?)` 与 `ActiveCount(Entity?)`。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/6f1fea505082d4a90a24b4d1779c45fbf8c6152d/Source/FunctionLayer/Scripting/Managed/Particles.cs#L3)
+C# 脚本通过 `Session.Particles`（`FlareEngine.Particles`）控制粒子爆发、启停与清空：`EmitBurst(Entity, uint)`、`SetPlaying(Entity, bool)`、`Clear(Entity?)` 与 `ActiveCount(Entity?)`。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/6f1fea505082d4a90a24b4d1779c45fbf8c6152d/Source/FunctionLayer/Scripting/Managed/Particles.cs#L3)

@@ -1,4 +1,4 @@
-param([switch]$Headless,[switch]$Hidden,[switch]$Editor,[switch]$Play,[ValidateRange(0,100000)][int]$Frames=0,[string]$Capture='',[ValidateRange(1,100000)][int]$CaptureFrame=1,[string]$Resolution='',[double]$FixedStep=0,[string]$CaptureSequence='',[ValidateRange(0,100000)][int]$CaptureCount=0,[string]$Profile='',[ValidateSet('zh-CN','en-US')][string]$Locale='zh-CN')
+﻿param([switch]$Headless,[switch]$Hidden,[switch]$Editor,[switch]$Play,[ValidateRange(0,100000)][int]$Frames=0,[string]$Capture='',[ValidateRange(1,100000)][int]$CaptureFrame=1,[string]$Resolution='',[double]$FixedStep=0,[string]$CaptureSequence='',[ValidateRange(0,100000)][int]$CaptureCount=0,[string]$Profile='',[ValidateSet('zh-CN','en-US')][string]$Locale='zh-CN')
 if([Console]::IsOutputRedirected){[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}
 $ErrorActionPreference='Stop'
 function PackageFile([string]$Relative) {
@@ -30,5 +30,7 @@ if($CaptureSequence){
 # 任何 stderr 行变成终止错误，导致警告被当成启动失败；调用子进程前只放宽本脚本的策略，
 # 真正结果仍以进程退出码判定（脚本随后直接退出，无需恢复）。
 $ErrorActionPreference='Continue'
-& (Join-Path $PSScriptRoot 'SelfEngine.Bootstrap.exe') @arguments
+$hostExe=Join-Path $PSScriptRoot 'FlareEngine.Bootstrap.exe'
+if(!(Test-Path -LiteralPath $hostExe)){$hostExe=Join-Path $PSScriptRoot 'SelfEngine.Bootstrap.exe'}
+& $hostExe @arguments
 exit $LASTEXITCODE

@@ -65,3 +65,44 @@ int32_t SE_CALL se_input_action_axis2d(
         return SE_OK;
     });
 }
+
+int32_t SE_CALL se_input_get_mouse_delta(SE_Session handle, SE_Vector2* delta) noexcept
+{
+    return Protect([&]() -> int32_t {
+        auto* s = Find(handle);
+        if (!s) return MissingSession();
+        if (!delta) return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidArgument");
+        *delta = s->mouseDelta;
+        return SE_OK;
+    });
+}
+
+int32_t SE_CALL se_input_set_cursor_mode(SE_Session handle, int32_t locked, int32_t visible) noexcept
+{
+    return Protect([&]() -> int32_t {
+        auto* s = Find(handle);
+        if (!s) return MissingSession();
+        const bool nextLocked = locked != 0;
+        const bool nextVisible = visible != 0;
+        if (!nextLocked && s->cursorLocked)
+            ReleaseSessionCursor(*s);
+        s->cursorLocked = nextLocked;
+        s->cursorVisible = nextVisible;
+        if (nextLocked)
+            s->cursorLockPausedByEsc = false;
+        if (!nextLocked && nextVisible)
+            ReleaseSessionCursor(*s);
+        return SE_OK;
+    });
+}
+
+int32_t SE_CALL se_input_get_cursor_mode(SE_Session handle, int32_t* locked, int32_t* visible) noexcept
+{
+    return Protect([&]() -> int32_t {
+        auto* s = Find(handle);
+        if (!s) return MissingSession();
+        if (locked) *locked = (s->cursorLocked && !s->cursorLockPausedByEsc) ? 1 : 0;
+        if (visible) *visible = s->cursorVisible ? 1 : 0;
+        return SE_OK;
+    });
+}

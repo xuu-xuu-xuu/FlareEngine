@@ -87,9 +87,9 @@ HRESULT D3D12Exposure::Initialize(ID3D12Device& device,D3D12MemoryAllocator& mem
         result=device.CreateComputePipelineState(&pipeline,IID_PPV_ARGS(lutState.GetAddressOf()));
     }
     if(FAILED(result)){CheckGraphicsResult(result,text,"D3D12.ExposureShaderFailed");return result;}
-    root->SetName(L"SelfEngine.ExposureRootSignature");
-    clearState->SetName(L"SelfEngine.ExposureClear");histogramState->SetName(L"SelfEngine.ExposureHistogram");
-    adaptState->SetName(L"SelfEngine.ExposureAdapt");lutState->SetName(L"SelfEngine.ExposureLut");
+    root->SetName(L"FlareEngine.ExposureRootSignature");
+    clearState->SetName(L"FlareEngine.ExposureClear");histogramState->SetName(L"FlareEngine.ExposureHistogram");
+    adaptState->SetName(L"FlareEngine.ExposureAdapt");lutState->SetName(L"FlareEngine.ExposureLut");
     device_=&device;memory_=&memory;root_=std::move(root);clear_=std::move(clearState);
     histogram_=std::move(histogramState);adapt_=std::move(adaptState);lut_=std::move(lutState);return S_OK;
 }
@@ -132,14 +132,14 @@ HRESULT D3D12Exposure::CreateOutput(ID3D12Resource& hdr,UINT width,UINT height,D
     result=device_->CreateCommittedResource(&uploadHeap,D3D12_HEAP_FLAG_NONE,&lutUpload,
         D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(candidate.lutUpload.GetAddressOf()));
     if(FAILED(result))return result;
-    candidate.lutUpload->SetName(L"SelfEngine.ExposureLutUpload");
+    candidate.lutUpload->SetName(L"FlareEngine.ExposureLutUpload");
     candidate.lutUploadRowPitch=lutRowPitch;
     D3D12_DESCRIPTOR_HEAP_DESC heap{};
     heap.NumDescriptors=descriptorCount;heap.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     heap.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;heap.NodeMask=1;
     result=device_->CreateDescriptorHeap(&heap,IID_PPV_ARGS(candidate.descriptors.GetAddressOf()));
     if(FAILED(result))return result;
-    candidate.descriptors->SetName(L"SelfEngine.ExposureDescriptors");
+    candidate.descriptors->SetName(L"FlareEngine.ExposureDescriptors");
     const auto increment=device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     const auto cpu=candidate.descriptors->GetCPUDescriptorHandleForHeapStart();
     const auto gpu=candidate.descriptors->GetGPUDescriptorHandleForHeapStart();

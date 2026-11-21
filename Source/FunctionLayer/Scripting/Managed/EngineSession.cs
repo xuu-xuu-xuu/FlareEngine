@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 public enum QualityLevel { Project, Performance, Balanced, High }
 
@@ -33,6 +33,7 @@ public sealed unsafe partial class EngineSession : IDisposable
     private bool disposeRequested;
     private bool disposed;
     public event Action<double>? Update;
+    internal event Action<double>? PostStep;
     public event Action<string, Exception?>? Diagnostic;
     public event Action<bool>? EditorPlayChanged;
     internal Func<ulong,string,string>? EditorDataRequested;
@@ -70,6 +71,7 @@ public sealed unsafe partial class EngineSession : IDisposable
             // 弱句柄不会把整个 session 永久根住；Step 自身保持 owner 强引用。
             handle.CallbackContext = GCHandle.Alloc(this, GCHandleType.Weak);
             Check(NativeMethods.SetUpdate(value, &NativeUpdate, GCHandle.ToIntPtr(handle.CallbackContext)));
+            Check(NativeMethods.SetPostStep(value, &NativePostStep, GCHandle.ToIntPtr(handle.CallbackContext)));
             Check(NativeMethods.SetEnvironmentCallback(value,&NativeEnvironmentTick,GCHandle.ToIntPtr(handle.CallbackContext)));
             if(Marshal.SizeOf<EventHeader>()!=88||Marshal.SizeOf<EventStatistics>()!=104||Marshal.SizeOf<AudioPlayDescription>()!=40)throw new EngineException("Bridge.AbiMismatch",1);
             Check(NativeMethods.SetEventCallback(value,&NativeEvent,GCHandle.ToIntPtr(handle.CallbackContext)));
@@ -203,6 +205,57 @@ public sealed unsafe partial class EngineSession : IDisposable
         Check(result);
         return new Entity(this, entity);
     });
+    public Entity? FindEntityByName(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        return Invoke<Entity?>(value =>
+        {
+            Check(NativeMethods.FindEntityByName(value, name, checked((uint)Encoding.UTF8.GetByteCount(name)), out var entity, out var found));
+            return found != 0 ? new Entity(this, entity) : null;
+        });
+    }
+    public Vector2 MouseDelta => Invoke(value => { Check(NativeMethods.GetMouseDelta(value, out var delta)); return delta; });
+    public (bool Locked, bool Visible) CursorMode => Invoke(value =>
+    {
+        Check(NativeMethods.GetCursorMode(value, out var locked, out var visible));
+        return (locked != 0, visible != 0);
+    });
+    public void SetCursorMode(bool locked, bool visible)
+        => Invoke(value => { Check(NativeMethods.SetCursorMode(value, locked ? 1 : 0, visible ? 1 : 0)); return 0; });
+    public (Vector3 Origin, Vector3 Direction)? ScreenPointToRay(ulong cameraStableId, Vector2 screenPixel) => Invoke<(Vector3, Vector3)?>(value =>
+    {
+        var result = NativeMethods.ScreenPointToRay(value, cameraStableId, screenPixel, out var origin, out var direction);
+        if (result == 1 || result == 2) return null;
+        Check(result);
+        return (origin, direction);
+    });
+    public IReadOnlyList<(ulong SourceStableId, Entity Clone)> DuplicateEntity(F_Entity source, Vector3? position = null, Quaternion? rotation = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (source.Session != this) throw new ArgumentException("Bridge.InvalidEntity");
+        return Invoke<IReadOnlyList<(ulong, Entity)>>(value =>
+        {
+            Vector3 posVal = position ?? default;
+            Quaternion rotVal = rotation.HasValue ? Quaternion.Normalize(rotation.Value) : Quaternion.Identity;
+            float* rotPtr = stackalloc float[4] { rotVal.X, rotVal.Y, rotVal.Z, rotVal.W };
+            Vector3* posPtr = position.HasValue ? &posVal : null;
+            float* optRotPtr = rotation.HasValue ? rotPtr : null;
+            var probe = NativeMethods.DuplicateEntity(value, source.Handle, posPtr, optRotPtr, null, null, 0, out var required);
+            if (probe != 3) Check(probe);
+            if (required == 0) return [];
+            var srcIds = new ulong[required];
+            var dstHandles = new ulong[required];
+            fixed (ulong* pSrc = srcIds)
+            fixed (ulong* pDst = dstHandles)
+            {
+                Check(NativeMethods.DuplicateEntity(value, source.Handle, posPtr, optRotPtr, pSrc, pDst, required, out var actual));
+                var result = new (ulong, Entity)[actual];
+                for (uint i = 0; i < actual; ++i)
+                    result[i] = (srcIds[i], new Entity(this, dstHandles[i]));
+                return result;
+            }
+        });
+    }
     public string ExportScene() => Invoke(value => ReadString((byte* buffer, uint capacity, out uint required) => NativeMethods.ExportScene(value, buffer, capacity, out required)));
     public void ImportScene(string json)
     {
@@ -216,6 +269,7 @@ public sealed unsafe partial class EngineSession : IDisposable
         if (inCallback) { disposeRequested = true; return; }
         disposed = true;
         Update = null;
+        PostStep = null;
         EditorPlayChanged = null;
         EventHandlers.Clear();
         SceneRetiring=null;retiringEntities.Clear();
@@ -319,6 +373,30 @@ public sealed unsafe partial class EngineSession : IDisposable
         }
         finally { if (owner is not null) --owner.callbackDepth; }
     }
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static int NativePostStep(ulong _, double deltaSeconds, nint context)
+    {
+        EngineSession? owner = null;
+        try
+        {
+            owner = GCHandle.FromIntPtr(context).Target as EngineSession;
+            if (owner is null) return 1;
+            ++owner.callbackDepth;
+            owner.PostStep?.Invoke(deltaSeconds);
+            if (owner.disposeRequested && owner.IsWindowRunning) owner.RequestWindowClose();
+            return 0;
+        }
+        catch (Exception exception)
+        {
+            if (owner is not null)
+            {
+                owner.LastCallbackException = exception;
+                try { owner.Diagnostic?.Invoke("Bridge.ManagedCallbackFailed", exception); } catch { }
+            }
+            return 1;
+        }
+        finally { if (owner is not null) --owner.callbackDepth; }
+    }
 }
 
 // W07：程序化天空覆盖。颜色是显示线性 0..1；太阳方向取场景方向光，不在这里重复定义。
@@ -328,8 +406,9 @@ public struct SkyState
     public float SunIntensity, SunAngularRadius;
 }
 
-public sealed class Entity
-{    internal Entity(EngineSession session, ulong handle) { Session = session; Handle = handle; }
+public partial class F_Entity
+{
+    internal F_Entity(EngineSession session, ulong handle) { Session = session; Handle = handle; }
     public EngineSession Session { get; }
     public ulong Handle { get; }
     public bool Enabled
@@ -345,6 +424,15 @@ public sealed class Entity
     {
         get => Session.Invoke(value => { EngineSession.Check(NativeMethods.GetTransform(value, Handle, out var transform)); return transform; });
         set => Session.Invoke(native => { EngineSession.Check(NativeMethods.SetTransform(native, Handle, in value)); return 0; });
+    }
+    public Transform WorldTransform
+        => Session.Invoke(value => { EngineSession.Check(NativeMethods.GetWorldTransform(value, Handle, out var transform)); return transform; });
+    public Entity? Parent
+        => Session.Invoke<Entity?>(value => { EngineSession.Check(NativeMethods.GetParent(value, Handle, out var parent)); return parent == 0 ? null : new Entity(Session, parent); });
+    public void SetParent(F_Entity? parent, bool keepWorld = true)
+    {
+        if (parent is not null && parent.Session != Session) throw new ArgumentException("Bridge.InvalidEntity");
+        Session.Invoke(value => { EngineSession.Check(NativeMethods.SetParent(value, Handle, parent?.Handle ?? 0, keepWorld ? 1 : 0)); return 0; });
     }
     public void Destroy() => Session.Invoke(value => { EngineSession.Check(NativeMethods.DestroyEntity(value, Handle)); return 0; });
     // W03：角色播放与关节查询。clip 名来自资产；关节不存在返回 null，不是异常。
@@ -372,4 +460,9 @@ public sealed class Entity
             return front!=0?(Vector2?)uv:null;
         });
     }
+}
+
+public sealed class Entity : F_Entity
+{
+    internal Entity(EngineSession session, ulong handle) : base(session, handle) { }
 }

@@ -1,16 +1,16 @@
 using System.Numerics;
-using SelfEngine;
+using FlareEngine;
 
 namespace ProjectScripts;
 
-[ScriptId("sample.menu_world")]
-public sealed class MenuWorld:Behaviour
+[F_Script("sample.menu_world")]
+public sealed class MenuWorld:F_Behaviour
 {
-    [Expose] public EntityReference Floor,Target;
+    [F_Expose] public EntityReference Floor,Target;
     private RigidBody? floorBody,targetBody;
     private bool debugChanged,previousDebug;
     public int Interactions {get;private set;}
-    public override void OnCreate()
+    public override void F_Awake()
     {
         var floor=Floor.Resolve(Entity.Session)??throw new ArgumentException("Bridge.InvalidEntity");
         var target=Target.Resolve(Entity.Session)??throw new ArgumentException("Bridge.InvalidEntity");
@@ -25,7 +25,7 @@ public sealed class MenuWorld:Behaviour
             Scripts.Events.Publish(new MenuInteractionCompleted(request.Target));return true;
         });
     }
-    public override void OnDestroy()
+    public override void F_Destroy()
     {
         if(!Entity.Session.IsDisposed)
         {

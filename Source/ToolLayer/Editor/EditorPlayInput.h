@@ -33,8 +33,13 @@ public:
 
     void Attach(UiTree* ui);
     void SetViewport(HWND window, UiRect viewport);
+    void Activate();
     EditorInputRoute Process(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
     [[nodiscard]] bool Active() const noexcept { return active_; }
+    void SetCursorCaptured(bool captured) noexcept { cursorCaptured_ = captured; }
+    [[nodiscard]] bool CursorCaptured() const noexcept { return cursorCaptured_; }
+    [[nodiscard]] HWND Window() const noexcept { return window_; }
+    [[nodiscard]] UiRect Viewport() const noexcept { return viewport_; }
     [[nodiscard]] bool KeyboardConsumed() const;
     [[nodiscard]] bool PointerConsumed() const;
     [[nodiscard]] InputState GameplayInput(const InputState& source) const;
@@ -55,6 +60,7 @@ private:
     std::array<bool, 3> held_{};
     bool active_ = false;
     bool over_ = false;
+    bool cursorCaptured_ = false;
     HWND window_ = nullptr;
 };
 

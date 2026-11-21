@@ -1231,7 +1231,7 @@ HRESULT D3D12Meshlet::Prepare(D3D12UploadArena& arena, D3D12MeshletOutput& outpu
             ComPtr<ID3D12DescriptorHeap> heap;
             const auto hr = device2_->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(heap.GetAddressOf()));
             if (FAILED(hr)) return hr;
-            heap->SetName(L"SelfEngine.MeshletDescriptors");
+            heap->SetName(L"FlareEngine.MeshletDescriptors");
             output.descriptors = std::move(heap);
             output.descriptorCapacity = nextCap;
         }

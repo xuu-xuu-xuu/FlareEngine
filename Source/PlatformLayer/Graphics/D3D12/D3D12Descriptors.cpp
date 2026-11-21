@@ -38,7 +38,7 @@ HRESULT D3D12DescriptorPool::Allocate(UINT count,std::shared_ptr<D3D12Descriptor
     D3D12_DESCRIPTOR_HEAP_DESC desc{};desc.Type=type_;desc.NumDescriptors=capacity;
     Page page;const auto result=device_->CreateDescriptorHeap(&desc,IID_PPV_ARGS(page.heap.GetAddressOf()));
     if(FAILED(result)){++stats_.failures;return result;}
-    page.heap->SetName(L"SelfEngine.CpuDescriptorPage");page.capacity=capacity;page.free.emplace(0,capacity);
+    page.heap->SetName(L"FlareEngine.CpuDescriptorPage");page.capacity=capacity;page.free.emplace(0,capacity);
     pages_.push_back(std::move(page));stats_.capacity+=capacity;++stats_.heapsCreated;
     const auto index=static_cast<UINT>(pages_.size()-1);take(index,pages_[index].free.begin());return S_OK;
 }
@@ -92,7 +92,7 @@ HRESULT D3D12FrameDescriptors::Prepare(ID3D12Device& device,std::span<const D3D1
         Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> candidate;
         const auto result=device.CreateDescriptorHeap(&desc,IID_PPV_ARGS(candidate.GetAddressOf()));
         if(FAILED(result)){++stats_.failures;return result;}
-        candidate->SetName(L"SelfEngine.FrameDescriptorTable");heap_=std::move(candidate);stats_.capacity=capacity;++stats_.heapsCreated;
+        candidate->SetName(L"FlareEngine.FrameDescriptorTable");heap_=std::move(candidate);stats_.capacity=capacity;++stats_.heapsCreated;
     }
     stats_.used=needed;stats_.peak=std::max(stats_.peak,needed);stats_.allocations+=needed;draws_.clear();draws_.reserve(sources.size());
     if(!needed)return S_OK;

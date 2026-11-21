@@ -81,7 +81,8 @@ bool ValidCandidate(const fs::path& root,const fs::path& operations,const fs::pa
     {
         if(!Within(root,operations))return false;
         manifest=ReadJson(root/"candidate.json");
-        if(manifest.value("schemaVersion",0)!=1||manifest.value("kind",std::string{})!="SelfEngine.EditorScriptCandidate"
+        const auto kind=manifest.value("kind",std::string{});
+        if(manifest.value("schemaVersion",0)!=1||(kind!="FlareEngine.EditorScriptCandidate"&&kind!="SelfEngine.EditorScriptCandidate")
             ||manifest.value("configuration",std::string{})!=configuration||TextPath(manifest.value("projectRoot",std::string{}))!=project)return false;
         std::set<fs::path> listed;
         for(const auto& file:manifest.at("files"))
@@ -239,6 +240,7 @@ int RunManagedEditorWorker(const EditorWorkerOptions& options,const fs::path& en
             SetPathEnvironment(L"SELFENGINE_EDITOR_UI_FILE",ui.empty()?fs::path{}:project/ui);
             SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_EXPLICIT",(!options.scene.empty()||options.smokePlayback)?L"1":nullptr);
             SetEnvironmentVariableW(L"SELFENGINE_EDITOR_MANAGED_HOST",L"1");
+            SetEnvironmentVariableW(L"FLARE_EDITOR_UNCOMPILED_SCRIPTS",nullptr);
             SetPathEnvironment(L"SELFENGINE_EDITOR_CAPTURE_FILE",options.capture.empty()?fs::path{}:fs::absolute(options.capture));
             SetEnvironmentVariableW(L"SELFENGINE_EDITOR_CAPTURE_FRAME",std::to_wstring(options.frames?options.frames:30).c_str());
             std::vector<std::wstring> run{L"--editor",L"--project-root",project.wstring(),L"--project",(candidate/TextPath(candidateManifest.at("assembly").get<std::string>())).wstring(),
@@ -286,6 +288,7 @@ int RunNativeEditorWorker(const EditorWorkerOptions& options)
 {
     if(!ReportStartup(StartupStage::Runtime))return 0;
     SetEnvironmentVariableW(L"SELFENGINE_EDITOR_MANAGED_HOST",nullptr);
+    SetEnvironmentVariableW(L"FLARE_EDITOR_UNCOMPILED_SCRIPTS",nullptr);
     EditorRenderer renderer;
     if(!options.capture.empty())renderer.SetCaptureOutput(options.capture,options.frames?options.frames:30);
     EditorApplicationHooks hooks;
@@ -385,26 +388,97 @@ int RunEditorWorker(const EditorWorkerOptions& options)
     {
         if(!firstNativeLoad)loading.Restart();firstNativeLoad=false;
         const auto build=ReadJson(options.projectRoot/"build.json");
-        if(fs::is_regular_file(options.projectRoot/"build.json")&&(!build.is_object()
-            ||(build.contains("scriptsProject")&&(!build["scriptsProject"].is_string()||!build["scriptsProject"].get<std::string>().empty()))))
+        const bool isSmokeRun=options.smokePlayback||!options.smokeExportName.empty()||!options.smokeWorkflow.empty();
+        const bool packaged=fs::is_regular_file(engineRoot/"editor-package.json");
+        const fs::path directBootstrap=packaged?(engineRoot/"Player/FlareEngine.Bootstrap.exe"):(GetExecutableDirectory()/"FlareEngine.Bootstrap.exe");
+        const bool hasScriptsProject=fs::is_regular_file(options.projectRoot/"build.json")&&(!build.is_object()
+            ||(build.contains("scriptsProject")&&(!build["scriptsProject"].is_string()||!build["scriptsProject"].get<std::string>().empty())));
+        const bool interactiveManagedDirect=!isSmokeRun&&!options.hidden&&options.frames==0&&!options.projectRoot.empty()
+            &&fs::is_regular_file(directBootstrap)
+            &&(!fs::is_regular_file(options.projectRoot/"build.json")||(build.is_object()&&(!build.contains("scriptsProject")||build["scriptsProject"].is_string())));
+        if(hasScriptsProject&&!interactiveManagedDirect)
             return RunManagedEditorWorker(options,engineRoot,userDirectory,loading);
         // 空项目也有受控重开入口：首次创建 Behaviour 后无需手动关掉启动器。
         if(options.projectRoot.empty())return RunNativeEditorWorker(options);
-        const auto operation=NewOperation(fs::absolute(options.projectRoot)/"out/Editor"/userDirectory.filename()/"operations");
+        const auto project=fs::absolute(options.projectRoot).lexically_normal();
+        const auto operation=NewOperation(project/"out/Editor"/userDirectory.filename()/"operations");
         if(operation.empty())
         {
             std::wcerr<<L"[Error] Editor.OperationDirectoryUnavailable: "
-                      <<(fs::absolute(options.projectRoot)/"out/Editor"/userDirectory.filename()/"operations").wstring()<<L"\n";
+                      <<(project/"out/Editor"/userDirectory.filename()/"operations").wstring()<<L"\n";
             return 5;
         }
-        const Json status{{"schemaVersion",1},{"state","ready"},{"managed",false},{"hasCandidate",false},
+        const bool bootInManagedHost=!isSmokeRun&&fs::is_regular_file(directBootstrap);
+        const Json status{{"schemaVersion",1},{"state","ready"},{"managed",bootInManagedHost},{"hasCandidate",false},
             {"sourceIdentity",""},{"candidateIdentity",""},{"candidateRoot",""},{"diagnosticKey",""},{"diagnosticsPath",PathText(operation/"build.log")},{"sourceFiles",Json::array()}};
         if(!WriteJsonAtomic(operation/"build-status.json",status))return 5;
         SetPathEnvironment(L"SELFENGINE_EDITOR_RESTART_REQUEST",operation/"restart.json");
         SetPathEnvironment(L"SELFENGINE_EDITOR_BUILD_STATUS",operation/"build-status.json");
         SetPathEnvironment(L"SELFENGINE_EDITOR_BUILD_DIAGNOSTICS",operation/"build.log");
         SetPathEnvironment(L"SELFENGINE_EDITOR_ENGINE_ROOT",engineRoot);
-        const auto result=RunNativeEditorWorker(options);
+        int result=1;
+        if(bootInManagedHost)
+        {
+            if(!ReportStartup(StartupStage::Runtime))return 0;
+            const auto manifestDoc=ReadJson(project/"project.json");
+            const auto scene=options.scene.empty()?project/TextPath(manifestDoc.value("entryScene",std::string{})):fs::absolute(options.scene);
+            const auto ui=TextPath(build.is_object()?build.value("entryUi",std::string{}):std::string{});
+            const auto bindingsRel=TextPath(build.is_object()?build.value("bindings",std::string{}):std::string{});
+            const fs::path bindingsFile=bindingsRel.empty()?(project/"Scripts/Main.bindings.json"):(project/bindingsRel);
+            fs::path initialDll;
+            if(hasScriptsProject)
+            {
+                std::error_code ec;
+                fs::file_time_type newestCs{};
+                bool hasCs=false;
+                for(fs::recursive_directory_iterator it(project/"Scripts",ec),end;!ec&&it!=end;it.increment(ec))
+                {
+                    if(it->is_directory(ec)&&(it->path().filename()==L"bin"||it->path().filename()==L"obj")){it.disable_recursion_pending();continue;}
+                    if(!it->is_regular_file(ec)||it->path().extension()!=L".cs")continue;
+                    const auto wt=it->last_write_time(ec);
+                    if(!ec&&(!hasCs||wt>newestCs)){newestCs=wt;hasCs=true;}
+                }
+                const fs::path hotRoot=project/"out/Editor/HotReload";
+                fs::file_time_type bestDllTime{};
+                if(fs::is_directory(hotRoot,ec))
+                {
+                    for(const auto& dir:fs::directory_iterator(hotRoot,ec))
+                    {
+                        if(!dir.is_directory(ec)||!dir.path().filename().wstring().starts_with(L"bin-"))continue;
+                        for(const auto& f:fs::directory_iterator(dir.path(),ec))
+                        {
+                            if(!f.is_regular_file(ec)||!f.path().filename().wstring().ends_with(L".deps.json"))continue;
+                            auto stem=f.path().filename().wstring();stem.erase(stem.size()-10);
+                            const fs::path candDll=dir.path()/(stem+L".dll");
+                            if(!fs::is_regular_file(candDll,ec))continue;
+                            const auto dt=fs::last_write_time(candDll,ec);
+                            if(!ec&&(!hasCs||dt>=newestCs)&&(initialDll.empty()||dt>bestDllTime)){initialDll=candDll;bestDllTime=dt;}
+                        }
+                    }
+                }
+            }
+            SetPathEnvironment(L"SELFENGINE_EDITOR_SCENE_FILE",scene);
+            SetPathEnvironment(L"SELFENGINE_EDITOR_UI_FILE",ui.empty()?fs::path{}:project/ui);
+            SetEnvironmentVariableW(L"SELFENGINE_EDITOR_MANAGED_HOST",L"1");
+            SetEnvironmentVariableW(L"FLARE_EDITOR_UNCOMPILED_SCRIPTS",(hasScriptsProject&&initialDll.empty())?L"1":nullptr);
+            SetPathEnvironment(L"SELFENGINE_EDITOR_CAPTURE_FILE",options.capture.empty()?fs::path{}:fs::absolute(options.capture));
+            SetEnvironmentVariableW(L"SELFENGINE_EDITOR_CAPTURE_FRAME",std::to_wstring(options.frames?options.frames:30).c_str());
+            std::vector<std::wstring> run{L"--editor",L"--project-root",project.wstring(),L"--project",initialDll.wstring(),
+                L"--bindings",bindingsFile.wstring(),L"--scene",scene.wstring(),L"--locale",WideText(options.locale)};
+            if(!ui.empty()){run.push_back(L"--ui");run.push_back((project/ui).wstring());}
+            const auto content=TextPath(manifestDoc.value("contentRoot",std::string{}));
+            if(!content.empty()){run.push_back(L"--asset-root");run.push_back((project/content).wstring());run.push_back(L"--asset-cache");run.push_back((project/".cache/assets").wstring());}
+            if(options.hidden)run.push_back(L"--hidden");
+            if(options.frames){run.push_back(L"--frames");run.push_back(std::to_wstring(options.frames));}
+            ProcessRunResult child;std::atomic<bool> hostCancelled=false;
+            RunEditorProcess(directBootstrap.wstring(),run,packaged?project:engineRoot,operation/"editor.log",
+                &hostCancelled,child,[&]{if(loading.Cancelled())hostCancelled=true;},!options.hidden);
+            result=child.started?child.exitCode:5;
+        }
+        else
+        {
+            result=RunNativeEditorWorker(options);
+        }
         const auto restart=ReadJson(operation/"restart.json");
         if(!restart.is_object()||restart.value("schemaVersion",0)!=1||restart.value("action",std::string{})!="compile")return result;
     }

@@ -36,6 +36,8 @@ struct EditorApplicationHooks
     std::function<void(World&, UiTree&, FrameData&)> extract;
     std::function<bool(std::uint64_t, std::string&, std::string&)> scriptQuery;
     std::function<bool(std::uint64_t, const std::string&, std::string&)> scriptApply;
+    std::function<void(std::vector<std::string>&)> drainScriptLogs;
+    std::function<bool(void* window, const int (&screenRect)[4])> syncPlayCursor;
     EditorExternalDocuments externalDocuments;
     std::function<void(EditorWorkspaceHost&, EditorSession&)> operationFrame;
     std::function<void(EditorSession&, UiTree&)> closing;

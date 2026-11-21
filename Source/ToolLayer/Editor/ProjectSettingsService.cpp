@@ -46,7 +46,9 @@ bool Parse(std::string_view text,bool build,Json& output,std::string& errorKey)
             else if(event==Json::parse_event_t::key&&!keys.empty()&&!keys.back().insert(value.get<std::string>()).second)duplicate=true;
             else if(event==Json::parse_event_t::object_end)keys.pop_back();return true;
         });
-        if(duplicate||!parsed.is_object()||parsed.value("format",std::string{})!=(build?"SelfEngine.Build":"SelfEngine.Project"))
+        const auto fmt=parsed.is_object()?parsed.value("format",std::string{}):std::string{};
+        const bool validFormat=build?(fmt=="FlareEngine.Build"||fmt=="SelfEngine.Build"):(fmt=="FlareEngine.Project"||fmt=="SelfEngine.Project");
+        if(duplicate||!parsed.is_object()||!validFormat)
         {errorKey=invalid;return false;}
         if(!parsed.contains("version")||!parsed.at("version").is_number_integer()||parsed.at("version")!=1)
         {errorKey="Project.UnsupportedVersion";return false;}
@@ -216,7 +218,7 @@ bool ProjectSettingsService::DecodeBuild(std::string_view text,BuildSettings& ou
 }
 bool ProjectSettingsService::MergeBuild(std::string_view original,const BuildSettings& settings,std::string& output,std::string& errorKey)
 {
-    errorKey.clear();Json json={{"format","SelfEngine.Build"},{"version",1}};
+    errorKey.clear();Json json={{"format","FlareEngine.Build"},{"version",1}};
     if(!original.empty()&&!Parse(original,true,json,errorKey))return false;
     try
     {

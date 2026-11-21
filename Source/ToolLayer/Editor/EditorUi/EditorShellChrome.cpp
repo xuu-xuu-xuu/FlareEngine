@@ -17,10 +17,11 @@ using namespace detail;
 void EditorShell::RegisterDefaultShortcuts()
 {
     router_.RegisterShortcut('S', true, false, false, EditorCommandId::Save);
-    router_.RegisterShortcut('S', true, true, true, EditorCommandId::SaveAll);
+    router_.RegisterShortcut('S', true, false, true, EditorCommandId::SaveAll);
     router_.RegisterShortcut('Z', true, false, false, EditorCommandId::Undo);
     router_.RegisterShortcut('Z', true, true, false, EditorCommandId::Redo);
     router_.RegisterShortcut('Y', true, false, false, EditorCommandId::Redo);
+    router_.RegisterShortcut('P', true, false, false, EditorCommandId::Play);
     router_.RegisterShortcut(VK_F5, false, false, false, EditorCommandId::Play);
     router_.RegisterShortcut(VK_F6, false, false, false, EditorCommandId::Pause);
     router_.RegisterShortcut(VK_F7, false, false, false, EditorCommandId::Step);
@@ -37,6 +38,7 @@ void EditorShell::RegisterDefaultShortcuts()
     router_.RegisterShortcut('B', true, true, false, EditorCommandId::TogglePanel, "build-export");
     router_.RegisterShortcut(VK_OEM_COMMA, true, false, false, EditorCommandId::OpenSettings);
     router_.RegisterShortcut('P', true, true, false, EditorCommandId::TogglePanel, "preferences");
+    router_.RegisterShortcut('F', true, true, false, EditorCommandId::SetProperty, "@align-with-view");
     router_.RegisterShortcut(VK_F11, false, false, false, EditorCommandId::FocusViewport);
     router_.RegisterShortcut(VK_F1, false, false, false, EditorCommandId::TogglePanel, "about");
 }
@@ -48,44 +50,52 @@ void EditorShell::BuildChromeMenus()
     const std::string play = Text("EditorUi.Play", "Play");
     const std::string project = Text("EditorUi.Project", "Project");
     const std::string panels = Text("EditorUi.Panels", "Panels");
-    chrome_.AddMenu(file, Text("EditorUi.Open", "Open"), EditorCommandId::Open);
-    chrome_.AddMenu(file, Text("EditorUi.NewScene", "New Scene"), EditorCommandId::NewScene);
-    chrome_.AddMenu(file, Text("EditorUi.Save", "Save"), EditorCommandId::Save);
-    chrome_.AddMenu(file, Text("EditorUi.SaveSceneAs", "Save As"), EditorCommandId::SaveAs);
-    chrome_.AddMenu(file, Text("EditorUi.SaveAll", "Save All"), EditorCommandId::SaveAll);
-    chrome_.AddMenu(edit, Text("EditorUi.Undo", "Undo"), EditorCommandId::Undo);
-    chrome_.AddMenu(edit, Text("EditorUi.Redo", "Redo"), EditorCommandId::Redo);
-    chrome_.AddMenu(edit, Text("EditorUi.Preferences", "Preferences"), EditorCommandId::TogglePanel, "preferences");
-    chrome_.AddMenu(play, Text("EditorUi.Play", "Play / Stop"), EditorCommandId::Play);
-    chrome_.AddMenu(play, Text("EditorUi.Pause", "Pause / Resume"), EditorCommandId::Pause);
-    chrome_.AddMenu(play, Text("EditorUi.StepPlay", "Step"), EditorCommandId::Step);
-    chrome_.AddMenu(play, Text("EditorUi.Stop", "Stop"), EditorCommandId::Stop);
-    chrome_.AddMenu(project, Text("EditorUi.ProjectSettings", "Project Settings"), EditorCommandId::OpenSettings);
+    chrome_.AddMenu(file, Text("EditorUi.Open", "Open"), EditorCommandId::Open, {}, "Ctrl+O");
+    chrome_.AddMenu(file, Text("EditorUi.NewScene", "New Scene"), EditorCommandId::NewScene, {}, "Ctrl+N", true);
+    chrome_.AddMenu(file, Text("EditorUi.Save", "Save"), EditorCommandId::Save, {}, "Ctrl+S");
+    chrome_.AddMenu(file, Text("EditorUi.SaveSceneAs", "Save As"), EditorCommandId::SaveAs, {}, "Ctrl+Shift+S");
+    chrome_.AddMenu(file, Text("EditorUi.SaveAll", "Save All"), EditorCommandId::SaveAll, {}, "Ctrl+Alt+S");
+
+    chrome_.AddMenu(edit, Text("EditorUi.Undo", "Undo"), EditorCommandId::Undo, {}, "Ctrl+Z");
+    chrome_.AddMenu(edit, Text("EditorUi.Redo", "Redo"), EditorCommandId::Redo, {}, "Ctrl+Y", true);
+    chrome_.AddMenu(edit, Text("EditorUi.Duplicate", "Duplicate"), EditorCommandId::Duplicate, {}, "Ctrl+D");
+    chrome_.AddMenu(edit, Text("EditorUi.Delete", "Delete"), EditorCommandId::Delete, {}, "Del", true);
+    chrome_.AddMenu(edit, Text("EditorUi.AlignWithView", "Align With View"), EditorCommandId::SetProperty, "@align-with-view", "Ctrl+Shift+F", true);
+    chrome_.AddMenu(edit, Text("EditorUi.Preferences", "Preferences"), EditorCommandId::TogglePanel, "preferences", "Ctrl+Shift+P");
+
+    chrome_.AddMenu(play, Text("EditorUi.Play", "Play / Stop"), EditorCommandId::Play, {}, "F5");
+    chrome_.AddMenu(play, Text("EditorUi.Pause", "Pause / Resume"), EditorCommandId::Pause, {}, "F6");
+    chrome_.AddMenu(play, Text("EditorUi.StepPlay", "Step"), EditorCommandId::Step, {}, "F7");
+    chrome_.AddMenu(play, Text("EditorUi.Stop", "Stop"), EditorCommandId::Stop, {}, "F8", true);
+    chrome_.AddMenu(play, Text("EditorUi.FullscreenPreview", "Fullscreen Preview"), EditorCommandId::TogglePanel, "@maximize-on-play", "F11");
+
+    chrome_.AddMenu(project, Text("EditorUi.ProjectSettings", "Project Settings"), EditorCommandId::OpenSettings, {}, "Ctrl+,");
     chrome_.AddMenu(project, Text("EditorUi.BuildExport", "Build / Export Panel"), EditorCommandId::TogglePanel,
-                    "build-export");
-    chrome_.AddMenu(project, Text("EditorUi.Export", "Export"), EditorCommandId::Export);
-    chrome_.AddMenu(project, Text("EditorUi.BuildRestart", "Build / Restart"), EditorCommandId::Build);
-    const EditorPanelId panelIds[] = {EditorPanelId::Hierarchy, EditorPanelId::Assets, EditorPanelId::Viewport,
-                                      EditorPanelId::UiDesigner, EditorPanelId::Inspector, EditorPanelId::Console,
-                                      EditorPanelId::Material, EditorPanelId::ProjectSettings,
-                                      EditorPanelId::BuildExport, EditorPanelId::AssetTools};
-    for (const EditorPanelId panel : panelIds)
+                    "build-export", "Ctrl+Shift+B", true);
+    chrome_.AddMenu(project, Text("EditorUi.CompileScripts", "Compile Scripts"), EditorCommandId::Build, {}, "Ctrl+B");
+    chrome_.AddMenu(project, Text("EditorUi.Export", "Export"), EditorCommandId::Export, {}, "Ctrl+E");
+
+    const EditorPanelId workspacePanels[] = {
+        EditorPanelId::Viewport, EditorPanelId::Game, EditorPanelId::UiDesigner,
+        EditorPanelId::Hierarchy, EditorPanelId::Assets, EditorPanelId::Inspector, EditorPanelId::Console};
+    for (std::size_t i = 0; i < std::size(workspacePanels); ++i)
     {
-        chrome_.AddMenu(panels, PanelLabel(panel), EditorCommandId::TogglePanel, EditorPanelName(panel));
+        const EditorPanelId panel = workspacePanels[i];
+        chrome_.AddMenu(panels, PanelLabel(panel), EditorCommandId::TogglePanel, EditorPanelName(panel),
+                        {}, i + 1 == std::size(workspacePanels));
     }
-    chrome_.AddMenu(panels, Text("EditorUi.FocusViewport", "Focus Viewport"), EditorCommandId::FocusViewport);
-    chrome_.AddMenu(panels, Text("EditorUi.Layout2By3", "2 by 3 Layout (Unity Default)"),
-                    EditorCommandId::TogglePanel, "@layout:2by3");
-    chrome_.AddMenu(panels, Text("EditorUi.LayoutStandard", "Standard Shelf Layout (Unity)"),
-                    EditorCommandId::TogglePanel, "@layout:standard");
-    chrome_.AddMenu(panels, Text("EditorUi.LayoutWide", "Wide Viewport Layout (UE)"),
-                    EditorCommandId::TogglePanel, "@layout:wide");
-    chrome_.AddMenu(panels, Text("EditorUi.LayoutClassic", "Classic 3-Column Layout"),
-                    EditorCommandId::TogglePanel, "@layout:classic");
-    chrome_.AddMenu(panels, Text("EditorUi.LayoutReset", "Reset Default 2 by 3 Layout"),
-                    EditorCommandId::TogglePanel, "@layout:reset");
+    const EditorPanelId utilityPanels[] = {
+        EditorPanelId::Material, EditorPanelId::AssetTools, EditorPanelId::ProjectSettings, EditorPanelId::BuildExport};
+    for (std::size_t i = 0; i < std::size(utilityPanels); ++i)
+    {
+        const EditorPanelId panel = utilityPanels[i];
+        chrome_.AddMenu(panels, PanelLabel(panel), EditorCommandId::TogglePanel, EditorPanelName(panel),
+                        {}, i + 1 == std::size(utilityPanels));
+    }
+    chrome_.AddMenu(panels, Text("EditorUi.FullscreenPreview", "Fullscreen"), EditorCommandId::FocusViewport, {}, "F11");
+
     const std::string help = Text("EditorUi.Help", "Help");
-    chrome_.AddMenu(help, Text("EditorUi.About", "About"), EditorCommandId::TogglePanel, "about");
+    chrome_.AddMenu(help, Text("EditorUi.About", "About"), EditorCommandId::TogglePanel, "about", "F1", true);
     chrome_.AddMenu(help, Text("EditorUi.Diagnostics", "Diagnostics"), EditorCommandId::TogglePanel, "diagnostics");
 
     chrome_.AddToolbar(Text("EditorUi.Play", "Play"), EditorCommandId::Play);
@@ -153,9 +163,24 @@ void EditorShell::BuildChrome()
         document_.SetStyle(button, ButtonStyle(menuX, 0.0f, width, menuHeight_, kSurfaceRaised));
         document_.SetText(button, name);
         dispatcher_.AddHandler(button, UiEventType::PointerDown, [this, name](UiInputEvent& event) {
-            if (openMenu_ == name) CloseMenu();
-            else OpenMenu(name);
+            if (event.button != 0) return;
+            if (openMenu_ == name)
+            {
+                CloseMenu();
+                menuPressedFromBar_ = false;
+            }
+            else
+            {
+                OpenMenu(name);
+                menuPressedFromBar_ = true;
+            }
             event.handled = true;
+        });
+        dispatcher_.AddHandler(button, UiEventType::PointerMove, [this, name](UiInputEvent&) {
+            if (!openMenu_.empty() && openMenu_.front() != '@' && openMenu_ != name)
+            {
+                OpenMenu(name);
+            }
         });
         menuButtons_.push_back(button);
         menuX += width + 2.0f;
@@ -259,6 +284,28 @@ void EditorShell::BuildChrome()
         viewportToolButtons_.push_back(button);
     }
 
+    gameTools_ = document_.CreateElement(UiElementKind::Panel);
+    document_.SetParent(gameTools_, Slot(EditorPanelId::Game).panel.IsValid() ? Slot(EditorPanelId::Game).panel : root_);
+    document_.SetStyle(gameTools_, AbsoluteStyle(0, 0, 100, 24));
+    for (int idx = 0; idx < 2; ++idx)
+    {
+        const auto button = document_.CreateElement(UiElementKind::Button);
+        document_.SetParent(button, gameTools_);
+        dispatcher_.AddHandler(button, UiEventType::PointerDown, [this, idx](UiInputEvent& e) {
+            if (e.button == 0)
+            {
+                const char* arg = idx == 0 ? "@preview-windowed" : "@preview-fullscreen";
+                if (commands_.CanExecute(EditorCommandId::TogglePanel))
+                    (void)commands_.Execute(EditorCommand{EditorCommandId::TogglePanel, arg});
+                else
+                    SetMaximizeOnPlay(idx == 1);
+            }
+            e.handled = true;
+            e.StopPropagation();
+        });
+        gameToolButtons_.push_back(button);
+    }
+
     gizmo_ = document_.CreateElement(UiElementKind::Panel);
     if (document_.SetParent(gizmo_, root_))
     {
@@ -328,11 +375,7 @@ void EditorShell::BuildChrome()
     document_.SetVisible(tabInsertMarker_, false);
 
     BindRootInputHandlers();
-    if (console_)
-    {
-        console_->SetItemCount(static_cast<int>(lines_.size()));
-        console_->Sync();
-    }
+    RebuildConsoleDisplay();
     RefreshStatus();
 }
 
@@ -346,6 +389,19 @@ void EditorShell::BindRootInputHandlers()
                 event.y >= rect.y + rect.height)
             {
                 CloseInspectorColor(true);
+                event.handled = true;
+                event.StopPropagation();
+            }
+            return;
+        }
+        if (addCompPopup_.IsValid())
+        {
+            const auto rect = layout_.Rect(addCompPopup_);
+            if (event.x < rect.x || event.y < rect.y || event.x >= rect.x + rect.width ||
+                event.y >= rect.y + rect.height)
+            {
+                CloseAddComponentPopup();
+                dispatcher_.ClearFocus();
                 event.handled = true;
                 event.StopPropagation();
             }
@@ -376,8 +432,10 @@ void EditorShell::BindRootInputHandlers()
             bool onPopupTrigger = (event.target == assetsTypeElement_ || event.target == assetsCreateElement_);
             for (const auto& q : quickButtons_)
                 if ((q.action == "create" || q.action == "layout") && event.target == q.button) onPopupTrigger = true;
-            if (!insideDropdown && !onPopupTrigger &&
-                (!openMenu_.empty() && (openMenu_.front() == '@' || event.y >= menuHeight_ + toolbarHeight_)))
+            bool onMenuButton = false;
+            for (const auto& mb : menuButtons_)
+                if (event.target == mb) onMenuButton = true;
+            if (!insideDropdown && !onPopupTrigger && !onMenuButton)
             {
                 CloseMenu();
             }
@@ -426,6 +484,7 @@ void EditorShell::BindRootInputHandlers()
     }, UiEventPhase::Capture);
 
     dispatcher_.AddHandler(document_.Root(), UiEventType::PointerUp, [this](UiInputEvent& event) {
+        menuPressedFromBar_ = false;
         if (inspectorColor_ && inspectorColor_->dragging && event.button == 0)
         {
             MoveInspectorColor(event);
@@ -627,20 +686,23 @@ void EditorShell::UpdateTransport()
 }
 
 void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, bool grid, bool gizmos,
-                                   bool playing, bool paused)
+                                   bool playing, bool paused, bool sceneViewDuringPlay)
 {
+    const bool playChanged = (previewPlaying_ != playing);
     previewPlaying_ = playing;
     previewPaused_ = playing && paused;
+    if (playChanged && inspectorList_) RefreshInspectorRows();
     const auto surface = SurfaceRoot(dock_.SurfaceFor(EditorPanelId::Viewport));
     const auto viewport = layout_.Rect(ViewportPanel());
     const float available = std::max(0.f, viewport.width - 16.f);
-    const bool visible = !playing && document_.Visible(ViewportPanel()) && viewport.width > 48.f && viewport.height > 36.f;
-    for (auto group : {viewportTools_, transformTools_})
-    {
-        document_.SetParent(group, surface.IsValid() ? surface : root_);
-        document_.SetVisible(group, visible);
-    }
-    if (!visible) return;
+    const bool showViewTools = (!playing || sceneViewDuringPlay) && !gameMaximized_ &&
+                               document_.Visible(ViewportPanel()) && viewport.width > 48.f && viewport.height > 36.f;
+    const bool showTransformTools = !playing && showViewTools;
+    document_.SetParent(viewportTools_, surface.IsValid() ? surface : root_);
+    document_.SetParent(transformTools_, surface.IsValid() ? surface : root_);
+    document_.SetVisible(viewportTools_, showViewTools);
+    document_.SetVisible(transformTools_, showTransformTools);
+    if (!showViewTools) return;
 
     const bool wideTools = available >= 520.f;
     const std::string labels[] = {
@@ -661,6 +723,8 @@ void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, 
     for (std::size_t i = 0; i < 4 && i < viewportToolButtons_.size(); ++i)
     {
         const auto button = viewportToolButtons_[i];
+        document_.SetVisible(button, showTransformTools);
+        if (!showTransformTools) continue;
         const auto fill = active[i] ? flare::workspace::Selection :
             (hoveredChrome_ == button ? flare::workspace::Hover : flare::workspace::Header);
         const float w = wideTools ? (MeasuredWidth(labels[i], 12.f) + 14.f) : 28.f;
@@ -685,12 +749,16 @@ void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, 
     document_.SetStyle(transformTools_, tools);
 
     float vx = 1.f, vy = 1.f, maxWidth = 0.f;
-    const float sameRowLimit = std::max(0.f, available - transformW - 8.f);
-    const bool placeNextToTransform = sameRowLimit >= 220.f;
+    const float effectiveTransformW = showTransformTools ? transformW : 0.f;
+    const float sameRowLimit = std::max(0.f, available - (showTransformTools ? (transformW + 8.f) : 0.f));
+    const bool placeNextToTransform = !showTransformTools || sameRowLimit >= 220.f;
     const float rowBudget = placeNextToTransform ? sameRowLimit : available;
     for (std::size_t i = 4; i < viewportToolButtons_.size(); ++i)
     {
         const auto button = viewportToolButtons_[i];
+        const bool showBtn = (i >= 6) || showTransformTools;
+        document_.SetVisible(button, showBtn);
+        if (!showBtn) continue;
         const auto fill = active[i] ? flare::workspace::Selection :
             (hoveredChrome_ == button ? flare::workspace::Hover : flare::workspace::Header);
         const float width = std::min(rowBudget, MeasuredWidth(labels[i], 12.f) + 14.f);
@@ -704,7 +772,7 @@ void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, 
         document_.SetText(button, labels[i]);
         document_.SetStyle(button, style);
     }
-    const float barX = placeNextToTransform ? (viewport.x + 8.f + transformW + 8.f) : (viewport.x + 8.f);
+    const float barX = placeNextToTransform ? (viewport.x + 8.f + (showTransformTools ? (effectiveTransformW + 8.f) : 0.f)) : (viewport.x + 8.f);
     const float barY = placeNextToTransform ? (viewport.y + 8.f) : (viewport.y + 8.f + pillH + 6.f);
     const float height = std::min(vy + pillH + 1.f, std::max(0.f, viewport.height - (barY - viewport.y) - 4.f));
     auto bar = AbsoluteStyle(barX, barY, maxWidth, height);
@@ -714,13 +782,104 @@ void EditorShell::SetViewportState(int tool, bool local, bool center, bool sky, 
     document_.SetStyle(viewportTools_, bar);
 }
 
+void EditorShell::SetMaximizeOnPlay(bool enabled)
+{
+    const bool changed = dock_.MaximizeOnPlay() != enabled;
+    if (changed)
+    {
+        dock_.SetMaximizeOnPlay(enabled);
+        SaveLayoutIfConfigured();
+    }
+    if (previewPlaying_)
+    {
+        SetGameMaximized(enabled);
+        if (changed && initialized_) Frame();
+    }
+    else if (!enabled && gameMaximized_)
+    {
+        SetGameMaximized(false);
+    }
+    else if (changed && initialized_)
+    {
+        Frame();
+    }
+}
+
+void EditorShell::SetGameMaximized(bool maximized)
+{
+    if (gameMaximized_ == maximized) return;
+    gameMaximized_ = maximized;
+    if (gameMaximized_)
+    {
+        if (!dock_.Find(EditorPanelId::Game))
+            dock_.OpenTabNear(EditorPanelId::Game, EditorPanelId::Console);
+        dock_.SelectTab(EditorPanelId::Game);
+        SetActivePanel(EditorPanelId::Game);
+    }
+    MarkDockDirty(true, false);
+    if (initialized_) Frame();
+}
+
+void EditorShell::UpdateGameTools()
+{
+    if (!gameTools_.IsValid() || gameToolButtons_.size() < 2) return;
+    const auto gamePanel = GamePanel();
+    const auto gameRect = layout_.Rect(gamePanel);
+    const bool visible = document_.Visible(gamePanel) && gameRect.width > 48.f && gameRect.height >= 24.f;
+    document_.SetVisible(gameTools_, visible);
+    if (!visible) return;
+
+    auto bar = AbsoluteStyle(0.f, 0.f, gameRect.width, 24.f);
+    bar.width = UiLength::Percent(100.f);
+    bar.background = UiInk(flare::workspace::Header, 0.85f);
+    bar.borderWidth = 1.0f;
+    bar.borderColor = kBorder;
+    bar.overflow = UiOverflow::Hidden;
+    document_.SetStyle(gameTools_, bar);
+
+    const std::string labels[2] = {
+        Text("EditorUi.WindowedPreview", "Windowed Preview"),
+        Text("EditorUi.FullscreenPreview", "Fullscreen Preview")};
+    const bool active[2] = {!dock_.MaximizeOnPlay(), dock_.MaximizeOnPlay()};
+    constexpr float btnH = 20.f;
+    float gx = 6.f;
+    const float maxAvail = std::max(32.f, gameRect.width - 12.f);
+    for (std::size_t i = 0; i < 2; ++i)
+    {
+        const auto btn = gameToolButtons_[i];
+        document_.SetVisible(btn, true);
+        const float textW = MeasuredWidth(labels[i], 12.f);
+        const float w = std::min(std::max(24.f, maxAvail * 0.5f), textW + 16.f);
+        const auto fill = active[i] ? flare::workspace::Selection :
+            (hoveredChrome_ == btn ? flare::workspace::Hover : flare::workspace::Header);
+        auto style = ButtonStyle(gx, 2.f, w, btnH, UiInk(fill));
+        style.cornerRadius = 4.0f;
+        style.fontSize = 12.f;
+        style.color = active[i] ? UiInk(flare::Gold) : (hoveredChrome_ == btn ? kText : kMuted);
+        style.borderWidth = 1.0f;
+        style.borderColor = active[i] ? UiInk(flare::workspace::Focus, 0.72f) : kBorder;
+        style.padding.left = std::max(4.f, (w - textW) * 0.5f);
+        style.padding.right = 2.f;
+        document_.SetText(btn, labels[i]);
+        document_.SetStyle(btn, style);
+        gx += w + 3.f;
+    }
+}
+
 void EditorShell::AppendConsoleLine(std::string line)
 {
-    lines_.push_back(std::move(line));
+    bool followTail = false;
     if (console_)
     {
-        console_->Invalidate();
-        console_->SetItemCount(static_cast<int>(lines_.size()));
+        const float maxBefore = std::max(0.0f, static_cast<float>(console_->ItemCount()) * console_->RowHeight() - console_->ViewportHeight());
+        followTail = (console_->Offset() >= maxBefore - 24.0f);
+    }
+    lines_.push_back(std::move(line));
+    RebuildConsoleDisplay();
+    if (console_ && followTail)
+    {
+        const float maxAfter = std::max(0.0f, static_cast<float>(console_->ItemCount()) * console_->RowHeight() - console_->ViewportHeight());
+        console_->SetScrollOffset(maxAfter);
         console_->Sync();
     }
 }
@@ -731,10 +890,8 @@ void EditorShell::ClearConsole()
     if (console_)
     {
         console_->SetScrollOffset(0.0f);
-        console_->Invalidate();
-        console_->SetItemCount(0);
-        console_->Sync();
     }
+    RebuildConsoleDisplay();
     SetStatus(Text("EditorUi.ConsoleCleared", "Console cleared"));
 }
 
@@ -743,10 +900,12 @@ bool EditorShell::ApplyLayoutPreset(std::string_view preset)
     DockNode targetLayout = DefaultEditorDockLayout();
     if (preset == "standard") targetLayout = StandardShelfDockLayout();
     else if (preset == "wide") targetLayout = WideViewportDockLayout();
-    else if (preset == "classic") targetLayout = ClassicThreeColumnDockLayout();
     else if (preset != "reset" && preset != "default" && preset != "2by3") return false;
 
+    const bool keepMaxOnPlay = dock_.MaximizeOnPlay();
+    gameMaximized_ = false;
     dock_ = EditorDock(std::move(targetLayout));
+    dock_.SetMaximizeOnPlay(keepMaxOnPlay);
     if (!dock_.Find(activePanel_)) SetActivePanel(EditorPanelId::Viewport);
     MarkDockDirty(true, true);
     SetStatus(Text("EditorUi.LayoutApplied", "Workspace layout applied"));
@@ -774,12 +933,12 @@ void EditorShell::SetSelectionLabel(std::string label)
 void EditorShell::RefreshStatus()
 {
     if (!statusBar_.IsValid()) return;
-    std::string text = status_;
+    std::string hoverHint;
     for (std::size_t i = 0; i < toolbarButtons_.size(); ++i)
     {
         if (hoveredChrome_ != toolbarButtons_[i]) continue;
         const auto& item = chrome_.Toolbar()[i];
-        text = item.command == EditorCommandId::Play && previewPlaying_ ? Text("EditorUi.Stop", "Stop") : item.label;
+        hoverHint = item.command == EditorCommandId::Play && previewPlaying_ ? Text("EditorUi.Stop", "Stop") : item.label;
         break;
     }
     const char* toolKeys[] = {"EditorUi.ViewTool", "EditorUi.Translate", "EditorUi.Rotate", "EditorUi.ScaleTool"};
@@ -787,10 +946,18 @@ void EditorShell::RefreshStatus()
     for (std::size_t i = 0; i < 4 && i < viewportToolButtons_.size(); ++i)
     {
         if (hoveredChrome_ == viewportToolButtons_[i])
-            text = Text(toolKeys[i], toolNames[i]) + " (" + "QWER"[i] + ")";
+            hoverHint = Text(toolKeys[i], toolNames[i]) + " (" + "QWER"[i] + ")";
     }
-    if (dirty_) text += "   ·   " + Text("EditorUi.Unsaved", "Unsaved");
-    if (!selectionLabel_.empty()) text += "   |   " + selectionLabel_;
+    const bool idleStatus = status_.empty() || status_ == "Ready" || status_ == Text("EditorUi.Ready", "Ready");
+    std::string primary = !hoverHint.empty() ? hoverHint : (!idleStatus ? status_ : std::string{});
+    std::string text;
+    if (!primary.empty() && !selectionLabel_.empty())
+        text = primary + "   |   " + selectionLabel_;
+    else if (!primary.empty())
+        text = std::move(primary);
+    else
+        text = selectionLabel_;
+
     if (text == lastStatusText_) return;
     lastStatusText_ = text;
     document_.SetText(statusBar_, text);
@@ -802,7 +969,13 @@ void EditorShell::OpenMenu(const std::string& menu)
     openMenu_ = menu;
     std::vector<EditorMenuItem> items;
     for (const auto& item : chrome_.Menus())
-        if (item.menu == menu) items.push_back(item);
+    {
+        if (item.menu != menu) continue;
+        EditorMenuItem copy = item;
+        if ((copy.argument == "@maximize-on-play" || copy.command == EditorCommandId::FocusViewport) && MaximizeOnPlay())
+            copy.label = "✓ " + copy.label;
+        items.push_back(std::move(copy));
+    }
     float left = 6.0f;
     for (const auto& name : menuNames_)
     {
@@ -819,15 +992,17 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
     CloseMenu();
     openMenu_ = "@create";
     std::vector<EditorMenuItem> items;
-    const auto add = [&](const char* key, const char* fallback, EditorCommandId id, const char* argument) {
-        items.push_back({{}, Text(key, fallback), id, argument});
+    const auto add = [&](const char* key, const char* fallback, EditorCommandId id, const char* argument,
+                         bool sepAfter = false) {
+        items.push_back({{}, Text(key, fallback), id, argument, {}, sepAfter});
     };
     if (panel == EditorPanelId::Assets)
     {
+        add("EditorUi.NewFolder", "New Folder", EditorCommandId::CreateAsset, "folder");
         add("EditorUi.NewMaterial", "New material", EditorCommandId::CreateAsset, "material");
-        add("EditorUi.CreateScriptAsset", "Create C# script", EditorCommandId::CreateAsset, "script");
+        add("EditorUi.CreateScriptAsset", "Create C# script", EditorCommandId::CreateAsset, "script", true);
         add("Feature.Tod.Create", "Create day cycle", EditorCommandId::CreateAsset, "tod");
-        add("Navigation.BakeScene", "Bake scene NavMesh", EditorCommandId::CreateAsset, "navmesh");
+        add("Navigation.BakeScene", "Bake scene NavMesh", EditorCommandId::CreateAsset, "navmesh", true);
         add("EditorUi.Import", "Import", EditorCommandId::Import, "");
         add("Feature.Tools", "Asset and reference tools", EditorCommandId::TogglePanel, "asset-tools");
     }
@@ -835,32 +1010,52 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
     {
         if (panel == EditorPanelId::None)
         {
+            add("EditorUi.NewFolder", "New Folder", EditorCommandId::CreateAsset, "folder");
             add("EditorUi.CreateScriptAsset", "Create C# script", EditorCommandId::CreateAsset, "script");
-            add("EditorUi.NewMaterial", "New material", EditorCommandId::CreateAsset, "material");
+            add("EditorUi.NewMaterial", "New material", EditorCommandId::CreateAsset, "material", true);
         }
         add("EditorUi.CreateEmpty", "Create empty object", EditorCommandId::CreateEntity, "empty");
         add("EditorUi.CreateCube", "Create cube", EditorCommandId::CreateEntity, "cube");
-        add("EditorUi.CreateSphere", "Create sphere", EditorCommandId::CreateEntity, "sphere");
+        add("EditorUi.CreateSphere", "Create sphere", EditorCommandId::CreateEntity, "sphere", true);
         add("EditorUi.CreateCamera", "Create camera", EditorCommandId::CreateEntity, "camera");
         add("EditorUi.CreateLight", "Create light", EditorCommandId::CreateEntity, "light");
         add("EditorUi.LightPoint", "Point light", EditorCommandId::CreateEntity, "point-light");
         add("EditorUi.LightSpot", "Spot light", EditorCommandId::CreateEntity, "spot-light");
-        add("Feature.Rectangle", "Rectangle area light", EditorCommandId::CreateEntity, "rectangle-light");
+        add("Feature.Rectangle", "Rectangle area light", EditorCommandId::CreateEntity, "rectangle-light", true);
         add("Feature.Render", "Scene rendering settings", EditorCommandId::CreateEntity, "render-settings");
-        add("Feature.Environment", "Environment lighting", EditorCommandId::CreateEntity, "environment-settings");
+        add("Feature.Environment", "Environment lighting", EditorCommandId::CreateEntity, "environment-settings", true);
         add("Feature.Body", "Physics box", EditorCommandId::CreateEntity, "physics-cube");
         add("EditorUi.CreatePhysicsSphere", "Physics sphere", EditorCommandId::CreateEntity, "physics-sphere");
         add("EditorUi.CreateTriggerBox", "Trigger box", EditorCommandId::CreateEntity, "trigger-box");
-        add("Feature.Character", "Capsule character", EditorCommandId::CreateEntity, "character");
+        add("Feature.Character", "Capsule character", EditorCommandId::CreateEntity, "character", true);
         add("EditorUi.CreateAudioSource", "Audio source", EditorCommandId::CreateEntity, "audio-source");
         add("Feature.AudioListener", "Audio listener", EditorCommandId::CreateEntity, "audio-listener");
         add("Feature.ParticleEmitter", "Particle emitter", EditorCommandId::CreateEntity, "particle-emitter");
-        add("Feature.NavigationAgent", "Navigation agent", EditorCommandId::CreateEntity, "nav-agent");
+        add("Feature.NavigationAgent", "Navigation agent", EditorCommandId::CreateEntity, "nav-agent",
+            panel == EditorPanelId::Hierarchy && parent != 0);
         if (panel == EditorPanelId::Hierarchy && parent != 0)
             add("EditorUi.CreatePrefab", "Create Prefab", EditorCommandId::CreateAsset, "prefab");
     }
     const UiElementHandle menuSurface = panel == EditorPanelId::None ? root_ : SurfaceRoot(dock_.SurfaceFor(panel));
     ShowMenu(menuSurface, x, y, 210.0f, items, parent);
+}
+
+void EditorShell::OpenAssetItemMenu(const std::string& path, const std::string& type, float x, float y)
+{
+    if (closeModalOpen_ || confirmOpen_ || previewPlaying_) return;
+    CloseMenu();
+    openMenu_ = "@asset-item";
+    menuTargetAssetPath_ = path;
+    (void)type;
+    std::vector<EditorMenuItem> items{
+        {{}, Text("EditorUi.NewFolder", "New Folder"), EditorCommandId::CreateAsset, "folder"},
+        {{}, Text("EditorUi.NewMaterial", "New material"), EditorCommandId::CreateAsset, "material"},
+        {{}, Text("EditorUi.CreateScriptAsset", "Create C# script"), EditorCommandId::CreateAsset, "script", {}, true},
+        {{}, Text("EditorUi.RenameAsset", "Rename"), EditorCommandId::SetProperty, "@asset-ctx:rename", "F2"},
+        {{}, Text("EditorUi.DeleteAsset", "Delete"), EditorCommandId::SetProperty, "@asset-ctx:delete", "Del", true},
+        {{}, Text("EditorUi.ShowInExplorer", "Show in Explorer"), EditorCommandId::SetProperty, "@asset-ctx:explorer"},
+    };
+    ShowMenu(SurfaceRoot(dock_.SurfaceFor(EditorPanelId::Assets)), x, y, 200.0f, items);
 }
 
 void EditorShell::OpenLayoutMenu(float x, float y)
@@ -869,13 +1064,12 @@ void EditorShell::OpenLayoutMenu(float x, float y)
     CloseMenu();
     openMenu_ = "@layout";
     std::vector<EditorMenuItem> items{
-        {{}, Text("EditorUi.Layout2By3", "2 by 3 Layout (Unity Default)"), EditorCommandId::TogglePanel, "@layout:2by3"},
-        {{}, Text("EditorUi.LayoutStandard", "Standard Shelf Layout (Unity)"), EditorCommandId::TogglePanel, "@layout:standard"},
-        {{}, Text("EditorUi.LayoutWide", "Wide Viewport Layout (UE)"), EditorCommandId::TogglePanel, "@layout:wide"},
-        {{}, Text("EditorUi.LayoutClassic", "Classic 3-Column Layout"), EditorCommandId::TogglePanel, "@layout:classic"},
+        {{}, Text("EditorUi.Layout2By3", "2 by 3 Layout"), EditorCommandId::TogglePanel, "@layout:2by3"},
+        {{}, Text("EditorUi.LayoutStandard", "Standard Shelf Layout"), EditorCommandId::TogglePanel, "@layout:standard"},
+        {{}, Text("EditorUi.LayoutWide", "Wide Viewport Layout"), EditorCommandId::TogglePanel, "@layout:wide", {}, true},
         {{}, Text("EditorUi.LayoutReset", "Reset Default 2 by 3 Layout"), EditorCommandId::TogglePanel, "@layout:reset"},
     };
-    ShowMenu(root_, x, y, 250.0f, items);
+    ShowMenu(root_, x, y, 220.0f, items);
 }
 
 void EditorShell::OpenAssetTypeMenu(float x, float y)
@@ -884,7 +1078,7 @@ void EditorShell::OpenAssetTypeMenu(float x, float y)
     CloseMenu();
     openMenu_ = "@asset-type";
     std::vector<EditorMenuItem> items{
-        {{}, Text("EditorUi.FilterAll", "All"), EditorCommandId::SetProperty, "@asset-type:"},
+        {{}, Text("EditorUi.FilterAll", "All"), EditorCommandId::SetProperty, "@asset-type:", {}, true},
         {{}, Text("EditorUi.DocumentScene", "Scene"), EditorCommandId::SetProperty, "@asset-type:scene"},
         {{}, Text("EditorUi.AssetModel", "Model"), EditorCommandId::SetProperty, "@asset-type:model"},
         {{}, Text("EditorUi.DocumentMaterial", "Material"), EditorCommandId::SetProperty, "@asset-type:material"},
@@ -893,7 +1087,7 @@ void EditorShell::OpenAssetTypeMenu(float x, float y)
         {{}, Text("EditorUi.AssetScript", "C# Script"), EditorCommandId::SetProperty, "@asset-type:C#"},
         {{}, Text("EditorUi.AssetAudio", "Audio"), EditorCommandId::SetProperty, "@asset-type:audio"},
     };
-    ShowMenu(SurfaceRoot(dock_.SurfaceFor(EditorPanelId::Assets)), x, y, 160.0f, items);
+    ShowMenu(SurfaceRoot(dock_.SurfaceFor(EditorPanelId::Assets)), x, y, 168.0f, items);
 }
 
 void EditorShell::ShowMenu(UiElementHandle surface, float x, float y, float width,
@@ -901,8 +1095,18 @@ void EditorShell::ShowMenu(UiElementHandle surface, float x, float y, float widt
 {
     const auto bounds = layout_.Rect(surface);
     if (items.empty() || !surface.IsValid()) { CloseMenu(); return; }
-    width = std::min(width, bounds.width);
-    const float height = 8.0f + static_cast<float>(items.size()) * 26.0f;
+    float naturalWidth = width;
+    std::size_t sepCount = 0;
+    for (std::size_t i = 0; i < items.size(); ++i)
+    {
+        const auto& item = items[i];
+        const float labelW = MeasuredWidth(item.label, 13.0f);
+        const float shortW = item.shortcut.empty() ? 0.0f : (MeasuredWidth(item.shortcut, 11.5f) + 22.0f);
+        naturalWidth = std::max(naturalWidth, labelW + shortW + 30.0f);
+        if (item.separatorAfter && i + 1 < items.size()) ++sepCount;
+    }
+    width = std::min(naturalWidth, bounds.width);
+    const float height = 10.0f + static_cast<float>(items.size()) * 26.0f + static_cast<float>(sepCount) * 7.0f;
     const auto left = std::clamp(x - bounds.x, 0.0f, std::max(0.0f, bounds.width - width));
     const auto top = std::clamp(y - bounds.y, 0.0f, std::max(0.0f, bounds.height - height));
     menuDropdown_ = document_.CreateElement(UiElementKind::Panel);
@@ -913,43 +1117,97 @@ void EditorShell::ShowMenu(UiElementHandle surface, float x, float y, float widt
     panelStyle.borderColor = UiInk(flare::workspace::Divider);
     panelStyle.cornerRadius = 8.0f;
     document_.SetStyle(menuDropdown_, panelStyle);
+
+    float itemY = 5.0f;
     for (std::size_t i = 0; i < items.size(); ++i)
     {
         const auto& item = items[i];
+        const bool hasSep = item.separatorAfter && i + 1 < items.size();
         const auto button = document_.CreateElement(UiElementKind::Button);
         document_.SetParent(button, menuDropdown_);
-        auto itemStyle = ButtonStyle(4.0f, 4.0f + static_cast<float>(i) * 26.0f,
-                                     width - 8.0f, 24.0f, UiInk(flare::workspace::Panel));
+        auto itemStyle = ButtonStyle(5.0f, itemY, width - 10.0f, 24.0f, UiInk(flare::workspace::Panel));
         itemStyle.cornerRadius = 4.0f;
+        itemStyle.padding.left = 10.0f;
+        itemStyle.padding.right = item.shortcut.empty() ? 10.0f : (MeasuredWidth(item.shortcut, 11.5f) + 18.0f);
         document_.SetStyle(button, itemStyle);
         document_.SetText(button, item.label);
-        dispatcher_.AddHandler(button, UiEventType::PointerDown,
-            [this, command = EditorCommand{item.command, item.argument, target}, label = item.label](UiInputEvent& event) {
-                event.handled = true;
-                if (event.button != 0) return;
-                CloseMenu();
-                if (command.argument.starts_with("@layout:"))
+
+        if (!item.shortcut.empty())
+        {
+            const auto hint = document_.CreateElement(UiElementKind::Label);
+            if (document_.SetParent(hint, button))
+            {
+                const float sw = MeasuredWidth(item.shortcut, 11.5f) + 4.0f;
+                auto hintStyle = AbsoluteStyle(std::max(0.0f, width - 10.0f - sw - 8.0f), 0.0f, sw, 24.0f);
+                hintStyle.background = UiColor{0, 0, 0, 0};
+                hintStyle.color = kMuted;
+                hintStyle.fontSize = 11.5f;
+                hintStyle.textFlow = UiTextFlow::SingleLineEllipsis;
+                hintStyle.pointerEvents = UiPointerEvents::None;
+                document_.SetStyle(hint, hintStyle);
+                document_.SetText(hint, item.shortcut);
+            }
+        }
+        if (hasSep)
+        {
+            const auto divider = document_.CreateElement(UiElementKind::Panel);
+            if (document_.SetParent(divider, button))
+            {
+                auto divStyle = AbsoluteStyle(6.0f, 27.0f, std::max(0.0f, width - 22.0f), 1.0f);
+                divStyle.background = kBorder;
+                divStyle.pointerEvents = UiPointerEvents::None;
+                document_.SetStyle(divider, divStyle);
+            }
+        }
+
+        const auto executeItem = [this, command = EditorCommand{item.command, item.argument, target},
+                                  label = item.label](UiInputEvent& event) {
+            event.handled = true;
+            if (event.button != 0) return;
+            const std::string targetPath = menuTargetAssetPath_;
+            menuPressedFromBar_ = false;
+            CloseMenu();
+            if (command.argument.starts_with("@layout:"))
+            {
+                ApplyLayoutPreset(std::string_view(command.argument).substr(8));
+                return;
+            }
+            if (command.argument.starts_with("@asset-type:"))
+            {
+                assetsModel_.SetTypeFilter(std::string_view(command.argument).substr(12));
+                assetsGridDirty_ = true;
+                if (assetsList_)
                 {
-                    ApplyLayoutPreset(std::string_view(command.argument).substr(8));
-                    return;
+                    assetsList_->SetScrollOffset(0.0f);
+                    assetsList_->Invalidate();
+                    assetsList_->SetItemCount(static_cast<int>(assetsModel_.Filtered().size()));
+                    assetsList_->Sync();
                 }
-                if (command.argument.starts_with("@asset-type:"))
+                UpdatePanelContentRects();
+                return;
+            }
+            if (command.argument.starts_with("@asset-ctx:"))
+            {
+                const std::string_view action = std::string_view(command.argument).substr(11);
+                if (action == "rename")
                 {
-                    assetsModel_.SetTypeFilter(std::string_view(command.argument).substr(12));
-                    if (assetsList_)
-                    {
-                        assetsList_->SetScrollOffset(0.0f);
-                        assetsList_->Invalidate();
-                        assetsList_->SetItemCount(static_cast<int>(assetsModel_.Filtered().size()));
-                        assetsList_->Sync();
-                    }
-                    UpdatePanelContentRects();
-                    return;
+                    BeginAssetRename(targetPath);
                 }
-                if (!commands_.CanExecute(command.id))
-                    SetStatus(Text("EditorUi.CommandUnavailable", "Command unavailable") + ": " + label);
-                else commands_.Execute(command);
-            });
+                else if (assetContextActionHandler_)
+                {
+                    assetContextActionHandler_(targetPath, action);
+                }
+                return;
+            }
+            if (!commands_.CanExecute(command.id))
+                SetStatus(Text("EditorUi.CommandUnavailable", "Command unavailable") + ": " + label);
+            else commands_.Execute(command);
+        };
+        dispatcher_.AddHandler(button, UiEventType::PointerDown, executeItem);
+        dispatcher_.AddHandler(button, UiEventType::PointerUp, [this, executeItem](UiInputEvent& event) {
+            if (menuPressedFromBar_) executeItem(event);
+        });
+        itemY += 26.0f + (hasSep ? 7.0f : 0.0f);
     }
 }
 
@@ -964,6 +1222,7 @@ void EditorShell::CloseMenu()
         menuDropdown_ = {};
     }
     openMenu_.clear();
+    menuTargetAssetPath_.clear();
 }
 
 bool EditorShell::RouteShortcut(const UiInputEvent& event, bool textFieldFocused)
@@ -981,6 +1240,12 @@ bool EditorShell::RouteShortcut(const UiInputEvent& event, bool textFieldFocused
     if (splitterActive_ && event.type == UiEventType::KeyDown && event.key == UiKeyEscape)
     {
         EndSplitter(false);
+        return true;
+    }
+    if (AddComponentPopupOpen() && event.type == UiEventType::KeyDown && event.key == UiKeyEscape)
+    {
+        CloseAddComponentPopup();
+        dispatcher_.ClearFocus();
         return true;
     }
     if (MenuOpen() && event.type == UiEventType::KeyDown && event.key == UiKeyEscape)

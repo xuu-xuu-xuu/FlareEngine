@@ -104,7 +104,7 @@ HRESULT D3D12HiZ::CreateOutput(ID3D12Resource& depth,UINT width,UINT height,D3D1
     heapDescription.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;heapDescription.NodeMask=1;
     result=device_->CreateDescriptorHeap(&heapDescription,IID_PPV_ARGS(candidate.descriptors.GetAddressOf()));
     if(FAILED(result))return result;
-    candidate.descriptors->SetName(L"SelfEngine.HiZDescriptors");
+    candidate.descriptors->SetName(L"FlareEngine.HiZDescriptors");
     const auto increment=device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     const auto cpu=candidate.descriptors->GetCPUDescriptorHandleForHeapStart();
     const auto gpu=candidate.descriptors->GetGPUDescriptorHandleForHeapStart();

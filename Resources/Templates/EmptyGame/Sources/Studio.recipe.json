@@ -1,9 +1,0 @@
-{
-  "format": "SelfEngine.TemplateEnvironmentRecipe",
-  "version": 1,
-  "generator": {"tool": "EnvironmentCooker", "mode": "sample", "preset": "soft"},
-  "source": "Sources/Studio.hdr",
-  "output": "Content/Environments/Studio.seenv",
-  "settings": {"cubeSize": 64, "irradianceSize": 16, "lutSize": 64, "samples": 512},
-  "assetId": "71000000000000000000000000000009"
-}

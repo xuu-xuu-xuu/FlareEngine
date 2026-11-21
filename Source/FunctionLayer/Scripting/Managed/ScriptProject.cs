@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Runtime.Loader;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 // 只在停止状态装载下一次编译结果；流加载避免占用脚本 DLL，ALC 隔离项目依赖。
 public sealed class ScriptProject : IDisposable
@@ -11,7 +11,16 @@ public sealed class ScriptProject : IDisposable
         private readonly AssemblyDependencyResolver resolver = new(assemblyPath);
         protected override Assembly? Load(AssemblyName name)
         {
-            if (name.Name == typeof(Behaviour).Assembly.GetName().Name) return typeof(Behaviour).Assembly;
+            if (name.Name == typeof(F_Behaviour).Assembly.GetName().Name) return typeof(F_Behaviour).Assembly;
+            if (name.Name == "SelfEngine.Managed")
+            {
+                var shimPath = Path.Combine(AppContext.BaseDirectory, "SelfEngine.Managed.dll");
+                if (File.Exists(shimPath))
+                {
+                    using var shimStream = File.OpenRead(shimPath);
+                    return LoadFromStream(shimStream);
+                }
+            }
             var path = resolver.ResolveAssemblyToPath(name);
             if (path is null) return null;
             using var stream = File.OpenRead(path);
@@ -23,6 +32,10 @@ public sealed class ScriptProject : IDisposable
     private ProjectContext? context;
     private ScriptSystem? scripts;
     private ScriptRegistry? registry;
+    private string startupSceneJson = "";
+    private string startupAssemblyPath = "";
+    private string startupBindingsJson = "";
+    private string[] startupAllowed = [];
     private bool disposed;
     public bool IsRunning => scripts?.IsRunning ?? false;
     public string LastBindings { get; private set; } = "";
@@ -30,7 +43,24 @@ public sealed class ScriptProject : IDisposable
     public ScriptSystem Scripts => scripts ?? throw new InvalidOperationException("Script.ProjectNotRunning");
     public event Action<ScriptDiagnostic>? Diagnostic;
     public string EditedBindings { get; private set; } = "";
-    public ScriptProject(EngineSession session) => this.session = session;
+    public ScriptProject(EngineSession session)
+    {
+        this.session = session;
+        this.session.PostStep += OnPostStep;
+    }
+
+    private void OnPostStep(double _)
+    {
+        if (scripts is not { SceneReloadRequested: true } || string.IsNullOrEmpty(startupSceneJson)) return;
+        scripts.SceneReloadRequested = false;
+        var asm = startupAssemblyPath;
+        var allow = startupAllowed;
+        var bind = startupBindingsJson;
+        var scene = startupSceneJson;
+        Stop();
+        session.ImportScene(scene);
+        Load(asm, allow, bind, true);
+    }
 
     // 候选检查与正式 Inspector 使用同一类型目录；尚未绑定到实体的脚本也必须可添加。
     // 只返回字符串，不把项目 Type/Assembly 留在宿主中，也不调用任何脚本生命周期。
@@ -43,7 +73,7 @@ public sealed class ScriptProject : IDisposable
         try
         {
             using var stream=File.OpenRead(assemblyPath);
-            foreach(var type in context.LoadFromStream(stream).GetTypes().Where(type=>type.IsPublic&&!type.IsAbstract&&typeof(Behaviour).IsAssignableFrom(type)))
+            foreach(var type in context.LoadFromStream(stream).GetTypes().Where(type=>type.IsPublic&&!type.IsAbstract&&typeof(F_Behaviour).IsAssignableFrom(type)))
                 registry.Register(type);
             return registry.Types.Keys.Order(StringComparer.Ordinal).ToArray();
         }
@@ -82,7 +112,7 @@ public sealed class ScriptProject : IDisposable
         {
             using var stream = File.OpenRead(assemblyPath);
             var assembly = context.LoadFromStream(stream);
-            foreach (var type in assembly.GetTypes().Where(type => type.IsPublic && !type.IsAbstract && typeof(Behaviour).IsAssignableFrom(type)))
+            foreach (var type in assembly.GetTypes().Where(type => type.IsPublic && !type.IsAbstract && typeof(F_Behaviour).IsAssignableFrom(type)))
             {
                 var id = ScriptRegistry.IdOf(type);
                 if (allow.Contains(id)) registry.Register(type);
@@ -91,7 +121,14 @@ public sealed class ScriptProject : IDisposable
             scripts = new ScriptSystem(session, registry);
             scripts.Diagnostic += ForwardDiagnostic;
             if (!ScriptFields.Load(scripts, bindingsJson)) throw new InvalidOperationException("Script.DocumentInvalid");
-            if(start)scripts.Start();
+            if (start)
+            {
+                startupSceneJson = session.ExportScene();
+                startupAssemblyPath = assemblyPath;
+                startupBindingsJson = bindingsJson;
+                startupAllowed = allow.ToArray();
+                scripts.Start();
+            }
         }
         catch { Release(); throw; }
     }
@@ -119,7 +156,27 @@ public sealed class ScriptProject : IDisposable
                 var response=bindings.ProcessDocumentRequest(command,IsRunning);
                 EditedBindings=bindings.Json;return response;
             }
-            if(IsRunning)throw new InvalidOperationException("Script.LoadWhileRunning");
+            if(command.ContainsKey("ReloadAssembly"))
+            {
+                if(IsRunning)throw new InvalidOperationException("Bridge.EditorReadOnly");
+                var nextPath=Path.GetFullPath(command["ReloadAssembly"]!.GetValue<string>());
+                var nextAllowed=DiscoverTypes(nextPath).ToArray();
+                bindings.ReloadAssembly(nextPath,nextAllowed);
+                assemblyPath=nextPath;
+                allowed=nextAllowed;
+                if(command["AttachScript"]?.GetValue<string>() is { Length: > 0 } attachId && entity!=0)
+                    bindings.Apply(entity,new System.Text.Json.Nodes.JsonObject{["Type"]=attachId,["Add"]=true}.ToJsonString());
+                EditedBindings=bindings.Json;return "{}";
+            }
+            if(IsRunning)
+            {
+                if(command["Live"]?.GetValue<bool>()==true)
+                {
+                    if(scripts is not null)ScriptFields.ApplyLive(scripts,entity,command);
+                    return "{}";
+                }
+                throw new InvalidOperationException("Script.LoadWhileRunning");
+            }
             if(command["Save"]?.GetValue<bool>()==true)bindings.SaveDocument();
             else bindings.Apply(entity,request);
             EditedBindings=bindings.Json;return "{}";
@@ -127,7 +184,7 @@ public sealed class ScriptProject : IDisposable
         void Changed(bool playing)
         {
             // 没有任何脚本附件的编辑场景仍能运行原生模拟；不需要空白名单的 ScriptSystem。
-            if(playing){if(ScriptBindings.ScriptTypes(bindings.Json).Count!=0)Start(assemblyPath,allowed,bindings.Json);}
+            if(playing){if(!string.IsNullOrEmpty(assemblyPath)&&ScriptBindings.ScriptTypes(bindings.Json).Count!=0)Start(assemblyPath,allowed,bindings.Json);}
             else Stop();
         }
         session.EditorPlayChanged+=Changed;
@@ -136,6 +193,8 @@ public sealed class ScriptProject : IDisposable
     }
     private void ForwardDiagnostic(ScriptDiagnostic diagnostic)
     {
+        if (diagnostic.Key != "Script.FixedStepBudget")
+            F_Log.PushRaw($"[Error] {diagnostic.ScriptType}{(string.IsNullOrEmpty(diagnostic.Phase) ? "" : "." + diagnostic.Phase)}: {diagnostic.Key} {diagnostic.Detail}");
         try { Diagnostic?.Invoke(diagnostic); } catch { }
     }
     private void Release()
@@ -149,5 +208,5 @@ public sealed class ScriptProject : IDisposable
             if(unloading is not null){LastUnloadedContext=new WeakReference(unloading);unloading.Unload();}
         }
     }
-    public void Dispose() { if (disposed) return; try{Stop();}finally{disposed=true;Diagnostic=null;} }
+    public void Dispose() { if (disposed) return; session.PostStep -= OnPostStep; try{Stop();}finally{disposed=true;Diagnostic=null;} }
 }

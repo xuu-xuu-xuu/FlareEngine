@@ -35,6 +35,7 @@ struct ToolkitAssetInspectorState
     std::string targetPath;
     bool inspectUi = false;
     bool editTod = false;
+    bool preferScriptUndo = false;
     std::filesystem::path explicitUiPath;
     std::shared_ptr<const ImageData> previewImage;
     std::string previewImageKey;

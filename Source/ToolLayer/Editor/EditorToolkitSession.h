@@ -2,6 +2,7 @@
 
 #include "ToolLayer/Editor/EditorToolkitForms.h"
 #include "ToolLayer/Editor/EditorFloatingWindows.h"
+#include "FunctionLayer/Rendering/SandboxRenderer.h"
 #include "ToolLayer/Editor/EditorPlayInput.h"
 #include "ToolLayer/Editor/EditorSessionStore.h"
 #include "ToolLayer/Editor/ViewportDropWorkflow.h"
@@ -84,6 +85,12 @@ struct ToolkitAppState
     std::optional<EditorWorkspaceHost::DocumentContext> restoredContext;
     std::optional<CameraSnapshot> camera;
     ui::UiRect viewportRect{};
+    ui::UiRect playViewportRect{};
+    ui::editor::EditorPanelId prePlayGameGroupTab = ui::editor::EditorPanelId::None;
+    bool enteredMaximizedOnPlay = false;
+    bool pendingActivatePlayInput = false;
+    bool pendingPlayAfterCompile = false;
+    bool initialScriptCheckDone = false;
     HWND hostWindow = nullptr;
     HWND nativeMoveWindow = nullptr;
     EditorApplicationHooks* hooks = nullptr;
@@ -107,7 +114,35 @@ struct ToolkitAppState
     std::array<float, 4> loggedViewport{-1.0f, -1.0f, -1.0f, -1.0f};
     std::string exportName = "GameExport";
     std::string pendingAsset;
+    std::string pendingRenameAssetPath;
     std::string importStatus;
+    std::string transientStatus;
+    std::uint64_t transientStatusUntilTick = 0;
+    std::string lastWindowTitle;
+    std::optional<ui::editor::EditorCommandId> pendingDialogCommand;
+    std::uint32_t pendingFocusSurfaceId = 0;
+    HWND gameSurfaceWindow = nullptr;
+    std::unique_ptr<SandboxRenderer> gameRenderer;
+    std::uint64_t gameUpdateIndex = 0;
+    std::uint64_t gameImageRevision = 0;
+    std::uint64_t lastGameRenderKey = 0;
+    std::uint64_t lastGameRenderTick = 0;
+    bool interactiveResizing = false;
+    bool prevSplitterActive = false;
+    std::uint64_t lastInteractiveResizeTick = 0;
+    bool assetsListDirty = true;
+    std::uint64_t lastAssetScanTick = 0;
+    std::size_t lastAssetIdCount = 0;
+    std::size_t lastScriptSourceCount = 0;
+    std::vector<ui::editor::EditorAssetEntry> cachedAssetEntries;
+    struct CachedAssetThumb
+    {
+        std::uint64_t token = 0;
+        std::shared_ptr<ImageData> image;
+        std::filesystem::file_time_type mtime{};
+    };
+    std::unordered_map<std::string, CachedAssetThumb> assetThumbnails;
+    std::uint64_t nextAssetThumbToken = 0x180000000ull;
     std::future<ToolkitImportResult> importTask;
     std::function<bool()> exportAction;
     std::function<bool()> autoExportFn;
@@ -135,6 +170,16 @@ struct ToolkitAppState
     }
     ~ToolkitAppState()
     {
+        if (gameRenderer)
+        {
+            gameRenderer->Shutdown();
+            gameRenderer.reset();
+        }
+        if (gameSurfaceWindow)
+        {
+            DestroyWindow(gameSurfaceWindow);
+            gameSurfaceWindow = nullptr;
+        }
         sceneNavigation.Clear();
         sceneParticles.Clear();
         sceneAudio.Clear(audio);

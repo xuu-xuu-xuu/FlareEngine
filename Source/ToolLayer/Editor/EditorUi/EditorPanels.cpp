@@ -271,20 +271,151 @@ void EditorAssetsModel::SetTypeFilter(std::string_view type)
     RebuildFiltered();
 }
 
+void EditorAssetsModel::SetCurrentFolder(std::string folderPath)
+{
+    if (currentFolder_ == folderPath) return;
+    currentFolder_ = std::move(folderPath);
+    RebuildFiltered();
+}
+
+bool EditorAssetsModel::IsFolderExpanded(std::string_view folderPath) const
+{
+    for (const auto& [key, open] : folderExpansion_)
+    {
+        if (key == folderPath) return open;
+    }
+    return true;
+}
+
+bool EditorAssetsModel::ToggleFolder(std::string_view folderPath)
+{
+    for (auto& [key, open] : folderExpansion_)
+    {
+        if (key == folderPath)
+        {
+            open = !open;
+            RebuildFiltered();
+            return true;
+        }
+    }
+    folderExpansion_.emplace_back(std::string(folderPath), false);
+    RebuildFiltered();
+    return true;
+}
+
 void EditorAssetsModel::RebuildFiltered()
 {
     filtered_.clear();
-    for (const EditorAssetEntry& entry : entries_)
+    const bool hasFolders = std::any_of(entries_.begin(), entries_.end(),
+                                        [](const EditorAssetEntry& e) { return e.type == "folder"; });
+    const bool flatSearch = !filter_.empty() || !typeFilter_.empty();
+
+    if (!hasFolders || flatSearch)
     {
-        const bool textMatch = filter_.empty() || ContainsInsensitive(entry.path, filter_);
-        const bool typeMatch = typeFilter_.empty() || entry.type == typeFilter_;
-        if (textMatch && typeMatch)
+        for (const EditorAssetEntry& entry : entries_)
         {
-            filtered_.push_back(entry);
+            if (flatSearch && entry.type == "folder" && !typeFilter_.empty()) continue;
+            const bool textMatch = filter_.empty() || ContainsInsensitive(entry.path, filter_) ||
+                                   ContainsInsensitive(entry.displayName, filter_);
+            const bool typeMatch = typeFilter_.empty() || entry.type == typeFilter_;
+            if (textMatch && typeMatch)
+            {
+                EditorAssetEntry copy = entry;
+                copy.depth = 0;
+                copy.hasChildren = false;
+                filtered_.push_back(std::move(copy));
+            }
         }
     }
+    else if (!currentFolder_.empty())
+    {
+        // 面包屑定位到指定目录时，展示该目录的直接子文件夹与直接子资产。
+        std::vector<EditorAssetEntry> folders;
+        std::vector<EditorAssetEntry> files;
+        for (const EditorAssetEntry& entry : entries_)
+        {
+            if (entry.relativeDir != currentFolder_) continue;
+            EditorAssetEntry copy = entry;
+            copy.depth = 0;
+            copy.hasChildren = false;
+            if (copy.type == "folder") folders.push_back(std::move(copy));
+            else files.push_back(std::move(copy));
+        }
+        const auto byName = [](const EditorAssetEntry& a, const EditorAssetEntry& b) {
+            const std::string_view an = a.displayName.empty() ? std::string_view(a.path) : std::string_view(a.displayName);
+            const std::string_view bn = b.displayName.empty() ? std::string_view(b.path) : std::string_view(b.displayName);
+            return an < bn;
+        };
+        std::sort(folders.begin(), folders.end(), byName);
+        std::sort(files.begin(), files.end(), byName);
+        for (auto& f : folders) filtered_.push_back(std::move(f));
+        for (auto& f : files) filtered_.push_back(std::move(f));
+    }
+    else
+    {
+        // 单栏目录树视图：按 relativeDir 层级递归组织文件夹与子资产。
+        std::unordered_map<std::string, std::vector<const EditorAssetEntry*>> childFolders;
+        std::unordered_map<std::string, std::vector<const EditorAssetEntry*>> childFiles;
+        std::unordered_map<std::string, std::string> folderRelKey;
+        for (const EditorAssetEntry& entry : entries_)
+        {
+            if (entry.type == "folder")
+            {
+                childFolders[entry.relativeDir].push_back(&entry);
+                const std::string selfRel = entry.relativeDir.empty()
+                    ? entry.displayName
+                    : (entry.relativeDir + "/" + entry.displayName);
+                folderRelKey[entry.path] = selfRel;
+            }
+            else
+            {
+                childFiles[entry.relativeDir].push_back(&entry);
+            }
+        }
+        const auto byPtrName = [](const EditorAssetEntry* a, const EditorAssetEntry* b) {
+            const std::string_view an = a->displayName.empty() ? std::string_view(a->path) : std::string_view(a->displayName);
+            const std::string_view bn = b->displayName.empty() ? std::string_view(b->path) : std::string_view(b->displayName);
+            return an < bn;
+        };
+        for (auto& [k, vec] : childFolders) std::sort(vec.begin(), vec.end(), byPtrName);
+        for (auto& [k, vec] : childFiles) std::sort(vec.begin(), vec.end(), byPtrName);
+
+        const auto emitDir = [&](const auto& self, const std::string& relDir, std::size_t depth) -> void {
+            if (const auto fit = childFolders.find(relDir); fit != childFolders.end())
+            {
+                for (const EditorAssetEntry* folder : fit->second)
+                {
+                    const std::string& subKey = folderRelKey[folder->path];
+                    const bool hasSub = (childFolders.find(subKey) != childFolders.end() && !childFolders[subKey].empty()) ||
+                                        (childFiles.find(subKey) != childFiles.end() && !childFiles[subKey].empty());
+                    const bool open = IsFolderExpanded(folder->path);
+                    EditorAssetEntry row = *folder;
+                    row.depth = depth;
+                    row.hasChildren = hasSub;
+                    row.expanded = open;
+                    filtered_.push_back(std::move(row));
+                    if (open && depth < 16)
+                    {
+                        self(self, subKey, depth + 1);
+                    }
+                }
+            }
+            if (const auto ait = childFiles.find(relDir); ait != childFiles.end())
+            {
+                for (const EditorAssetEntry* asset : ait->second)
+                {
+                    EditorAssetEntry row = *asset;
+                    row.depth = depth;
+                    row.hasChildren = false;
+                    filtered_.push_back(std::move(row));
+                }
+            }
+        };
+        emitDir(emitDir, "", 0);
+    }
+
     if (!selected_.empty() &&
-        std::none_of(filtered_.begin(), filtered_.end(), [this](const EditorAssetEntry& entry) {
+        std::none_of(entries_.begin(), entries_.end(), [this](const EditorAssetEntry& entry) {
             return entry.path == selected_;
         }))
     {

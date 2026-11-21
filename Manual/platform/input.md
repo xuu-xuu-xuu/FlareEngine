@@ -24,7 +24,7 @@
 
 ## InputActions
 
-C# 脚本通过 `Session.Actions`（`Behaviour` 内亦可直接访问 `Actions`，类型为 `SelfEngine.InputActions`）加载动作表并查询动作/轴，不直接硬编码平台扫描码。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/6f1fea505082d4a90a24b4d1779c45fbf8c6152d/Source/FunctionLayer/Scripting/Managed/InputActions.cs#L6)
+C# 脚本通过 `Session.Actions`（`F_Behaviour` 内亦可直接访问 `Actions`，类型为 `FlareEngine.InputActions`）加载动作表并查询动作/轴，不直接硬编码平台扫描码。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/6f1fea505082d4a90a24b4d1779c45fbf8c6152d/Source/FunctionLayer/Scripting/Managed/InputActions.cs#L6)
 
 ```csharp
 Vector2 move = Actions.GetAxis2D("Move");

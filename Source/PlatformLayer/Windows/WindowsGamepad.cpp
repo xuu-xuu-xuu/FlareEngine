@@ -80,11 +80,19 @@ void PollWindowsGamepads(std::array<GamepadState, 4>& outStates) noexcept
         return;
     }
 
+    static std::array<ULONGLONG, 4> nextDisconnectedRetryTick{};
+    const ULONGLONG nowTick = GetTickCount64();
+
     for (DWORD i = 0; i < static_cast<DWORD>(outStates.size()); ++i)
     {
+        if (!outStates[i].connected && nowTick < nextDisconnectedRetryTick[i])
+        {
+            continue;
+        }
         RawXInputState raw{};
         if (getState(i, &raw) == ERROR_SUCCESS)
         {
+            nextDisconnectedRetryTick[i] = 0;
             outStates[i] = DecodeXInputGamepad(
                 raw.gamepad.buttons,
                 raw.gamepad.leftTrigger,
@@ -96,6 +104,7 @@ void PollWindowsGamepads(std::array<GamepadState, 4>& outStates) noexcept
         }
         else
         {
+            nextDisconnectedRetryTick[i] = nowTick + 500;
             outStates[i] = GamepadState{};
         }
     }

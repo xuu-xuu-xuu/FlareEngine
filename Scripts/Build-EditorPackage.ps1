@@ -85,6 +85,7 @@ try {
     RunStep 'publish_player' $powershell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $root 'Scripts/Publish-Managed.ps1'),'-Configuration','Release','-OutputDirectory',$runtimeOutput)
     CopyTree $runtimeOutput (Join-Path $stage 'Player')
     AddStep 'copy_managed_sdk'
+    CopyFile (Join-Path $runtimeOutput 'FlareEngine.Managed.dll') (Join-Path $stage 'SDK/Managed/FlareEngine.Managed.dll')
     CopyFile (Join-Path $runtimeOutput 'SelfEngine.Managed.dll') (Join-Path $stage 'SDK/Managed/SelfEngine.Managed.dll')
     $sdkProps=@'
 <Project>
@@ -96,39 +97,45 @@ try {
     <SelfContained>false</SelfContained>
     <UseAppHost>false</UseAppHost>
   </PropertyGroup>
+  <ItemGroup>
+    <Using Include="FlareEngine" />
+  </ItemGroup>
 </Project>
 '@
     $sdkTargets=@'
 <Project>
   <!-- 旧源码模板与包内新模板都绑定当前包的同一 API，不重新构建引擎。 -->
   <ItemGroup>
-    <ProjectReference Remove="$(SelfEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(SelfEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj" />
-    <Reference Remove="SelfEngine.Managed" />
-    <Reference Include="SelfEngine.Managed">
-      <HintPath>$(MSBuildThisFileDirectory)Managed/SelfEngine.Managed.dll</HintPath>
+    <ProjectReference Remove="$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(FlareEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj;$(SelfEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(SelfEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj" />
+    <Reference Remove="FlareEngine.Managed;SelfEngine.Managed" />
+    <Reference Include="FlareEngine.Managed">
+      <HintPath>$(MSBuildThisFileDirectory)Managed/FlareEngine.Managed.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Using Include="FlareEngine" />
   </ItemGroup>
-  <Target Name="SelfEngineValidatePackageApi" BeforeTargets="ResolveReferences">
-    <Error Condition="!Exists('$(MSBuildThisFileDirectory)Managed/SelfEngine.Managed.dll')" Text="Export.EditorPackageInvalid: SelfEngine.Managed.dll" />
+  <Target Name="FlareEngineValidatePackageApi" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)Managed/FlareEngine.Managed.dll')" Text="Export.EditorPackageInvalid: FlareEngine.Managed.dll" />
   </Target>
 </Project>
 '@
+    [IO.File]::WriteAllText((Join-Path $stage 'SDK/FlareEngine.Scripts.props'),$sdkProps,[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $stage 'SDK/FlareEngine.Scripts.targets'),$sdkTargets,[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $stage 'SDK/SelfEngine.Scripts.props'),$sdkProps,[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $stage 'SDK/SelfEngine.Scripts.targets'),$sdkTargets,[Text.UTF8Encoding]::new($false))
     AddStep 'prepare_package_template'
-    foreach($packageTemplateName in @('EmptyGame','RenderingStudio','IndoorGallery')) {
+    foreach($packageTemplateName in @('RenderingStudio','IndoorGallery')) {
     $template=Join-Path $stage ('Resources/Templates/'+$packageTemplateName)
-    $scriptProject=Join-Path $template 'Scripts/EmptyGame.Scripts.csproj'
+    $scriptProject=Join-Path $template 'Scripts/FlareGame.Scripts.csproj'
     $xml=New-Object Xml.XmlDocument
     $xml.PreserveWhitespace=$true;$xml.Load($scriptProject)
     foreach($reference in @($xml.SelectNodes('//ProjectReference'))){[void]$reference.ParentNode.RemoveChild($reference)}
-    $import=$xml.CreateElement('Import');$import.SetAttribute('Project','$(SelfEngineRoot)/SDK/SelfEngine.Scripts.props');$import.SetAttribute('Condition',"Exists('`$(SelfEngineRoot)/SDK/SelfEngine.Scripts.props')")
+    $import=$xml.CreateElement('Import');$import.SetAttribute('Project','$(FlareEngineRoot)/SDK/FlareEngine.Scripts.props');$import.SetAttribute('Condition',"Exists('`$(FlareEngineRoot)/SDK/FlareEngine.Scripts.props')")
     [void]$xml.DocumentElement.PrependChild($import)
-    $group=$xml.CreateElement('ItemGroup');$reference=$xml.CreateElement('Reference');$reference.SetAttribute('Include','SelfEngine.Managed')
-    $hint=$xml.CreateElement('HintPath');$hint.InnerText='$(SelfEngineRoot)/SDK/Managed/SelfEngine.Managed.dll';[void]$reference.AppendChild($hint)
+    $group=$xml.CreateElement('ItemGroup');$reference=$xml.CreateElement('Reference');$reference.SetAttribute('Include','FlareEngine.Managed')
+    $hint=$xml.CreateElement('HintPath');$hint.InnerText='$(FlareEngineRoot)/SDK/Managed/FlareEngine.Managed.dll';[void]$reference.AppendChild($hint)
     $private=$xml.CreateElement('Private');$private.InnerText='false';[void]$reference.AppendChild($private);[void]$group.AppendChild($reference);[void]$xml.DocumentElement.AppendChild($group)
-    foreach($errorNode in @($xml.SelectNodes('//Target[@Name="CheckEngineRoot"]/Error'))){$errorNode.SetAttribute('Text','Export.EditorPackageInvalid: set SelfEngineRoot to the editor package directory.')}
+    foreach($errorNode in @($xml.SelectNodes('//Target[@Name="CheckEngineRoot"]/Error'))){$errorNode.SetAttribute('Text','Export.EditorPackageInvalid: set FlareEngineRoot to the editor package directory.')}
     $writerSettings=New-Object Xml.XmlWriterSettings;$writerSettings.Encoding=[Text.UTF8Encoding]::new($false);$writerSettings.Indent=$true
     $writer=[Xml.XmlWriter]::Create($scriptProject,$writerSettings);try{$xml.Save($writer)}finally{$writer.Dispose()}
     # 与模板已有 Directory.Build.props 配对，避免项目位置意外引入外层构建定制。
@@ -139,16 +146,16 @@ try {
         if(Test-Path -LiteralPath $legacy){Remove-Item -LiteralPath $legacy}
     }
     }
-    # 两模板共用同一组脚本源，预编译只做一次；独立清单仍按真实源摘要核验。
-    $template=Join-Path $stage 'Resources/Templates/EmptyGame'
-    $scriptProject=Join-Path $template 'Scripts/EmptyGame.Scripts.csproj'
+    # 带脚本示例模板共用同一组脚本源，预编译只做一次；独立清单仍按真实源摘要核验。
+    $template=Join-Path $stage 'Resources/Templates/RenderingStudio'
+    $scriptProject=Join-Path $template 'Scripts/FlareGame.Scripts.csproj'
     $dotnet=(Get-Command dotnet.exe -ErrorAction Stop).Source
     $scriptProperties=Get-EnginePackageScriptProperties $stage (Join-Path $evidence 'template-obj')
-    RunStep 'restore_template_scripts' $dotnet (@('restore',$scriptProject,'--runtime','win-x64','--configfile',(Join-Path $root 'BuildConfig/NuGet.Config'),'--packages',(Join-Path $root 'out/nuget/packages'),'-p:Configuration=Release','-p:SelfContained=false','--nologo')+$scriptProperties)
-    $precompiled=Join-Path $stage 'SDK/Precompiled/EmptyGame'
-    RunStep 'publish_template_scripts' $dotnet (@('publish',$scriptProject,'--configuration','Release','--runtime','win-x64','--self-contained','false','--output',(Join-Path $precompiled 'Files'),'-p:PublishSingleFile=false','-p:PublishTrimmed=false','-p:GenerateDependencyFile=true','--no-restore','--nologo')+$scriptProperties)
-    foreach($required in @('EmptyGame.Scripts.dll','EmptyGame.Scripts.deps.json')){if(!(Test-Path -LiteralPath (Join-Path $precompiled ('Files/'+$required)))){throw ('Export.StepFailed '+$required)}}
-    Write-EngineJson (Join-Path $precompiled 'manifest.json') ([ordered]@{schema=1;project='EmptyGame.Scripts.csproj';assembly='EmptyGame.Scripts';source_files=@(Get-EngineScriptInputs $scriptProject)})
+    RunStep 'restore_template_scripts' $dotnet (@('restore',$scriptProject,'--configfile',(Join-Path $root 'BuildConfig/NuGet.Config'),'--packages',(Join-Path $root 'out/nuget/packages'),'-p:Configuration=Release','-p:SelfContained=false','-p:UseAppHost=false','-p:NuGetAudit=false','--nologo')+$scriptProperties)
+    $precompiled=Join-Path $stage 'SDK/Precompiled/FlareGame'
+    RunStep 'publish_template_scripts' $dotnet (@('publish',$scriptProject,'--configuration','Release','--self-contained','false','--output',(Join-Path $precompiled 'Files'),'-p:UseAppHost=false','-p:NuGetAudit=false','-p:PublishSingleFile=false','-p:PublishTrimmed=false','-p:GenerateDependencyFile=true','--no-restore','--nologo')+$scriptProperties)
+    foreach($required in @('FlareGame.Scripts.dll','FlareGame.Scripts.deps.json')){if(!(Test-Path -LiteralPath (Join-Path $precompiled ('Files/'+$required)))){throw ('Export.StepFailed '+$required)}}
+    Write-EngineJson (Join-Path $precompiled 'manifest.json') ([ordered]@{schema=1;project='FlareGame.Scripts.csproj';assembly='FlareGame.Scripts';source_files=@(Get-EngineScriptInputs $scriptProject)})
     AddStep 'clean_template_outputs'
     # dotnet publish 会在模板 Scripts 下重建 bin/obj；包内只保留预编译产物，不携带派生缓存。
     foreach($derivedName in @('bin','obj')){
@@ -225,10 +232,10 @@ exit $LASTEXITCODE
     })
     [int64]$totalBytes=0;foreach($file in $files){$totalBytes+=[int64]$file.bytes}
     $manifest=[ordered]@{
-        schema=1;kind='SelfEngine.EditorPackage';name=$Name;version=(Get-Date -Format 'yyyy.MM.dd');
+        schema=1;kind='FlareEngine.EditorPackage';name=$Name;version=(Get-Date -Format 'yyyy.MM.dd');
         configuration=$Configuration;git_head=$sourceIdentity.git_head;source_dirty=$sourceIdentity.dirty;source_sha256=$sourceIdentity.source_sha256;
         created_utc=(Get-Date).ToUniversalTime().ToString('o');clean_machine_tested=$false;package_export_tested=$false;export_contract=1;
-        runtime=@{player='Player';tools='Tools';managed_api='SDK/Managed';script_targets='SDK/SelfEngine.Scripts.targets';dotnet_sdk='10.0';precompiled_template='SDK/Precompiled/EmptyGame'};
+        runtime=@{player='Player';tools='Tools';managed_api='SDK/Managed';script_targets='SDK/FlareEngine.Scripts.targets';dotnet_sdk='10.0';precompiled_template='SDK/Precompiled/FlareGame'};
         files=$files;file_count=$files.Count;total_bytes=$totalBytes
     }
     Write-EngineJson (Join-Path $stage 'editor-package.json') $manifest

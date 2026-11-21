@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true)][string]$ProjectRoot,
     [Parameter(Mandatory=$true)][string]$ScriptsProject,
     [Parameter(Mandatory=$true)][string]$Scene,
@@ -48,13 +48,13 @@ try {
     if((Invoke-EngineProgram $dotnet $compileArguments (Join-Path $case 'bootstrap-build.log')) -ne 0){throw (Text 'Preview.BuildFailed')}
     $report.phase='restore_project';WriteReport
     $scriptOutput=Join-Path $case 'Scripts'
-    $restoreArguments=@('restore',$project,'--configfile',(Join-Path $repository 'BuildConfig/NuGet.Config'),'--packages',(Join-Path $repository 'out/nuget/packages'),('-p:Configuration='+$Configuration),('-p:SelfEngineRoot='+$repository),'--nologo')
+    $restoreArguments=@('restore',$project,'--configfile',(Join-Path $repository 'BuildConfig/NuGet.Config'),'--packages',(Join-Path $repository 'out/nuget/packages'),('-p:Configuration='+$Configuration),('-p:FlareEngineRoot='+$repository),('-p:SelfEngineRoot='+$repository),'--nologo')
     if((Invoke-EngineProgram $dotnet $restoreArguments (Join-Path $case 'project-restore.log')) -ne 0){throw (Text 'Preview.RestoreFailed')}
     $report.phase='compile_project';WriteReport
-    $compileArguments=@('build',$project,'--configuration',$Configuration,'--output',$scriptOutput,('-p:SelfEngineRoot='+$repository),'--nologo','--no-restore')
+    $compileArguments=@('build',$project,'--configuration',$Configuration,'--output',$scriptOutput,('-p:FlareEngineRoot='+$repository),('-p:SelfEngineRoot='+$repository),'--nologo','--no-restore')
     if((Invoke-EngineProgram $dotnet $compileArguments (Join-Path $case 'project-build.log')) -ne 0){throw (Text 'Preview.BuildFailed')}
     $nameLog=Join-Path $case 'assembly-name.log'
-    if((Invoke-EngineProgram $dotnet @('msbuild',$project,'-nologo',('-p:Configuration='+$Configuration),('-p:SelfEngineRoot='+$repository),'-getProperty:TargetFileName') $nameLog) -ne 0){throw (Text 'Preview.BuildFailed')}
+    if((Invoke-EngineProgram $dotnet @('msbuild',$project,'-nologo',('-p:Configuration='+$Configuration),('-p:FlareEngineRoot='+$repository),('-p:SelfEngineRoot='+$repository),'-getProperty:TargetFileName') $nameLog) -ne 0){throw (Text 'Preview.BuildFailed')}
     $assemblyName=(Get-Content -LiteralPath $nameLog -Raw -Encoding UTF8).Trim()
     if([IO.Path]::GetFileName($assemblyName) -ne $assemblyName -or !($assemblyName.EndsWith('.dll'))){throw (Text 'Preview.BuildFailed')}
     $assembly=Join-Path $scriptOutput $assemblyName
@@ -64,7 +64,7 @@ try {
     $resources=Join-Path $binaryDirectory 'Resources';New-Item -ItemType Directory -Path $resources -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $repository 'Resources/Localization') -Destination $resources -Recurse -Force
     Copy-EngineRendererResources -NativeDirectory $native -Destination $resources
-    $arguments=@((Join-Path $binaryDirectory 'SelfEngine.Bootstrap.dll'),'--project-root',$ProjectRoot,'--project',$assembly,'--scene',$sceneFile,'--bindings',$bindingsFile,'--locale',$Locale,'--preview-lease',$leasePath)
+    $arguments=@((Join-Path $binaryDirectory 'FlareEngine.Bootstrap.dll'),'--project-root',$ProjectRoot,'--project',$assembly,'--scene',$sceneFile,'--bindings',$bindingsFile,'--locale',$Locale,'--preview-lease',$leasePath)
     if($Mode -eq 'Editor'){$arguments+='--editor';if($Play){$arguments+='--play'}}
     elseif($Mode -eq 'Window'){$arguments+='--window'}
     elseif($Frames -eq 0){$Frames=120}

@@ -341,7 +341,7 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
         ++p.stats.pipelineCreations;
         if(p.library&&description.kind!=rhi::PipelineKind::Gui&&description.kind!=rhi::PipelineKind::ToneMap&&SUCCEEDED(p.library->StorePipeline(libraryName.c_str(),prepared->pipeline.Get()))){++p.stats.libraryStores;p.libraryDirty=true;}
     }
-    prepared->rootSignature->SetName(L"SelfEngine.PreparedRootSignature");prepared->pipeline->SetName(L"SelfEngine.PreparedPipeline");
+    prepared->rootSignature->SetName(L"FlareEngine.PreparedRootSignature");prepared->pipeline->SetName(L"FlareEngine.PreparedPipeline");
     p.livePipelines.push_back(prepared);if(description.cachePrepared)p.pipelines.insert_or_assign(key,prepared);return prepared;
 }
 D3D12PipelineCacheStatistics D3D12PipelineCache::Stats() const

@@ -12,14 +12,14 @@
 
 `Advance(World&, double seconds)` 按固定步采样启用的角色，先合成父子关节变换，再乘逆绑定矩阵得到蒙皮矩阵。找不到指定片段时没有可用的动画姿态。`BuildFrameData(const Environment&, …)` 将姿态复制到本帧网格快照；自定义宿主若只传 `World`，不会提取动画姿态。渲染器将每关节写成 48 字节的 3×4 矩阵供 GPU 蒙皮使用。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/542afe82dcdf65eb987477b3862dd3b5d82b43e5/Source/FunctionLayer/Runtime/SkeletalAnimation.cpp#L122) · [帧快照](https://github.com/xuu-xuu-xuu/FlareEngine/blob/542afe82dcdf65eb987477b3862dd3b5d82b43e5/Source/FunctionLayer/Application/FrameData.cpp#L5) · [GPU 数据布局](https://github.com/xuu-xuu-xuu/FlareEngine/blob/542afe82dcdf65eb987477b3862dd3b5d82b43e5/Source/FunctionLayer/Rendering/SandboxRenderer.cpp#L42)
 
-## Entity
+## F_Entity
 
-C# 行为脚本通过自身的 `Entity` 控制角色。以下是绑定到角色的 `Behaviour` 中的两个回调。示例假设模型确实包含 `Walk` 和名为 `IndexTip.R` 的关节；移植时应替换为自己模型中的名称。
+C# 行为脚本通过自身的 `Entity` 控制角色。以下是绑定到角色的 `F_Behaviour` 中的两个生命周期回调。示例假设模型确实包含 `Walk` 和名为 `IndexTip.R` 的关节；移植时应替换为自己模型中的名称。
 
 ```csharp
-public override void OnCreate() => Entity.PlayAnimation("Walk", speed: 1f, loop: true);
+public override void F_Start() => Entity.PlayAnimation("Walk", speed: 1f, loop: true);
 
-public override void OnFixedPostUpdate(double seconds)
+public override void F_FixedUpdate(float fixedDelta)
 {
     if (Entity.JointPosition("IndexTip.R") is not { } tip) return;
     // tip 是本次固定步的世界坐标，可用来定位手指特效。

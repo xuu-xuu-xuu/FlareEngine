@@ -174,7 +174,14 @@ rhi::Result GameUIRenderer::Configure(rhi::Device& device,rhi::CommandContext& c
         scale=f.editorGui.framebufferScale;
         if(!IsFinite(f.sceneViewport.width)||!IsFinite(f.sceneViewport.height)||!IsFinite(scale.x)||!IsFinite(scale.y)||scale.x<=0||scale.y<=0
             ||f.sceneViewport.width<1||f.sceneViewport.height<1||f.sceneViewport.width*scale.x>8192||f.sceneViewport.height*scale.y>8192)return {rhi::Error::InvalidArgument};
-        width=static_cast<unsigned>(std::lround(f.sceneViewport.width*scale.x));height=static_cast<unsigned>(std::lround(f.sceneViewport.height*scale.y));
+        if(!width||!height)
+        {
+            width=static_cast<unsigned>(std::lround(f.sceneViewport.width*scale.x));height=static_cast<unsigned>(std::lround(f.sceneViewport.height*scale.y));
+        }
+        else
+        {
+            scale={static_cast<float>(width)/f.sceneViewport.width,static_cast<float>(height)/f.sceneViewport.height};
+        }
     }
     // 只在确有覆盖层时复制；普通场景 UI 路径保持零额外分配。
     std::vector<UiVisual> composed;

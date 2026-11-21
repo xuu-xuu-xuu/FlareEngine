@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 public readonly record struct SceneHandle(ulong Value);
 public enum SceneState:uint {Unloaded,Preparing,ReadyToActivate,Active,Unloading,Failed,Cancelled}

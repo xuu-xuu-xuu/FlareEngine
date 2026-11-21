@@ -10,11 +10,11 @@ internal static class RuntimePreflight
         var pipe = new Pipe();
         try
         {
-            var payload = JsonSerializer.SerializeToUtf8Bytes(new Probe(37, "SelfEngine"));
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new Probe(37, "FlareEngine"));
             pipe.Writer.WriteAsync(payload).GetAwaiter().GetResult();
             pipe.Writer.Complete();
             var value = JsonSerializer.DeserializeAsync<Probe>(pipe.Reader).GetAwaiter().GetResult();
-            if (value is not { Number: 37, Name: "SelfEngine" })
+            if (value is not { Number: 37, Name: "FlareEngine" })
                 throw new InvalidDataException("Bootstrap.RuntimeCheckFailed");
         }
         finally { pipe.Reader.Complete(); }

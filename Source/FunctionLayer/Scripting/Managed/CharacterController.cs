@@ -1,7 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 [StructLayout(LayoutKind.Sequential)]
 public struct CharacterDescription

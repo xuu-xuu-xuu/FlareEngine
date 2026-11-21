@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <FlareEngineRoot Condition="'$(FlareEngineRoot)' == ''">$(SelfEngineRoot)</FlareEngineRoot>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>FlareGame.Scripts</AssemblyName>
+  </PropertyGroup>
+  <Target Name="CheckEngineRoot" BeforeTargets="ResolveReferences" Condition="'$(FlareEngineRoot)' == ''">
+    <Error Text="Set FlareEngineRoot to the FlareEngine directory." />
+  </Target>
+  <ItemGroup>
+    <ProjectReference Include="$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj" />
+  </ItemGroup>
+</Project>

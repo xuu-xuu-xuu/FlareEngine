@@ -142,9 +142,14 @@ bool World::IsDestroyPending(EntityHandle entity)const{return IsAllocated(entity
 bool World::IsKnown(EntityHandle entity)const{return IsAllocated(entity)&&!IsDestroyPending(entity);}
 bool World::IsAlive(EntityHandle entity) const { return IsKnown(entity) && slots_[entity.index].state==SlotState::Alive; }
 const EntityRecord* World::Get(EntityHandle entity) const { return IsAlive(entity)?&slots_[entity.index].record:nullptr; }
+const EntityRecord* World::GetKnown(EntityHandle entity) const { return IsKnown(entity)?&slots_[entity.index].record:nullptr; }
 EntityHandle World::FindByStableId(StableEntityId id) const
 {
     const auto it=stableIds_.find(id); return it!=stableIds_.end() && IsAlive(it->second)?it->second:EntityHandle{};
+}
+EntityHandle World::FindKnownByStableId(StableEntityId id) const
+{
+    const auto it=stableIds_.find(id); return it!=stableIds_.end() && IsKnown(it->second)?it->second:EntityHandle{};
 }
 
 EntityHandle World::ResolveReference(StableEntityId id) const
@@ -197,10 +202,11 @@ EntityHandle World::Create(std::string name,StableEntityId stableId)
     auto& slot=slots_[index];
     slot.generation=static_cast<std::uint32_t>(generation);slot.state=SlotState::Reserved;
     slot.record={stableId,std::move(name),{},true};
+    slot.pendingTransform=Transform{};
     const EntityHandle handle{index,slot.generation};stableIds_.emplace(stableId,handle);usedStableIds_.insert(stableId);
     if(sceneCreated_)
     {
-        const auto rollback=[&]{stableIds_.erase(stableId);usedStableIds_.erase(stableId);slot.record={};slot.state=SlotState::Free;freeSlots_.push_back(index);};
+        const auto rollback=[&]{stableIds_.erase(stableId);usedStableIds_.erase(stableId);slot.record={};slot.pendingTransform={};slot.state=SlotState::Free;freeSlots_.push_back(index);};
         try{if(!sceneCreated_(handle)){rollback();Fail("Scene.MembershipRejected");return {};}}
         catch(...){rollback();throw;}
     }
@@ -212,7 +218,7 @@ bool World::Activate(EntityHandle entity)
     if(!IsAllocated(entity)||IsDestroyPending(entity))return true;
     if(!IsKnown(entity) || slots_[entity.index].state!=SlotState::Reserved) return Fail("World.InvalidEntity");
     slots_[entity.index].state=SlotState::Alive;++aliveCount_;TouchSpatial(entity);
-    if(Store(transforms_,entity,Transform{}))return true;
+    if(Store(transforms_,entity,slots_[entity.index].pendingTransform))return true;
     MarkDestroy(entity);DestroyNow(entity);return false;
 }
 bool World::Defer(std::function<bool(World&)> operation,bool nextFrame)
@@ -272,13 +278,14 @@ bool World::Rename(EntityHandle entity,std::string name)
 {
     if(!IsKnown(entity))return Fail("World.InvalidEntity");
     if(name.size()>4096)return Fail("World.InvalidName");
+    if(slots_[entity.index].state==SlotState::Reserved)slots_[entity.index].record.name=name;
     return DeferEntity(entity,[entity,name=std::move(name)](World& world)
     {if(!world.IsAlive(entity))return world.Fail("World.InvalidEntity");world.slots_[entity.index].record.name=name;return true;});
 }
 bool World::SetEnabled(EntityHandle entity,bool enabled)
 {
     if(!IsKnown(entity))return Fail("World.InvalidEntity");
-    if(!enabled){slots_[entity.index].record.enabled=false;TouchSpatial(entity);}
+    if(!enabled||slots_[entity.index].state==SlotState::Reserved){slots_[entity.index].record.enabled=enabled;TouchSpatial(entity);}
     return DeferEntity(entity,[entity,enabled](World& world)
     {if(!world.IsAlive(entity))return world.Fail("World.InvalidEntity");world.slots_[entity.index].record.enabled=enabled;world.TouchSpatial(entity);return world.RefreshComponents();});
 }
@@ -304,6 +311,12 @@ bool World::SetParent(EntityHandle entity,EntityHandle parent)
     if(shuttingDown_)return Fail("World.ShuttingDown");
     if(!IsKnown(entity) || (parent && !IsKnown(parent)))return Fail("World.InvalidEntity");
     if(sceneParent_&&!sceneParent_(entity,parent))return Fail("Scene.CrossSceneParent");
+    if(slots_[entity.index].state==SlotState::Reserved)
+    {
+        for(auto cursor=parent;cursor;cursor=GetKnown(cursor)?GetKnown(cursor)->parent:EntityHandle{})
+            if(cursor==entity)return Fail("World.ParentCycle");
+        slots_[entity.index].record.parent=parent;
+    }
     return DeferEntity(entity,[entity,parent](World& world){return parent&&!world.IsKnown(parent)?true:world.ParentNow(entity,parent);},true);
 }
 bool World::ParentNow(EntityHandle entity,EntityHandle parent)
@@ -320,14 +333,36 @@ Mat4 World::GetWorldMatrix(EntityHandle entity) const
     for(auto cursor=entity;cursor;cursor=Get(cursor)->parent) result=GetTransform(cursor)->Matrix()*result;
     return result;
 }
+Mat4 World::GetKnownWorldMatrix(EntityHandle entity) const
+{
+    Mat4 result;
+    if(!IsKnown(entity)) {Fail("World.InvalidEntity");return result;}
+    for(auto cursor=entity;cursor;)
+    {
+        const auto* t=GetKnownTransform(cursor);
+        if(!t)break;
+        result=t->Matrix()*result;
+        const auto* r=GetKnown(cursor);
+        cursor=r?r->parent:EntityHandle{};
+    }
+    return result;
+}
 const Transform* World::GetTransform(EntityHandle entity) const {const auto* component=IsAlive(entity)?transforms_.Get(entity.index):nullptr;return component?&component->value:nullptr;}
+const Transform* World::GetKnownTransform(EntityHandle entity) const
+{
+    if(!IsKnown(entity))return nullptr;
+    if(IsAlive(entity))if(const auto* component=transforms_.Get(entity.index))return &component->value;
+    return &slots_[entity.index].pendingTransform;
+}
 bool World::SetTransform(EntityHandle entity,const Transform& transform,TransformWriteMode mode)
 {
     if(!IsKnown(entity))return Fail("World.InvalidEntity");
     if(!IsValid(transform)||(mode!=TransformWriteMode::Normalize&&mode!=TransformWriteMode::PreserveUnit))return Fail("World.InvalidTransform");
-    return DeferEntity(entity,[entity,transform,mode](World& world)
-    {if(!world.IsAlive(entity))return world.Fail("World.InvalidEntity");auto normalized=transform;
-        if(mode!=TransformWriteMode::PreserveUnit||std::abs(LengthSquared(normalized.rotation)-1)>1e-6f)normalized.rotation=Normalize(normalized.rotation);
+    auto normalized=transform;
+    if(mode!=TransformWriteMode::PreserveUnit||std::abs(LengthSquared(normalized.rotation)-1)>1e-6f)normalized.rotation=Normalize(normalized.rotation);
+    slots_[entity.index].pendingTransform=normalized;
+    return DeferEntity(entity,[entity,normalized](World& world)
+    {if(!world.IsAlive(entity))return world.Fail("World.InvalidEntity");
         if(!world.Store(world.transforms_,entity,normalized))return false;world.TouchSpatial(entity);return true;});
 }
 const CameraComponent* World::GetCamera(EntityHandle entity) const {const auto* component=IsAlive(entity)?cameras_.Get(entity.index):nullptr;return component?&component->value:nullptr;}

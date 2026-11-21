@@ -3,13 +3,17 @@ using System.Numerics;
 using System.Reflection;
 using System.Text.Json;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
-public readonly record struct ExposedField(string Name, string Kind, object? Value);
+public readonly record struct ExposedField(string Name, string Kind, object? Value,
+    string? Header = null, string? Tooltip = null, float? Min = null, float? Max = null)
+{
+    public ExposedField(string Name, string Kind, object? Value) : this(Name, Kind, Value, null, null, null, null) { }
+}
 
 public static class ScriptFields
 {
-    internal static void ClearSceneReferences(Behaviour value,IReadOnlySet<ulong> invalidated)
+    internal static void ClearSceneReferences(F_Behaviour value,IReadOnlySet<ulong> invalidated)
     {
         foreach(var field in Fields(value.GetType()))if(field.FieldType==typeof(EntityReference)&&field.GetValue(value) is EntityReference reference&&invalidated.Contains(reference.StableId))field.SetValue(value,new EntityReference(0));
     }
@@ -19,12 +23,12 @@ public static class ScriptFields
     private static IEnumerable<FieldInfo> Fields(Type type)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
-        for (Type? current = type; current is not null && current != typeof(Behaviour); current = current.BaseType)
+        for (Type? current = type; current is not null && current != typeof(F_Behaviour) && current != typeof(global::SelfEngine.Behaviour) && current != typeof(object); current = current.BaseType)
         {
             foreach (var field in current.GetFields(BindingFlags.Instance | BindingFlags.Public |
                          BindingFlags.NonPublic | BindingFlags.DeclaredOnly).OrderBy(field => field.Name, StringComparer.Ordinal))
             {
-                if (!field.IsDefined(typeof(ExposeAttribute)) || field.IsInitOnly || field.IsStatic) continue;
+                if (!field.IsDefined(typeof(F_ExposeAttribute), inherit: false) || field.IsInitOnly || field.IsStatic) continue;
                 if (!names.Add(field.Name)) throw new InvalidOperationException("Script.FieldTypeChanged");
                 yield return field;
             }
@@ -55,9 +59,52 @@ public static class ScriptFields
         }
         catch(Exception exception)when(exception is JsonException or InvalidOperationException or FormatException or OverflowException or KeyNotFoundException or ArgumentException){return false;}
     }
-    public static IReadOnlyList<ExposedField> Describe(Behaviour behaviour) => Fields(behaviour.GetType())
+    public static IReadOnlyList<ExposedField> Describe(F_Behaviour behaviour) => Fields(behaviour.GetType())
         .Where(field => Kind(field.FieldType) is not null)
-        .Select(field => new ExposedField(field.Name, Kind(field.FieldType)!, field.GetValue(behaviour))).ToArray();
+        .Select(field =>
+        {
+            var header = field.GetCustomAttribute<F_HeaderAttribute>(inherit: false)?.Title;
+            var tooltip = field.GetCustomAttribute<F_TooltipAttribute>(inherit: false)?.Text;
+            var range = field.GetCustomAttribute<F_RangeAttribute>(inherit: false);
+            return new ExposedField(field.Name, Kind(field.FieldType)!, field.GetValue(behaviour),
+                header, tooltip, range?.Min, range?.Max);
+        }).ToArray();
+
+    internal static void CopyExposedFields(F_Behaviour source, F_Behaviour target, IReadOnlyDictionary<ulong, ulong>? stableIdRemap = null)
+    {
+        if (source.GetType() != target.GetType()) return;
+        foreach (var field in Fields(source.GetType()))
+        {
+            if (Kind(field.FieldType) is null) continue;
+            var val = field.GetValue(source);
+            if (stableIdRemap is not null && val is EntityReference reference && reference.StableId != 0
+                && stableIdRemap.TryGetValue(reference.StableId, out var mappedId))
+            {
+                val = new EntityReference(mappedId);
+            }
+            field.SetValue(target, val);
+        }
+    }
+
+    internal static void ApplyLive(ScriptSystem system, ulong entityStableId, System.Text.Json.Nodes.JsonObject command)
+    {
+        var type = command["Type"]?.GetValue<string>() ?? throw new JsonException("Script.TypeMissing");
+        var target = system.Attachments.FirstOrDefault(b => b.Entity.IsAlive && b.Entity.StableId == entityStableId && ScriptRegistry.IdOf(b.GetType()) == type)
+            ?? throw new InvalidOperationException("Script.InvalidAttachment");
+        if (command["Enabled"] is not null)
+            target.Enabled = command["Enabled"]!.GetValue<bool>();
+        if (command["Field"] is not null)
+        {
+            var fieldName = command["Field"]!.GetValue<string>();
+            var field = Fields(target.GetType()).FirstOrDefault(f => f.Name == fieldName)
+                ?? throw new InvalidOperationException("Script.FieldMissing");
+            var kind = Kind(field.FieldType) ?? throw new InvalidOperationException("Script.FieldTypeChanged");
+            using var doc = JsonDocument.Parse(command["Value"]?.ToJsonString() ?? "null");
+            if (!TryReadValue(kind, doc.RootElement, out var val))
+                throw new ArgumentException("Script.FieldValueInvalid");
+            field.SetValue(target, val);
+        }
+    }
 
     public static string Save(ScriptSystem system)
     {
@@ -96,7 +143,7 @@ public static class ScriptFields
             system.Report(null, "Script.DocumentInvalid", exception.GetType().Name);
             return false;
         }
-        var candidates = new List<(Entity Entity, Behaviour Value)>();
+        var candidates = new List<(Entity Entity, F_Behaviour Value)>();
         try
         {
             foreach (var saved in document.Scripts)
@@ -106,7 +153,7 @@ public static class ScriptFields
                     throw new JsonException();
                 var entity = system.Session.FindEntity(stableId);
                 if (entity is null) { system.Report(null, "Script.EntityMissing", saved.Entity); continue; }
-                Behaviour? value;
+                F_Behaviour? value;
                 try { value = system.Registry.Create(saved.Type); }
                 catch (Exception exception) { system.Report(null, "Script.ConstructionFailed", saved.Type + ": " + exception.GetType().Name); continue; }
                 if (value is null) { system.Report(null, "Script.TypeMissing", saved.Type); continue; }

@@ -1,28 +1,28 @@
-using SelfEngine;
+using FlareEngine;
 
 namespace ProjectScripts;
 
-[ScriptId("sample.project_mover")]
-public sealed class Mover : Behaviour
+[F_Script("sample.project_mover")]
+public sealed class Mover : F_Behaviour
 {
-    [Expose] public float Speed = 2;
-    public override void OnCreate() => Subscribe<MenuSettingsChanged>(settings => Speed = settings.MoveSpeed);
-    public override void OnUpdate(double seconds)
+    [F_Expose] public float Speed = 2;
+    public override void F_Awake() => Subscribe<MenuSettingsChanged>(settings => Speed = settings.MoveSpeed);
+    public override void F_Update(float delta)
     {
         var transform = Entity.Transform;
-        transform.Position.X += Speed * (float)seconds;
+        transform.Position.X += Speed * delta;
         Entity.Transform = transform;
     }
 }
 
-[ScriptId("sample.project_rotator")]
-public sealed class Rotator : Behaviour
+[F_Script("sample.project_rotator")]
+public sealed class Rotator : F_Behaviour
 {
-    [Expose] public float Speed = 1;
-    public override void OnUpdate(double seconds)
+    [F_Expose] public float Speed = 1;
+    public override void F_Update(float delta)
     {
         var transform = Entity.Transform;
-        transform.Rotation = System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.UnitY, Speed * (float)seconds) * transform.Rotation);
+        transform.Rotation = System.Numerics.Quaternion.Normalize(System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.UnitY, Speed * delta) * transform.Rotation);
         Entity.Transform = transform;
     }
 }

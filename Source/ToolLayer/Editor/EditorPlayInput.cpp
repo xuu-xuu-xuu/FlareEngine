@@ -62,6 +62,22 @@ void EditorPlayInput::Attach(UiTree* ui)
     }
 }
 
+void EditorPlayInput::Activate()
+{
+    if (!ui_ || !input_ || (blocked_ && blocked_()))
+    {
+        return;
+    }
+    if (!active_)
+    {
+        active_ = true;
+        if (onActivated_)
+        {
+            onActivated_();
+        }
+    }
+}
+
 void EditorPlayInput::Deactivate(HWND window)
 {
     if (input_ && ui_)
@@ -137,6 +153,11 @@ EditorInputRoute EditorPlayInput::Process(HWND window, UINT message, WPARAM wPar
     }
     if (Keyboard(message) && active_)
     {
+        if ((message == WM_KEYDOWN || message == WM_KEYUP || message == WM_SYSKEYDOWN || message == WM_SYSKEYUP) &&
+            (wParam == VK_F5 || wParam == VK_F6 || wParam == VK_F7 || wParam == VK_F8 || wParam == VK_F11))
+        {
+            return result;
+        }
         result.forwardEditor = false;
         result.handled = input_->Process(window, message, wParam, lParam);
         return result;
@@ -196,7 +217,7 @@ bool EditorPlayInput::KeyboardConsumed() const
 
 bool EditorPlayInput::PointerConsumed() const
 {
-    return !active_ || !input_ || (!over_ && !Held()) || input_->PointerConsumed();
+    return !active_ || !input_ || (!over_ && !Held() && !cursorCaptured_) || input_->PointerConsumed();
 }
 
 InputState EditorPlayInput::GameplayInput(const InputState& source) const
@@ -222,6 +243,8 @@ InputState EditorPlayInput::GameplayInput(const InputState& source) const
     {
         result.isLeftDown = false;
         result.mouseButtons.fill(false);
+        result.mouseDeltaX = 0;
+        result.mouseDeltaY = 0;
         result.pointerEvents.clear();
     }
     return result;

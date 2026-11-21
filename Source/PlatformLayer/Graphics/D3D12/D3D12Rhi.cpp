@@ -796,8 +796,8 @@ Result CommandContext::ConfigureGui(TextureHandle sceneTarget,TextureHandle comp
     if(scene==output||!scene->target||!scene->target->depth||scene->target->srgb||!output->target||!output->target->srgb||output->target->depth||program->kind!=PipelineKind::Gui)return Fail(Error::Unsupported);
     std::vector<std::shared_ptr<TextureEntry>> resolved;
     if(auto result=ResolveGuiGeometry(*d,g,textures,d->presentation.frames[0].guiDescriptors.Maximum(),output.get(),true,resolved);!result)return result;
-    // 150%/200% 等分数缩放会产生亚像素差异；按 1px 容差比较，避免合法 DPI 被误判。
-    if(std::abs(g.displaySize.x*g.framebufferScale.x-output->native.width)>1.0f||std::abs(g.displaySize.y*g.framebufferScale.y-output->native.height)>1.0f)return Fail(Error::InvalidArgument);
+    // 150%/200% 等分数缩放会产生亚像素差异，拖边期间合成目标可按分块预留余量；有效像素区不得超出合成目标。
+    if(g.displaySize.x*g.framebufferScale.x>output->native.width+1.0f||g.displaySize.y*g.framebufferScale.y>output->native.height+1.0f)return Fail(Error::InvalidArgument);
     impl_->guiGeometry=g;impl_->guiScene=scene;impl_->guiComposite=output;impl_->guiPipeline=program;impl_->guiTextures=std::move(resolved);
     impl_->leases.insert(impl_->leases.end(),{scene,output,program});
     for(const auto& texture:impl_->guiTextures)impl_->leases.push_back(texture);
@@ -1585,7 +1585,14 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
             nullptr,IID_PPV_ARGS(captureBuffer.GetAddressOf()))))return false;
         request.readback=captureBuffer.Get();return true;
     };
-    if(capture&&!prepareCapture(DXGI_FORMAT_R8G8B8A8_UNORM,p.width,p.height,readback,copying,bytes))return Fail(Error::BackendFailure);
+    UINT captureW = p.width, captureH = p.height;
+    if (c.guiComposite && c.guiGeometry.displaySize.x > 0.0f && c.guiGeometry.displaySize.y > 0.0f &&
+        c.guiGeometry.framebufferScale.x > 0.0f && c.guiGeometry.framebufferScale.y > 0.0f)
+    {
+        captureW = std::min(p.width, static_cast<UINT>(std::max(1L, std::lround(c.guiGeometry.displaySize.x * c.guiGeometry.framebufferScale.x))));
+        captureH = std::min(p.height, static_cast<UINT>(std::max(1L, std::lround(c.guiGeometry.displaySize.y * c.guiGeometry.framebufferScale.y))));
+    }
+    if(capture&&!prepareCapture(DXGI_FORMAT_R8G8B8A8_UNORM,captureW,captureH,readback,copying,bytes))return Fail(Error::BackendFailure);
     if(hdrCapture&&!prepareCapture(DXGI_FORMAT_R16G16B16A16_FLOAT,p.width,p.height,hdrReadback,hdrCopying,hdrBytes))return Fail(Error::BackendFailure);
     if(shadowCapture&&!prepareCapture(DXGI_FORMAT_R32_TYPELESS,c.shadow->resolution,c.shadow->resolution,shadowReadback,shadowCopying,shadowBytes,c.shadow->cascadeCount?c.shadow->cascadeCount:1))return Fail(Error::BackendFailure);
     const UINT sceneWidth=outputWidth*sceneScale,sceneHeight=outputHeight*sceneScale;
@@ -1661,11 +1668,11 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     }
     if(capture)
     {
-        Image image{p.width,p.height,std::vector<std::uint8_t>(size_t(p.width)*p.height*4)};
+        Image image{captureW,captureH,std::vector<std::uint8_t>(size_t(captureW)*captureH*4)};
         void* mapped=nullptr;const D3D12_RANGE range{0,static_cast<SIZE_T>(bytes)};
         if(FAILED(readback->Map(0,&range,&mapped)))return Fail(Error::BackendFailure);
-        for(UINT row=0;row<p.height;++row)std::memcpy(image.rgba8.data()+size_t(row)*p.width*4,
-            static_cast<const std::byte*>(mapped)+copying.footprint.Offset+size_t(row)*copying.footprint.Footprint.RowPitch,size_t(p.width)*4);
+        for(UINT row=0;row<captureH;++row)std::memcpy(image.rgba8.data()+size_t(row)*captureW*4,
+            static_cast<const std::byte*>(mapped)+copying.footprint.Offset+size_t(row)*copying.footprint.Footprint.RowPitch,size_t(captureW)*4);
         const D3D12_RANGE noWrites{0,0};readback->Unmap(0,&noWrites);*capture=std::move(image);
     }
     if(hdrCapture)

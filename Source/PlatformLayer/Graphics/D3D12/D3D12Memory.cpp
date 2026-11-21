@@ -156,7 +156,7 @@ HRESULT D3D12MemoryAllocator::Create(const D3D12_RESOURCE_DESC& description,D3D1
             D3D12_HEAP_DESC heap{};heap.SizeInBytes=capacity;heap.Alignment=alignment;heap.Properties.Type=D3D12_HEAP_TYPE_DEFAULT;
             heap.Properties.CreationNodeMask=heap.Properties.VisibleNodeMask=1;heap.Flags=Flags(block->category);
             const auto result=p.device->CreateHeap(&heap,IID_PPV_ARGS(block->heap.GetAddressOf()));if(FAILED(result))return result;
-            block->heap->SetName(L"SelfEngine.DefaultMemoryHeap");block->free.emplace(0,capacity);p.blocks.push_back(block);lease->block=std::move(block);
+            block->heap->SetName(L"FlareEngine.DefaultMemoryHeap");block->free.emplace(0,capacity);p.blocks.push_back(block);lease->block=std::move(block);
             p.stats.reserved+=capacity;++p.stats.heapCreations;p.stats.peakReserved=std::max(p.stats.peakReserved,p.stats.reserved);
         }
         lease->info.heap=lease->block->id;lease->info.offset=chosenOffset;
@@ -226,7 +226,7 @@ HRESULT D3D12MemoryAllocator::CreateTransientSlot(UINT64 bytes,UINT64 alignment,
         heap.Properties.CreationNodeMask=heap.Properties.VisibleNodeMask=1;heap.Flags=Flags(category);
         const auto hr=p.device->CreateHeap(&heap,IID_PPV_ARGS(block->heap.GetAddressOf()));
         if(FAILED(hr))return hr;
-        block->heap->SetName(L"SelfEngine.DefaultMemoryHeap");
+        block->heap->SetName(L"FlareEngine.DefaultMemoryHeap");
         block->free.emplace(0,capacity);p.blocks.push_back(block);lease->block=std::move(block);
         p.stats.reserved+=capacity;++p.stats.heapCreations;p.stats.peakReserved=std::max(p.stats.peakReserved,p.stats.reserved);
     }

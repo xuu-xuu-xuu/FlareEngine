@@ -53,13 +53,33 @@ int32_t SE_CALL se_session_set_update(SE_Session handle, SE_UpdateCallback callb
         return SE_OK;
     });
 }
+int32_t SE_CALL se_session_set_post_step(SE_Session handle, SE_UpdateCallback callback, void* context) noexcept
+{
+    return Protect([&]() -> int32_t {
+        Session* session = Find(handle);
+        if (!session) return MissingSession();
+        if (session->stepping) return Error(SE_BUSY, "Bridge.SessionBusy");
+        session->postStepCallback = callback;
+        session->postStepContext = callback ? context : nullptr;
+        return SE_OK;
+    });
+}
 int32_t SE_CALL se_session_step(SE_Session handle, double dt) noexcept
 {
     return Protect([&]() -> int32_t {
         Session* session = Find(handle);
         if (!session) return MissingSession();
         if (!std::isfinite(dt) || dt < 0.0 || dt > 1.0) return Error(SE_INVALID_ARGUMENT, "Bridge.InvalidDelta");
-        return AdvanceSession(*session,handle,dt,false);
+        const auto rc = AdvanceSession(*session,handle,dt,false);
+        if (rc != SE_OK || !session->postStepCallback) return rc;
+        auto cb = session->postStepCallback;
+        void* ctx = session->postStepContext;
+        int32_t postRc = 0;
+        {
+            struct Unlock{Unlock(){sessionsMutex.unlock();}~Unlock(){sessionsMutex.lock();}} unlock;
+            postRc = cb(handle, dt, ctx);
+        }
+        return postRc == 0 ? SE_OK : Error(SE_CALLBACK_FAILED, "Bridge.CallbackFailed");
     });
 }
 int32_t SE_CALL se_environment_set_callback(SE_Session handle,SE_TickCallback callback,void* context)noexcept

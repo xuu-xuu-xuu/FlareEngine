@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Numerics;
 
-namespace SelfEngine;
+namespace FlareEngine;
 
 internal static unsafe partial class NativeMethods
 {
@@ -24,6 +24,8 @@ internal static unsafe partial class NativeMethods
     internal static partial int Close(ulong handle);
     [LibraryImport(Library, EntryPoint = "se_session_set_update")]
     internal static partial int SetUpdate(ulong handle, delegate* unmanaged[Cdecl]<ulong,double,nint,int> callback, nint context);
+    [LibraryImport(Library, EntryPoint = "se_session_set_post_step")]
+    internal static partial int SetPostStep(ulong handle, delegate* unmanaged[Cdecl]<ulong,double,nint,int> callback, nint context);
     [LibraryImport(Library, EntryPoint = "se_session_step")]
     internal static partial int Step(ulong handle, double deltaSeconds);
     [LibraryImport(Library, EntryPoint = "se_session_get_value")]
@@ -44,6 +46,12 @@ internal static unsafe partial class NativeMethods
     internal static partial int InputActionAxis1D(ulong handle, string action, uint length, out float value);
     [LibraryImport(Library, EntryPoint = "se_input_action_axis2d", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int InputActionAxis2D(ulong handle, string action, uint length, out Vector2 value);
+    [LibraryImport(Library, EntryPoint = "se_input_get_mouse_delta")]
+    internal static partial int GetMouseDelta(ulong handle, out Vector2 delta);
+    [LibraryImport(Library, EntryPoint = "se_input_set_cursor_mode")]
+    internal static partial int SetCursorMode(ulong handle, int locked, int visible);
+    [LibraryImport(Library, EntryPoint = "se_input_get_cursor_mode")]
+    internal static partial int GetCursorMode(ulong handle, out int locked, out int visible);
     [LibraryImport(Library, EntryPoint = "se_session_run_window", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int RunWindow(ulong handle, string locale, uint length, int visible, ulong maximumFrames);
     [LibraryImport(Library, EntryPoint="se_session_set_window_capture", StringMarshalling=StringMarshalling.Utf8)]
@@ -72,6 +80,8 @@ internal static unsafe partial class NativeMethods
     internal static partial int SetMesh(ulong handle,ulong entity,string asset,uint length,int castsShadow,int receivesShadow);
     [LibraryImport(Library, EntryPoint="se_camera_project_direction")]
     internal static partial int ProjectDirection(ulong handle,ulong cameraStableId,Vector3 direction,out Vector2 screenUv,out int inFront);
+    [LibraryImport(Library, EntryPoint="se_camera_screen_point_to_ray")]
+    internal static partial int ScreenPointToRay(ulong handle,ulong cameraStableId,Vector2 screenPixel,out Vector3 origin,out Vector3 direction);
     [LibraryImport(Library, EntryPoint="se_session_set_sky", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SetSky(ulong handle,string? json,uint length);
     [LibraryImport(Library, EntryPoint = "se_session_request_stop")]
@@ -122,10 +132,20 @@ internal static unsafe partial class NativeMethods
     internal static partial int GetTransform(ulong handle, ulong entity, out Transform transform);
     [LibraryImport(Library, EntryPoint = "se_entity_set_transform")]
     internal static partial int SetTransform(ulong handle, ulong entity, in Transform transform);
+    [LibraryImport(Library, EntryPoint = "se_entity_get_world_transform")]
+    internal static partial int GetWorldTransform(ulong handle, ulong entity, out Transform transform);
+    [LibraryImport(Library, EntryPoint = "se_entity_get_parent")]
+    internal static partial int GetParent(ulong handle, ulong entity, out ulong parent);
+    [LibraryImport(Library, EntryPoint = "se_entity_set_parent")]
+    internal static partial int SetParent(ulong handle, ulong entity, ulong parent, int keepWorld);
+    [LibraryImport(Library, EntryPoint = "se_entity_duplicate")]
+    internal static partial int DuplicateEntity(ulong handle, ulong source, Vector3* overridePos, float* overrideRotXyzw, ulong* outSourceStableIds, ulong* outClonedEntities, uint capacity, out uint outCount);
     [LibraryImport(Library, EntryPoint = "se_entity_get_stable_id")]
     internal static partial int GetStableId(ulong handle, ulong entity, out ulong id);
     [LibraryImport(Library, EntryPoint = "se_entity_find")]
     internal static partial int FindEntity(ulong handle, ulong id, out ulong entity);
+    [LibraryImport(Library, EntryPoint = "se_entity_find_by_name", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int FindEntityByName(ulong handle, string name, uint length, out ulong entity, out int found);
     [LibraryImport(Library, EntryPoint = "se_entity_get_name")]
     internal static partial int GetName(ulong handle, ulong entity, byte* buffer, uint capacity, out uint required);
     [LibraryImport(Library, EntryPoint = "se_scene_export")]

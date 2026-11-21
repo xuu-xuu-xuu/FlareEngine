@@ -92,7 +92,15 @@ bool RecordD3D12Gui(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12Gui
     if(!use(c.composite->color.resource.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET))return false;
     const auto rtv=c.composite->rtv->Cpu();constexpr float clear[]{0.015f,0.015f,0.02f,1};commands.ClearRenderTargetView(rtv,clear,0,nullptr);
     commands.OMSetRenderTargets(1,&rtv,FALSE,nullptr);
-    if(!RecordD3D12GuiLayer(p,c.layer,frame.guiDescriptors,u,states,p.width,p.height,text))return false;
+    UINT guiW = p.width;
+    UINT guiH = p.height;
+    if (c.layer.geometry && c.layer.geometry->displaySize.x > 0.0f && c.layer.geometry->displaySize.y > 0.0f &&
+        c.layer.geometry->framebufferScale.x > 0.0f && c.layer.geometry->framebufferScale.y > 0.0f)
+    {
+        guiW = std::min(p.width, static_cast<UINT>(std::max(1L, std::lround(c.layer.geometry->displaySize.x * c.layer.geometry->framebufferScale.x))));
+        guiH = std::min(p.height, static_cast<UINT>(std::max(1L, std::lround(c.layer.geometry->displaySize.y * c.layer.geometry->framebufferScale.y))));
+    }
+    if(!RecordD3D12GuiLayer(p,c.layer,frame.guiDescriptors,u,states,guiW,guiH,text))return false;
     if(!use(c.composite->color.resource.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE)||!use(p.backBuffers[backBuffer].Get(),D3D12_RESOURCE_STATE_COPY_DEST))return false;
     commands.CopyResource(p.backBuffers[backBuffer].Get(),c.composite->color.resource.Get());return true;
 }

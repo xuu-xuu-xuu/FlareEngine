@@ -1,10 +1,10 @@
-namespace SelfEngine;
+namespace FlareEngine;
 
 // 只执行显式注册的动作；持久绑定保存 ID，不保存项目委托或 Type。
 public sealed class UiActionBindings
 {
     private readonly record struct Key(ulong Entity,string Script,string Action);
-    private sealed record Registration(ulong Id,Behaviour Owner,Action<UiEvent> Handler);
+    private sealed record Registration(ulong Id,F_Behaviour Owner,Action<UiEvent> Handler);
     private sealed class Token(UiActionBindings registry,Key key,ulong id):IDisposable
     {
         private UiActionBindings? ownerRegistry=registry;
@@ -16,7 +16,7 @@ public sealed class UiActionBindings
     private ulong next;
     internal UiActionBindings(ScriptSystem system)=>this.system=system;
     public int Count=>registrations.Count;
-    public IDisposable Register(Behaviour owner,string action,Action<UiEvent> handler)
+    public IDisposable Register(F_Behaviour owner,string action,Action<UiEvent> handler)
     {
         ArgumentNullException.ThrowIfNull(owner);ArgumentNullException.ThrowIfNull(handler);
         if(owner.Owner!=system||system.Session.IsDisposed||!owner.Entity.IsAlive)throw new ArgumentException("Script.NotAttached");
@@ -40,7 +40,7 @@ public sealed class UiActionBindings
         if(missing.Add((system.Session.Ui.Epoch,value.Target,binding)))
             system.Report(null,"Script.UiBindingMissing",$"node={value.Target} event={value.Kind} entity={binding.Entity} script={binding.Script} action={binding.Action}","UiAction");
     }
-    internal void Remove(Behaviour owner)
+    internal void Remove(F_Behaviour owner)
     {foreach(var key in registrations.Where(pair=>pair.Value.Owner==owner).Select(pair=>pair.Key).ToArray())registrations.Remove(key);}
     internal void Clear(){registrations.Clear();missing.Clear();}
 }

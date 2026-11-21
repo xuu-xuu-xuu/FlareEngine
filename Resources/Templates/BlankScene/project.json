@@ -1,5 +1,5 @@
 {
-  "format": "SelfEngine.Project",
+  "format": "FlareEngine.Project",
   "version": 1,
   "name": "BlankScene",
   "contentRoot": "Content",

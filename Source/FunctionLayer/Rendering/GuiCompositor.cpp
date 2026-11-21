@@ -63,7 +63,9 @@ rhi::Result GuiCompositor::Configure(rhi::Device& device,rhi::CommandContext& co
             image.width==0||image.height==0||image.width>8192||image.height>8192||!image.rgba8||
             image.bytes!=static_cast<std::size_t>(image.width)*image.height*4)return {rhi::Error::InvalidArgument};
         const auto size=imageSizes_.find(image.token);
-        if(size==imageSizes_.end()||size->second.first!=image.width||size->second.second!=image.height)
+        const auto rev=imageRevisions_.find(image.token);
+        const bool sameSize=size!=imageSizes_.end()&&size->second.first==image.width&&size->second.second==image.height&&images_.contains(image.token);
+        if(!sameSize)
         {
             rhi::Texture next;
             auto result=device.CreateTexture({image.width,image.height,1,1,rhi::TextureFormat::Rgba8,"GuiImage"},
@@ -71,6 +73,14 @@ rhi::Result GuiCompositor::Configure(rhi::Device& device,rhi::CommandContext& co
             if(!result)return result;
             images_[image.token]=std::move(next);
             imageSizes_[image.token]={image.width,image.height};
+            imageRevisions_[image.token]=image.revision;
+        }
+        else if(image.revision!=0&&(rev==imageRevisions_.end()||rev->second!=image.revision))
+        {
+            const rhi::TextureSubresource sub{{image.rgba8,image.bytes},0};
+            auto result=device.UploadTextureSubresourcesRange(images_[image.token],0,std::span(&sub,1));
+            if(!result)return result;
+            imageRevisions_[image.token]=image.revision;
         }
     }
     if(!composite_||width!=width_||height!=height_)

@@ -250,7 +250,8 @@ std::filesystem::path ProjectWorkspaceSession::EngineRootFromExecutable()
 {
     std::error_code error;
     wchar_t configured[32768]{};
-    const auto length=GetEnvironmentVariableW(L"SELFENGINE_EDITOR_ENGINE_ROOT",configured,32768);
+    auto length=GetEnvironmentVariableW(L"FLARE_EDITOR_ENGINE_ROOT",configured,32768);
+    if(length==0||length>=32768)length=GetEnvironmentVariableW(L"SELFENGINE_EDITOR_ENGINE_ROOT",configured,32768);
     if(length>0&&length<32768)
     {
         const std::filesystem::path root(configured);
@@ -273,7 +274,25 @@ std::filesystem::path ProjectWorkspaceSession::UserDataDirectory(const std::file
     const auto localAppDataPath=[]() -> std::filesystem::path {
         wchar_t localAppData[MAX_PATH]{};
         const auto length=GetEnvironmentVariableW(L"LOCALAPPDATA",localAppData,MAX_PATH);
-        if(length>0&&length<MAX_PATH)return std::filesystem::path(localAppData)/"SelfEngine"/"Editor"/IdentityHash();
+        if(length>0&&length<MAX_PATH)
+        {
+            const auto hash=IdentityHash();
+            const auto flareDir=std::filesystem::path(localAppData)/"FlareEngine"/"Editor"/hash;
+            const auto legacyDir=std::filesystem::path(localAppData)/"SelfEngine"/"Editor"/hash;
+            std::error_code ec;
+            if(!std::filesystem::exists(flareDir/"preferences.json",ec)&&std::filesystem::is_regular_file(legacyDir/"preferences.json",ec))
+            {
+                std::filesystem::create_directories(flareDir,ec);
+                if(!ec)
+                {
+                    std::filesystem::copy_file(legacyDir/"preferences.json",flareDir/"preferences.json",std::filesystem::copy_options::skip_existing,ec);
+                    ec.clear();
+                    if(std::filesystem::is_regular_file(legacyDir/"preferences.json.bak",ec))
+                        std::filesystem::copy_file(legacyDir/"preferences.json.bak",flareDir/"preferences.json.bak",std::filesystem::copy_options::skip_existing,ec);
+                }
+            }
+            return flareDir;
+        }
         return {};
     };
     if(development)
@@ -318,7 +337,8 @@ ProjectPreflight ProjectWorkspaceSession::Preflight(const std::filesystem::path&
         std::ifstream input(path,std::ios::binary);
         const std::string text{std::istreambuf_iterator<char>(input),{}};
         const auto json=Json::parse(text);
-        if(json.at("format")!="SelfEngine.Project"){result.errorKey="Project.InvalidManifest";result.detail="format";return result;}
+        const auto format=json.at("format").get<std::string>();
+        if(format!="FlareEngine.Project"&&format!="SelfEngine.Project"){result.errorKey="Project.InvalidManifest";result.detail="format";return result;}
         if(!json.at("version").is_number_integer()||json.at("version")!=1){result.errorKey="Project.UnsupportedVersion";result.detail=json.at("version").dump();return result;}
         if(json.at("name").get<std::string>().empty()){result.errorKey="Project.InvalidManifest";result.detail="name";return result;}
         const auto contentRoot=json.at("contentRoot").get<std::string>();
@@ -374,7 +394,7 @@ bool ProjectWorkspaceSession::CreateProject(ProjectTemplate projectTemplate,cons
     }
     const auto templateDirectory=templateRoot/(projectTemplate==ProjectTemplate::IndoorGallery?L"IndoorGallery":
         projectTemplate==ProjectTemplate::RenderingStudio?L"RenderingStudio":
-        projectTemplate==ProjectTemplate::BlankScene?L"BlankScene":L"EmptyGame");
+        projectTemplate==ProjectTemplate::BlankScene?L"BlankScene":L"Basic3D");
     if(!std::filesystem::is_regular_file(templateDirectory/L"project.json",error))
     {errorKey="Project.TemplateMissing";detail=Utf8(templateDirectory);return false;}
     const auto candidate=base/(std::wstring(L".")+Wide(name)+L".candidate-"+Wide(std::to_string(GetTickCount64())));
