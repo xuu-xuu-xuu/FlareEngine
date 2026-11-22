@@ -13,15 +13,15 @@
 
 ### 第 1 步：右键新建自定义 Shader 与配套材质
 
-1. 在下方 **资产 (`Assets`)** 面板点击工具栏 **`+`**（或在空白处右键），选择 **新建表面着色器 (HLSL) (`New Surface Shader (HLSL)`)**，生成 `NewSurfaceShader.fshader.hlsl`。
-2. 选中刚生成的着色器，在右侧 **属性 (`Inspector`)** 面板点击 **新建材质 (`New Material`)**：
+1. 在下方 **资源 (`Assets`)** 面板点击工具栏 **`＋`**（或在空白处右键），选择 **新建表面着色器 (HLSL) (`New Surface Shader (HLSL)`)**，生成 `NewSurfaceShader.fshader.hlsl`。
+2. 选中刚生成的着色器，在右侧 **属性 (`Inspector`)** 面板点击 **以此着色器新建材质资产 (`Create Material Using This Shader`)**：
    - 编辑器会自动在同目录生成 `NewSurfaceShader_Mat.material.json` 并填好着色器引用与默认参数；
    - 如果你在场景里正选中某个网格物体，还会**自动把新材质赋给该物体**！
-   - 你也可以随时把任意 `.fshader.hlsl` 或 `.fshader.json` 从 **资产 (`Assets`)** 拖进任意材质的 **着色器 (`Shader`)** 槽位（或点槽位右侧 `⊙` 选择器筛选切换）。
+   - 你也可以随时把任意 `.fshader.hlsl` 或 `.fshader.json` 从 **资源 (`Assets`)** 拖进任意材质的 **Shader 产物 (`Shader artifact`)** 槽位（或点槽位右侧 `⊙` 选择器筛选切换）。
 
 ### 第 2 步：外部编辑器保存，切回窗口零重启热编译
 
-双击 `.fshader.hlsl`（或点属性面板的 **打开源码**）即可在你常用的 VS Code / Cursor / Visual Studio 中打开：
+双击 `.fshader.hlsl`（或点属性面板的 **在代码编辑器中打开 HLSL (`Open HLSL in Code Editor`)**）即可在你常用的 VS Code / Cursor / Visual Studio 中打开：
 
 ```text
   在外部编辑器修改 .fshader.hlsl 按 Ctrl+S 保存
@@ -40,7 +40,7 @@
 
 ### 第 3 步：在材质面板拖滑块与拾色器实时调参
 
-只要在 `Properties { ... }` 块里声明属性（写法与 Unity 完全一致），选中引用该着色器的 `.material.json` 时，右侧 **属性 (`Inspector`)** 面板就会自动生成 **着色器参数 (`Shader Parameters`)** 分组——支持范围滑块、布尔开关、浮点拖拽、颜色拾色器与向量输入，支持 `Ctrl + Z / Y` 撤销重做，拖动时左侧视口模型零延迟实时响应。
+只要在 `Properties { ... }` 块里声明属性（写法与 Unity 完全一致），选中引用该着色器的 `.material.json` 时，右侧 **属性 (`Inspector`)** 面板就会自动生成 **自定义着色器参数 (`Custom Shader Parameters`)** 分组——支持范围滑块、布尔开关、浮点拖拽、颜色拾色器与向量输入，支持 `Ctrl + Z / Y` 撤销重做，拖动时左侧视口模型零延迟实时响应。
 
 ---
 
@@ -297,7 +297,8 @@ Shader "Character/ToonOutlineXRay"
             HLSLPROGRAM
             void surf(Input IN, inout SurfaceOutput o)
             {
-                float rim = CalcRim(IN.worldNormal, IN.viewDir, 2.2);
+                float rim  = CalcRim(IN.worldNormal, IN.viewDir, 2.2);
+                o.Albedo   = 0.0;
                 o.Emission = _XRayColor.rgb * (0.25 + rim * 1.4);
                 o.Alpha    = 1.0;
             }
@@ -311,13 +312,13 @@ Shader "Character/ToonOutlineXRay"
 
 ## 三、ASE 风格可视化连线（`Shader Graph`）
 
-不想记 HLSL 函数名？直接用内置的 **着色器连线图 (`Shader Graph`)** 连线即可！
+不想记 HLSL 函数名？直接用内置的 **着色器连线 (`Shader Graph`)** 连线即可！
 
 ### 1. 新建并打开连线面板（双视口实时联动）
 
-1. 在 **资产 (`Assets`)** 面板点击 **`+`**（或右键）→ **新建可视化着色器 (ASE) (`New Visual Shader Graph (ASE)`)**，生成 `NewShaderGraph.fshader.json`。
-2. 面板默认停靠在左下方（与控制台并列标签），**左上方场景视口 (`Viewport`) 完全不被遮挡**；你也可以随时通过顶栏 **面板 (`Panels`) → 着色器连线图 (`Shader Graph`)** 打开，或把标签拖出来变成独立副屏窗口。
-3. 点击连线面板顶栏右侧的 **新建材质 (`New Material`)**（若正选中场景物体，会自动把新材质赋给它）。
+1. 在 **资源 (`Assets`)** 面板点击 **`＋`**（或右键）→ **新建可视化着色器 (ASE) (`New Visual Shader Graph (ASE)`)**，生成 `NewShaderGraph.fshader.json`。
+2. 创建或双击打开 `.fshader.json` 时，面板会自动停靠在左下方页签组（与 **摄像机视口**、**控制台** 并列），**左上方场景视口 (`Viewport`) 完全不被遮挡**；你也可以随时通过顶栏 **面板 (`Panels`) → 着色器连线 (`Shader Graph`)** 打开，或把标签拖出来变成独立副屏窗口。
+3. 点击连线面板顶栏右侧的 **新建配套材质 (`Create Material`)**（若正选中场景物体，会自动把新材质赋给它）。
 4. 此后你在画布里的**每一次连线、断开、暴露参数、修改常量或撤销重做**：
    - **左上方场景视口 (`Viewport`)** 里使用该材质的真实场景模型**立刻热编译同步变化**；
    - **连线面板右下角**的 `112×112` **迷你材质预览球**同步动画刷新，按住预览球左右/上下拖动即可实时旋转预览光源角度！
@@ -328,22 +329,23 @@ Shader "Character/ToonOutlineXRay"
 | :--- | :--- |
 | **平移画布** | 按住 **鼠标中键**、**鼠标右键拖拽** 或 `Alt + 左键拖拽` |
 | **以光标为中心缩放** | 滚动 **鼠标滚轮**（`0.35× ~ 2.0×`） |
-| **呼出分类搜索新建节点** | 在画布空白处 **单击右键**、按 **`空格 (Space)`** 键，或点顶栏 **`+ 添加节点`**（支持顶部分类标签筛选、滚轮翻页、搜中英文名，回车即放） |
+| **呼出分类搜索新建节点** | 在画布空白处 **单击右键**、按 **`空格 (Space)`** 键，或点顶栏 **`＋ 添加节点 (Space)` (`+ Add Node (Space)`)**（支持顶部分类标签筛选、滚轮翻页、搜中英文名，回车即放） |
 | **拖线到空白处自动连线新建** | 从任意输出或未连输入端口拖出贝塞尔曲线，在空白处松开鼠标 → 自动过滤可连节点并在选中后**自动接线** |
 | **框选 / 多选移动节点** | 左键空白处拖拽框选；按住 `Shift` 或 `Ctrl` 加选节点一起拖动 |
 | **拔插改连 / 一键断线** | 左键按住已连接的输入端口即可像拔插头一样改插到其他输入口或松在空白处丢弃；按住 **`Alt + 左键`** 点击端口/连线或 **`右键单击连线`** 一键秒断 |
+| **删除选中节点或连线** | 按 **`Del`** 或 **`Backspace`** |
 | **复制选中节点** | **`Ctrl + D`**（自动保留选中子图内部的连线） |
-| **居中全部节点** | 按 **`F`** 键（或点顶栏 **居中 (`Frame`)**） |
+| **居中全部节点** | 按 **`F`** 键（或点顶栏 **居中画布 (`Frame Graph`)**） |
 | **撤销 / 重做** | **`Ctrl + Z`** / **`Ctrl + Y`** |
 
 ### 3. 暴露材质面板滑块与行内微调参数
 
 1. 在画布中点击选中任意属性节点（`Float`、`Range`、`Boolean`、`Color`、`Vector2`、`Vector3`、`Vector4`），或选中任意带有未连线可调输入端口的运算/程序化节点（如 `Voronoi`、`DissolveEdge`、`Twirl`）。
 2. 工具栏下方会出现属性条：
-   - 对属性节点可点击 **暴露为材质参数 (`Expose`)** 勾选打勾，右侧输入英文参数名（如 `_GlowPower`）按回车；
-   - 在数值框直接输入默认值（`Range` 节点支持写 `默认值, 最小值, 最大值`，普通运算节点可直接逗号分隔修改未连线的默认输入参数）按回车。
+   - 对属性节点可点击 **暴露到材质面板 (`Expose in Inspector`)** 勾选打勾，右侧输入英文参数名（如 `_GlowPower`）按回车（或点回画布自动提交）；
+   - 在数值框直接输入默认值（`Range` 节点支持写 `默认值, 最小值, 最大值`，普通运算节点可直接逗号分隔修改未连线的默认输入参数）按回车或失焦自动提交。
 3. 切回你的材质 `.material.json`，就能看到暴露出的参数已经自动变成可拖拽的材质滑块或拾色器了！
-4. 随时点击顶栏 **查看生成 HLSL (`View HLSL`)**，还能直接打开节点图编译出的标准 `.fshader.hlsl` 源码对照学习。
+4. 随时点击顶栏 **打开生成的 HLSL (`View Generated HLSL`)**，还能直接打开节点图编译出的标准 `.fshader.hlsl` 源码对照学习。
 
 ### 4. 内置 9 大类 138 个节点速查表（对齐 Unity ASE / Unreal 常用节点库）
 
@@ -355,9 +357,9 @@ Shader "Character/ToonOutlineXRay"
 | **2. 属性与数学常量 (`Property`，9 个)** | `Float`、`Range`、`Boolean`（开关）、`Color`、`Vector2`、`Vector3`、`Vector4`、`PI`（`PI / TAU / HalfPI / InvPI`）、`GoldenRatio`（`Phi / E / Sqrt2`） |
 | **3. 贴图采样与法线处理 (`Texture`，9 个)** | `BaseColorMap`、`NormalMap`、`MetallicRoughnessMap`、`NormalStrength`（法线强度）、`NormalBlend`（RNM 细节法线混合）、`NormalFromHeight`（高度转法线）、`TriplanarBaseColor`（三平面无缝投射）、`ParallaxOffset`（视差偏移 UV）、`Flipbook`（序列帧 UV） |
 | **4. UV 坐标与扭曲变换 (`UV`，10 个)** | `TilingOffset`、`Panner`、`Rotator`（旋转）、`PolarCoordinates`（极坐标）、`Twirl`（漩涡）、`RadialShear`（径向切变）、`Spherize`（球面凸镜）、`PixelateUV`（马赛克）、`MirrorUV`（镜像平铺）、`WorldAlignedUV`（世界平面 UV） |
-| **5. 数学、插值与波形 (`Math`，40 个)** | 四则与范围：`Add`、`Subtract`、`Multiply`、`Divide`、`MultiplyAdd`、`OneMinus`、`Negate`、`Reciprocal`、`Abs`、`Sign`、`Saturate`、`Clamp`、`Min`、`Max`、`Lerp`、`InverseLerp`、`Remap`、`Smoothstep`、`Step`<br>取整与周期：`Floor`、`Ceil`、`Round`、`Frac`、`Fmod`、`PingPong`<br>幂指对与根号：`Power`、`Sqrt`、`Rsqrt`、`Exp`（`e^x / 2^x`）、`Log`（`ln / log2`）<br>三角与波形：`Sin`、`Cos`、`Tan`、`Asin`、`Acos`、`Atan2`、`Radians`、`Degrees`、`TriangleWave`、`SquareWave`、`SawtoothWave` |
+| **5. 数学、插值与波形 (`Math`，41 个)** | 四则与范围：`Add`、`Subtract`、`Multiply`、`Divide`、`MultiplyAdd`、`OneMinus`、`Negate`、`Reciprocal`、`Abs`、`Sign`、`Saturate`、`Clamp`、`Min`、`Max`、`Lerp`、`InverseLerp`、`Remap`、`Smoothstep`、`Step`<br>取整与周期：`Floor`、`Ceil`、`Round`、`Frac`、`Fmod`、`PingPong`<br>幂指对与根号：`Power`、`Sqrt`、`Rsqrt`、`Exp`（`e^x / 2^x`）、`Log`（`ln / log2`）<br>三角与波形：`Sin`、`Cos`、`Tan`、`Asin`、`Acos`、`Atan2`、`Radians`、`Degrees`、`TriangleWave`、`SquareWave`、`SawtoothWave` |
 | **6. 向量与通道重组 (`Vector`，14 个)** | `Dot`、`Cross`（叉积）、`Normalize`、`Length`、`Distance`、`Reflect`（反射）、`Project`（投影）、`Reject`（正交平面分量）、`RotateAboutAxis`（绕任意轴旋转）、`Split`、`Combine`、`Append`（追加拼接）、`ComponentMask`（`XY/XZ/YZ/ZYX` 掩码）、`TransformTS2WS`（切线转世界空间） |
 | **7. 色彩空间与混合滤镜 (`Color`，14 个)** | `RGBToHSV`、`HSVToRGB`、`HueShift`（色相偏移）、`Saturation`、`Contrast`、`BrightnessGamma`、`Luminance`（感知明度）、`Posterize`（色阶量化）、`ColorRamp`（双色平滑渐变）、`ColorMask`（颜色抠像）、`BlendScreen`（滤色）、`BlendOverlay`（叠加）、`BlendSoftLight`（柔光）、`HDRBoost`（HDR 发光倍增） |
 | **8. 程序化噪波与几何图形 (`Procedural`，12 个)** | `SimpleNoise`、`GradientNoise`（柏林梯度噪波）、`FbmNoise`（4 层分形湍流）、`Voronoi`（输出距离与 `CellId`）、`Checkerboard`（棋盘格）、`GridPattern`（网格线）、`BrickPattern`（错缝砖墙）、`EllipseShape`（圆/椭圆）、`RectangleShape`（圆角矩形）、`PolygonShape`（正多边形）、`SphereMask`（3D 球形遮罩）、`WaveRing`（径向涟漪） |
 | **9. 风格化光照、特效与分支 (`Artistic`，12 个)** | `Fresnel`、`RimLight`（受光边缘光）、`HalfLambert`（半兰伯特）、`CelShadeBand`（赛璐璐色阶）、`SpecularStylized`（卡通高光）、`MatCapUV`（球面环境捕捉）、`DissolveEdge`（一站式消融灼烧边缘）、`DitherThreshold`（4×4 Bayer 抖动半透明）、`HeightFogMask`（高度渐变）、`VertexWindWave`（植被顶点风吹）、`CompareIf`（条件比较）、`StaticSwitch`（二选一开关） |
-| **主表面输出 (`Master`，1 个)** | `MasterSurface`（含 `BaseColor`、`Metallic`、`Roughness`、`NormalTS`、`Emissive`、`Opacity`、`AlphaCutoff` 与驱动顶点位移及实时阴影的 `WorldOffset`） |
+| **主表面输出 (`Master`，1 个)** | `MasterSurface`（含 `BaseColor`、`Metallic`、`Roughness`、`NormalTS`、`Emissive`、`Opacity`、`AlphaCutoff` 与驱动顶点局部偏移及实时阴影的 `WorldOffset`） |
