@@ -43,7 +43,7 @@
 
 ## C# 脚本速览
 
-在编辑器中点击 **+ 添加组件** 输入类名即可生成并挂载脚本，切回编辑器自动增量热重载：
+下面是一个控制角色移动、朝向与跳跃的 C# 示例脚本——在编辑器点击 **+ 添加组件** 新建并在外部 IDE 保存后，切回 Flare 窗口即可自动编译生效（完整语法拆解见 [C# 脚本教程](https://xuu-xuu-xuu.github.io/FlareEngine/user/scripting.html)）：
 
 ```csharp
 using System.Numerics;

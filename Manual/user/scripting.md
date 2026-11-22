@@ -36,7 +36,75 @@
 不管是编译报错，还是运行时用 `F_Log.Info / Warn / Error` 打出的日志，都会自带 `文件名.cs(行,列)`。在左下角 **控制台** 面板**双击该行**，会直接把外部代码编辑器光标定位到那一行代码。
 :::
 
-## 3. 属性面板暴露字段与拖拽直连实体
+::: tip 为什么热重载不是“边打字边编译”？
+Flare 的 C# 热重载**默认就是自动开启的，不需要写任何配置代码**。引擎刻意在「切回编辑器窗口」或「点击运行预览」时才触发增量编译，而不是你每敲一个字就编译——这样可以避免外部编辑器开启自动保存（Auto-Save）时把还没写完的代码反复编译刷屏报错。如果你是双屏并排写代码（窗口焦点没切换），随时按 **`Ctrl + B`** 点一下顶栏 **编译脚本** 即可立刻刷新。另外，**运行预览（Play Mode）进行中会暂停代码级热重载**，但支持在属性面板直接热调数值；停止预览后新代码会自动生效。
+:::
+
+## 3. 3 分钟看懂一份 Flare 脚本的语法结构
+
+如果你刚接触 C# 或 Flare 脚本，下面这份 20 行的 `PlayerMover.cs` 就是最标准的脚本骨架——它实现“按 `WASD` 移动、转头看目标、按空格跳跃并打印日志”：
+
+```csharp
+using System.Numerics;                       // ① 引入命名空间（提供 Vector3 / Vector2）
+using FlareEngine;                           //    引入引擎全部 F_ 游戏 API
+
+public class PlayerMover : F_Behaviour       // ② 定义脚本类：继承 F_Behaviour 才能挂到物体上
+{
+    // ③ 成员变量：加 [F_Expose] 会显示在编辑器右侧「属性」面板
+    [F_Header("移动参数")]
+    [F_Expose, F_Range(1f, 20f)] public float MoveSpeed = 6f;
+    [F_Expose] public F_Entity? LookTarget;
+
+    // ④ 生命周期方法：游戏运行时由引擎在固定时机自动调用
+    public override void F_Update(float delta)
+    {
+        // A. 读取 WASD 移动物体
+        var dir = new Vector3(F_Input.Horizontal, 0f, F_Input.Vertical);
+        Translate(dir * (MoveSpeed * F_Time.DeltaTime), localSpace: false);
+
+        // B. 自动转头看向目标物体
+        if (LookTarget is { IsValid: true })
+            LookAt(LookTarget.WorldPosition);
+
+        // C. 按空格键给刚体施加向上冲量，并打印起跳坐标
+        if (F_Input.KeyDown(F_Key.Space) && TryGetComponent<F_Rigidbody>(out var body))
+        {
+            body.AddImpulse(Vector3.UnitY * 5f);
+            F_Log.Info($"Jump at {Entity.WorldPosition}");
+        }
+    }
+}
+```
+
+### 结构与常见 C# 语法拆解
+
+1. **命名空间（`using ...;`）**
+   - 写在文件最顶部，相当于告诉编译器“我要用哪些工具箱”。写 Flare 脚本基本固定带两行：`using System.Numerics;`（三维向量 `Vector3` 等数学类型）和 `using FlareEngine;`（引擎的 `F_` 开头全部 API）。
+2. **类声明（`public class PlayerMover : F_Behaviour`）**
+   - `public class 类名` 定义一个公开类，**建议与 `.cs` 文件名保持一致**（例如 `PlayerMover.cs` 里写 `class PlayerMover`）。
+   - 冒号后的 `: F_Behaviour` 表示“继承自引擎行为基类”，只有继承它才能作为组件挂到场景物体上，**不需要**额外手写 `[F_Script]` 或外层 `namespace`。
+3. **特性与字段（`[...]`、`public`、`float`、`?`）**
+   - **方括号 `[...]`（特性 Attribute）**：给编辑器看的标记，用来控制面板显示方式（例如 `[F_Expose]` 暴露到面板、`[F_Range(1f, 20f)]` 变成滑条）。**不加 `[F_Expose]` 的字段只供代码内部使用，不会出现在属性面板**。
+   - **`public` 与 `private`**：需要暴露给编辑器或其他脚本读写的字段写 `public`；只在当前脚本内部缓存的临时变量（如 `_body`、`_yaw`）写 `private`。
+   - **小数后缀 `f`**：C# 里写 `float` 必须加后缀 `f`（如 `6f`、`0.25f`），不写 `f` 会被当成 `double` 导致类型报错。
+   - **类型后面的 `?`（可空类型）**：如 `F_Entity?`、`F_Rigidbody?` 表示“这个引用可能是空的”（比如面板里还没拖物体进去，或目标刚被销毁）。使用前写 `if (LookTarget is { IsValid: true })` 就能同时判空并确认物体仍然存活，不会崩。
+4. **生命周期钩子（`public override void F_...()`）**
+   - `override` 表示重写基类 `F_Behaviour` 预留的回调。你只需要写你关心的那几个，没写的不占任何开销：
+     | 回调方法 | 什么时候触发 | 常见用途 |
+     | :--- | :--- | :--- |
+     | `F_Awake()` | 实体激活瞬间最早执行一次 | 初始化本脚本内部变量 |
+     | `F_Start()` | 首帧更新前执行一次 | 用 `GetComponent<...>()` 获取同物体上的刚体、角色控制器等组件 |
+     | `F_Update()` 或 `F_Update(float delta)` | 每一渲染帧执行一次（无参、带参两种写法都支持） | 读取键鼠输入、旋转移动、镜头控制、射线检测 |
+     | `F_FixedUpdate()` 或 `F_FixedUpdate(float fixedDelta)` | 按固定物理步（默认 60 Hz）稳定执行 | 调用 `AddForce`、`F_CharacterController.Move` 等物理控制 |
+     | `F_CollisionEnter(in F_Contact contact)` | 两个碰撞体刚撞上时触发 | 扣血、播音效、读取真实撞击点 `contact.Point` 与冲量 `contact.Impulse` |
+     | `F_Destroy()` | 物体销毁或停止运行预览时触发 | 解锁鼠标（`F_Cursor.Locked = false`）、清理资源 |
+5. **上面示例里 4 个最常用的语法写法**
+   - **`var` 自动推断类型**：`var dir = new Vector3(...)` 等价于 `Vector3 dir = new Vector3(...)`，少敲重复类型名。
+   - **命名参数（`localSpace: false`）**：显式写清布尔参数的含义。在 `Translate(..., localSpace: ...)` 里，`false` 表示按**世界固定方向**移动，`true` 表示按**物体自身脸朝向**移动。
+   - **安全取组件（`TryGetComponent<T>(out var body)`）**：`<>` 尖括号里填组件类型，`out var body` 在找到组件时顺便把结果放进新变量 `body` 并返回 `true`；如果这个物体没挂刚体则返回 `false`，直接跳过跳跃逻辑而不报错。
+   - **字符串插值（`$"Jump at {Entity.WorldPosition}"`）**：引号前加 `$` 后，大括号 `{...}` 里的表达式会自动转成文字拼进日志里，非常适合配合 `F_Log.Info(...)` 调试。
+
+## 4. 属性面板暴露字段与拖拽直连实体
 
 在脚本字段上加上 `[F_Expose]` 特性，保存并热重载后，字段就会自动出现在右侧 **属性** 面板里，并随 `Ctrl + S` 与场景一起保存。
 
@@ -49,7 +117,7 @@
   - `[F_Space(10f)]`：在上方留出垂直间距。
   - `[F_ReadOnly]`：只读显示（方便实时查看运行态调试值）。
 
-## 4. 可直接复制的统一 `F_` API 实战脚本
+## 5. 可直接复制的统一 `F_` API 实战脚本
 
 ### 示例一：点击射线交互、物理推力、真实碰撞点与无线程异步延时
 
@@ -213,7 +281,7 @@ public class FirstPersonMover : F_Behaviour
 在编辑器运行预览里开启 `F_Cursor.Locked = true` 后，不需要自己写额外的解锁逻辑：试玩途中按一下 **`Esc`**，引擎会自动暂停光标锁定并恢复系统指针，你可以直接移动鼠标去点顶栏的 **停止预览 (`■`)** 或修改属性面板；如果想继续试玩，在摄像机视口里点一下鼠标左键就会重新锁回视角。
 :::
 
-## 5. 常用 `FlareEngine` 高频 API 速查表
+## 6. 常用 `FlareEngine` 高频 API 速查表
 
 | 需求分类 | 常用写法 |
 | :--- | :--- |
