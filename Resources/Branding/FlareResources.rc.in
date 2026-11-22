@@ -16,6 +16,8 @@ BEGIN
   BEGIN
 #ifdef FLARE_NATIVE_LIBRARY
    VALUE "FileDescription", "Flare Engine Runtime\0"
+#elif defined(FLARE_INSTALLER_APP)
+   VALUE "FileDescription", "Flare Engine Setup\0"
 #else
    VALUE "FileDescription", "Flare Engine Editor\0"
 #endif
@@ -24,6 +26,8 @@ BEGIN
    VALUE "ProductVersion", "0.1.0\0"
 #ifdef FLARE_NATIVE_LIBRARY
    VALUE "OriginalFilename", "EngineNative.dll\0"
+#elif defined(FLARE_INSTALLER_APP)
+   VALUE "OriginalFilename", "FlareEngine-Setup.exe\0"
 #else
    VALUE "OriginalFilename", "FlareEditor.exe\0"
 #endif

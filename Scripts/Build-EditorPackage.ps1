@@ -194,6 +194,8 @@ try {
     AddStep 'write_readme'
     if(Test-Path -LiteralPath (Join-Path $root 'Docs/EditorPackageReadme.md') -PathType Leaf){
         CopyFile (Join-Path $root 'Docs/EditorPackageReadme.md') (Join-Path $stage 'README.md')
+    }elseif(Test-Path -LiteralPath (Join-Path $root 'README.md') -PathType Leaf){
+        CopyFile (Join-Path $root 'README.md') (Join-Path $stage 'README.md')
     }
     $startScript=@'
 param([string]$Project='',[ValidateSet('zh-CN','en-US')][string]$Language='zh-CN',[switch]$SafeMode)

@@ -1,0 +1,127 @@
+name: 发布 Flare Engine 安装包与版本
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布版本标签（如 v0.1.0）'
+        required: true
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows-x64:
+    name: 构建 Windows x64 安装程序并发布 Release
+    runs-on: windows-2022
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 安装 .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: 解析版本号
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
+          if (-not $tag.StartsWith('v')) { $tag = "v$tag" }
+          $version = $tag.TrimStart('v')
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: 编译 C++20 / DirectX 12 原生目标与安装器（Release）
+        shell: pwsh
+        run: |
+          . .\Scripts\Import-MsvcEnvironment.ps1
+          Import-EngineMsvcEnvironment
+          cmake --preset windows-x64-release -DFLARE_BUILD_DEVELOPMENT_TOOLS=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build --preset windows-x64-release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build .\Source\FunctionLayer\Scripting\Bootstrap\Bootstrap.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 打包编辑器便携目录与一键安装程序（Setup.exe + Portable.zip）
+        shell: pwsh
+        run: |
+          .\Scripts\Build-EditorPackage.ps1 -Configuration Release -Name FlareEngine
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\Scripts\Build-EditorInstaller.ps1 -Configuration Release -Version "${{ steps.meta.outputs.version }}" -PackageDirectory "out/packages/FlareEngine" -OutputDirectory "out/release" -IncludePortableZip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: 生成 Release 发布说明并上传安装包
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.meta.outputs.tag }}"
+          $ver = "${{ steps.meta.outputs.version }}"
+          $shaContent = (Get-Content -LiteralPath "out/release/SHA256SUMS.txt" -Raw -Encoding UTF8).Trim()
+
+          $template = @'
+          ## Flare Engine __TAG__（Windows x64）
+
+          ### 下载与安装说明
+
+          | 安装包文件 | 适用场景 | 说明 |
+          | :--- | :--- | :--- |
+          | **`FlareEngine-Setup-v__VER__-x64.exe`** | **推荐大多数用户下载** | 原生向导式安装程序（无需管理员权限与预装 VC++ 运行库），自动配置桌面/开始菜单快捷方式与 Windows「已安装的应用」一键卸载 |
+          | **`FlareEngine-Portable-v__VER__-x64.zip`** | 免安装绿色便携版 | 解压至任意无特殊限制目录，双击 `FlareEditor.exe` 即可启动 |
+          | **`SHA256SUMS.txt`** | 完整性校验 | 安装程序与便携包的 SHA-256 摘要 |
+
+          > **系统与环境要求**：Windows 10 / 11 x64，支持 DirectX 12 的显卡（硬件光追需支持 DXR 1.1）。安装包已内嵌完整的独立运行环境与预编译示例，开箱即可浏览、布光、编辑自定义 Shader / ASE 连线图并导出游戏；如需新建或修改 C# 脚本并触发热编译，请额外安装 [.NET SDK 10.0](https://dotnet.microsoft.com/download/dotnet/10.0)。
+
+          ### 核心亮点
+
+          - **DirectX 12 现代渲染**：多散射 PBR、PSSM + Vogel 软阴影、Forward+ 256 局部光、GTAO / SSGI / SSR / 体积雾、SM 6.5 Mesh Shader 及带 SVGF 降噪的 DXR 1.1 混合硬件光线追踪。
+          - **Unity 风格多 Pass 着色器与 138 节点 ASE 连线图**：支持 `.fshader.hlsl`（最多 8 Pass、背面外扩描边、发光叠加、隔墙 X-Ray 透视与零重启热编译）及 `.fshader.json` 可视化节点画布（主视口真实模型 + 动态光源预览球双路实时联动）。
+          - **自研黑曜金一体化编辑器**：零第三方 IMGUI 依赖，多窗口停靠与副屏浮动、五层卡片式 Inspector（支持算式求值）、预制体双向覆写与原生中英文界面。
+          - **.NET 10 C# 零重启热重载与独立游戏导出**：统一 `F_` 游戏 API、自动生成 `.sln` 与中文智能提示、刚体物理/胶囊控制器、NavMesh 寻路、glTF/FBX 骨骼动画、XAudio2 3D 音频、一键独立游戏 `Play.exe` 导出与固定步 MP4 视频录制。
+
+          ### 在线文档
+
+          - **使用者文档（快速上手 / C# API 字典 / 自定义 Shader 教程）**：https://xuu-xuu-xuu.github.io/FlareEngine/user/
+          - **开发者文档（五层架构 / D3D12 渲染与运行时拆解）**：https://xuu-xuu-xuu.github.io/FlareEngine/
+
+          ### SHA-256 校验值
+
+          ```text
+          __SHA256__
+          ```
+          '@
+
+          $notes = ($template -replace '(?m)^          ', '').Replace('__TAG__', $tag).Replace('__VER__', $ver).Replace('__SHA256__', $shaContent)
+          $notesFile = "out/release/RELEASE_NOTES.md"
+          [IO.File]::WriteAllText($notesFile, $notes + "`n", [Text.UTF8Encoding]::new($false))
+
+          $assets = @(
+            "out/release/FlareEngine-Setup-v$ver-x64.exe",
+            "out/release/FlareEngine-Portable-v$ver-x64.zip",
+            "out/release/SHA256SUMS.txt"
+          )
+
+          $oldEap = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          gh release view $tag *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+          $ErrorActionPreference = $oldEap
+
+          if ($exists) {
+            gh release edit $tag --title "Flare Engine $tag" --notes-file $notesFile
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release upload $tag @assets --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } else {
+            gh release create $tag @assets --title "Flare Engine $tag" --notes-file $notesFile --target "${{ github.sha }}"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

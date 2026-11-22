@@ -35,7 +35,7 @@ function Read-EngineEditorPackage([string]$Root) {
     }
     foreach($file in Get-ChildItem -LiteralPath $Root -File -Recurse -Force){
         $relative=$file.FullName.Substring($Root.Length+1).Replace('\','/')
-        if($relative -ne 'editor-package.json' -and !$listed.ContainsKey($relative)){throw ('Export.EditorPackageInvalid '+$relative)}
+        if($relative -notin @('editor-package.json','Uninstall.exe','uninstall.dat') -and !$listed.ContainsKey($relative)){throw ('Export.EditorPackageInvalid '+$relative)}
     }
     foreach($required in @('Tools/ProjectTool.exe','Player/FlareEngine.Bootstrap.exe','Player/EngineNative.dll','Player/FlareEngine.Managed.dll',
         'Player/FlareEngine.Bootstrap.runtimeconfig.json','SDK/Managed/FlareEngine.Managed.dll','SDK/Managed/FlareEngine.Managed.xml','SDK/FlareEngine.Scripts.props','SDK/FlareEngine.Scripts.targets')){

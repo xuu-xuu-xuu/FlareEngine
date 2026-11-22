@@ -71,12 +71,14 @@ CMakeUserPresets.json
 !/Source/ToolLayer/Tools/Project.h
 !/Source/ToolLayer/Tools/ProjectTool.cpp
 !/Source/ToolLayer/Tools/FlareEditor.cpp
+!/Source/ToolLayer/Tools/FlareInstaller.cpp
 !/Source/ToolLayer/Tools/ShaderBuilder.cpp
 !/Source/ToolLayer/Tools/NavigationCooker.cpp
 !/Source/ToolLayer/Tools/RenderingCooker.cpp
 !/Source/ToolLayer/Tools/DiffuseProbeCooker.cpp
 /Scripts/*
 !/Scripts/Build-EditorPackage.ps1
+!/Scripts/Build-EditorInstaller.ps1
 !/Scripts/Build-EditorScriptCandidate.ps1
 !/Scripts/Copy-RendererResources.ps1
 !/Scripts/EditorPackageRuntime.ps1

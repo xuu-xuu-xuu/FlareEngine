@@ -108,7 +108,11 @@ Shader "FX/HologramRim"
 
 ## 快速开始
 
-### 环境要求
+### 直接下载安装（推荐）
+
+前往 [**GitHub Releases**](https://github.com/xuu-xuu-xuu/FlareEngine/releases) 下载最新的 **`FlareEngine-Setup-v0.1.0-x64.exe`** 双击即可一键向导安装（自动创建桌面/开始菜单快捷方式并注册 Windows 应用卸载项，也可下载免安装便携版 `.zip`）。
+
+### 从源码构建环境要求
 
 - **系统与显卡**：Windows 10 / 11 x64，支持 DirectX 12（硬件光追需 DXR 1.1）
 - **C++ 工具链**：Visual Studio 2022（「使用 C++ 的桌面开发」）、CMake 3.25+、Ninja
@@ -127,10 +131,11 @@ dotnet build .\Source\FunctionLayer\Scripting\Bootstrap\Bootstrap.csproj -c Rele
 .\Scripts\Start-Editor.ps1
 ```
 
-打包独立便携版编辑器（输出至 `out/packages/FlareEngine`）：
+打包独立便携版编辑器与一键安装程序（输出至 `out/packages/FlareEngine` 与 `out/release`）：
 
 ```powershell
 .\Scripts\Build-EditorPackage.ps1 -Configuration Release -Name FlareEngine
+.\Scripts\Build-EditorInstaller.ps1 -Configuration Release -IncludePortableZip
 ```
 
 本地预览开发者与使用者文档站：
