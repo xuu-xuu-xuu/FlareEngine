@@ -4,6 +4,7 @@
 #include "EditorMaterialWorkflow.h"
 #include "EditorScriptTools.h"
 #include "EditorSessionStore.h"
+#include "EditorShaderGraphController.h"
 #include "MaterialThumbnail.h"
 #include "ProjectSettingsService.h"
 #include "PrefabWorkflow.h"
@@ -16,6 +17,8 @@
 #include "ResourceLayer/Assets/AudioClip.h"
 #include "ResourceLayer/Assets/MaterialMetadata.h"
 #include "ResourceLayer/Assets/Primitives.h"
+#include "ResourceLayer/Assets/ShaderGraph.h"
+#include "ResourceLayer/Assets/SurfaceShader.h"
 #include "ResourceLayer/Scenes/PrefabDocument.h"
 
 #include <algorithm>
@@ -85,6 +88,96 @@ bool ParseFloatList(std::string_view text, float* values, std::size_t count)
         if (!(stream >> values[index])) return false;
     }
     return true;
+}
+
+std::string FormatShaderParamText(SurfaceParamKind kind, const Vec4& v)
+{
+    switch (kind)
+    {
+    case SurfaceParamKind::Float:
+    case SurfaceParamKind::Range:
+        return std::to_string(v.x);
+    case SurfaceParamKind::Vector2:
+        return std::to_string(v.x) + ", " + std::to_string(v.y);
+    case SurfaceParamKind::Vector3:
+        return std::to_string(v.x) + ", " + std::to_string(v.y) + ", " + std::to_string(v.z);
+    case SurfaceParamKind::Color:
+    case SurfaceParamKind::Vector4:
+        return std::to_string(v.x) + ", " + std::to_string(v.y) + ", " + std::to_string(v.z) + ", " + std::to_string(v.w);
+    }
+    return std::to_string(v.x);
+}
+
+bool ParseShaderParamFormValue(const AssetStore& assets,
+                               const MaterialDocument& doc,
+                               std::string_view matKey,
+                               std::string_view text,
+                               PropertyValue& outParsed,
+                               std::string& outFormatted)
+{
+    constexpr std::string_view kPrefix = "material.shaderParam.";
+    if (!matKey.starts_with(kPrefix)) return false;
+    const std::string paramName(matKey.substr(kPrefix.size()));
+
+    SurfaceParamKind kind = SurfaceParamKind::Vector4;
+    float minVal = -1e9f, maxVal = 1e9f;
+    bool clampRange = false;
+    Vec4 existing{0.0f, 0.0f, 0.0f, 1.0f};
+    if (auto it = doc.shaderParameters.find(paramName); it != doc.shaderParameters.end()) existing = it->second;
+
+    if (!doc.shader.empty())
+    {
+        std::vector<AssetDiagnostic> diag;
+        UserSurfaceShaderSource shader;
+        if (assets.LoadSurfaceShader(doc.shader, shader, diag))
+        {
+            for (const auto& p : shader.metadata.parameters)
+            {
+                if (p.name == paramName)
+                {
+                    kind = p.kind;
+                    if (doc.shaderParameters.find(paramName) == doc.shaderParameters.end()) existing = p.defaultValue;
+                    if (kind == SurfaceParamKind::Range) { minVal = p.minValue; maxVal = p.maxValue; clampRange = true; }
+                    break;
+                }
+            }
+        }
+    }
+
+    float vals[4]{existing.x, existing.y, existing.z, existing.w};
+    if (kind == SurfaceParamKind::Float || kind == SurfaceParamKind::Range)
+    {
+        if (!ParseFloatList(text, vals, 1) || !std::isfinite(vals[0])) return false;
+        if (clampRange) vals[0] = std::clamp(vals[0], minVal, maxVal);
+        const Vec4 result{vals[0], 0.0f, 0.0f, 1.0f};
+        outParsed = result;
+        outFormatted = FormatShaderParamText(kind, result);
+        return true;
+    }
+    if (kind == SurfaceParamKind::Vector2)
+    {
+        if (!ParseFloatList(text, vals, 2)) return false;
+        const Vec4 result{vals[0], vals[1], 0.0f, 1.0f};
+        outParsed = result;
+        outFormatted = FormatShaderParamText(kind, result);
+        return true;
+    }
+    if (kind == SurfaceParamKind::Vector3)
+    {
+        if (!ParseFloatList(text, vals, 3)) return false;
+        const Vec4 result{vals[0], vals[1], vals[2], 1.0f};
+        outParsed = result;
+        outFormatted = FormatShaderParamText(kind, result);
+        return true;
+    }
+    if (ParseFloatList(text, vals, 4) || ParseFloatList(text, vals, 3))
+    {
+        const Vec4 result{vals[0], vals[1], vals[2], vals[3]};
+        outParsed = result;
+        outFormatted = FormatShaderParamText(kind, result);
+        return true;
+    }
+    return false;
 }
 
 bool ApplyProjectSettingsField(EditorWorkspaceHost& host, std::string_view key, const std::string& value)
@@ -276,6 +369,8 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
     const bool audio = extension == ".wav" || extension == ".ogg";
     const bool todAsset = extension == ".tod";
     const bool prefab = IsPrefabDocumentPath(selected);
+    const bool shaderHlsl = IsSurfaceShaderHlslPath(selected);
+    const bool shaderGraph = IsShaderGraphPath(selected);
     std::string type = extension;
     if (model) type = ctx.text.GetText("EditorUi.AssetModel");
     else if (prefab) type = ctx.text.GetText("EditorUi.AssetPrefab");
@@ -283,6 +378,8 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
     else if (audio) type = ctx.text.GetText("EditorUi.AssetAudio");
     else if (todAsset) type = ctx.text.GetText("EditorUi.AssetEnvironment");
     else if (extension == ".cs") type = ctx.text.GetText("EditorUi.AssetScript");
+    else if (shaderGraph) type = ctx.text.GetText("EditorUi.AssetShaderGraph");
+    else if (shaderHlsl) type = ctx.text.GetText("EditorUi.AssetShader");
     else if (IsMaterialDocumentPath(selected)) type = ctx.text.GetText("EditorUi.DocumentMaterial");
 
     addDetail("asset.name", "EditorUi.Name", state.assetName);
@@ -391,6 +488,20 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
         state.rows.push_back({"asset.openMaterial", ctx.text.GetText("EditorUi.OpenMaterial"),
                               EditorPropertyType::Action, {}, false});
     }
+    if (shaderHlsl)
+    {
+        state.rows.push_back({"asset.openShaderSource", ctx.text.GetText("EditorUi.OpenShaderSource"),
+                              EditorPropertyType::Action, {}, false});
+        state.rows.push_back({"asset.createShaderMaterial", ctx.text.GetText("EditorUi.CreateMaterialFromShader"),
+                              EditorPropertyType::Action, {}, ctx.session.IsPlaying()});
+    }
+    if (shaderGraph)
+    {
+        state.rows.push_back({"asset.openShaderGraph", ctx.text.GetText("EditorUi.OpenShaderGraph"),
+                              EditorPropertyType::Action, {}, false});
+        state.rows.push_back({"asset.createShaderMaterial", ctx.text.GetText("EditorUi.CreateMaterialFromShader"),
+                              EditorPropertyType::Action, {}, ctx.session.IsPlaying()});
+    }
     if (asset_io::Within(ctx.assets.SourceRoot(), selected))
     {
         state.rows.push_back({"asset.targetPath", ctx.text.GetText("Editor.AssetTarget"),
@@ -447,13 +558,38 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
                 break;
             }
         }
+        if (shaderGraph)
+        {
+            ShaderGraphDocument sgDoc;
+            std::string sgErr;
+            if (LoadShaderGraph(selected, sgDoc, sgErr))
+            {
+                const ShaderPreviewImage sphere = RenderShaderGraphPreviewSphere(sgDoc, 0.0f, -0.55f, 0.52f, {}, 96);
+                if (sphere.width > 0 && sphere.height > 0 && !sphere.rgba8.empty())
+                {
+                    auto image = std::make_shared<ImageData>();
+                    image->width = sphere.width;
+                    image->height = sphere.height;
+                    image->rgba8 = sphere.rgba8;
+                    const std::string imageKey = "shadergraph:" + path;
+                    const std::size_t hash = std::hash<std::string>{}(imageKey);
+                    state.previewToken = 0x100000000ull | (static_cast<std::uint64_t>(hash) & 0xffffffffull);
+                    state.previewImage = std::move(image);
+                    state.previewImageKey = imageKey;
+                    state.imageInfos[imageKey] = {state.previewToken, static_cast<float>(state.previewImage->width),
+                                                  static_cast<float>(state.previewImage->height)};
+                    ctx.shell.SetAssetPreviewImage(imageKey, static_cast<float>(state.previewImage->width),
+                                                   static_cast<float>(state.previewImage->height));
+                }
+            }
+        }
         return;
     }
 
     std::string materialError;
     if (ctx.host.OpenMaterial(ctx.assets, selected, false))
     {
-        auto matRows = BuildMaterialFormRows(ctx.host.Material(), ctx.text);
+        auto matRows = BuildMaterialFormRows(ctx.host.Material(), ctx.text, &ctx.assets);
         ctx.shell.SetFormProperties(EditorPanelId::Material, matRows);
         const std::string matSection = ctx.text.GetText("EditorUi.DocumentMaterial");
         std::size_t matUserCount = 0;
@@ -483,22 +619,26 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
         }
         for (auto& mr : matRows)
         {
-            if (mr.key == "name") continue;
+            if (mr.key == "name" || mr.key == "material.name") continue;
+            const bool isCustomParam = mr.key.starts_with("material.shaderParam.");
             EditorProperty inlineRow = mr;
             inlineRow.key = "asset.mat." + mr.key;
-            inlineRow.section = matSection;
+            if (inlineRow.section.empty()) inlineRow.section = matSection;
             inlineRow.readOnly = inlineRow.readOnly || ctx.session.IsPlaying();
             if (inlineRow.type == EditorPropertyType::Number)
             {
-                inlineRow.dragStep = 0.01f;
-                inlineRow.dragMinimum = 0.0f;
-                inlineRow.dragMaximum = (mr.key == "normalScale") ? 2.0f : 1.0f;
-                inlineRow.slider = true;
+                if (!isCustomParam)
+                {
+                    inlineRow.dragStep = 0.01f;
+                    inlineRow.dragMinimum = 0.0f;
+                    inlineRow.dragMaximum = (mr.key == "normalScale" || mr.key == "material.normalScale") ? 2.0f : 1.0f;
+                    inlineRow.slider = true;
+                }
                 inlineRow.tooltip = ctx.text.GetText("EditorUi.TooltipDragScrub");
             }
             else if (inlineRow.type == EditorPropertyType::Asset)
             {
-                inlineRow.acceptedAssetKind = "texture";
+                if (inlineRow.acceptedAssetKind.empty()) inlineRow.acceptedAssetKind = "texture";
                 if (inlineRow.value.empty()) inlineRow.displayValue = ctx.text.GetText("EditorUi.None");
                 else
                 {
@@ -846,33 +986,42 @@ bool HandleAssetPropertyAction(ToolkitWorkspaceContext& ctx, const std::string& 
     {
         if (ctx.session.IsPlaying() || !ctx.host.Material().Ready()) return false;
         const std::string matKey = key.substr(10);
-        const PropertyDescriptor* descriptor = FindMaterialProperty(matKey);
-        if (!descriptor) return false;
         PropertyValue parsed;
-        if (descriptor->type == PropertyType::Vector4)
+        std::string formattedOverride;
+        if (matKey.starts_with("material.shaderParam."))
         {
-            PropertyValue existingVal;
-            std::string ignored;
-            float curAlpha = 1.0f;
-            if (ReadMaterialProperty(ctx.host.Material().Document(), matKey, existingVal, ignored))
-                if (const auto* v4 = std::get_if<Vec4>(&existingVal)) curAlpha = v4->w;
-            float vals[4]{0.0f, 0.0f, 0.0f, curAlpha};
-            if (ParseFloatList(value, vals, 4)) parsed = Vec4{vals[0], vals[1], vals[2], vals[3]};
-            else if (ParseFloatList(value, vals, 3)) parsed = Vec4{vals[0], vals[1], vals[2], curAlpha};
-            else return false;
-            if (!ValidatePropertyValue(*descriptor, parsed)) return false;
+            if (!ParseShaderParamFormValue(ctx.assets, ctx.host.Material().Document(), matKey, value, parsed, formattedOverride))
+                return false;
         }
-        else if (!ParseMaterialFormValue(*descriptor, value, parsed))
+        else
         {
-            return false;
+            const PropertyDescriptor* descriptor = FindMaterialProperty(matKey);
+            if (!descriptor) return false;
+            if (descriptor->type == PropertyType::Vector4)
+            {
+                PropertyValue existingVal;
+                std::string ignored;
+                float curAlpha = 1.0f;
+                if (ReadMaterialProperty(ctx.host.Material().Document(), matKey, existingVal, ignored))
+                    if (const auto* v4 = std::get_if<Vec4>(&existingVal)) curAlpha = v4->w;
+                float vals[4]{0.0f, 0.0f, 0.0f, curAlpha};
+                if (ParseFloatList(value, vals, 4)) parsed = Vec4{vals[0], vals[1], vals[2], vals[3]};
+                else if (ParseFloatList(value, vals, 3)) parsed = Vec4{vals[0], vals[1], vals[2], curAlpha};
+                else return false;
+                if (!ValidatePropertyValue(*descriptor, parsed)) return false;
+            }
+            else if (!ParseMaterialFormValue(*descriptor, value, parsed))
+            {
+                return false;
+            }
         }
         if (!ctx.host.Material().SetProperty(matKey, parsed)) return false;
-        ctx.shell.SetFormProperties(EditorPanelId::Material, BuildMaterialFormRows(ctx.host.Material(), ctx.text));
+        ctx.shell.SetFormProperties(EditorPanelId::Material, BuildMaterialFormRows(ctx.host.Material(), ctx.text, &ctx.assets));
         for (auto& row : state.rows)
         {
             if (row.key == key)
             {
-                row.value = PropertyText(parsed);
+                row.value = formattedOverride.empty() ? PropertyText(parsed) : formattedOverride;
                 if (row.type == EditorPropertyType::Asset)
                 {
                     if (row.value.empty()) row.displayValue = ctx.text.GetText("EditorUi.None");
@@ -889,6 +1038,40 @@ bool HandleAssetPropertyAction(ToolkitWorkspaceContext& ctx, const std::string& 
             if (ctx.host.SaveMaterial(ctx.assets))
                 HandleAssetSelection(ctx, asset_io::Utf8(state.assetPath));
         }
+        return true;
+    }
+    if (key == "asset.openShaderSource")
+    {
+        if (state.assetPath.empty()) return false;
+        CodeEditorSettings settings;
+        settings.executable = asset_io::FromUtf8(ctx.host.Preferences().externalEditor);
+        std::string err, detail;
+        if (!EditorScriptTools::OpenSource(ctx.root, state.assetPath, 1, 1, settings, err, detail))
+        {
+            ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, err, "EditorUi.SaveFailed"));
+            return false;
+        }
+        return true;
+    }
+    if (key == "asset.openShaderGraph")
+    {
+        if (!ctx.shaderGraph || state.assetPath.empty()) return false;
+        return ctx.shaderGraph->Open(state.assetPath, true);
+    }
+    if (key == "asset.createShaderMaterial")
+    {
+        if (state.assetPath.empty() || ctx.session.IsPlaying()) return false;
+        std::filesystem::path matPath;
+        std::string err;
+        if (!CreateCompanionShaderMaterial(ctx.root, ctx.assets, ctx.session, state.assetPath, matPath, err))
+        {
+            ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, err, "Assets.WriteFailed"));
+            return false;
+        }
+        const std::string utf8 = asset_io::Utf8(matPath);
+        HandleAssetSelection(ctx, utf8);
+        ctx.shell.PingAsset(utf8);
+        ctx.shell.SetStatus(ctx.text.GetText("EditorUi.Saved") + ": " + asset_io::Utf8(matPath.filename()));
         return true;
     }
     if (key == "asset.openMaterial")
@@ -936,7 +1119,9 @@ std::string LocalizedToolkitStatus(const Localization& text,
     return fallback.empty() ? std::string(fallbackKey) : fallback;
 }
 
-std::vector<EditorProperty> BuildMaterialFormRows(const EditorMaterialWorkflow& material, const Localization& text)
+std::vector<EditorProperty> BuildMaterialFormRows(const EditorMaterialWorkflow& material,
+                                                  const Localization& text,
+                                                  const AssetStore* assets)
 {
     std::vector<EditorProperty> rows;
     if (!material.Ready()) return rows;
@@ -946,7 +1131,8 @@ std::vector<EditorProperty> BuildMaterialFormRows(const EditorMaterialWorkflow& 
         std::string error;
         if (!ReadMaterialProperty(material.Document(), descriptor.key, value, error)) continue;
         EditorPropertyType type = EditorPropertyType::String;
-        if (descriptor.type == PropertyType::Number) type = EditorPropertyType::Number;
+        if (descriptor.key == "material.alphaMode") type = EditorPropertyType::Combo;
+        else if (descriptor.type == PropertyType::Number) type = EditorPropertyType::Number;
         else if (descriptor.type == PropertyType::Boolean) type = EditorPropertyType::Boolean;
         else if (descriptor.type == PropertyType::AssetId) type = EditorPropertyType::Asset;
         else if (descriptor.type == PropertyType::Vector3 || descriptor.type == PropertyType::Vector4)
@@ -954,8 +1140,57 @@ std::vector<EditorProperty> BuildMaterialFormRows(const EditorMaterialWorkflow& 
         const std::string label = descriptor.labelKey.empty()
             ? std::string(descriptor.key) : text.GetText(descriptor.labelKey);
         EditorProperty row{std::string(descriptor.key), label, type, PropertyText(value), !descriptor.editable};
-        if (type == EditorPropertyType::Asset) row.acceptedAssetKind = "texture";
+        if (type == EditorPropertyType::Asset)
+            row.acceptedAssetKind = (descriptor.key == "material.shader") ? "shader" : "texture";
+        else if (descriptor.key == "material.alphaMode")
+        {
+            row.options = {"OPAQUE", "MASK", "BLEND"};
+            row.optionLabels = {"OPAQUE", "MASK", "BLEND"};
+        }
         rows.push_back(std::move(row));
+    }
+
+    if (assets != nullptr && !material.Document().shader.empty())
+    {
+        std::vector<AssetDiagnostic> shaderDiag;
+        UserSurfaceShaderSource userShader;
+        if (assets->LoadSurfaceShader(material.Document().shader, userShader, shaderDiag))
+        {
+            const std::string paramSection = text.GetText("EditorUi.ShaderParametersSection");
+            for (const auto& param : userShader.metadata.parameters)
+            {
+                Vec4 cur = param.defaultValue;
+                if (auto it = material.Document().shaderParameters.find(param.name);
+                    it != material.Document().shaderParameters.end())
+                {
+                    cur = it->second;
+                }
+                EditorPropertyType pType = EditorPropertyType::String;
+                if (param.kind == SurfaceParamKind::Float || param.kind == SurfaceParamKind::Range)
+                    pType = EditorPropertyType::Number;
+                else if (param.kind == SurfaceParamKind::Color)
+                    pType = EditorPropertyType::Color;
+
+                EditorProperty pRow{"material.shaderParam." + param.name,
+                                    param.label.empty() ? param.name : param.label,
+                                    pType,
+                                    FormatShaderParamText(param.kind, cur),
+                                    false};
+                pRow.section = paramSection;
+                if (param.kind == SurfaceParamKind::Range)
+                {
+                    pRow.slider = true;
+                    pRow.dragMinimum = param.minValue;
+                    pRow.dragMaximum = param.maxValue;
+                    pRow.dragStep = std::max(0.001f, (param.maxValue - param.minValue) * 0.005f);
+                }
+                else if (param.kind == SurfaceParamKind::Float)
+                {
+                    pRow.dragStep = 0.02f;
+                }
+                rows.push_back(std::move(pRow));
+            }
+        }
     }
     return rows;
 }
@@ -1381,6 +1616,7 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
             key == "asset.scriptClass" || key == "asset.attachScript" || key == "asset.compileScripts" ||
             key == "asset.deleteScript" || key.starts_with("asset.mat.") ||
             key == "asset.previewAudio" || key == "asset.stopAudio" || key == "asset.openMaterial" ||
+            key == "asset.openShaderSource" || key == "asset.openShaderGraph" || key == "asset.createShaderMaterial" ||
             key == "asset.newSubfolder" || key == "asset.showExplorer")
         {
             return HandleAssetPropertyAction(ctx, key, value);
@@ -1697,10 +1933,18 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
     ctx.shell.SetFormHandlers(
         EditorPanelId::Material,
         [&ctx](std::string key, std::string value) {
-            const PropertyDescriptor* descriptor = FindMaterialProperty(key);
-            if (!descriptor) return false;
             PropertyValue parsed;
-            if (!ParseMaterialFormValue(*descriptor, value, parsed)) return false;
+            if (key.starts_with("material.shaderParam."))
+            {
+                std::string formatted;
+                if (!ParseShaderParamFormValue(ctx.assets, ctx.host.Material().Document(), key, value, parsed, formatted))
+                    return false;
+            }
+            else
+            {
+                const PropertyDescriptor* descriptor = FindMaterialProperty(key);
+                if (!descriptor || !ParseMaterialFormValue(*descriptor, value, parsed)) return false;
+            }
             const bool applied = ctx.host.Material().SetProperty(key, parsed);
             if (applied) Log(LogLevel::Info, "EditorUi.ToolkitMaterial: property " + key);
             return applied;
@@ -1712,7 +1956,7 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
                     LocalizedToolkitStatus(ctx.text, ctx.host.LastError(), "EditorUi.SaveMaterialFailed"));
                 return false;
             }
-            ctx.shell.SetFormProperties(EditorPanelId::Material, BuildMaterialFormRows(ctx.host.Material(), ctx.text));
+            ctx.shell.SetFormProperties(EditorPanelId::Material, BuildMaterialFormRows(ctx.host.Material(), ctx.text, &ctx.assets));
             ctx.shell.SetFormStatus(EditorPanelId::Material, ctx.text.GetText("EditorUi.Saved"));
             Log(LogLevel::Info, "EditorUi.ToolkitMaterial: saved");
             return true;

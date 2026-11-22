@@ -217,8 +217,7 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             }
             else if(asset.type=="shader")
             {
-                flare::ShaderArtifactSource artifact;
-                if(!store.LoadShaderArtifact(asset.id,artifact,assetDiagnostics))
+                if(!store.IsValidMaterialShaderReference(asset.id,assetDiagnostics))
                 {for(const auto& d:assetDiagnostics)diagnostics.push_back({d.key,d.detail});return false;}
             }
             else if(asset.type=="environment")

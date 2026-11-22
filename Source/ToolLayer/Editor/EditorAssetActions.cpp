@@ -75,7 +75,7 @@ std::string Type(const fs::path& path)
     if(extension==".wav"||extension==".ogg")return "audio";
     if(IsMaterialDocumentPath(path))return "material";
     if(IsPrefabDocumentPath(path))return "prefab";
-    if(extension==".sebin")return "shader";
+    if(extension==".sebin"||IsUserSurfaceAssetPath(path))return "shader";
     if(extension==".tod")return "tod";
     if(extension==".seenv")return "environment";
     if(extension==".selod"||extension==".sehlod"||extension==".semeshlet"||extension==".seimp"||extension==".sebc"||extension==".ppm"
@@ -454,8 +454,12 @@ bool EditorAssetActions::SyncProjectAssets(const fs::path& requested,AssetStore&
             else if(type=="environment")valid=static_cast<bool>(assets.LoadEnvironment(id,errors));
             else if(type=="prefab"){PrefabDocument prefabDoc;std::string prefabErr;valid=ReadPrefabDocument(path,prefabDoc,prefabErr);if(!valid&&!prefabErr.empty())errors.push_back({prefabErr,id});}
             else if(type=="data")valid=true;
-            else{ShaderArtifactSource shader;valid=assets.LoadShaderArtifact(id,shader,errors);}
-            if(!valid)return Issue(diagnostics,"Assets.ProjectSyncFailed",path,errors.empty()?id:errors.back().key+": "+errors.back().detail);
+            else{valid=assets.IsValidMaterialShaderReference(id,errors);}
+            if(!valid)
+            {
+                if(IsUserSurfaceAssetPath(path))continue;
+                return Issue(diagnostics,"Assets.ProjectSyncFailed",path,errors.empty()?id:errors.back().key+": "+errors.back().detail);
+            }
             json["assets"].push_back({{"id",id},{"type",type}});changed=true;
         }
         if(!changed)return true;
@@ -505,8 +509,8 @@ bool EditorAssetActions::ValidatePlayAssets(const World& world,const UiTree* ui,
         {dependency.pointer="/textures/"+name;image(texture,dependency);}
         if(!value.shader.empty())
         {
-            dependency.pointer="/shader";dependency.asset=value.shader;ShaderArtifactSource shader;errors.clear();
-            if(!assets.LoadShaderArtifact(value.shader,shader,errors))report(errors,dependency,"Assets.ShaderArtifactInvalid");
+            dependency.pointer="/shader";dependency.asset=value.shader;errors.clear();
+            if(!assets.IsValidMaterialShaderReference(value.shader,errors))report(errors,dependency,"Assets.ShaderArtifactInvalid");
         }
     };
     for(const auto entity:world.Entities())if(const auto* mesh=world.GetMesh(entity))

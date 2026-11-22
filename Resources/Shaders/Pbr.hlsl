@@ -2,6 +2,9 @@
 #include "GeometryCoverage.hlsli"
 #ifdef SE_MATERIAL_SURFACE
 #include "MaterialCoverage.hlsli"
+#ifdef SE_USER_SURFACE
+#include "UserSurfaceContract.hlsli"
+#endif
 #endif
 #ifdef SE_SHADING_EXTENSIONS
 #include "ShadingBindings.hlsli"
@@ -59,6 +62,9 @@ struct PixelInput
 #ifdef SE_INSTANCED
     nointerpolation uint instanceIndex:TEXCOORD2;
 #endif
+#ifdef SE_USER_SURFACE
+    float3 localPosition:TEXCOORD3;
+#endif
 };
 PixelInput VSMain(VertexInput input
 #ifdef SE_INSTANCED
@@ -84,6 +90,16 @@ PixelInput VSMain(VertexInput input
     localNormal=SkinDirection(skinFromSkinned,localNormal);
     localTangent=float4(SkinDirection(skinFromSkinned,localTangent.xyz),localTangent.w);
 #endif
+#if defined(SE_USER_SURFACE) && defined(FLARE_HAS_VERTEX)
+    FlareVertexInput userV;
+    userV.localPos=localPosition;
+    userV.localNormal=localNormal;
+    userV.uv=input.uv;
+    userV.time=flareTime;
+    FlareVertex(userV);
+    localPosition=userV.localPos;
+    localNormal=userV.localNormal;
+#endif
 #ifdef SE_INSTANCED
     uint start=instanceIndex*instanceStrideBytes;
     float4x4 instanceClip=InstanceMatrix(start),instanceWorld=InstanceMatrix(start+64),instanceNormal=InstanceMatrix(start+128);
@@ -98,7 +114,11 @@ PixelInput VSMain(VertexInput input
     output.normal=mul(normalFromLocal,float4(localNormal,0)).xyz;
     output.tangent=float4(mul(worldFromLocal,float4(localTangent.xyz,0)).xyz,localTangent.w);
 #endif
-    output.uv=input.uv;return output;
+    output.uv=input.uv;
+#ifdef SE_USER_SURFACE
+    output.localPosition=localPosition;
+#endif
+    return output;
 }
 float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
 {
@@ -113,9 +133,16 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     ApplyLodCoverage(materialOptions.w,input.position.xy);
     bool logicalFront=frontFace==(materialParameters.w>0);
 #ifdef SE_MATERIAL_SURFACE
+#ifdef SE_USER_SURFACE
+    if(!logicalFront&&surfaceCoverage.z<.5)discard;
+    if(logicalFront&&surfaceCoverage.z>1.5)discard;
+    float coverageAlpha=1.0;materialBaseColor=surfaceBaseColorFactor;
+#else
     float coverageAlpha=MaterialCoverage(input.uv,logicalFront);materialBaseColor=surfaceBaseColorFactor;
 #endif
+#endif
     if(!logicalFront&&materialOptions.z<0.5)discard;
+    if(logicalFront&&materialOptions.z>1.5)discard;
     float3 color=baseColorMap.Sample(materialSampler,input.uv).rgb*materialBaseColor.rgb;
     float3 n=UnitVector(input.normal,float3(0,0,1));
     float3 geometricNormal=n;
@@ -149,6 +176,88 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
             rough=FilterSpecularRoughness(rough,normalDx,normalDy,footprint);
     }
     float3 v=UnitVector(cameraPosition.xyz-input.worldPosition,float3(0,0,1));
+#ifdef SE_USER_SURFACE
+    float3 userEmissive=float3(0,0,0);
+    {
+        float4 baseSample=baseColorMap.Sample(materialSampler,input.uv);
+        float3 defaultNormalTS=float3(0,0,1);
+        if(materialOptions.x>0.5&&abs(materialParameters.z)>1e-8)
+        {
+            defaultNormalTS=SampleNormalTS(input.uv);
+            defaultNormalTS.xy*=materialParameters.z;
+            defaultNormalTS=UnitVector(defaultNormalTS,float3(0,0,1));
+        }
+        float3 baseGeoN=UnitVector(input.normal,float3(0,0,1));
+        float3 fallbackAxis=abs(baseGeoN.y)<0.99?UnitVector(cross(float3(0,1,0),baseGeoN),float3(1,0,0)):UnitVector(cross(float3(1,0,0),baseGeoN),float3(0,0,1));
+        float3 tBasis=UnitVector(input.tangent.xyz-baseGeoN*dot(baseGeoN,input.tangent.xyz),fallbackAxis);
+        float3 bBasis=cross(baseGeoN,tBasis)*input.tangent.w*materialParameters.w;
+#ifdef SE_INSTANCED
+        float3 objOrigin=mul(InstanceMatrix(input.instanceIndex*instanceStrideBytes+64),float4(0,0,0,1)).xyz;
+#else
+        float3 objOrigin=mul(worldFromLocal,float4(0,0,0,1)).xyz;
+#endif
+        FlareSurfaceInput userIn=(FlareSurfaceInput)0;
+        userIn.uv=input.uv;
+        userIn.worldPos=input.worldPosition;
+        userIn.localPos=input.localPosition;
+        userIn.objectPos=objOrigin;
+        userIn.cameraPos=cameraPosition.xyz;
+        userIn.worldNormal=geometricNormal;
+        userIn.worldTangent=tBasis;
+        userIn.worldBitangent=bBasis;
+        userIn.viewDir=v;
+#ifdef SE_FORWARD
+        userIn.lightDir=frameDirection.w>0.5?UnitVector(frameDirection.xyz,float3(0.35,0.85,0.38)):float3(0.35,0.85,0.38);
+        userIn.lightColor=frameDirection.w>0.5?max(frameRadiance.rgb,0.0):float3(0.0,0.0,0.0);
+#else
+        userIn.lightDir=UnitVector(directionToLight.xyz,float3(0.35,0.85,0.38));
+        userIn.lightColor=max(radiance.rgb,0.0);
+#endif
+        userIn.vertexColor=float4(1,1,1,1);
+#ifdef SE_SHADING_EXTENSIONS
+        userIn.screenUv=saturate(input.position.xy*shadingViewport.zw);
+#else
+        userIn.screenUv=frac(input.position.xy/float2(1280.0,720.0));
+#endif
+        userIn.screenPos=userIn.screenUv;
+        userIn.pixelPos=input.position.xy;
+        userIn.facing=logicalFront?1.0:-1.0;
+        userIn.time=flareTime;
+
+        FlareSurfaceOutput userS=(FlareSurfaceOutput)0;
+        userS.baseColor=color;
+        userS.metallic=metal;
+        userS.roughness=rough;
+        userS.normalTS=defaultNormalTS;
+        userS.emissive=float3(0,0,0);
+        userS.opacity=baseSample.a*surfaceBaseColorFactor.a;
+        userS.alphaCutoff=surfaceCoverage.x;
+
+        FlareSurface(userIn,userS);
+
+        if(surfaceCoverage.y>0.5&&surfaceCoverage.y<1.5)
+            clip(userS.opacity-userS.alphaCutoff);
+        coverageAlpha=saturate(userS.opacity);
+        color=max(userS.baseColor,0.0);
+        metal=saturate(userS.metallic);
+        rough=max(0.045,saturate(userS.roughness));
+        userEmissive=max(userS.emissive,0.0);
+
+        float3 tsN=UnitVector(userS.normalTS,float3(0,0,1));
+        n=UnitVector(tBasis*tsN.x+bBasis*tsN.y+baseGeoN*tsN.z,baseGeoN);
+        if(!logicalFront)n=-n;
+    }
+#if defined(SE_FORWARD) && (FLARE_SHADING_MODE == 1)
+    {
+        float3 unlitOut=min(max(color+userEmissive,0),65504);
+#ifdef SE_MATERIAL_SURFACE
+        return float4(unlitOut,MaterialOutputAlpha(coverageAlpha));
+#else
+        return float4(unlitOut,1);
+#endif
+    }
+#endif
+#endif
 #ifdef SE_SHADING_EXTENSIONS
     float2 materialUvDx=ddx(input.uv),materialUvDy=ddy(input.uv);
     float3 receiverPlane=UnitVector(cross(ddx(input.worldPosition),ddy(input.worldPosition)),geometricNormal);
@@ -221,7 +330,20 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     lit+=RectangleLighting(color,metal,rough,input.worldPosition,n,geometricNormal,v,input.tangent.xyz,
         input.tangent.w*materialParameters.w,logicalFront?1:-1,input.uv,materialUvDx,materialUvDy,surfaceCurvature);
 #endif
+#ifdef SE_USER_SURFACE
+#if FLARE_SHADING_MODE == 1
+    float3 shaded=color+userEmissive;
+#elif FLARE_SHADING_MODE == 2
+    float toonShaped=saturate(lookNdl)*saturate(lookVisibility);
+    float toonLevel=toonShaped>=0.55?1.0:(toonShaped>=0.16?0.55:0.0);
+    float3 toonBase=lerp(color*float3(0.58,0.56,0.66),color,toonLevel);
+    float3 shaded=(materialOptions.y>0.5?color:lerp(lit,toonBase,0.82))+userEmissive;
+#else
+    float3 shaded=(materialOptions.y>0.5?color:ApplyLook(lit,color,n,v,lookNdl,lookVisibility))+userEmissive;
+#endif
+#else
     float3 shaded=materialOptions.y>0.5?color:ApplyLook(lit,color,n,v,lookNdl,lookVisibility);
+#endif
 #ifdef SE_CASCADED
     if(csmOptions.z>.5)shaded=CascadeDebugColor(input.worldPosition);
 #endif
@@ -238,7 +360,19 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
 #endif
 #else
     float3 lit=SURFACE_DIRECT(l)*radiance.rgb;
+#ifdef SE_USER_SURFACE
+#if FLARE_SHADING_MODE == 1
+    float3 shaded=color+userEmissive;
+#elif FLARE_SHADING_MODE == 2
+    float toonShaped=saturate(dot(n,l));
+    float toonLevel=toonShaped>=0.55?1.0:(toonShaped>=0.16?0.55:0.0);
+    float3 shaded=(materialOptions.y>0.5?color:lerp(lit,lerp(color*float3(0.58,0.56,0.66),color,toonLevel),0.82))+userEmissive;
+#else
+    float3 shaded=(materialOptions.y>0.5?color:ApplyLook(lit,color,n,v,saturate(dot(n,l)),1.0))+userEmissive;
+#endif
+#else
     float3 shaded=materialOptions.y>0.5?color:ApplyLook(lit,color,n,v,saturate(dot(n,l)),1.0);
+#endif
     return float4(OutputSrgb(shaded),1);
 #endif
 }

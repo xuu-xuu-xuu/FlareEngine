@@ -6,13 +6,13 @@ namespace flare
 {
 OpaqueSortKey BuildOpaqueSortKey(const rhi::DrawIndexed& draw)
 {
-    OpaqueSortKey key;size_t index=0;key.words[index++]=static_cast<std::uint64_t>(rhi::PassKind::Opaque);
+    OpaqueSortKey key;size_t index=0;key.words[index++]=(static_cast<std::uint64_t>(draw.subPassIndex)<<32)|static_cast<std::uint64_t>(rhi::PassKind::Opaque);
     const auto handle=[&](const auto& value){key.words[index++]=value.device;key.words[index++]=(std::uint64_t(value.index)<<32)|value.generation;};
     const auto scalar=[&](float value){key.words[index++]=std::bit_cast<std::uint32_t>(value);};
     handle(draw.pipeline);handle(draw.texture);handle(draw.normalTexture);handle(draw.metallicRoughnessTexture);
     scalar(draw.tint.x);scalar(draw.tint.y);scalar(draw.tint.z);scalar(draw.tint.w);
     scalar(draw.pbr.metallic);scalar(draw.pbr.roughness);scalar(draw.pbr.normalScale);
-    key.words[index++]=(draw.textureIsData?1u:0u)|(draw.unlit?2u:0u)|(draw.pbr.normalMapping?4u:0u)|(draw.pbr.doubleSided?8u:0u)|(draw.pbr.receivesShadow?16u:0u);
+    key.words[index++]=(draw.textureIsData?1u:0u)|(draw.unlit?2u:0u)|(draw.pbr.normalMapping?4u:0u)|(draw.pbr.doubleSided?8u:0u)|(draw.pbr.receivesShadow?16u:0u)|(draw.pbr.cullFront?32u:0u);
     handle(draw.vertices);handle(draw.indices);
     key.words[index++]=static_cast<std::uint64_t>(draw.alphaMode);scalar(draw.alphaCutoff);return key;
 }

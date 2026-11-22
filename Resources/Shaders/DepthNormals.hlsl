@@ -40,6 +40,7 @@ float2 GeometryNormal(PixelInput input,bool frontFace)
     MaterialCoverage(input.uv,logicalFront);
 #endif
     if(!logicalFront&&options.z<.5)discard;
+    if(logicalFront&&options.z>1.5)discard;
     float3 n=UnitVector(input.normal,float3(0,0,1));if(!logicalFront)n=-n;
     n/=abs(n.x)+abs(n.y)+abs(n.z);
     float2 encoded=n.xy;

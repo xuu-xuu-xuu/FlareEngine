@@ -499,15 +499,31 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
     }
     else source=assets.LoadMaterial(id,diagnostics);
     if(!source)return old;
-    if(source->alphaMode!=MaterialAlphaMode::Opaque&&!source->shader.empty())
+    const bool isUserSurface=!source->shader.empty()&&IsUserSurfaceAssetPath(assets.Resolve(source->shader));
+    if(!isUserSurface&&source->alphaMode!=MaterialAlphaMode::Opaque&&!source->shader.empty())
         asset_io::Diagnostic(diagnostics,"Rendering.MaterialShaderCoverageFallback",source->name,true);
     const bool layered=source->clearCoat.weight>0||source->sheen.color.x>0||source->sheen.color.y>0||source->sheen.color.z>0
         ||source->anisotropy.strength>0||source->subsurface.weight>0;
-    if(layered&&!source->shader.empty()&&(previous==materials_.end()||previous->second.source!=source))
+    if(!isUserSurface&&layered&&!source->shader.empty()&&(previous==materials_.end()||previous->second.source!=source))
         asset_io::Diagnostic(diagnostics,"Material.ShaderFallback",source->shader,true);
     // 先按内容修订解析用户产物：失败时保留上一有效材质/Pipeline；首次加载失败退回默认 PBR 并记录诊断。
     ShaderArtifactSource artifact;std::string shaderKey;
-    if(!source->shader.empty()&&customMaterialPipelines_&&source->alphaMode==MaterialAlphaMode::Opaque&&!layered)
+    std::shared_ptr<const UserSurfaceShaderSource> loadedUserSurface;
+    if(isUserSurface)
+    {
+        UserSurfaceShaderSource userSrc;
+        if(assets.LoadSurfaceShader(source->shader,userSrc,diagnostics))
+        {
+            userSrc.materialParameters=source->shaderParameters;
+            shaderKey="user:"+userSrc.content_sha256;
+            loadedUserSurface=std::make_shared<const UserSurfaceShaderSource>(std::move(userSrc));
+        }
+        else if(previous!=materials_.end())
+        {
+            return old;
+        }
+    }
+    else if(!source->shader.empty()&&customMaterialPipelines_&&source->alphaMode==MaterialAlphaMode::Opaque&&!layered)
     {
         if(assets.LoadShaderArtifact(source->shader,artifact,diagnostics))
         {
@@ -536,11 +552,18 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
     auto gpu=std::make_shared<PbrRenderMaterial>();const auto& c=source->baseColor;gpu->color={c[0],c[1],c[2],c[3]};
     gpu->metallic=source->metallic;gpu->roughness=source->roughness;gpu->doubleSided=source->doubleSided;
     gpu->alphaMode=source->alphaMode;gpu->alphaCutoff=source->alphaCutoff;
+    if(loadedUserSurface)
+    {
+        if(loadedUserSurface->metadata.blendOverride)gpu->alphaMode=*loadedUserSurface->metadata.blendOverride;
+        if(loadedUserSurface->metadata.doubleSidedOverride)gpu->doubleSided=*loadedUserSurface->metadata.doubleSidedOverride;
+        gpu->userParams=PackSurfaceShaderParameters(loadedUserSurface->metadata,source->shaderParameters);
+        gpu->userSurface=loadedUserSurface;
+    }
     gpu->normalScale=NormalScale(source->normalScale,source->name,diagnostics);gpu->normalMapping=!source->normalTexture.empty();
     ConfigureLayers(source->clearCoat,source->sheen,source->anisotropy,source->subsurface,*gpu,source->name,diagnostics);
     rhi::Texture* targets[]{&gpu->baseColor,&gpu->normal,&gpu->metallicRoughness,&gpu->layerTextures[0],&gpu->layerTextures[1],&gpu->layerTextures[2],&gpu->layerTextures[3],&gpu->layerTextures[4],&gpu->layerTextures[5]};
     const auto roleFor=[&](std::size_t index){return index>=3?(index==6?TextureRole::LayerColor:TextureRole::LayerData)
-        :index==0?(source->alphaMode==MaterialAlphaMode::Opaque?TextureRole::Color:TextureRole::CoverageColor):index==1?TextureRole::Normal:TextureRole::Data;};
+        :index==0?((gpu->alphaMode==MaterialAlphaMode::Opaque&&!(loadedUserSurface&&loadedUserSurface->metadata.usesAlphaCoverage))?TextureRole::Color:TextureRole::CoverageColor):index==1?TextureRole::Normal:TextureRole::Data;};
     std::array<const ImageData*,9> pixels{};std::array<std::string,9> keys;bool needsUpload=false;
     for(std::size_t index=0;index<9;++index)
     {
@@ -563,7 +586,7 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
         result=batch.Finish();if(!result){asset_io::Diagnostic(diagnostics,result.Key(),id);return old;}
     }
     BindLayerTextures(*gpu);
-    if(!shaderKey.empty())
+    if(!shaderKey.empty()&&!loadedUserSurface)
     {
         if(previous!=materials_.end()&&previous->second.shaderKey==shaderKey&&old&&old->pipeline)gpu->pipeline=old->pipeline;
         else
@@ -629,7 +652,8 @@ void AppendStaticModelDraws(const StaticRenderModel& model,const Mat4& entityWor
 }
 void AppendShadowModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,std::vector<rhi::DrawIndexed>& output,
     std::uint32_t lodLevel,std::span<const std::byte> skinPalette,std::uint32_t skinJointCount,rhi::PipelineHandle skinPipeline,
-    std::span<const std::shared_ptr<const PbrRenderMaterial>> overrides)
+    std::span<const std::shared_ptr<const PbrRenderMaterial>> overrides,
+    std::vector<std::shared_ptr<const UserSurfaceShaderSource>>* outUserSurfaces)
 {
     for(const auto& part:model.layout.parts)
     {
@@ -643,6 +667,7 @@ void AppendShadowModelDraws(const StaticRenderModel& model,const Mat4& entityWor
         {draw.texture=*material->baseColor;draw.tint=material->color;draw.alphaMode=material->alphaMode;
          draw.alphaCutoff=material->alphaCutoff;draw.pbr.metallic=material->metallic;
          draw.pbr.roughness=material->roughness;draw.pbr.doubleSided=material->doubleSided;
+         draw.userParams=material->userParams;
          draw.unlit=model.fallbackMeshes[part.mesh]&&!overridden;}
         draw.compressedVertices=mesh.vertexLayoutVersion==rhi::VertexLayoutVersionCompressed;
         draw.vertices=*mesh.vertices;draw.indices=*LevelIndices(mesh,lodLevel);draw.world=DrawWorld(model,part,entityWorld);
@@ -659,13 +684,15 @@ void AppendShadowModelDraws(const StaticRenderModel& model,const Mat4& entityWor
             {draw.worldBounds=*bounds;draw.hasWorldBounds=true;}
         }
         output.push_back(draw);
+        if(outUserSurfaces)outUserSurfaces->push_back(material?material->userSurface:nullptr);
     }
 }
 void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
     std::span<const std::shared_ptr<const PbrRenderMaterial>> overrides,std::vector<rhi::DrawIndexed>& output,
     rhi::PipelineHandle pipeline,const Mat4& viewProjection,Vec3 camera,Vec3 directionToLight,Vec3 radiance,
     std::uint32_t lodLevel,float lodDither,const Mat4* previousWorld,Vec4 look,std::span<const std::byte> skinPalette,
-    std::uint32_t skinJointCount,rhi::PipelineHandle skinPipeline)
+    std::uint32_t skinJointCount,rhi::PipelineHandle skinPipeline,
+    std::vector<std::shared_ptr<const UserSurfaceShaderSource>>* outUserSurfaces)
 {
     for(const auto& part:model.layout.parts)
     {
@@ -684,6 +711,7 @@ void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
         draw.normalTexture=*material->normal;draw.metallicRoughnessTexture=*material->metallicRoughness;
         draw.alphaMode=material->alphaMode;draw.alphaCutoff=material->alphaCutoff;
         draw.layers=material->layers;
+        draw.userParams=material->userParams;
         if(!mesh.skinned&&!model.compressed)
             if(const auto bounds=TransformBounds(mesh.localBounds,draw.world))
             {draw.worldBounds=*bounds;draw.hasWorldBounds=true;}
@@ -698,6 +726,7 @@ void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
         draw.look=look;
         if(mesh.skinned){draw.skinPalette=skinPalette;draw.skinJointCount=skinJointCount;}
         output.push_back(draw);
+        if(outUserSurfaces)outUserSurfaces->push_back(material->userSurface);
     }
 }
 }

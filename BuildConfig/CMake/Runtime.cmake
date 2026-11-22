@@ -115,6 +115,8 @@ add_library(EngineAssets STATIC
     Source/ResourceLayer/Assets/AsyncAssetLoader.cpp
     Source/ResourceLayer/Assets/StaticModelPreparation.cpp
     Source/ResourceLayer/Assets/MaterialMetadata.cpp
+    Source/ResourceLayer/Assets/SurfaceShader.cpp
+    Source/ResourceLayer/Assets/ShaderGraph.cpp
     Source/ResourceLayer/Assets/TextureBake.cpp
     Source/ResourceLayer/Assets/LodBake.cpp
     Source/ResourceLayer/Assets/HlodBake.cpp

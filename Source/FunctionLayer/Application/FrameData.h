@@ -91,6 +91,8 @@ struct FrameData
     GuiGeometry editorGui; // Tool 完整复制后的自有数据，Function 不解释 ImGui。
     std::optional<CameraSnapshot> editorCamera; // 当前布局尺寸下的独立编辑镜头，Play 留空。
     std::optional<MaterialPreview> materialPreview;
+    std::uint64_t shaderReloadGeneration=0;
+    std::function<void(const std::string&)> editorShaderDiagnosticSink;
     AssetStore* assets = nullptr; // 仅主线程、本次 Render 借用；加载得到的 shared_ptr 可由渲染器自行持有。
     float exposure=1;
     Vec3 skyColor{0.02f,0.04f,0.08f}; // 线性 HDR；普通 Sky 的固定背景，环境模式使用 environment。

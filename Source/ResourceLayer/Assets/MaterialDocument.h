@@ -1,5 +1,6 @@
 #pragma once
 #include "StaticModel.h"
+#include <map>
 #include <string_view>
 
 namespace flare
@@ -13,8 +14,10 @@ struct MaterialDocument
     bool doubleSided=false;
     AssetId baseColorTexture,normalTexture,metallicRoughnessTexture;
     float normalScale=1;
-    // 可选用户 PBR Shader 产物（.sebin）；空表示内置默认 PBR，旧材质缺省行为不变。
+    // 可选用户 Shader 资产（.sebin、.fshader.hlsl 或 .fshader.json）；空表示内置默认 PBR，旧材质缺省行为不变。
     AssetId shader;
+    // 可选自定义着色器材质参数覆盖（键为 @Param 参数名，值为最多 4 分量浮点）。为空时不写入 JSON。
+    std::map<std::string, Vec4> shaderParameters;
     // 沿用 baseColor[3] 为唯一因子 alpha；贴图 alpha 与该因子相乘，不复制 opacity。
     MaterialAlphaMode alphaMode=MaterialAlphaMode::Opaque;
     float alphaCutoff=0.5f;

@@ -76,7 +76,7 @@ void EditorShell::BuildChromeMenus()
     chrome_.AddMenu(project, Text("EditorUi.Export", "Export"), EditorCommandId::Export, {}, "Ctrl+E");
 
     const EditorPanelId workspacePanels[] = {
-        EditorPanelId::Viewport, EditorPanelId::Game, EditorPanelId::UiDesigner,
+        EditorPanelId::Viewport, EditorPanelId::Game, EditorPanelId::ShaderGraph, EditorPanelId::UiDesigner,
         EditorPanelId::Hierarchy, EditorPanelId::Assets, EditorPanelId::Inspector, EditorPanelId::Console};
     for (std::size_t i = 0; i < std::size(workspacePanels); ++i)
     {
@@ -436,6 +436,20 @@ void EditorShell::BindRootInputHandlers()
                 event.StopPropagation();
             }
             return;
+        }
+        if (shaderGraph_ && shaderGraph_->searchPopup.IsValid() && document_.Visible(shaderGraph_->searchPopup))
+        {
+            const auto rect = layout_.Rect(shaderGraph_->searchPopup);
+            if ((event.x < rect.x || event.y < rect.y || event.x >= rect.x + rect.width ||
+                 event.y >= rect.y + rect.height) &&
+                event.target != shaderGraph_->addNodeBtn)
+            {
+                document_.SetVisible(shaderGraph_->searchPopup, false);
+                shaderGraph_->pendingWireDir.clear();
+                shaderGraph_->pendingWireNode = 0;
+                shaderGraph_->pendingWirePort.clear();
+                if (dispatcher_.Focus() == shaderGraph_->searchBox) dispatcher_.ClearFocus();
+            }
         }
         if (closeModalOpen_ || confirmOpen_)
         {
@@ -1156,6 +1170,8 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
     {
         add("EditorUi.NewFolder", "New Folder", EditorCommandId::CreateAsset, "folder");
         add("EditorUi.NewMaterial", "New material", EditorCommandId::CreateAsset, "material");
+        add("EditorUi.NewSurfaceShader", "New Surface Shader (HLSL)", EditorCommandId::CreateAsset, "shader-hlsl");
+        add("EditorUi.NewShaderGraph", "New Visual Shader Graph (ASE)", EditorCommandId::CreateAsset, "shader-graph");
         add("EditorUi.CreateScriptAsset", "Create C# script", EditorCommandId::CreateAsset, "script", true);
         add("Feature.Tod.Create", "Create day cycle", EditorCommandId::CreateAsset, "tod");
         add("Navigation.BakeScene", "Bake scene NavMesh", EditorCommandId::CreateAsset, "navmesh", true);
@@ -1168,7 +1184,9 @@ void EditorShell::OpenCreateMenu(EditorPanelId panel, float x, float y, std::uin
         {
             add("EditorUi.NewFolder", "New Folder", EditorCommandId::CreateAsset, "folder");
             add("EditorUi.CreateScriptAsset", "Create C# script", EditorCommandId::CreateAsset, "script");
-            add("EditorUi.NewMaterial", "New material", EditorCommandId::CreateAsset, "material", true);
+            add("EditorUi.NewMaterial", "New material", EditorCommandId::CreateAsset, "material");
+            add("EditorUi.NewSurfaceShader", "New Surface Shader (HLSL)", EditorCommandId::CreateAsset, "shader-hlsl");
+            add("EditorUi.NewShaderGraph", "New Visual Shader Graph (ASE)", EditorCommandId::CreateAsset, "shader-graph", true);
         }
         add("EditorUi.CreateEmpty", "Create empty object", EditorCommandId::CreateEntity, "empty");
         add("EditorUi.CreateCube", "Create cube", EditorCommandId::CreateEntity, "cube");
@@ -1211,12 +1229,14 @@ void EditorShell::OpenAssetItemMenu(const std::string& path, const std::string& 
     std::vector<EditorMenuItem> items{
         {{}, Text("EditorUi.NewFolder", "New Folder"), EditorCommandId::CreateAsset, "folder"},
         {{}, Text("EditorUi.NewMaterial", "New material"), EditorCommandId::CreateAsset, "material"},
+        {{}, Text("EditorUi.NewSurfaceShader", "New Surface Shader (HLSL)"), EditorCommandId::CreateAsset, "shader-hlsl"},
+        {{}, Text("EditorUi.NewShaderGraph", "New Visual Shader Graph (ASE)"), EditorCommandId::CreateAsset, "shader-graph"},
         {{}, Text("EditorUi.CreateScriptAsset", "Create C# script"), EditorCommandId::CreateAsset, "script", {}, true},
         {{}, Text("EditorUi.RenameAsset", "Rename"), EditorCommandId::SetProperty, "@asset-ctx:rename", "F2"},
         {{}, Text("EditorUi.DeleteAsset", "Delete"), EditorCommandId::SetProperty, "@asset-ctx:delete", "Del", true},
         {{}, Text("EditorUi.ShowInExplorer", "Show in Explorer"), EditorCommandId::SetProperty, "@asset-ctx:explorer"},
     };
-    ShowMenu(SurfaceRoot(dock_.SurfaceFor(EditorPanelId::Assets)), x, y, 200.0f, items);
+    ShowMenu(SurfaceRoot(dock_.SurfaceFor(EditorPanelId::Assets)), x, y, 224.0f, items);
 }
 
 void EditorShell::OpenLayoutMenu(float x, float y)
@@ -1547,6 +1567,10 @@ bool EditorShell::RouteShortcut(const UiInputEvent& event, bool textFieldFocused
     if (MenuOpen() && event.type == UiEventType::KeyDown && event.key == UiKeyEscape)
     {
         CloseMenu();
+        return true;
+    }
+    if (RouteShaderGraphKey(event, textFieldFocused))
+    {
         return true;
     }
     return router_.RouteKey(event, textFieldFocused);

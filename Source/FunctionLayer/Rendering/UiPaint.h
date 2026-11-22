@@ -25,6 +25,7 @@ enum class UiPaintCommandKind : std::uint8_t
     Text,
     Image,
     Line,
+    CubicBezier,
     CanvasRect,
     CanvasCircle,
 };
@@ -43,6 +44,10 @@ struct UiPaintCommand
     float insetBottom = 0.0f;
     float x0 = 0.0f;
     float y0 = 0.0f;
+    float c0x = 0.0f;
+    float c0y = 0.0f;
+    float c1x = 0.0f;
+    float c1y = 0.0f;
     float x1 = 0.0f;
     float y1 = 0.0f;
     float lineWidth = 0.0f;
@@ -90,6 +95,11 @@ public:
     void Text(const UiRect& rect, std::string_view text, float fontSize, const UiColor& color, UiTextFlow flow);
     void Image(const UiRect& rect, std::string_view image, const UiColor& color) override;
     void Line(float x0, float y0, float x1, float y1, float width, const UiColor& color) override;
+    void CubicBezier(float x0, float y0,
+                     float c0x, float c0y,
+                     float c1x, float c1y,
+                     float x1, float y1,
+                     float width, const UiColor& color) override;
     void CanvasRect(const UiRect& rect, const UiColor& color) override;
     void CanvasCircle(float centerX, float centerY, float radius, const UiColor& color) override;
 };

@@ -2,6 +2,7 @@
 
 #include "StaticModel.h"
 #include "MaterialDocument.h"
+#include "SurfaceShader.h"
 #include "Environment.h"
 #include "AudioClip.h"
 #include "ResourceLayer/Environment/TODProfile.h"
@@ -33,6 +34,15 @@ struct ShaderArtifactSource
     std::string content_sha256;
 };
 
+// 已注册的自定义表面着色器 / 可视化节点图资产（.fshader.hlsl / .fshader.json）。
+struct UserSurfaceShaderSource
+{
+    std::filesystem::path source;
+    std::string content_sha256;
+    SurfaceShaderMetadata metadata;
+    std::map<std::string, Vec4> materialParameters;
+};
+
 // CPU 图片解码；颜色空间用途由渲染端决定，不把法线图等数据自动转为 sRGB。
 bool DecodeImage(const std::filesystem::path& path, ImageData& output,
     std::vector<AssetDiagnostic>& diagnostics, std::uint64_t maximumRgbaBytes = 256ull * 1024 * 1024);
@@ -55,6 +65,11 @@ public:
         std::vector<AssetDiagnostic>& diagnostics);
     // 只读校验并返回 .sebin 产物路径与内容 SHA-256；不做容器解析，不读取 HLSL。
     bool LoadShaderArtifact(const AssetId& id, ShaderArtifactSource& output,
+        std::vector<AssetDiagnostic>& diagnostics) const;
+    // 加载并校验自定义表面着色器（.fshader.hlsl）或可视化节点图（.fshader.json）。
+    bool LoadSurfaceShader(const AssetId& id, UserSurfaceShaderSource& output,
+        std::vector<AssetDiagnostic>& diagnostics) const;
+    bool IsValidMaterialShaderReference(const AssetId& id,
         std::vector<AssetDiagnostic>& diagnostics) const;
     std::shared_ptr<const EnvironmentAsset> LoadEnvironment(const AssetId& id,
         std::vector<AssetDiagnostic>& diagnostics);

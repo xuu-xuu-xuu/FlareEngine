@@ -65,6 +65,7 @@ struct D3D12MeshDraw
     bool hasWorldBounds=false;
     bool staticShadowCaster=false;
     std::span<const flare::rhi::GeometryCluster> geometryClusters;
+    std::array<flare::Vec4,8> userParams{};
 };
 
 bool InitializeD3D12MeshPipeline(D3D12MeshPipeline& pipeline,const D3D12Context& context,

@@ -978,7 +978,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     {
         if(!CheckGraphicsResult(frame.uploads.Allocate(256,256,slice),localization,"D3D12.UploadCapacityExceeded"))return false;
         const flare::Vec3 x{draw.world(0,0),draw.world(1,0),draw.world(2,0)},y{draw.world(0,1),draw.world(1,1),draw.world(2,1)},z{draw.world(0,2),draw.world(1,2),draw.world(2,2)};
-        const flare::rhi::MaterialSurfaceConstants material{draw.tint,{draw.alphaCutoff,float(draw.alphaMode),draw.pbr.doubleSided?1.f:0.f,flare::Dot(flare::Cross(x,y),z)<0?-1.f:1.f}};
+        const flare::rhi::UserMaterialSurfaceConstants material{draw.tint,{draw.alphaCutoff,float(draw.alphaMode),draw.pbr.cullFront?2.f:(draw.pbr.doubleSided?1.f:0.f),flare::Dot(flare::Cross(x,y),z)<0?-1.f:1.f},content.surfaceTime,draw.userParams};
         std::memset(slice.cpu,0,256);std::memcpy(slice.cpu,&material,sizeof(material));return true;
     };
     const bool hasSurfaceMaterials=std::any_of(content.meshes.begin(),content.meshes.end(),[&](const auto& draw)
@@ -1049,14 +1049,19 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         if(!pack(content.meshes,frame.skinSlices)){presentation.commandList->Close();return false;}
         if(!pack(content.shadowMeshes,frame.shadowSkinSlices)){presentation.commandList->Close();return false;}
     }
-    const bool hasMaskCasters=std::any_of(content.shadowMeshes.begin(),content.shadowMeshes.end(),[](const auto& draw){return draw.alphaMode==flare::MaterialAlphaMode::Mask;});
+    const auto shadowDrawNeedsMaterial=[&](const D3D12MeshDraw& draw)
+    {
+        const auto* prog=draw.pipeline?draw.pipeline:content.shadowPipeline;
+        return draw.alphaMode==flare::MaterialAlphaMode::Mask||(prog&&prog->prepared&&prog->prepared->materialRootParameter!=UINT_MAX);
+    };
+    const bool hasMaskCasters=std::any_of(content.shadowMeshes.begin(),content.shadowMeshes.end(),shadowDrawNeedsMaterial);
     if(hasMaskCasters){frame.shadowMaterialConstants.assign(content.shadowMeshes.size(),{});frame.shadowMaterialTables.assign(content.shadowMeshes.size(),{});}
     else{frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();}
     std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> maskViews;std::vector<size_t> maskIndices;
     for(size_t caster=0;caster<content.shadowMeshes.size();++caster)
     {
         const auto& draw=content.shadowMeshes[caster];
-        if(draw.alphaMode!=flare::MaterialAlphaMode::Mask)continue;
+        if(!shadowDrawNeedsMaterial(draw))continue;
         if(!draw.mesh->textureViews||!uploadMaterial(draw,frame.shadowMaterialConstants[caster]))return false;
         maskViews.push_back(draw.mesh->textureViews->Cpu(draw.textureIsData?1:0));maskIndices.push_back(caster);
     }

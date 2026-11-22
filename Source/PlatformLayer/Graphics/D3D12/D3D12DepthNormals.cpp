@@ -36,7 +36,7 @@ bool SupportedPrepared(const D3D12PreparedPipeline& prepared,const std::filesyst
     const auto& source=prepared.program->source;
     return rhi::UsesLitLayout(source.kind)&&!rhi::IsInstanced(source.kind)&&prepared.depth==rhi::DepthMode::ReadWriteLess
         &&prepared.blend==rhi::BlendMode::Opaque&&prepared.description.SampleDesc.Count==1&&prepared.description.DSVFormat==DXGI_FORMAT_D32_FLOAT
-        &&BuiltinCoverage(source,expectedShaderDir);
+        &&(source.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion||BuiltinCoverage(source,expectedShaderDir));
 }
 bool CreateTarget(D3D12Presentation& p,ID3D12Device& device,UINT width,UINT height,bool material,std::shared_ptr<D3D12DepthNormalTarget>& output,const Localization& text)
 {
@@ -117,10 +117,11 @@ bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,co
             if(cached.supported)
             {
                 const bool basic=rhi::IsBasicLit(prepared.program->source.kind),surface=prepared.materialRootParameter!=UINT_MAX;
+                const auto& builtinDir=expectedShaderDir.empty()?prepared.program->source.path.parent_path():expectedShaderDir;
                 const UINT slot=(basic?2u:0u)+(surface?1u:0u);
                 if(!pixels_[slot])
                 {
-                    rhi::PipelineDescription description{rhi::PipelineKind::PbrMesh,prepared.program->source.path.parent_path()/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl"),rhi::PbrMaterialLayoutVersion};
+                    rhi::PipelineDescription description{rhi::PipelineKind::PbrMesh,builtinDir/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl"),rhi::PbrMaterialLayoutVersion};
                     description.macros.push_back({"SE_DEPTH_NORMALS","1"});description.materialLayoutVersion=surface?rhi::MaterialSurfaceLayoutVersion:0;
                     D3D12ShaderSource source;if(!ReadD3D12ShaderSource(description,source,text))return false;
                     pixels_[slot]=LoadD3D12ShaderProgram(std::move(source),shaderStatistics_,text);if(!pixels_[slot])return false;
@@ -128,7 +129,7 @@ bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,co
                 if(material&&!indoorPixels_[slot])
                 {
                     const D3D_SHADER_MACRO defines[]{{"SE_MATERIAL_SURFACE","1"},{nullptr,nullptr}};
-                    const auto path=prepared.program->source.path.parent_path()/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl");
+                    const auto path=builtinDir/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl");
                     if(!CompileD3D12Shader(path,"PSIndoor","ps_5_1",indoorPixels_[slot],text,0,surface?defines:nullptr))return false;
                 }
                 const auto key=flare::Sha256(prepared.key+":"+pixels_[slot]->bytecodeKey+(material?":indoor-material:v1":":geometry39:independent-d32-rg16-less:v1"));
@@ -177,7 +178,7 @@ bool D3D12DepthNormals::Record(D3D12Presentation& p,D3D12FrameContext& frame,con
     commands.OMSetRenderTargets(target.material?2:1,&rtv,TRUE,&dsv);
     for(size_t index=0;index<frame.depthNormals->pipelines.size();++index)
     {
-        const auto& pipeline=frame.depthNormals->pipelines[index];if(!pipeline)continue;
+        const auto& pipeline=frame.depthNormals->pipelines[index];if(!pipeline||content.meshes[index].pbr.cullFront)continue;
         auto draw=content.meshes[index];draw.pipeline=&pipeline->mesh;
         RecordD3D12Meshes(pipeline->mesh,std::span(&draw,1),content.viewProjection,frame,commands,target.width,target.height,false,nullptr,{},static_cast<UINT>(index));
     }

@@ -183,6 +183,7 @@ struct D3D12FrameContent
     bool sceneGrid=false;
     flare::rhi::ParticleFrame particles;
     std::filesystem::path particleShader;
+    flare::Vec4 surfaceTime{0,0,1,0};
     // G06.10：多批次遮挡；与 content.meshes 一一对应，空表示普通绘制。
     const D3D12IndirectBatch* indirects=nullptr;
     std::size_t indirectCount=0;

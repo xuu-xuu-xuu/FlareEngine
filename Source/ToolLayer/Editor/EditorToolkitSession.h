@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ToolLayer/Editor/EditorToolkitForms.h"
+#include "ToolLayer/Editor/EditorShaderGraphController.h"
 #include "ToolLayer/Editor/EditorFloatingWindows.h"
 #include "FunctionLayer/Rendering/SandboxRenderer.h"
 #include "ToolLayer/Editor/EditorPlayInput.h"
@@ -77,6 +78,7 @@ struct ToolkitAppState
     ExternalChangeMonitor externalChange;
     std::unique_ptr<ui::editor::EditorShell> shell;
     std::unique_ptr<EditorFeatureTools> featureTools;
+    std::unique_ptr<EditorShaderGraphController> shaderGraph;
     std::unique_ptr<ui::editor::EditorInputAdapter> input;
     std::unique_ptr<EditorFloatingWindows> floatingWindows;
     std::unique_ptr<UiDirectWriteTextService> fontService;
@@ -145,6 +147,11 @@ struct ToolkitAppState
     };
     std::unordered_map<std::string, CachedAssetThumb> assetThumbnails;
     std::uint64_t nextAssetThumbToken = 0x180000000ull;
+    std::uint64_t shaderReloadGeneration = 1;
+    std::unordered_map<std::string, std::filesystem::file_time_type> shaderFileMtimes;
+    bool shaderMtimesInitialized = false;
+    std::vector<std::string> pendingShaderDiagnostics;
+    std::string lastLoggedShaderDiagnostic;
     std::future<ToolkitImportResult> importTask;
     std::function<bool()> exportAction;
     std::function<bool()> autoExportFn;

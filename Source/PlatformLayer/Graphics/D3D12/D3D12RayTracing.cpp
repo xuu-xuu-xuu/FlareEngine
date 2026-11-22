@@ -1151,7 +1151,7 @@ bool PrepareD3D12RayTracing(D3D12Presentation& p,
         const auto appendInstance = [&](const flare::Mat4& world, flare::Vec4 tint, float metallic,
                                         float roughness, bool unlit, bool doubleSided) {
             const auto dedupeKey = makeDedupeKey(mesh, world);
-            if (fromShadowCasters && emittedInstances.contains(dedupeKey)) return;
+            if (emittedInstances.contains(dedupeKey)) return;
             if (tlasInstances.size() >= MaxRtInstances || !flare::IsFinite(world))
             {
                 if (fromShadowCasters) ++unsupportedCasters;

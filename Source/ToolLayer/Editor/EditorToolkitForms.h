@@ -26,6 +26,7 @@ class Localization;
 
 namespace flare
 {
+class EditorShaderGraphController;
 
 struct ToolkitAssetInspectorState
 {
@@ -82,6 +83,7 @@ struct ToolkitWorkspaceContext
     std::future<ToolkitImportResult>& importTask;
     EditorApplicationHooks* hooks = nullptr;
     AudioWorld* audio = nullptr;
+    EditorShaderGraphController* shaderGraph = nullptr;
 };
 
 // 将引擎诊断键（如 Editor.ExternalChange）解析为当前语言文案，未命中键表时使用本地化兜底键。
@@ -90,7 +92,8 @@ struct ToolkitWorkspaceContext
                                                  std::string_view fallbackKey = "EditorUi.SaveFailed");
 
 [[nodiscard]] std::vector<ui::editor::EditorProperty> BuildMaterialFormRows(const EditorMaterialWorkflow& material,
-                                                                            const Localization& text);
+                                                                            const Localization& text,
+                                                                            const AssetStore* assets = nullptr);
 
 [[nodiscard]] bool ParseMaterialFormValue(const PropertyDescriptor& descriptor,
                                           std::string_view text,

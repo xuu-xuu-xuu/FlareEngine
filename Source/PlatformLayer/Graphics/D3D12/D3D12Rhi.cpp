@@ -434,6 +434,7 @@ struct CommandContext::Impl
     bool sceneGrid=false;
     ParticleFrame particles;
     std::filesystem::path particleShader;
+    Vec4 surfaceTime{0,0,1,0};
 };
 Device::Device():impl_(std::make_shared<Impl>()){}
 Device::~Device(){Shutdown();}
@@ -651,8 +652,8 @@ Result Device::CreatePipeline(const PipelineDescription& description,Pipeline& o
         &&!(IsOutput(description.kind)&&description.bindingLayoutVersion==OutputLutLayoutVersion)
         &&!skinnedLayout&&!filterLayout)
         ||skinnedLayout!=(description.vertexLayoutVersion==VertexLayoutVersionSkinned)
-        ||(description.depth!=DepthMode::Default&&description.depth!=DepthMode::Disabled&&description.depth!=DepthMode::ReadWriteLess&&description.depth!=DepthMode::ReadOnlyLessEqual&&description.depth!=DepthMode::ReadOnlyEqual)
-        ||(description.blend!=BlendMode::Opaque&&description.blend!=BlendMode::Alpha)
+        ||(description.depth!=DepthMode::Default&&description.depth!=DepthMode::Disabled&&description.depth!=DepthMode::ReadWriteLess&&description.depth!=DepthMode::ReadOnlyLessEqual&&description.depth!=DepthMode::ReadOnlyEqual&&description.depth!=DepthMode::ReadOnlyGreater)
+        ||(description.blend!=BlendMode::Opaque&&description.blend!=BlendMode::Alpha&&description.blend!=BlendMode::Additive)
         ||(description.colorFormat!=ColorFormat::Rgba8Unorm&&description.colorFormat!=ColorFormat::Rgba16Float&&description.colorFormat!=ColorFormat::Rgba8Srgb))return Fail(Error::Unsupported);
     if(IsPostProcess(description.kind))
     {
@@ -1107,6 +1108,10 @@ Result CommandContext::ConfigurePostProcess(const PostProcessSettings& settings,
     {entries[index]=device->pipelines.Get(handles[index],device->id);if(!entries[index])return Fail(Error::InvalidHandle);if(entries[index]->kind!=kinds[index])return Fail(Error::Unsupported);}
     impl_->post=settings;impl_->postPipelines=entries;for(const auto& entry:entries)impl_->leases.push_back(entry);return {};
 }
+void CommandContext::SetSurfaceTime(Vec4 timeSinCosDelta) noexcept
+{
+    if(impl_&&IsFinite(timeSinCosDelta))impl_->surfaceTime=timeSinCosDelta;
+}
 Result CommandContext::DrawOverlay(const OverlayQuad& quad)
 {
     auto device=impl_?impl_->device.lock():nullptr;
@@ -1148,12 +1153,12 @@ Result CommandContext::DrawShadow(const DrawIndexed& draw)
     }
     else if(!draw.skinPalette.empty()||draw.skinJointCount)return Fail(Error::InvalidArgument);
     std::shared_ptr<TextureEntry> coverage;
-    if(draw.alphaMode==MaterialAlphaMode::Mask)
+    if(draw.alphaMode==MaterialAlphaMode::Mask||(pipeline&&pipeline->mesh.prepared->program->source.materialLayoutVersion==UserSurfaceMaterialLayoutVersion))
     {
-        if(!pipeline||pipeline->mesh.prepared->program->source.materialLayoutVersion!=MaterialSurfaceLayoutVersion||pipeline->mesh.prepared->alphaMode!=MaterialAlphaMode::Mask)return Fail(Error::Unsupported);
+        if(!pipeline||!IsMaterialSurfaceLayout(pipeline->mesh.prepared->program->source.materialLayoutVersion)||pipeline->mesh.prepared->alphaMode!=draw.alphaMode)return Fail(Error::Unsupported);
         coverage=device->textures.Get(draw.texture,device->id);if(!coverage)return Fail(Error::InvalidHandle);
         if(!device->Ready(*coverage))return Fail(Error::InvalidState);
-        if(coverage->target||coverage->native.cube||coverage->native.arrayLayers!=1||(coverage->native.format!=TextureFormat::Rgba8&&coverage->native.format!=TextureFormat::Bc7Unorm&&coverage->native.format!=TextureFormat::Bc7UnormSrgb))return Fail(Error::Unsupported);
+        if(coverage->target||coverage->native.cube||coverage->native.arrayLayers!=1||(draw.alphaMode==MaterialAlphaMode::Mask&&coverage->native.format!=TextureFormat::Rgba8&&coverage->native.format!=TextureFormat::Bc7Unorm&&coverage->native.format!=TextureFormat::Bc7UnormSrgb))return Fail(Error::Unsupported);
         if(!IsFinite(draw.tint)||draw.tint.w<0||draw.tint.w>1)return Fail(Error::InvalidArgument);
     }
     else if(pipeline&&pipeline->mesh.prepared->program->source.materialLayoutVersion)return Fail(Error::Unsupported);
@@ -1264,8 +1269,9 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
     if((draw.alphaMode==MaterialAlphaMode::Blend)!=transparent||pipeline->mesh.prepared->alphaMode!=draw.alphaMode)return Fail(Error::Unsupported);
     if(draw.alphaMode!=MaterialAlphaMode::Opaque)
     {
-        if(!instances.empty()||impl_->occlusion.active||pipeline->mesh.prepared->program->source.materialLayoutVersion!=MaterialSurfaceLayoutVersion
-            ||(texture->native.format!=TextureFormat::Rgba8&&texture->native.format!=TextureFormat::Bc7Unorm&&texture->native.format!=TextureFormat::Bc7UnormSrgb))return Fail(Error::Unsupported);
+        const auto matVer=pipeline->mesh.prepared->program->source.materialLayoutVersion;
+        if(!instances.empty()||impl_->occlusion.active||!IsMaterialSurfaceLayout(matVer)
+            ||(matVer!=UserSurfaceMaterialLayoutVersion&&texture->native.format!=TextureFormat::Rgba8&&texture->native.format!=TextureFormat::Bc7Unorm&&texture->native.format!=TextureFormat::Bc7UnormSrgb))return Fail(Error::Unsupported);
         if(!IsFinite(draw.tint.w)||draw.tint.w<0||draw.tint.w>1)return Fail(Error::InvalidArgument);
     }
     const bool forward=IsForward(pipeline->kind),shadow=IsShadowed(pipeline->kind),environment=IsEnvironment(pipeline->kind);
@@ -1411,12 +1417,14 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
         draw.hasPreviousWorld,draw.previousWorld,c.drawPipelines[i]->mesh.prepared->program->source.compressedVertex,draw.outline,
         draw.look,draw.skinPalette,draw.skinJointOffset,draw.skinJointCount,draw.alphaMode,draw.alphaCutoff});
         draws.back().layers=draw.layers.constants;
+        draws.back().userParams=draw.userParams;
         draws.back().worldBounds=draw.worldBounds;draws.back().hasWorldBounds=draw.hasWorldBounds;draws.back().geometryClusters=draw.geometryClusters;
         if(c.forward&&c.forward->shading.enabled)
             for(UINT slot=0;slot<6;++slot)if(c.layerTextures[i][slot])draws.back().layerTextures[slot]=&c.layerTextures[i][slot]->native;
     }
     // G06.08：批处理对象必须活到 RenderD3D12Frame 返回；这里只做本地借用。
     D3D12FrameContent content;content.viewProjection=c.viewProjection;content.meshes=draws;content.opaqueDrawCount=c.transparentPass?c.opaqueDrawCount:draws.size();content.sourceFrame=c.sourceFrame;content.cacheOpaqueBindings=c.cacheOpaqueBindings;
+    content.surfaceTime=c.surfaceTime;
     content.depthNormals=c.depthNormals?&*c.depthNormals:nullptr;
     content.screenSpaceOcclusion=c.screenSpaceOcclusion?&*c.screenSpaceOcclusion:nullptr;
     for(UINT slot=0;slot<5;++slot)if(c.shadingTextures[slot])content.shadingTextures[slot]=&c.shadingTextures[slot]->native;
@@ -1568,6 +1576,7 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
         shadow.skinPalette=c.shadowPalettes[index];
         shadow.skinJointCount=c.shadowJointCounts[index];shadow.skinJointOffset=c.shadowJointOffsets[index];
         shadow.staticShadowCaster=c.shadowMaterials[index].staticShadowCaster;
+        shadow.userParams=c.shadowMaterials[index].userParams;
         shadow.pipeline=c.shadowPipelines[index]?&c.shadowPipelines[index]->mesh:nullptr;
         shadowDraws.push_back(shadow);
     }
@@ -2015,6 +2024,10 @@ std::vector<std::string> Device::DebugMessages() const
             result.emplace_back(message->pDescription);
     }
     return result;
+}
+std::vector<std::string> Device::TakeShaderDiagnostics() const
+{
+    return TakeD3D12ShaderDiagnostics();
 }
 ID3D12Device* D3D12DiagnosticsAccess::NativeDevice(Device& d){return d.impl_?d.impl_->context.device.Get():nullptr;}
 ID3D12CommandQueue* D3D12DiagnosticsAccess::Queue(Device& d){return d.impl_?d.impl_->presentation.queue.Get():nullptr;}

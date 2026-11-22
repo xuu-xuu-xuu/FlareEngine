@@ -12,6 +12,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -75,10 +76,25 @@ bool Within(const fs::path& root,const fs::path& path)
     }
     return true;
 }
+std::mutex g_shaderDiagnosticsMutex;
+std::vector<std::string> g_shaderDiagnostics;
 void Diagnostic(const Localization& text,const char* key,const fs::path& path,ID3DBlob* details=nullptr,const std::string& detail={})
 {
-    Log(LogLevel::Error,text.GetText(key)+": "+Utf8(path)+(detail.empty()?"":" ["+detail+"]"));
-    if(details)Log(LogLevel::Error,std::string(static_cast<const char*>(details->GetBufferPointer()),details->GetBufferSize()));
+    const std::string header=text.GetText(key)+": "+Utf8(path)+(detail.empty()?"":" ["+detail+"]");
+    Log(LogLevel::Error,header);
+    std::string raw;
+    if(details&&details->GetBufferSize()>0)
+    {
+        raw.assign(static_cast<const char*>(details->GetBufferPointer()),details->GetBufferSize());
+        while(!raw.empty()&&(raw.back()=='\0'||raw.back()=='\r'||raw.back()=='\n'))raw.pop_back();
+        if(!raw.empty())Log(LogLevel::Error,raw);
+    }
+    std::lock_guard<std::mutex> lock(g_shaderDiagnosticsMutex);
+    if(g_shaderDiagnostics.size()<64)
+    {
+        if(!raw.empty())g_shaderDiagnostics.push_back(std::move(raw));
+        g_shaderDiagnostics.push_back(header);
+    }
 }
 bool Identifier(const std::string& value)
 {
@@ -194,9 +210,26 @@ bool ExtraFields(ID3D12ShaderReflection& shader,bool output,std::string& reason,
     }
     return true;
 }
-bool MaterialSurfaceFields(ID3D12ShaderReflection& shader,std::string& reason)
+bool MaterialSurfaceFields(ID3D12ShaderReflection& shader,UINT materialLayout,std::string& reason)
 {
     auto* buffer=shader.GetConstantBufferByName("MaterialSurfaceConstants");D3D12_SHADER_BUFFER_DESC desc{};
+    if(materialLayout==rhi::UserSurfaceMaterialLayoutVersion)
+    {
+        if(!buffer||FAILED(buffer->GetDesc(&desc))||desc.Type!=D3D_CT_CBUFFER
+            ||desc.Size<16||desc.Size>sizeof(rhi::UserMaterialSurfaceConstants)||desc.Variables!=4)
+        {reason="MaterialSurfaceConstants(user): size/fields";return false;}
+        const char* names[]{"surfaceBaseColorFactor","surfaceCoverage","flareTime","flareUserParams"};
+        const UINT offsets[]{0,16,32,48},sizes[]{16,16,16,128},elements[]{0,0,0,8};
+        for(UINT i=0;i<4;++i)
+        {
+            auto* variable=buffer->GetVariableByName(names[i]);D3D12_SHADER_VARIABLE_DESC field{};D3D12_SHADER_TYPE_DESC type{};
+            if(!variable||FAILED(variable->GetDesc(&field))||FAILED(variable->GetType()->GetDesc(&type))
+                ||field.StartOffset!=offsets[i]||field.Size!=sizes[i]
+                ||type.Type!=D3D_SVT_FLOAT||type.Class!=D3D_SVC_VECTOR||type.Rows!=1||type.Columns!=4||type.Elements!=elements[i]||type.Members)
+            {reason=std::string("MaterialSurfaceConstants.")+names[i]+": layout";return false;}
+        }
+        return true;
+    }
     if(!buffer||FAILED(buffer->GetDesc(&desc))||desc.Type!=D3D_CT_CBUFFER||desc.Size!=sizeof(rhi::MaterialSurfaceConstants)||desc.Variables!=2)
     {reason="MaterialSurfaceConstants: size/fields";return false;}
     const char* names[]{"surfaceBaseColorFactor","surfaceCoverage"};
@@ -328,7 +361,8 @@ bool LocalLightFields(ID3D12ShaderReflection& shader,std::string& reason)
 }
 bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,UINT layoutVersion,std::string& reason,UINT materialLayout=0,UINT shadingLayout=0)
 {
-    const bool surface=materialLayout==rhi::MaterialSurfaceLayoutVersion;
+    const bool surface=rhi::IsMaterialSurfaceLayout(materialLayout);
+    const bool userSurface=materialLayout==rhi::UserSurfaceMaterialLayoutVersion;
     const bool surfaceDepth=surface&&kind==rhi::PipelineKind::ShadowDepth;
     if(kind==rhi::PipelineKind::Gui)    {
         D3D12_SHADER_DESC desc{};if(FAILED(shader.GetDesc(&desc))||desc.BoundResources!=(vertex?1u:2u))return false;
@@ -375,7 +409,7 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
         if((binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint>=5&&binding.BindPoint<=7)
             ||(binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint>=13&&binding.BindPoint<=25))++expected;
     }
-    if(desc.BoundResources!=expected){reason="bindings="+std::to_string(desc.BoundResources)+", expected="+std::to_string(expected);return false;}
+    if(!userSurface&&desc.BoundResources!=expected){reason="bindings="+std::to_string(desc.BoundResources)+", expected="+std::to_string(expected);return false;}
     bool constants=false,frame=false,instances=false,bones=false,filter=false,material=false,shadingFrame=false,shadingMaterial=false,localLights=false,localShadow=false;UINT samplers=0,textures=0,clusters=0,shadingTextures=0;
     for(UINT index=0;index<desc.BoundResources;++index)
     {
@@ -401,8 +435,8 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
         else if(rhi::IsClustered(kind)&&!vertex&&binding.Type==D3D_SIT_STRUCTURED&&binding.Dimension==D3D_SRV_DIMENSION_BUFFER
             &&binding.BindPoint>=9&&binding.BindPoint<=12&&!(clusters&(1u<<(binding.BindPoint-9))))
             clusters|=1u<<(binding.BindPoint-9);
-        else if(surface&&!vertex&&binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==4&&!material)
-        {material=true;if(!MaterialSurfaceFields(shader,reason))return false;}
+        else if(surface&&(!vertex||userSurface)&&binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==4&&!material)
+        {material=true;if(!MaterialSurfaceFields(shader,materialLayout,reason))return false;}
         else if(rhi::IsShadowFilterLayout(layoutVersion)&&!vertex&&binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==3&&!filter)
         {filter=true;if(!ShadowFilterFields(shader,reason))return false;}
         else if(skinned&&vertex&&binding.Type==D3D_SIT_BYTEADDRESS&&binding.BindPoint==8&&!bones
@@ -410,31 +444,39 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
         else if(instanced&&binding.Type==D3D_SIT_BYTEADDRESS&&binding.BindPoint==7&&!instances&&binding.Dimension==D3D_SRV_DIMENSION_BUFFER)instances=true;
         else if(binding.Type==D3D_SIT_CBUFFER&&!binding.BindPoint&&!constants&&!(instanced&&vertex)){constants=true;if(!(output||sky?ExtraFields(shader,true,reason,sky,false,environmentSky):Fields(shader,mesh,pbr,reason,depth)))return false;}
         else if(forward&&!vertex&&binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==1&&!frame){frame=true;if(!ExtraFields(shader,false,reason,false,shadow,environment,rhi::IsCascaded(kind),rhi::IsClustered(kind)))return false;}
-        else if((mesh||output||environmentSky||surfaceDepth)&&!vertex&&binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint<textureCount
+        else if((mesh||output||environmentSky||surfaceDepth)&&(!vertex||userSurface)&&binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint<textureCount
             &&!(textures&(1u<<binding.BindPoint))&&binding.Dimension==((environment&&(binding.BindPoint==4||binding.BindPoint==5))||environmentSky?D3D_SRV_DIMENSION_TEXTURECUBE:rhi::IsCascaded(kind)&&binding.BindPoint==(output?1u:3u)?D3D_SRV_DIMENSION_TEXTURE2DARRAY:D3D_SRV_DIMENSION_TEXTURE2D)&&binding.ReturnType==D3D_RETURN_TYPE_FLOAT)textures|=1u<<binding.BindPoint;
-        else if((mesh||environmentSky||surfaceDepth)&&!vertex&&binding.Type==D3D_SIT_SAMPLER
+        else if((mesh||environmentSky||surfaceDepth)&&(!vertex||userSurface)&&binding.Type==D3D_SIT_SAMPLER
             &&(environmentSky?binding.BindPoint==2:binding.BindPoint<(environment?3u:shadow?2u:1u))&&!(samplers&(1u<<binding.BindPoint)))
         {
             if(((binding.uFlags&D3D_SIF_COMPARISON_SAMPLER)!=0)!=(shadow&&binding.BindPoint==1)){reason="sampler comparison type";return false;}
             samplers|=1u<<binding.BindPoint;
         }
+        else if(userSurface&&binding.Name&&std::strcmp(binding.Name,"$Globals")==0)
+        {
+            reason="Top-level constants in HLSLPROGRAM must use 'static const', and custom uniforms must be declared in Properties { ... }";
+            return false;
+        }
         else {reason=std::string(binding.Name?binding.Name:"binding")+": type="+std::to_string(binding.Type)+", register="+std::to_string(binding.BindPoint);return false;}
     }
+    if(userSurface)
+        return vertex?(constants&&bones==skinned):true;
     return constants==(instanced?!vertex:environmentSky?true:(output||sky)?!vertex:mesh||vertex)&&textures==((mesh||output||environmentSky||surfaceDepth)&&!vertex?((1u<<textureCount)-1):0u)
         &&samplers==(!vertex?(environmentSky?4u:environment?7u:mesh?(shadow?3u:1u):surfaceDepth?1u:0u):0u)&&frame==(forward&&!vertex)&&instances==instanced
         &&bones==(skinned&&vertex)&&material==(surface&&!vertex)&&filter==(rhi::IsShadowFilterLayout(layoutVersion)&&!vertex)
         &&clusters==((rhi::IsClustered(kind)&&!vertex)?15u:0u)&&(!shadingLayout||vertex||(shadingFrame&&localLights&&localShadow));
 }
 
-bool DepthNormalBindings(ID3D12ShaderReflection& shader,bool surface,bool basic,std::string& reason)
+bool DepthNormalBindings(ID3D12ShaderReflection& shader,UINT materialLayout,bool basic,std::string& reason)
 {
+    const bool surface=rhi::IsMaterialSurfaceLayout(materialLayout);
     D3D12_SHADER_DESC description{};if(FAILED(shader.GetDesc(&description)))return false;
     bool constants=false,material=false,sampler=false;UINT textures=0;
     for(UINT index=0;index<description.BoundResources;++index)
     {
         D3D12_SHADER_INPUT_BIND_DESC binding{};if(FAILED(shader.GetResourceBindingDesc(index,&binding))||binding.Space||binding.BindCount!=1)return false;
         if(binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==0&&!constants){constants=Fields(shader,true,true,reason);if(!constants)return false;}
-        else if(surface&&binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==4&&!material){material=MaterialSurfaceFields(shader,reason);if(!material)return false;}
+        else if(surface&&binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==4&&!material){material=MaterialSurfaceFields(shader,materialLayout,reason);if(!material)return false;}
         else if(binding.Type==D3D_SIT_TEXTURE&&((surface&&binding.BindPoint==0)||(basic&&binding.BindPoint==1))
             &&binding.Dimension==D3D_SRV_DIMENSION_TEXTURE2D&&!(textures&(1u<<binding.BindPoint)))textures|=1u<<binding.BindPoint;
         else if((surface||basic)&&binding.Type==D3D_SIT_SAMPLER&&binding.BindPoint==0&&!sampler)sampler=true;
@@ -453,7 +495,7 @@ bool Layout(const D3D12ShaderProgram& program,std::string* detail=nullptr)
     if(!Bindings(*vertex.Get(),kind,true,program.source.layoutVersion,reason,program.source.materialLayoutVersion,program.source.shadingLayoutVersion)){if(detail)*detail="VS "+reason;return false;}
     if(program.source.depthNormals)
     {
-        if(!DepthNormalBindings(*pixel.Get(),program.source.materialLayoutVersion!=0,program.source.path.filename()=="DepthNormalsBasic.hlsl",reason))
+        if(!DepthNormalBindings(*pixel.Get(),program.source.materialLayoutVersion,program.source.path.filename()=="DepthNormalsBasic.hlsl",reason))
         {if(detail)*detail="PS "+reason;return false;}
     }
     else if(!Bindings(*pixel.Get(),kind,false,program.source.layoutVersion,reason,program.source.materialLayoutVersion,program.source.shadingLayoutVersion)){if(detail)*detail="PS "+reason;return false;}
@@ -467,7 +509,7 @@ bool Layout(const D3D12ShaderProgram& program,std::string* detail=nullptr)
     const bool skinned=program.source.skinnedVertex;
     UINT vertexInputs=kind==rhi::PipelineKind::Gui?3u:rhi::IsInstanced(kind)?5u:(output||sky||depth)?1u:pbr?4u:mesh?3u:2u;
     if(skinned)vertexInputs=depth?3u:6u;
-    const bool surfaceDepth=depth&&program.source.materialLayoutVersion==rhi::MaterialSurfaceLayoutVersion;
+    const bool surfaceDepth=depth&&rhi::IsMaterialSurfaceLayout(program.source.materialLayoutVersion);
     if(surfaceDepth)vertexInputs=skinned?4u:2u;
     if(vs.InputParameters!=vertexInputs||ps.OutputParameters!=(depth?0u:1u)){if(detail)*detail="vertex inputs / pixel targets";return false;}
     const char* names[]{"POSITION",mesh?"NORMAL":"COLOR","TEXCOORD","TANGENT"};
@@ -622,13 +664,17 @@ bool ReadD3D12ShaderSource(const rhi::PipelineDescription& description,D3D12Shad
             &&!skinnedLayout&&!filterLayout)
         ||(skinnedLayout!=(description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned))
         ||!rhi::ValidPipelineKind(description.kind))return false;
-    D3D12ShaderSource source;source.path=description.shader;source.kind=description.kind;source.flags=D3D12ShaderCompileFlags();source.layoutVersion=description.bindingLayoutVersion;source.macros=description.macros;source.compressedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionCompressed;source.skinnedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned;
+    D3D12ShaderSource source;source.path=description.shader;source.kind=description.kind;
+    source.flags=(description.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion)
+        ?(D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_OPTIMIZATION_LEVEL1)
+        :D3D12ShaderCompileFlags();
+    source.layoutVersion=description.bindingLayoutVersion;source.macros=description.macros;source.compressedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionCompressed;source.skinnedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned;
     for(const auto& macro:source.macros)if(macro.name=="SE_DEPTH_NORMALS")
     {
         if(macro.value!="1"||description.kind!=rhi::PipelineKind::PbrMesh||description.vertexLayoutVersion!=rhi::VertexLayoutVersionLegacy)return false;
         source.depthNormals=true;
     }
-    if(description.materialLayoutVersion!=0&&description.materialLayoutVersion!=rhi::MaterialSurfaceLayoutVersion)return false;
+    if(description.materialLayoutVersion!=0&&!rhi::IsMaterialSurfaceLayout(description.materialLayoutVersion))return false;
     if(!flare::IsValidMaterialAlphaMode(description.alphaMode)||(!description.materialLayoutVersion&&description.alphaMode!=flare::MaterialAlphaMode::Opaque))return false;
     source.materialLayoutVersion=description.materialLayoutVersion;
     source.shadingLayoutVersion=description.shadingLayoutVersion;
@@ -646,7 +692,7 @@ bool ReadD3D12ShaderSource(const rhi::PipelineDescription& description,D3D12Shad
             if(found!=source.macros.end())return found->value=="1";
             source.macros.push_back({name,"1"});return true;
         };
-        if(!inject("SE_MATERIAL_SURFACE")||(source.compressedVertex&&!inject("SE_VERTEX_COMPRESSED")))return false;
+        if(!inject("SE_MATERIAL_SURFACE")||(source.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion&&!inject("SE_USER_SURFACE"))||(source.compressedVertex&&!inject("SE_VERTEX_COMPRESSED")))return false;
     }
     if(source.macros.size()>64){Diagnostic(text,"Shader.SourceInvalid",source.path);return false;}
     std::sort(source.macros.begin(),source.macros.end(),[](const auto& a,const auto& b){return a.name<b.name;});
@@ -670,8 +716,9 @@ bool ReadD3D12ShaderSource(const rhi::PipelineDescription& description,D3D12Shad
         const auto* begin=static_cast<const char*>(diagnostics->GetBufferPointer());
         messages=std::any_of(begin,begin+diagnostics->GetBufferSize(),[](char c){return c!='\0'&&c!='\r'&&c!='\n'&&c!=' '&&c!='\t';});
     }
-    // 预处理 API 没有 warnings-as-errors 标志；其诊断也必须使构建失败。
-    if(FAILED(preprocessResult)||messages)
+    // 预处理 API 没有 warnings-as-errors 标志；内建着色器将预处理诊断视为失败，用户自定义表面着色器仅在预处理失败时拦截。
+    const bool allowPreprocessWarnings=(source.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion);
+    if(FAILED(preprocessResult)||(!allowPreprocessWarnings&&messages))
     {Diagnostic(text,"D3D12.ShaderCompileFailed",source.path,diagnostics.Get(),"preprocess");return false;}
     source.preprocessed.assign(static_cast<const char*>(preprocessed->GetBufferPointer()),preprocessed->GetBufferSize());
     for(const auto& [relative,digest]:includes.dependencies)source.dependencies.push_back({relative,digest});
@@ -709,12 +756,16 @@ std::shared_ptr<const D3D12ShaderProgram> LoadD3D12ShaderProgram(D3D12ShaderSour
         {return macro.value=="1"&&(macro.name=="SE_DEPTH_NORMALS"||macro.name=="SE_MATERIAL_SURFACE");});
     const bool canonicalShading=source.shadingLayoutVersion&&!source.compressedVertex&&std::all_of(source.macros.begin(),source.macros.end(),[](const auto& macro)
         {return macro.value=="1"&&(macro.name=="SE_SHADING_EXTENSIONS"||macro.name=="SE_MATERIAL_SURFACE"||macro.name=="SE_SKINNED");});
-    if((source.macros.empty()||canonicalSkin||canonicalSurface||canonicalDepthNormals||canonicalShading)&&fs::exists(artifact,error)&&!error)
+    const bool userSurfaceCached=source.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion;
+    if((userSurfaceCached||source.macros.empty()||canonicalSkin||canonicalSurface||canonicalDepthNormals||canonicalShading)&&fs::exists(artifact,error)&&!error)
     {
         if(auto program=ReadArtifact(source,artifact)){++stats.artifactLoads;return program;}
-        ++stats.artifactRejections;Log(LogLevel::Warning,text.GetText("Shader.ArtifactRejected")+": "+Utf8(artifact));
+        if(!userSurfaceCached){++stats.artifactRejections;Log(LogLevel::Warning,text.GetText("Shader.ArtifactRejected")+": "+Utf8(artifact));}
     }
-    ++stats.compilations;return CompileD3D12ShaderProgram(std::move(source),text);
+    ++stats.compilations;
+    auto compiled=CompileD3D12ShaderProgram(std::move(source),text);
+    if(compiled&&userSurfaceCached)(void)WriteD3D12ShaderProgram(*compiled,artifact,text);
+    return compiled;
 }
 bool WriteD3D12ShaderProgram(const D3D12ShaderProgram& program,const fs::path& artifact,const Localization& text)
 {
@@ -817,4 +868,11 @@ std::shared_ptr<const D3D12ShaderProgram> LoadD3D12UserPbrPackage(const rhi::Pip
     if(!Layout(*program,&reason)){++stats.artifactRejections;Diagnostic(text,"Shader.LayoutMismatch",description.shader,nullptr,reason);return {};}
     program->bytecodeKey=flare::Sha256(BlobHash(*program->vertex.Get())+":"+BlobHash(*program->pixel.Get()));
     if(program->bytecodeKey.empty())return reject();++stats.artifactLoads;return program;
+}
+std::vector<std::string> TakeD3D12ShaderDiagnostics()
+{
+    std::lock_guard<std::mutex> lock(g_shaderDiagnosticsMutex);
+    std::vector<std::string> out;
+    out.swap(g_shaderDiagnostics);
+    return out;
 }

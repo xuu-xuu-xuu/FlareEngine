@@ -38,6 +38,8 @@ std::string CleanAssetDisplayName(const EditorAssetEntry& entry)
     if (fileName.ends_with(".material.json")) fileName.erase(fileName.size() - 14);
     else if (fileName.ends_with(".prefab.json")) fileName.erase(fileName.size() - 12);
     else if (fileName.ends_with(".scene.json")) fileName.erase(fileName.size() - 11);
+    else if (fileName.ends_with(".fshader.hlsl")) fileName.erase(fileName.size() - 13);
+    else if (fileName.ends_with(".fshader.json")) fileName.erase(fileName.size() - 13);
     return fileName;
 }
 
@@ -2112,6 +2114,9 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
     }
     case EditorPanelId::UiDesigner:
         BuildDesignerPanel(slot);
+        break;
+    case EditorPanelId::ShaderGraph:
+        BuildShaderGraphPanel(slot);
         break;
     case EditorPanelId::Material:
     case EditorPanelId::ProjectSettings:

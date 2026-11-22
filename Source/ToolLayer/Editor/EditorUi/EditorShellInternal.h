@@ -254,4 +254,90 @@ struct EditorInspectorColor
     std::array<UiElementHandle, 3> channels{}, channelLabels{}, channelSelections{};
     std::array<std::unique_ptr<UiTextEdit>, 3> editors;
 };
+
+struct EditorShaderGraphRuntime
+{
+    EditorShaderGraphViewState view;
+    std::vector<EditorShaderPaletteItem> palette;
+    std::function<void(std::string_view, std::string_view)> onAction;
+
+    UiElementHandle toolbar{};
+    UiElementHandle titleLabel{};
+    UiElementHandle shadingBtn{};
+    UiElementHandle blendBtn{};
+    UiElementHandle doubleSidedBtn{};
+    UiElementHandle addNodeBtn{};
+    UiElementHandle frameBtn{};
+    UiElementHandle saveBtn{};
+    UiElementHandle hlslBtn{};
+    UiElementHandle newMatBtn{};
+
+    UiElementHandle propBar{};
+    UiElementHandle exposeBtn{};
+    UiElementHandle paramNameBox{}, paramNameSel{};
+    std::unique_ptr<UiTextEdit> paramNameEdit;
+    float paramNameScroll = 0.0f;
+    UiElementHandle valueBox{}, valueSel{};
+    std::unique_ptr<UiTextEdit> valueEdit;
+    float valueScroll = 0.0f;
+    std::string editingField; // "param" | "value" | "search"
+
+    UiElementHandle canvas{};
+    UiElementHandle previewCard{};
+    UiElementHandle previewImage{};
+    UiElementHandle previewCaption{};
+
+    UiElementHandle searchPopup{};
+    UiElementHandle searchBox{}, searchSel{};
+    UiElementHandle searchCountLabel{};
+    std::unique_ptr<UiTextEdit> searchEdit;
+    float searchScroll = 0.0f;
+    std::string searchCategoryFilter;
+    std::vector<UiElementHandle> searchCategoryButtons;
+    std::vector<UiElementHandle> searchItemButtons;
+    std::vector<std::size_t> filteredPaletteIndices;
+    std::size_t searchHighlight = 0;
+    std::size_t searchListOffset = 0;
+    float spawnGraphX = 220.0f;
+    float spawnGraphY = 120.0f;
+    std::string pendingWireDir; // "" | "from_out" | "from_in"
+    std::uint32_t pendingWireNode = 0;
+    std::string pendingWirePort;
+
+    // Interactive canvas state
+    bool panning = false;
+    float panStartMouseX = 0.0f, panStartMouseY = 0.0f;
+    float panStartX = 0.0f, panStartY = 0.0f;
+
+    bool draggingNodes = false;
+    bool nodesMoved = false;
+    float dragLastMouseX = 0.0f, dragLastMouseY = 0.0f;
+
+    bool marqueeActive = false;
+    float marqueeStartX = 0.0f, marqueeStartY = 0.0f;
+    float marqueeCurX = 0.0f, marqueeCurY = 0.0f;
+
+    bool draggingWire = false;
+    bool wireReplugging = false;
+    bool wireFromOutput = true;
+    std::uint32_t wireNodeId = 0;
+    std::string wirePortId;
+    std::uint8_t wireValueType = 0;
+    float wireStartX = 0.0f, wireStartY = 0.0f;
+    float wireCurX = 0.0f, wireCurY = 0.0f;
+
+    std::uint32_t snapNodeId = 0;
+    std::string snapPortId;
+    bool snapIsOutput = false;
+    float snapPortX = 0.0f, snapPortY = 0.0f;
+
+    std::uint32_t hoveredNodeId = 0;
+    std::string hoveredPortId;
+    bool hoveredPortOutput = false;
+    std::size_t hoveredLink = static_cast<std::size_t>(-1);
+
+    bool orbitingPreview = false;
+    float orbitLastX = 0.0f, orbitLastY = 0.0f;
+    bool rootShortcutsBound = false;
+};
 } // namespace flare::ui::editor

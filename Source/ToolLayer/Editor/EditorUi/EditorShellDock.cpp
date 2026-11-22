@@ -452,12 +452,13 @@ void EditorShell::UpdatePanelContentRects()
             }
         }
     }
-    for (EditorPanelId panel : {EditorPanelId::UiDesigner, EditorPanelId::Material,
+    for (EditorPanelId panel : {EditorPanelId::UiDesigner, EditorPanelId::ShaderGraph, EditorPanelId::Material,
                                 EditorPanelId::ProjectSettings, EditorPanelId::BuildExport,
                                 EditorPanelId::Preferences, EditorPanelId::About, EditorPanelId::Diagnostics,EditorPanelId::AssetTools})
     {
         setContent(panel, 0.0f, panelHeight(panel));
     }
+    LayoutShaderGraphPanel(panelWidth(EditorPanelId::ShaderGraph), panelHeight(EditorPanelId::ShaderGraph));
     UpdateFormRects(EditorPanelId::Material);
     UpdateFormRects(EditorPanelId::ProjectSettings);
     UpdateFormRects(EditorPanelId::BuildExport);

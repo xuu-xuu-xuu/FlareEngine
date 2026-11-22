@@ -12,6 +12,7 @@ add_library(EngineEditorUi STATIC
     Source/ToolLayer/Editor/EditorUi/EditorShellModals.cpp
     Source/ToolLayer/Editor/EditorUi/EditorShellPanels.cpp
     Source/ToolLayer/Editor/EditorUi/EditorDesignerSurface.cpp
+    Source/ToolLayer/Editor/EditorUi/EditorShaderGraphSurface.cpp
     Source/ToolLayer/Editor/EditorUi/EditorInspector.cpp
     Source/ToolLayer/Editor/EditorUi/EditorColorPicker.cpp
     Source/ToolLayer/Editor/EditorUi/EditorPanels.cpp)
@@ -64,6 +65,7 @@ add_library(EngineEditorApp STATIC
     Source/ToolLayer/Editor/TodInspector.cpp
     Source/ToolLayer/Editor/EditorFeatureTools.cpp
     Source/ToolLayer/Editor/EditorCreation.cpp
+    Source/ToolLayer/Editor/EditorShaderGraphController.cpp
     Source/ToolLayer/Editor/ViewportDropWorkflow.cpp
     Source/ToolLayer/Editor/EditorClipPreview.cpp
     Source/ToolLayer/Editor/EditorScriptWorkflow.cpp

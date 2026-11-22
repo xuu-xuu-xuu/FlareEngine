@@ -81,6 +81,7 @@ std::string EditorShell::PanelLabel(EditorPanelId panel) const
     case EditorPanelId::Diagnostics: return Text("EditorUi.Diagnostics", "Diagnostics");
     case EditorPanelId::AssetTools: return Text("Feature.Tools", "Asset and reference tools");
     case EditorPanelId::Game: return Text("EditorUi.GameViewport", "Camera");
+    case EditorPanelId::ShaderGraph: return Text("EditorUi.ShaderGraph", "Shader Graph");
     default: return "Panel";
     }
 }

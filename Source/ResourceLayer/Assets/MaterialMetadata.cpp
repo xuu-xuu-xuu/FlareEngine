@@ -41,7 +41,16 @@ const PropertyDescriptor* FindMaterialProperty(std::string_view key)
 {for(const auto& field:fields)if(field.key==key)return &field;return nullptr;}
 bool ReadMaterialProperty(const MaterialDocument& m,std::string_view key,PropertyValue& value,std::string& error)
 {
-    error.clear();if(!FindMaterialProperty(key)){error="Metadata.UnknownProperty";return false;}
+    error.clear();
+    constexpr std::string_view paramPrefix="material.shaderParam.";
+    if(key.starts_with(paramPrefix))
+    {
+        const std::string paramName(key.substr(paramPrefix.size()));
+        const auto it=m.shaderParameters.find(paramName);
+        value=(it!=m.shaderParameters.end())?it->second:Vec4{0,0,0,1};
+        return true;
+    }
+    if(!FindMaterialProperty(key)){error="Metadata.UnknownProperty";return false;}
     if(key=="material.name")value=m.name;
     else if(key=="material.baseColor")value=Vec4{m.baseColor[0],m.baseColor[1],m.baseColor[2],m.baseColor[3]};
     else if(key=="material.metallic")value=m.metallic;
@@ -74,7 +83,24 @@ bool ReadMaterialProperty(const MaterialDocument& m,std::string_view key,Propert
 }
 bool WriteMaterialProperty(MaterialDocument& material,std::string_view key,const PropertyValue& value,std::string& error)
 {
-    error.clear();const auto* field=FindMaterialProperty(key);
+    error.clear();
+    constexpr std::string_view paramPrefix="material.shaderParam.";
+    if(key.starts_with(paramPrefix))
+    {
+        const std::string paramName(key.substr(paramPrefix.size()));
+        if(paramName.empty()||paramName.size()>64){error="Metadata.UnknownProperty";return false;}
+        Vec4 vec{0,0,0,1};
+        if(const auto* f=std::get_if<float>(&value))vec={*f,0.0f,0.0f,1.0f};
+        else if(const auto* v3=std::get_if<Vec3>(&value))vec={v3->x,v3->y,v3->z,1.0f};
+        else if(const auto* v4=std::get_if<Vec4>(&value))vec=*v4;
+        else{error="Metadata.InvalidValue";return false;}
+        auto copy=material;
+        copy.shaderParameters[paramName]=vec;
+        if(!ValidateMaterialDocument(copy)){error="Assets.InvalidMaterial";return false;}
+        material=std::move(copy);
+        return true;
+    }
+    const auto* field=FindMaterialProperty(key);
     if(!field){error="Metadata.UnknownProperty";return false;}
     if(!field->editable||!ValidatePropertyValue(*field,value)){error="Metadata.InvalidValue";return false;}
     auto copy=material;

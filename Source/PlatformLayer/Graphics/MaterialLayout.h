@@ -12,6 +12,8 @@ inline constexpr std::uint32_t ShadingExtensionLayoutVersion=40;
 inline constexpr std::uint32_t ParticleLayoutVersion=41;
 // 室内 SSGI 常量布局；与 IndoorLighting.hlsl IndoorConstants 严格对齐。
 inline constexpr std::uint32_t IndoorLightingLayoutVersion=42;
+// 自定义表面着色器扩展材质 b4 布局（复用既有 256B 对齐切片中的 176B，兼容内置 38 号布局）。
+inline constexpr std::uint32_t UserSurfaceMaterialLayoutVersion=43;
 struct alignas(16) IndoorLightingConstants
 {
     Mat4 view,projection,inverseProjection,inverseView;
@@ -228,6 +230,21 @@ struct alignas(16) MaterialSurfaceConstants
 static_assert(sizeof(MaterialSurfaceConstants)==32&&alignof(MaterialSurfaceConstants)==16);
 static_assert(offsetof(MaterialSurfaceConstants,coverage)==16);
 
+struct alignas(16) UserMaterialSurfaceConstants
+{
+    Vec4 baseColorFactor;
+    Vec4 coverage;
+    Vec4 flareTime; // x=time, y=sin(time), z=cos(time), w=deltaTime
+    std::array<Vec4,8> flareUserParams{};
+};
+static_assert(sizeof(UserMaterialSurfaceConstants)==176&&alignof(UserMaterialSurfaceConstants)==16);
+static_assert(offsetof(UserMaterialSurfaceConstants,flareTime)==32&&offsetof(UserMaterialSurfaceConstants,flareUserParams)==48);
+
+inline constexpr bool IsMaterialSurfaceLayout(std::uint32_t version) noexcept
+{
+    return version==MaterialSurfaceLayoutVersion||version==UserSurfaceMaterialLayoutVersion;
+}
+
 struct alignas(16) ShadowFilterConstants
 {
     Vec4 parameters; // tan(角半径)、搜索世界距离、最大半径 texel、启用。
@@ -283,5 +300,6 @@ inline constexpr LayoutVersionRecord GSeriesLayoutVersions[] =
     {ShadingExtensionLayoutVersion,"RG104-08/09/10/11/12","独立光照扩展 b5=480B/b6=96B/t13..24，覆盖38正交",480},
     {ParticleLayoutVersion,"RG104-16","GPU粒子广告牌实例(t0 48B)与常量b0=112B",112},
     {IndoorLightingLayoutVersion,"RG104-SSGI","室内SSGI时域重投影、帧抖动、历史权重与À-Trous常量b0=944B",944},
+    {UserSurfaceMaterialLayoutVersion,"SurfaceShader","自定义表面着色器b4：RGBA/覆盖/时间/8×Vec4参数",176},
 };
 }

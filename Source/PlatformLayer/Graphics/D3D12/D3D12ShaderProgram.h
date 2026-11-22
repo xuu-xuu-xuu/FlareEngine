@@ -41,3 +41,4 @@ std::string D3D12UserPbrInterfaceHash();
 bool WriteD3D12UserPbrPackage(const D3D12ShaderProgram& program,const std::filesystem::path& artifact,const Localization& text);
 std::shared_ptr<const D3D12ShaderProgram> LoadD3D12UserPbrPackage(const flare::rhi::PipelineDescription& description,
     D3D12ShaderLoadStatistics& stats,const Localization& text);
+std::vector<std::string> TakeD3D12ShaderDiagnostics();

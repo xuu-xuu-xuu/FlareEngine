@@ -210,4 +210,6 @@ private:
     bool memoryCaptureRequested_=false;
     flare::rhi::Image latestMemoryCapture_;
     SandboxDrawStatistics drawStatistics_;
+    double surfaceElapsedSeconds_=0.0;
+    std::uint64_t lastShaderReloadGeneration_=0;
 };

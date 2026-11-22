@@ -25,6 +25,7 @@ enum class EditorPanelId : std::uint8_t
     Diagnostics,
     AssetTools,
     Game,
+    ShaderGraph,
 };
 
 // Horizontal = 子节点左右排列；Vertical = 子节点上下排列。

@@ -149,8 +149,8 @@ constexpr std::uint32_t ShadowFilterBindingLayout(PipelineKind kind,bool skinned
 constexpr bool ValidShadowFilterBindingLayout(PipelineKind kind,std::uint32_t layout,bool skinned)
 {return IsCascaded(kind)&&IsShadowed(kind)&&(!skinned||SupportsSkinning(kind))&&layout==ShadowFilterBindingLayout(kind,skinned);}
 constexpr bool ValidPipelineKind(PipelineKind kind){return static_cast<unsigned>(kind)<=static_cast<unsigned>(PipelineKind::ClusteredCascadedBasicLitMesh);}
-enum class DepthMode { Default, Disabled, ReadWriteLess, ReadOnlyLessEqual, ReadOnlyEqual };
-enum class BlendMode { Opaque, Alpha };
+enum class DepthMode { Default, Disabled, ReadWriteLess, ReadOnlyLessEqual, ReadOnlyEqual, ReadOnlyGreater };
+enum class BlendMode { Opaque, Alpha, Additive };
 enum class ColorFormat { Rgba8Unorm, Rgba16Float, Rgba8Srgb };
 struct ShaderMacro {std::string name,value;bool operator==(const ShaderMacro&) const=default;};
 enum class ShaderInput { Source, Artifact };
@@ -174,14 +174,20 @@ inline bool ValidMaterialSurfacePipeline(const PipelineDescription& pipeline)
 {
     if(!IsValidMaterialAlphaMode(pipeline.alphaMode))return false;
     if(!pipeline.materialLayoutVersion)return pipeline.alphaMode==MaterialAlphaMode::Opaque;
-    if(pipeline.materialLayoutVersion!=MaterialSurfaceLayoutVersion||pipeline.shaderInput!=ShaderInput::Source
+    if(!IsMaterialSurfaceLayout(pipeline.materialLayoutVersion)||pipeline.shaderInput!=ShaderInput::Source
         ||(!UsesLitLayout(pipeline.kind)&&pipeline.kind!=PipelineKind::ShadowDepth)||IsInstanced(pipeline.kind))return false;
     if(pipeline.kind==PipelineKind::ShadowDepth)
-        return pipeline.alphaMode==MaterialAlphaMode::Mask&&pipeline.blend==BlendMode::Opaque
+        return (pipeline.alphaMode==MaterialAlphaMode::Mask||(pipeline.materialLayoutVersion==UserSurfaceMaterialLayoutVersion&&pipeline.alphaMode==MaterialAlphaMode::Opaque))
+            &&pipeline.blend==BlendMode::Opaque
             &&(pipeline.depth==DepthMode::Default||pipeline.depth==DepthMode::ReadWriteLess);
     if(pipeline.alphaMode==MaterialAlphaMode::Blend)
-        return IsForward(pipeline.kind)&&pipeline.colorFormat==ColorFormat::Rgba16Float
-            &&pipeline.blend==BlendMode::Alpha&&pipeline.depth==DepthMode::ReadOnlyLessEqual;
+    {
+        const bool userSurf=pipeline.materialLayoutVersion==UserSurfaceMaterialLayoutVersion;
+        const bool validBlend=pipeline.blend==BlendMode::Alpha||(userSurf&&pipeline.blend==BlendMode::Additive);
+        const bool validDepth=pipeline.depth==DepthMode::ReadOnlyLessEqual
+            ||(userSurf&&(pipeline.depth==DepthMode::ReadOnlyGreater||pipeline.depth==DepthMode::Disabled));
+        return IsForward(pipeline.kind)&&pipeline.colorFormat==ColorFormat::Rgba16Float&&validBlend&&validDepth;
+    }
     return pipeline.blend==BlendMode::Opaque&&(pipeline.alphaMode!=MaterialAlphaMode::Mask
         ||pipeline.depth==DepthMode::Default||pipeline.depth==DepthMode::ReadWriteLess);
 }
@@ -247,6 +253,7 @@ struct DrawIndexed
         float lodDither=0;
         // RG104：独立开关；默认保持旧材质，IBL 多散射与法线高光抗锯齿不改变资产。
         bool multiscatter=false,specularAA=false;
+        bool cullFront=false; // 多 Pass 背面描边等剔除正面模式（编码为 options.z / surfaceCoverage.z = 2）。
     } pbr;
     bool castsShadow=true;
     bool staticShadowCaster=false; // RG104-18：静态投射物进入级联底图缓存；动态/蒙皮投射物逐帧叠加。
@@ -276,6 +283,8 @@ struct DrawIndexed
     Aabb worldBounds;
     bool hasWorldBounds=false;
     std::span<const GeometryCluster> geometryClusters{}; // Draw 接收时复制快照；非法/缺失覆盖保留 CPU whole-draw。
+    std::array<Vec4,8> userParams{}; // 自定义表面着色器参数（写入 b4 既有 256B 切片后段）。
+    std::uint8_t subPassIndex=0; // 多 Pass 排序优先级（保证同一实体 Pass 0 恒先于 Pass 1 执行）。
 };
 // 世界空间辅助线。width 为逻辑像素；隐藏部分 alpha=0 表示遵守正常遮挡。
 struct SceneLine
@@ -661,6 +670,7 @@ public:
     Result ConfigurePostProcess(const PostProcessSettings& settings,const PostProcessPipelines& pipelines);
     Result ConfigureDepthNormals(const DepthNormalSettings& settings);
     Result ConfigureScreenSpaceOcclusion(const ScreenSpaceOcclusionSettings& settings);
+    void SetSurfaceTime(Vec4 timeSinCosDelta) noexcept;
     Result DrawOverlay(const OverlayQuad& quad);
     // W03：阴影投射统一走整份绘制描述，蒙皮投射需要顶点缓冲已记录调色板。
     Result DrawShadow(const DrawIndexed& draw);
@@ -721,6 +731,7 @@ public:
     void Collect();
     Statistics Stats() const;
     std::vector<std::string> DebugMessages() const; // 调试层 warning/error 的原始诊断，按需读取。
+    std::vector<std::string> TakeShaderDiagnostics() const;
     AdapterInformation Adapter() const;
     DeviceCapabilities Capabilities() const noexcept;
     bool Occluded() const;

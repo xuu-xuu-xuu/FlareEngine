@@ -60,6 +60,8 @@ bool RequiresMaterialCoverage(const flare::FrameData& frame)
             const auto* preview=frame.materialPreview&&frame.materialPreview->id==id?&frame.materialPreview->document:nullptr;
             const auto material=preview?std::shared_ptr<const flare::MaterialDocument>{}:frame.assets->LoadMaterial(id,ignored);
             if(preview?preview->alphaMode!=flare::MaterialAlphaMode::Opaque:material&&material->alphaMode!=flare::MaterialAlphaMode::Opaque)return true;
+            const auto& shaderId=preview?preview->shader:(material?material->shader:flare::AssetId{});
+            if(!shaderId.empty()&&flare::IsUserSurfaceAssetPath(frame.assets->Resolve(shaderId)))return true;
         }
         if(!flare::IsBuiltinMesh(instance.mesh.meshAsset)&&models.insert(instance.mesh.meshAsset).second)
         {
@@ -425,6 +427,11 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     std::optional<flare::CpuScope> preparation;preparation.emplace(frame.profiler,"CPU.CommandPrepare");
     camera_.reset();
     if (!frame.surface.width || !frame.surface.height) return RenderResult::Occluded;
+    if (frame.data && frame.data->shaderReloadGeneration != lastShaderReloadGeneration_)
+    {
+        lastShaderReloadGeneration_ = frame.data->shaderReloadGeneration;
+        models_.InvalidateMaterials();
+    }
     const bool coverageFrame=frame.data&&RequiresMaterialCoverage(*frame.data);
     const bool materialShading=frame.data&&flare::RequiresMaterialShading(*frame.data);
     const bool localLighting=frame.data&&std::any_of(frame.data->lights.begin(),frame.data->lights.end(),[](const auto& instance){
@@ -439,7 +446,9 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             std::vector<flare::AssetDiagnostic> ignored;
             const auto* preview=frame.data->materialPreview&&frame.data->materialPreview->id==id?&frame.data->materialPreview->document:nullptr;
             const auto material=preview?std::shared_ptr<const flare::MaterialDocument>{}:frame.data->assets->LoadMaterial(id,ignored);
-            customCascadeUnsupported=customCascadeUnsupported||(preview?!preview->shader.empty():material&&!material->shader.empty());
+            const auto& shaderId=preview?preview->shader:(material?material->shader:flare::AssetId{});
+            if(!shaderId.empty()&&!flare::IsUserSurfaceAssetPath(frame.data->assets->Resolve(shaderId)))
+                customCascadeUnsupported=true;
         }
     const bool indoorLighting=frame.data&&frame.data->indoor.Enabled();
     const bool rayTracingLighting=frame.data&&frame.data->rayTracing.Active();
@@ -676,6 +685,13 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if(!device_->EnableGpuTiming(frame.profiler&&frame.profiler->Enabled()))return RenderResult::Failed;
     auto commands=device_->BeginCommands(frame.updateIndex);
     if(!commands)return RenderResult::Failed;
+    {
+        const double stepSec=frame.updateDeltaSeconds>0.0?frame.updateDeltaSeconds:(frame.rawDeltaSeconds>0.0?frame.rawDeltaSeconds:1.0/60.0);
+        const float dt=std::clamp(static_cast<float>(stepSec),0.0f,0.25f);
+        surfaceElapsedSeconds_+=static_cast<double>(dt);
+        const float t=static_cast<float>(std::fmod(surfaceElapsedSeconds_,86400.0));
+        commands->SetSurfaceTime({t,std::sin(t),std::cos(t),dt});
+    }
     const bool forward=ForwardScene(scene_);
     const bool editor=scene_==SandboxScene::BasicLit&&frame.data&&frame.data->editorGuiEnabled;
     flare::rhi::Result result;
@@ -764,6 +780,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if(result&&(scene_==SandboxScene::TexturedCube||scene_==SandboxScene::Scene||MaterialScene(scene_)||HlodSceneMode(scene_)||forward))
     {
         std::vector<flare::rhi::DrawIndexed> meshes,casters,transparent;
+        std::vector<std::shared_ptr<const flare::UserSurfaceShaderSource>> meshSurfaces,casterSurfaces;
         const auto opaquePipeline=shadowFilterFrame?(featureEnvironment_||EnvironmentScene(scene_)?*filterPipelines.environment:
             BasicLitScene(scene_)&&!featureFullPbr_?*filterPipelines.basic:*filterPipelines.pbr):
             clusteredFrame?(clusterGroup==0?*clusterPipelines.pbr:
@@ -1130,12 +1147,12 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             if((scene_==SandboxScene::Shadows||BasicLitScene(scene_)||EnvironmentScene(scene_))&&mesh.mesh.castsShadow)
             {
                 const auto firstCaster=casters.size();
-                flare::AppendShadowModelDraws(*model,mesh.world,casters,0,skinPalette,skinJointCount,skinShadowPipeline,overrides);
+                flare::AppendShadowModelDraws(*model,mesh.world,casters,0,skinPalette,skinJointCount,skinShadowPipeline,overrides,&casterSurfaces);
                 const bool isStaticCaster=mesh.staticGeometry&&!skinnedModel;
                 for(auto cIdx=firstCaster;cIdx<casters.size();++cIdx)
                 {
                     casters[cIdx].stableId=mesh.entity;
-                    casters[cIdx].staticShadowCaster=isStaticCaster;
+                    casters[cIdx].staticShadowCaster=isStaticCaster&&!(cIdx<casterSurfaces.size()&&casterSurfaces[cIdx]&&casterSurfaces[cIdx]->metadata.hasVertexHook);
                 }
             }
             if(!candidate.visible)continue;
@@ -1163,10 +1180,10 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     impostor.vertices=*quadMesh.vertices;impostor.indices=*quadMesh.indices;impostor.texture=*impostorTexture_;
                     impostor.pipeline=*impostorPipeline_;impostor.world=quadWorld;impostor.viewProjection=viewProjection;
                     impostor.indexCount=6;impostor.impostorView=float(first);impostor.impostorNext=float(second);impostor.impostorBlend=blend;
-                    meshes.push_back(impostor);++impostorDrawCount;continue;
+                    meshes.push_back(impostor);meshSurfaces.push_back({});++impostorDrawCount;continue;
                 }
             }
-            if(!PbrScene(scene_)&&!forward){const auto first=meshes.size();flare::AppendStaticModelDraws(*model,mesh.world,meshes,*pipeline_,viewProjection);drawStatistics_.visible+=meshes.size()>first;continue;}
+            if(!PbrScene(scene_)&&!forward){const auto first=meshes.size();flare::AppendStaticModelDraws(*model,mesh.world,meshes,*pipeline_,viewProjection);meshSurfaces.resize(meshes.size());drawStatistics_.visible+=meshes.size()>first;continue;}
             const auto first=meshes.size();
             auto drawPipeline=opaquePipeline;
             if(model->compressed&&compressedPipeline_)drawPipeline=*compressedPipeline_;
@@ -1203,7 +1220,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             {
                 flare::AppendPbrModelDraws(*model,mesh.world,overrides,meshes,drawPipeline,viewProjection,camera_->position,
                     forward?flare::Vec3{0,0,1}:lightDirection,forward?flare::Vec3{}:radiance,level,dither,previousWorld,look,
-                    skinPalette,skinJointCount,skinDrawPipeline);
+                    skinPalette,skinJointCount,skinDrawPipeline,&meshSurfaces);
             };
             if(lodTransitionActive&&lodBlend<1.0f)
             {
@@ -1237,7 +1254,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 if(proxySelected[cell]&&hlodProxies_[cell])
                 {
                     flare::AppendPbrModelDraws(*hlodProxies_[cell],flare::Mat4{},hlodOverrides_[cell],meshes,opaquePipeline,viewProjection,
-                        camera_->position,lightDirection,radiance,0,0);
+                        camera_->position,lightDirection,radiance,0,0,nullptr,{},{},0,{},&meshSurfaces);
                     ++proxyDrawCount;
                 }
         }
@@ -1245,6 +1262,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         {
             result=flare::AppendPhysicsDebugDraws(*cube_,frame.data->debugLines,opaquePipeline,viewProjection,meshes);
             if(!result){Log(LogLevel::Error,localization.GetText(result.Key()));return RenderResult::Failed;}
+            meshSurfaces.resize(meshes.size());
             drawStatistics_.debugLines=frame.data->debugLines.size();
         }
         // G04.06：压缩纹理驻留必须在记录绘制前更新 SRV；超预算时降级最久未用的最细 mip。
@@ -1268,24 +1286,145 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 BasicLitScene(scene_)||scene_==SandboxScene::Shadows?flare::rhi::PipelineKind::ShadowedMesh:
                 ForwardScene(scene_)?flare::rhi::PipelineKind::ForwardMesh:flare::rhi::PipelineKind::PbrMesh;
             const auto shaders=ResourceDirectory()/"Shaders";
-            for(auto& draw:casters)if(draw.alphaMode==flare::MaterialAlphaMode::Mask)
+            const auto shaderCacheRoot=frame.data&&frame.data->assets?frame.data->assets->CacheRoot():std::filesystem::path{};
+            const auto reportUserDiagnostics=[&](const std::vector<std::string>& diags)
             {
-                const auto pipeline=surfacePipelines_.Load(*device_,shaders,flare::rhi::PipelineKind::ShadowDepth,
-                    draw.alphaMode,!draw.skinPalette.empty());
-                if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
-                draw.pipeline=*pipeline;
+                for(const auto& msg:diags)
+                {
+                    if(msg.empty())continue;
+                    if(frame.data&&frame.data->editorShaderDiagnosticSink)
+                        frame.data->editorShaderDiagnosticSink("[Error] "+msg);
+                }
+            };
+            std::vector<flare::rhi::DrawIndexed> filteredCasters;
+            filteredCasters.reserve(casters.size());
+            for(std::size_t cIdx=0;cIdx<casters.size();++cIdx)
+            {
+                auto draw=std::move(casters[cIdx]);
+                const auto* userSurf=cIdx<casterSurfaces.size()?casterSurfaces[cIdx].get():nullptr;
+                if(userSurf)
+                {
+                    if(!userSurf->metadata.shadowPassIndex.has_value())continue;
+                    const std::size_t shPassIdx=*userSurf->metadata.shadowPassIndex;
+                    const auto shPass=userSurf->metadata.EffectivePass(shPassIdx);
+                    if(shPass.cullMode.has_value())
+                    {
+                        draw.pbr.doubleSided=(*shPass.cullMode==flare::SurfaceCullMode::Off);
+                        draw.pbr.cullFront=(*shPass.cullMode==flare::SurfaceCullMode::Front);
+                    }
+                    if(shPass.blendPreset.has_value())
+                    {
+                        draw.alphaMode=(*shPass.blendPreset==flare::SurfaceBlendPreset::Cutout)?flare::MaterialAlphaMode::Mask:flare::MaterialAlphaMode::Opaque;
+                    }
+                    if(draw.alphaMode==flare::MaterialAlphaMode::Mask||shPass.hasVertexHook)
+                    {
+                        std::vector<std::string> diags;
+                        auto pipeline=surfacePipelines_.LoadUserSurface(*device_,shaders,shaderCacheRoot,*userSurf,
+                            flare::rhi::PipelineKind::ShadowDepth,draw.alphaMode,!draw.skinPalette.empty(),false,
+                            draw.compressedVertices,false,false,diags,nullptr,shPassIdx);
+                        reportUserDiagnostics(diags);
+                        if(pipeline)draw.pipeline=*pipeline;
+                        else if(draw.alphaMode==flare::MaterialAlphaMode::Mask)
+                        {
+                            const auto fb=surfacePipelines_.Load(*device_,shaders,flare::rhi::PipelineKind::ShadowDepth,draw.alphaMode,!draw.skinPalette.empty());
+                            if(!fb){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
+                            draw.pipeline=*fb;
+                        }
+                    }
+                }
+                else if(draw.alphaMode==flare::MaterialAlphaMode::Mask)
+                {
+                    const auto pipeline=surfacePipelines_.Load(*device_,shaders,flare::rhi::PipelineKind::ShadowDepth,
+                        draw.alphaMode,!draw.skinPalette.empty());
+                    if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
+                    draw.pipeline=*pipeline;
+                }
+                filteredCasters.push_back(std::move(draw));
             }
+            casters=std::move(filteredCasters);
             std::vector<flare::rhi::DrawIndexed> opaque;opaque.reserve(meshes.size());
-            for(auto draw:meshes)
+            for(std::size_t mIdx=0;mIdx<meshes.size();++mIdx)
             {
+                auto draw=meshes[mIdx];
+                const auto* userSurf=mIdx<meshSurfaces.size()?meshSurfaces[mIdx].get():nullptr;
+                if(userSurf)
+                {
+                    const bool skin=!draw.skinPalette.empty();auto materialKind=kind;
+                    if(flare::rhi::IsBasicLit(materialKind))
+                        materialKind=flare::rhi::IsClustered(materialKind)?(flare::rhi::IsCascaded(materialKind)?flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh:flare::rhi::PipelineKind::ClusteredShadowedMesh):
+                            flare::rhi::IsCascaded(materialKind)?flare::rhi::PipelineKind::CascadedShadowedMesh:flare::rhi::PipelineKind::ShadowedMesh;
+                    const std::size_t passCount=userSurf->metadata.PassCount();
+                    for(std::size_t passIdx=0;passIdx<passCount;++passIdx)
+                    {
+                        auto passDraw=draw;
+                        passDraw.subPassIndex=static_cast<std::uint8_t>(passIdx);
+                        const auto passSpec=userSurf->metadata.EffectivePass(passIdx);
+                        passDraw.unlit=draw.unlit||(passSpec.shadingModel==flare::SurfaceShadingModel::Unlit);
+                        if(passSpec.cullMode.has_value())
+                        {
+                            passDraw.pbr.doubleSided=(*passSpec.cullMode==flare::SurfaceCullMode::Off);
+                            passDraw.pbr.cullFront=(*passSpec.cullMode==flare::SurfaceCullMode::Front);
+                        }
+                        const bool forceReadOnlyDepth=(passSpec.zWrite.has_value()&&!*passSpec.zWrite)
+                            ||(passSpec.zTest!=flare::SurfaceDepthTest::LessEqual);
+                        flare::MaterialAlphaMode passAlpha=passDraw.alphaMode;
+                        if(passSpec.blendPreset.has_value())
+                        {
+                            switch(*passSpec.blendPreset)
+                            {
+                            case flare::SurfaceBlendPreset::Opaque:      passAlpha=flare::MaterialAlphaMode::Opaque; break;
+                            case flare::SurfaceBlendPreset::Cutout:      passAlpha=flare::MaterialAlphaMode::Mask;   break;
+                            case flare::SurfaceBlendPreset::Transparent: passAlpha=flare::MaterialAlphaMode::Blend;  break;
+                            case flare::SurfaceBlendPreset::Additive:    passAlpha=flare::MaterialAlphaMode::Blend;  break;
+                            }
+                        }
+                        if(!flare::rhi::IsForward(materialKind)&&passAlpha==flare::MaterialAlphaMode::Blend)
+                        {
+                            if(passIdx>0)continue;
+                            passAlpha=flare::MaterialAlphaMode::Opaque;
+                        }
+                        else if(forceReadOnlyDepth&&flare::rhi::IsForward(materialKind))
+                        {
+                            passAlpha=flare::MaterialAlphaMode::Blend;
+                        }
+                        passDraw.alphaMode=passAlpha;
+                        const auto passBlendMode=(passAlpha==flare::MaterialAlphaMode::Blend&&passSpec.blendPreset==flare::SurfaceBlendPreset::Additive)
+                            ?flare::rhi::BlendMode::Additive
+                            :(passAlpha==flare::MaterialAlphaMode::Blend?flare::rhi::BlendMode::Alpha:flare::rhi::BlendMode::Opaque);
+                        const auto passDepthMode=(passAlpha==flare::MaterialAlphaMode::Blend)
+                            ?(passSpec.zTest==flare::SurfaceDepthTest::Greater?flare::rhi::DepthMode::ReadOnlyGreater
+                                :passSpec.zTest==flare::SurfaceDepthTest::Always?flare::rhi::DepthMode::Disabled
+                                :flare::rhi::DepthMode::ReadOnlyLessEqual)
+                            :flare::rhi::DepthMode::Default;
+
+                        std::vector<std::string> diags;
+                        const flare::SurfaceShaderMetadata* fbMeta=nullptr;
+                        auto pipeline=surfacePipelines_.LoadUserSurface(*device_,shaders,shaderCacheRoot,*userSurf,materialKind,
+                            passAlpha,skin,shadowFilterFrame,passDraw.compressedVertices,models_.Bc5NormalsEnabled()&&!forward,
+                            shadingFrame,diags,&fbMeta,passIdx,passBlendMode,passDepthMode);
+                        reportUserDiagnostics(diags);
+                        if(fbMeta)passDraw.userParams=flare::PackSurfaceShaderParameters(*fbMeta,userSurf->materialParameters);
+                        if(!pipeline)
+                        {
+                            if(passIdx>0)continue;
+                            pipeline=surfacePipelines_.Load(*device_,shaders,materialKind,passAlpha,skin,shadowFilterFrame,
+                                passDraw.compressedVertices,models_.Bc5NormalsEnabled()&&!forward,shadingFrame);
+                        }
+                        if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
+                        passDraw.pipeline=*pipeline;
+                        if(passIdx>0)passDraw.outline=false;
+                        if(passDraw.alphaMode==flare::MaterialAlphaMode::Blend){passDraw.castsShadow=false;transparent.push_back(std::move(passDraw));}
+                        else opaque.push_back(std::move(passDraw));
+                    }
+                    continue;
+                }
                 if(draw.alphaMode!=flare::MaterialAlphaMode::Opaque||shadingFrame)
                 {
                     const bool skin=!draw.skinPalette.empty();auto materialKind=kind;
-                    // 与已有BasicLit蒙皮路径相同：蒙皮受光使用Full PBR技术。
                     if(skin&&flare::rhi::IsBasicLit(materialKind))
                         materialKind=flare::rhi::IsClustered(materialKind)?(flare::rhi::IsCascaded(materialKind)?flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh:flare::rhi::PipelineKind::ClusteredShadowedMesh):
                             flare::rhi::IsCascaded(materialKind)?flare::rhi::PipelineKind::CascadedShadowedMesh:flare::rhi::PipelineKind::ShadowedMesh;
-                    const auto pipeline=surfacePipelines_.Load(*device_,shaders,materialKind,draw.alphaMode,skin,shadowFilterFrame,
+                    auto pipeline=surfacePipelines_.Load(*device_,shaders,materialKind,draw.alphaMode,skin,shadowFilterFrame,
                         draw.compressedVertices,models_.Bc5NormalsEnabled()&&!forward,shadingFrame);
                     if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
                     draw.pipeline=*pipeline;

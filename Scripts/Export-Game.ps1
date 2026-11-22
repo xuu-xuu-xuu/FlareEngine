@@ -262,6 +262,9 @@ try {
     if(Test-Path -LiteralPath (Join-Path $workspace 'Docs/ExportedGameReadme.md') -PathType Leaf){
         Copy-Item -LiteralPath (Join-Path $workspace 'Docs/ExportedGameReadme.md') -Destination (Join-Path $stage 'README.md')
     }
+    if(Test-Path -LiteralPath (Join-Path $copiedProject '.cache/assets/user-shaders')){
+        Remove-Item -LiteralPath (Join-Path $copiedProject '.cache/assets/user-shaders') -Recurse -Force -ErrorAction SilentlyContinue
+    }
     $report.phase='manifest';Report
     $files=@(Get-ChildItem -LiteralPath $stage -File -Recurse | Sort-Object FullName | ForEach-Object {[ordered]@{path=$_.FullName.Substring($stage.Length+1).Replace('\','/');bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})
     [int64]$totalBytes=0;foreach($file in $files){$totalBytes+=[int64]$file.bytes}

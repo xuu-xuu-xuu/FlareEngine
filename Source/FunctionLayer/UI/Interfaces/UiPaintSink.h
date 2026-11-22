@@ -31,6 +31,18 @@ public:
     virtual void Text(const UiRect& rect, std::string_view text, float fontSize, const UiColor& color) = 0;
     virtual void Image(const UiRect& rect, std::string_view image, const UiColor& color) = 0;
     virtual void Line(float x0, float y0, float x1, float y1, float width, const UiColor& color) = 0;
+    virtual void CubicBezier(float x0, float y0,
+                             float c0x, float c0y,
+                             float c1x, float c1y,
+                             float x1, float y1,
+                             float width, const UiColor& color)
+    {
+        (void)c0x;
+        (void)c0y;
+        (void)c1x;
+        (void)c1y;
+        Line(x0, y0, x1, y1, width, color);
+    }
     virtual void CanvasRect(const UiRect& rect, const UiColor& color) = 0;
     virtual void CanvasCircle(float centerX, float centerY, float radius, const UiColor& color) = 0;
 };

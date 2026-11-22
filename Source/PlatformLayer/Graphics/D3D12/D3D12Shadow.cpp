@@ -79,11 +79,12 @@ bool ValidateShadowDraws(D3D12FrameContext& frame,const D3D12FrameContent& conte
                 return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.MeshDrawsInvalid");
             }
         }
+        const bool userSurfaceShadow=program.prepared->program->source.materialLayoutVersion==flare::rhi::UserSurfaceMaterialLayoutVersion;
         if(program.prepared->materialRootParameter!=UINT_MAX)
         {
-            if(draw.alphaMode!=flare::MaterialAlphaMode::Mask||!draw.mesh->texture||!frame.shadowMaterialConstants[index].resource)return false;
+            if((draw.alphaMode!=flare::MaterialAlphaMode::Mask&&!userSurfaceShadow)||!draw.mesh->texture||!frame.shadowMaterialConstants[index].resource)return false;
         }
-        if(draw.staticShadowCaster&&!skinned)staticIndices.push_back(index);
+        if(draw.staticShadowCaster&&!skinned&&!userSurfaceShadow)staticIndices.push_back(index);
         else dynamicIndices.push_back(index);
     }
     return true;

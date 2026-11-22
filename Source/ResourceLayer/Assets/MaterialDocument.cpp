@@ -35,6 +35,13 @@ bool ValidateMaterialDocument(const MaterialDocument& material)
         ||!std::isfinite(material.clearCoat.roughness)||material.clearCoat.roughness<0||material.clearCoat.roughness>1
         ||!std::isfinite(material.clearCoat.normalScale))return false;
     if(!IsValidMaterialLayer(material.sheen)||!IsValidMaterialLayer(material.anisotropy)||!IsValidMaterialLayer(material.subsurface))return false;
+    if(material.shaderParameters.size()>64)return false;
+    for(const auto& [paramName,paramVal]:material.shaderParameters)
+    {
+        std::u32string paramDecoded;
+        if(paramName.empty()||paramName.size()>64||!DecodeUtf8(paramName,paramDecoded))return false;
+        if(!std::isfinite(paramVal.x)||!std::isfinite(paramVal.y)||!std::isfinite(paramVal.z)||!std::isfinite(paramVal.w))return false;
+    }
     return AssetReference(material.baseColorTexture)&&AssetReference(material.normalTexture)
         &&AssetReference(material.metallicRoughnessTexture)&&AssetReference(material.shader)
         &&AssetReference(material.clearCoatWeightTexture)&&AssetReference(material.clearCoatRoughnessTexture)&&AssetReference(material.clearCoatNormalTexture)
@@ -65,6 +72,13 @@ bool SerializeMaterialDocument(const MaterialDocument& material,std::string& out
             PropertyValue value;std::string error;if(!ReadMaterialProperty(material,field.key,value,error))return false;
             json[nlohmann::json::json_pointer("/"+std::string(SerializedPropertyKey(field)))]=WritePropertyJson(value);
         }
+        if(!material.shaderParameters.empty())
+        {
+            nlohmann::json params=nlohmann::json::object();
+            for(const auto& [k,v]:material.shaderParameters)
+                params[k]={v.x,v.y,v.z,v.w};
+            json["shaderParameters"]=std::move(params);
+        }
         output=json.dump(2);return true;
     }
     catch(const std::exception& error){asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial",error.what());return false;}
@@ -77,7 +91,7 @@ bool DeserializeMaterialDocument(std::string_view text,MaterialDocument& output,
         const auto json=nlohmann::json::parse(text);
         if((json.at("type")!="FlareEngine.Material"&&json.at("type")!="SelfEngine.Material")||json.at("version")!=1)
         {asset_io::Diagnostic(diagnostics,"Assets.MaterialVersionUnsupported");return false;}
-        for(const char* key:{"clearCoat","sheen","anisotropy","subsurface"})if(json.contains(key)&&!json.at(key).is_object())
+        for(const char* key:{"clearCoat","sheen","anisotropy","subsurface","shaderParameters"})if(json.contains(key)&&!json.at(key).is_object())
         {asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial",key);return false;}
         MaterialDocument loaded;
         for(const auto& field:MaterialProperties())
@@ -87,6 +101,25 @@ bool DeserializeMaterialDocument(std::string_view text,MaterialDocument& output,
             PropertyValue value;std::string error;
             if(!json.contains(path)||!ReadPropertyJson(json.at(path),field,value)||!WriteMaterialProperty(loaded,field.key,value,error))
             {asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial",std::string(field.key));return false;}
+        }
+        if(json.contains("shaderParameters"))
+        {
+            for(auto it=json.at("shaderParameters").begin();it!=json.at("shaderParameters").end();++it)
+            {
+                Vec4 vec{0,0,0,1};
+                if(it.value().is_number())vec.x=it.value().get<float>();
+                else if(it.value().is_array()&&!it.value().empty()&&it.value().size()<=4)
+                {
+                    float* dst=&vec.x;
+                    for(std::size_t i=0;i<it.value().size();++i)
+                    {
+                        if(!it.value()[i].is_number()){asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial","shaderParameters");return false;}
+                        dst[i]=it.value()[i].get<float>();
+                    }
+                }
+                else{asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial","shaderParameters");return false;}
+                loaded.shaderParameters[it.key()]=vec;
+            }
         }
         if(!ValidateMaterialDocument(loaded)){asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial");return false;}
         output=std::move(loaded);return true;

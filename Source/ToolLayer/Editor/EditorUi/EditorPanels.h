@@ -172,4 +172,76 @@ private:
     bool gridMode_ = false;
 };
 
+struct EditorShaderPortView
+{
+    std::string id;
+    std::string label;
+    std::uint8_t valueType = 0; // 0=Float, 1=Vec2, 2=Vec3, 3=Vec4
+    bool connected = false;
+    bool operator==(const EditorShaderPortView&) const = default;
+};
+
+struct EditorShaderNodeView
+{
+    std::uint32_t id = 0;
+    std::string type;
+    std::string category;
+    std::string title;
+    std::string subtitle;
+    float x = 0.0f;
+    float y = 0.0f;
+    bool selected = false;
+    bool isMaster = false;
+    bool exposed = false;
+    float swatchRgba[4]{0.0f, 0.0f, 0.0f, 0.0f};
+    std::vector<EditorShaderPortView> inputs;
+    std::vector<EditorShaderPortView> outputs;
+    bool operator==(const EditorShaderNodeView&) const = default;
+};
+
+struct EditorShaderLinkView
+{
+    std::uint32_t fromNode = 0;
+    std::string fromPort;
+    std::uint32_t toNode = 0;
+    std::string toPort;
+    std::uint8_t valueType = 0;
+    bool selected = false;
+    bool operator==(const EditorShaderLinkView&) const = default;
+};
+
+struct EditorShaderPaletteItem
+{
+    std::string type;
+    std::string category;
+    std::string title;
+    bool hasInputs = false;
+    bool hasOutputs = true;
+    bool operator==(const EditorShaderPaletteItem&) const = default;
+};
+
+struct EditorShaderGraphViewState
+{
+    bool loaded = false;
+    bool dirty = false;
+    std::string title;
+    std::string shadingMode = "Lit";
+    std::string blendMode = "OPAQUE";
+    bool doubleSided = false;
+    float panX = 40.0f;
+    float panY = 50.0f;
+    float zoom = 1.0f;
+    std::string previewImageKey;
+    std::string statusText;
+    std::uint32_t primaryNodeId = 0;
+    bool canExpose = false;
+    bool primaryExposed = false;
+    std::string primaryParamName;
+    std::string primaryValueText;
+    bool primaryHasValue = false;
+    std::vector<EditorShaderNodeView> nodes;
+    std::vector<EditorShaderLinkView> links;
+    bool operator==(const EditorShaderGraphViewState&) const = default;
+};
+
 } // namespace flare::ui::editor

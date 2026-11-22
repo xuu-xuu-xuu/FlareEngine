@@ -22,6 +22,8 @@
 #include "ResourceLayer/Assets/AssetIO.h"
 #include "ResourceLayer/Scenes/PrefabDocument.h"
 #include "ResourceLayer/Assets/MaterialMetadata.h"
+#include "ResourceLayer/Assets/ShaderGraph.h"
+#include "ResourceLayer/Assets/SurfaceShader.h"
 
 #include <commdlg.h>
 #include <shellapi.h>
@@ -189,7 +191,7 @@ std::string EnsureAssetThumbnail(ToolkitAppState& state,
                                  std::string_view type)
 {
     if (state.hidden) return {};
-    if (type != "material" && type != "texture") return {};
+    if (type != "material" && type != "texture" && !(type == "shader" && IsShaderGraphPath(resolved))) return {};
     const std::string key = "thumb:" + asset_io::Utf8(resolved);
     std::error_code timeEc;
     const auto mtime = std::filesystem::last_write_time(resolved, timeEc);
@@ -200,7 +202,23 @@ std::string EnsureAssetThumbnail(ToolkitAppState& state,
     }
 
     std::shared_ptr<ImageData> thumbImg;
-    if (type == "material")
+    if (type == "shader" && IsShaderGraphPath(resolved))
+    {
+        ShaderGraphDocument sgDoc;
+        std::string sgErr;
+        if (LoadShaderGraph(resolved, sgDoc, sgErr))
+        {
+            const ShaderPreviewImage rendered = RenderShaderGraphPreviewSphere(sgDoc, 0.0f, -0.55f, 0.52f, {}, 40);
+            if (rendered.width > 0 && rendered.height > 0 && !rendered.rgba8.empty())
+            {
+                thumbImg = std::make_shared<ImageData>();
+                thumbImg->width = rendered.width;
+                thumbImg->height = rendered.height;
+                thumbImg->rgba8 = rendered.rgba8;
+            }
+        }
+    }
+    else if (type == "material")
     {
         std::vector<AssetDiagnostic> diags;
         if (const auto mat = state.assets.LoadMaterial(id, diags))
@@ -249,6 +267,86 @@ std::string EnsureAssetThumbnail(ToolkitAppState& state,
         token = state.nextAssetThumbToken++;
     state.assetThumbnails[key] = {token, thumbImg, mtime};
     return thumbImg ? key : std::string{};
+}
+
+void RefreshShaderWatchMtimes(ToolkitAppState& state, bool triggerReloadOnDiff)
+{
+    std::string changedNames;
+    std::size_t changedCount = 0;
+    for (const AssetId& id : state.assets.ListIds())
+    {
+        const std::filesystem::path resolved = state.assets.Resolve(id);
+        if (resolved.empty() || !IsUserSurfaceAssetPath(resolved)) continue;
+        std::error_code ec;
+        if (!std::filesystem::exists(resolved, ec) || ec) continue;
+        const auto mtime = std::filesystem::last_write_time(resolved, ec);
+        if (ec) continue;
+        const std::string key = asset_io::Utf8(resolved);
+        auto it = state.shaderFileMtimes.find(key);
+        if (it == state.shaderFileMtimes.end())
+        {
+            state.shaderFileMtimes.emplace(key, mtime);
+            if (triggerReloadOnDiff && state.shaderMtimesInitialized)
+            {
+                ++changedCount;
+                if (changedNames.empty()) changedNames = asset_io::Utf8(resolved.filename());
+            }
+        }
+        else if (it->second != mtime)
+        {
+            it->second = mtime;
+            if (triggerReloadOnDiff)
+            {
+                ++changedCount;
+                if (changedNames.empty()) changedNames = asset_io::Utf8(resolved.filename());
+            }
+        }
+    }
+    state.shaderMtimesInitialized = true;
+    if (triggerReloadOnDiff && changedCount > 0)
+    {
+        ++state.shaderReloadGeneration;
+        state.lastLoggedShaderDiagnostic.clear();
+        if (state.shaderGraph) (void)state.shaderGraph->ReloadIfModifiedOnDisk();
+        if (state.shell)
+        {
+            if (!state.assetState.assetPath.empty() && IsMaterialDocumentPath(state.assetState.assetPath))
+                state.shell->SelectAsset(asset_io::Utf8(state.assetState.assetPath));
+            const std::string msg = state.text.GetText("EditorUi.ShaderHotReloaded") + ": " + changedNames;
+            NotifyToolkitStatus(state, msg, false);
+            state.shell->AppendConsoleLine("[Info] " + msg);
+        }
+    }
+}
+
+void NotifyToolkitAssetPathChanged(ToolkitAppState& state,
+                                   const std::filesystem::path& oldPath,
+                                   const std::filesystem::path& newPath)
+{
+    for (auto it = state.shaderFileMtimes.begin(); it != state.shaderFileMtimes.end();)
+    {
+        const std::filesystem::path p = asset_io::FromUtf8(it->first);
+        if (p == oldPath || asset_io::Within(oldPath, p)) it = state.shaderFileMtimes.erase(it);
+        else ++it;
+    }
+    for (auto it = state.assetThumbnails.begin(); it != state.assetThumbnails.end();)
+    {
+        const std::string_view key = it->first;
+        const std::filesystem::path p = asset_io::FromUtf8(key.starts_with("thumb:") ? key.substr(6) : key);
+        if (p == oldPath || asset_io::Within(oldPath, p)) it = state.assetThumbnails.erase(it);
+        else ++it;
+    }
+    if (newPath.empty())
+    {
+        if (state.shaderGraph) state.shaderGraph->NotifyAssetDeleted(oldPath);
+    }
+    else
+    {
+        if (state.shaderGraph) state.shaderGraph->NotifyAssetMoved(oldPath, newPath);
+    }
+    ++state.shaderReloadGeneration;
+    state.lastLoggedShaderDiagnostic.clear();
+    RefreshShaderWatchMtimes(state, false);
 }
 
 bool PromptSaveSceneAsDialog(ToolkitAppState& state)
@@ -714,7 +812,7 @@ void SyncToolkitHierarchyAssetsAndInspector(ToolkitAppState& state)
             else if (utf8Path.ends_with(".scene.json")) { type = "scene"; seenScenePaths.insert(utf8Path); }
             else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".tga") type = "texture";
             else if (extension == ".wav" || extension == ".ogg") type = "audio";
-            else if (extension == ".hlsl" || extension == ".hlsli" || extension == ".sebin") type = "shader";
+            else if (IsShaderGraphPath(resolved) || extension == ".hlsl" || extension == ".hlsli" || extension == ".sebin") type = "shader";
             else if (extension == ".seenv") type = "env";
             else if (extension == ".tod") type = "tod";
             else if (extension == ".senav") type = "navmesh";
@@ -969,6 +1067,20 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
                 state.shell->SetStatus(state.scriptWorkflow.Status());
             return;
         }
+        if (IsShaderGraphPath(target))
+        {
+            if (state.shaderGraph) (void)state.shaderGraph->Open(target, true);
+            return;
+        }
+        if (IsSurfaceShaderHlslPath(target) || ext == ".hlsl" || ext == ".hlsli")
+        {
+            CodeEditorSettings settings;
+            settings.executable = asset_io::FromUtf8(state.host.Preferences().externalEditor);
+            std::string err, detail;
+            if (!EditorScriptTools::OpenSource(state.root, target, 1, 1, settings, err, detail))
+                state.shell->SetStatus(LocalizedToolkitStatus(state.text, err, "EditorUi.SaveFailed"));
+            return;
+        }
         if (IsMaterialDocumentPath(target))
         {
             OpenToolkitUtilityWindow(state, EditorPanelId::Material);
@@ -1193,18 +1305,26 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             return applied;
         });
     state.shell->SetConsoleActivateHandler([&state](const std::string& text) {
-        std::size_t csPos = std::string::npos;
-        for (std::size_t pos = 0; (pos = text.find(".cs", pos)) != std::string::npos; pos += 3)
+        std::size_t extPos = std::string::npos;
+        std::size_t extLen = 0;
+        for (const std::string_view token : {std::string_view(".cs"), std::string_view(".hlsl"), std::string_view(".hlsli")})
         {
-            const std::size_t after = pos + 3;
-            if (after < text.size() && (text[after] == '(' || text[after] == ':'))
+            for (std::size_t pos = 0; (pos = text.find(token, pos)) != std::string::npos; pos += token.size())
             {
-                csPos = pos;
-                break;
+                const std::size_t after = pos + token.size();
+                if (after < text.size() && (text[after] == '(' || text[after] == ':'))
+                {
+                    if (extPos == std::string::npos || pos < extPos)
+                    {
+                        extPos = pos;
+                        extLen = token.size();
+                    }
+                    break;
+                }
             }
         }
-        if (csPos == std::string::npos) return;
-        std::size_t start = csPos;
+        if (extPos == std::string::npos) return;
+        std::size_t start = extPos;
         while (start > 0)
         {
             const char c = text[start - 1];
@@ -1214,10 +1334,10 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             if (c == ' ' && start >= 4 && text.substr(start - 4, 4) == " in ") break;
             --start;
         }
-        while (start < csPos && text[start] == ' ') ++start;
-        const std::string filePart = text.substr(start, csPos + 3 - start);
+        while (start < extPos && text[start] == ' ') ++start;
+        const std::string filePart = text.substr(start, extPos + extLen - start);
         std::uint32_t line = 1, col = 1;
-        const std::size_t sepPos = csPos + 3;
+        const std::size_t sepPos = extPos + extLen;
         if (sepPos + 1 < text.size())
         {
             const char* p = text.c_str() + sepPos + 1;
@@ -1309,6 +1429,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
                 state.assets.Scan(scanDiag);
                 std::vector<EditorAssetIssue> syncIssues;
                 EditorAssetActions::SyncProjectAssets(state.root, state.assets, syncIssues);
+                NotifyToolkitAssetPathChanged(state, src, dst);
                 state.pendingAsset = asset_io::Utf8(dst);
                 NotifyToolkitStatus(state, state.text.GetText("EditorUi.AssetRenamed") + ": " + newBaseName);
                 return true;
@@ -1316,6 +1437,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             std::filesystem::rename(src, dst, ec);
             if (ec) return false;
             state.scriptWorkflow.RefreshSources();
+            NotifyToolkitAssetPathChanged(state, src, dst);
             state.pendingAsset = asset_io::Utf8(dst);
             NotifyToolkitStatus(state, state.text.GetText("EditorUi.AssetRenamed") + ": " + newBaseName);
             return true;
@@ -1325,6 +1447,8 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         if (srcName.ends_with(".material.json")) extSuffix = ".material.json";
         else if (srcName.ends_with(".prefab.json")) extSuffix = ".prefab.json";
         else if (srcName.ends_with(".scene.json")) extSuffix = ".scene.json";
+        else if (IsSurfaceShaderHlslPath(src)) extSuffix = ".fshader.hlsl";
+        else if (IsShaderGraphPath(src)) extSuffix = ".fshader.json";
         else extSuffix = asset_io::Utf8(src.extension());
 
         if (extSuffix == ".cs")
@@ -1365,12 +1489,14 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             state.assets.Scan(scanDiag);
             std::vector<EditorAssetIssue> syncIssues;
             EditorAssetActions::SyncProjectAssets(state.root, state.assets, syncIssues);
+            NotifyToolkitAssetPathChanged(state, src, dst);
             state.pendingAsset = asset_io::Utf8(dst);
             NotifyToolkitStatus(state, state.text.GetText("EditorUi.AssetRenamed") + ": " + finalFileName);
             return true;
         }
         std::filesystem::rename(src, dst, ec);
         if (ec) return false;
+        NotifyToolkitAssetPathChanged(state, src, dst);
         state.pendingAsset = asset_io::Utf8(dst);
         NotifyToolkitStatus(state, state.text.GetText("EditorUi.AssetRenamed") + ": " + finalFileName);
         return true;
@@ -1431,6 +1557,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             state.assets.Scan(scanDiag);
             std::vector<EditorAssetIssue> syncIssues;
             EditorAssetActions::SyncProjectAssets(state.root, state.assets, syncIssues);
+            NotifyToolkitAssetPathChanged(state, src, dst);
             state.pendingAsset = asset_io::Utf8(dst);
             NotifyToolkitStatus(state, state.text.GetText("EditorUi.AssetMoved") + ": " + asset_io::Utf8(dst.filename()));
             return true;
@@ -1483,6 +1610,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
                 }
                 if (std::filesystem::remove(target, ec) && !ec)
                 {
+                    NotifyToolkitAssetPathChanged(state, target, {});
                     ClearToolkitAssetSelectionState(state);
                     NotifyToolkitStatus(state, state.text.GetText("EditorUi.FolderDeleted") + ": " +
                                                asset_io::Utf8(target.filename()));
@@ -1525,6 +1653,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
                                 ctx.assets.Scan(scanDiag);
                                 std::vector<EditorAssetIssue> syncIssues;
                                 EditorAssetActions::SyncProjectAssets(ctx.root, ctx.assets, syncIssues);
+                                NotifyToolkitAssetPathChanged(state, plan.request.source, {});
                                 ClearToolkitAssetSelectionState(state);
                                 NotifyToolkitStatus(state, ctx.text.GetText("Editor.AssetActionSucceeded"));
                             },
@@ -1649,6 +1778,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         {
             if (!PromptSaveSceneAsDialog(state)) return false;
         }
+        if (state.shaderGraph && state.shaderGraph->IsOpen()) (void)state.shaderGraph->Save();
         const bool ok = SaveAllToolkitDocuments(ctx);
         if (ok)
         {
@@ -1817,6 +1947,11 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         return true;
     });
     commands.Register(EditorCommandId::Undo, [&state](const EditorCommand&) {
+        if (!state.session.IsPlaying() && state.shell->ActivePanel() == EditorPanelId::ShaderGraph &&
+            state.shaderGraph && state.shaderGraph->IsOpen())
+        {
+            return state.shaderGraph->Undo();
+        }
         if (state.assetState.inspectUi && !state.session.IsPlaying()) return state.host.Ui().Undo(state.ui);
         if (state.assetState.editTod && !state.session.IsPlaying()) return state.host.TimeOfDayPreview().Undo();
         if (!state.session.IsPlaying() &&
@@ -1824,7 +1959,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             state.host.Material().Undo())
         {
             (void)state.host.SaveMaterial(state.assets);
-            state.shell->SetFormProperties(EditorPanelId::Material, BuildMaterialFormRows(state.host.Material(), state.text));
+            state.shell->SetFormProperties(EditorPanelId::Material, BuildMaterialFormRows(state.host.Material(), state.text, &state.assets));
             if (!state.assetState.assetPath.empty() && IsMaterialDocumentPath(state.assetState.assetPath))
                 state.shell->SelectAsset(asset_io::Utf8(state.assetState.assetPath));
             return true;
@@ -1837,6 +1972,11 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         return false;
     });
     commands.Register(EditorCommandId::Redo, [&state](const EditorCommand&) {
+        if (!state.session.IsPlaying() && state.shell->ActivePanel() == EditorPanelId::ShaderGraph &&
+            state.shaderGraph && state.shaderGraph->IsOpen())
+        {
+            return state.shaderGraph->Redo();
+        }
         if (state.assetState.inspectUi && !state.session.IsPlaying()) return state.host.Ui().Redo(state.ui);
         if (state.assetState.editTod && !state.session.IsPlaying()) return state.host.TimeOfDayPreview().Redo();
         if (!state.session.IsPlaying() &&
@@ -1844,7 +1984,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             state.host.Material().Redo())
         {
             (void)state.host.SaveMaterial(state.assets);
-            state.shell->SetFormProperties(EditorPanelId::Material, BuildMaterialFormRows(state.host.Material(), state.text));
+            state.shell->SetFormProperties(EditorPanelId::Material, BuildMaterialFormRows(state.host.Material(), state.text, &state.assets));
             if (!state.assetState.assetPath.empty() && IsMaterialDocumentPath(state.assetState.assetPath))
                 state.shell->SelectAsset(asset_io::Utf8(state.assetState.assetPath));
             return true;
@@ -1976,6 +2116,11 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
     });
     commands.Register(EditorCommandId::Delete, [&state, &ctx, isCsScriptPath](const EditorCommand&) {
         if (state.session.IsPlaying()) return false;
+        if (state.shell->ActivePanel() == EditorPanelId::ShaderGraph &&
+            state.shaderGraph && state.shaderGraph->IsOpen())
+        {
+            return state.shaderGraph->DeleteSelected();
+        }
         if (state.assetState.inspectUi)
         {
             UiId selected = state.host.Ui().Selected();
@@ -2047,6 +2192,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
                         ctx.assets.Scan(scanDiag);
                         std::vector<EditorAssetIssue> syncIssues;
                         EditorAssetActions::SyncProjectAssets(ctx.root, ctx.assets, syncIssues);
+                        NotifyToolkitAssetPathChanged(state, plan.request.source, {});
                         ClearToolkitAssetSelectionState(state);
                         NotifyToolkitStatus(state, ctx.text.GetText("Editor.AssetActionSucceeded"));
                     },
@@ -2072,6 +2218,11 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         return state.session.Selected() && state.session.Delete(state.session.Selected());
     });
     commands.Register(EditorCommandId::Duplicate, [&state](const EditorCommand&) {
+        if (!state.session.IsPlaying() && state.shell->ActivePanel() == EditorPanelId::ShaderGraph &&
+            state.shaderGraph && state.shaderGraph->IsOpen())
+        {
+            return state.shaderGraph->DuplicateSelected();
+        }
         if (state.assetState.inspectUi || !state.assetState.assetName.empty()) return false;
         const auto sel = state.session.Selection();
         std::unordered_map<StableEntityId, StableEntityId> idRemap;
@@ -2231,6 +2382,11 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
                 NotifyToolkitStatus(state, state.text.GetText("EditorUi.Saved") + ": " +
                                            asset_io::Utf8(created.filename()));
             }
+            if (command.argument == "shader-graph" && state.shaderGraph)
+            {
+                (void)state.shaderGraph->Open(created, true);
+            }
+            RefreshShaderWatchMtimes(state, false);
             state.scriptWorkflow.RefreshSources();
             state.pendingAsset = asset_io::Utf8(created);
         }
@@ -2371,6 +2527,36 @@ bool InitializeToolkitWindowUi(ToolkitAppState& state, HWND window)
     state.shell->SetViewportImage("scene");
     state.shell->SetLayoutPath(state.safeMode ? std::filesystem::path{} : state.crashDirectory / ".editor-ui.json");
 
+    state.shaderGraph = std::make_unique<EditorShaderGraphController>(
+        state.root, state.assets.CacheRoot(), state.assets, state.session, state.text);
+    state.shaderGraph->Attach(*state.shell);
+    state.shaderGraph->SetReloadCallback([&state]() {
+        ++state.shaderReloadGeneration;
+        state.lastLoggedShaderDiagnostic.clear();
+        RefreshShaderWatchMtimes(state, false);
+        if (state.shell && !state.assetState.assetPath.empty() && IsMaterialDocumentPath(state.assetState.assetPath))
+            state.shell->SelectAsset(asset_io::Utf8(state.assetState.assetPath));
+    });
+    state.shaderGraph->SetOpenHlslCallback([&state](const std::filesystem::path& hlslPath) {
+        CodeEditorSettings settings;
+        settings.executable = asset_io::FromUtf8(state.host.Preferences().externalEditor);
+        std::string err, detail;
+        if (!EditorScriptTools::OpenSource(state.root, hlslPath, 1, 1, settings, err, detail))
+            NotifyToolkitStatus(state, LocalizedToolkitStatus(state.text, err, "EditorUi.SaveFailed"));
+    });
+    state.shaderGraph->SetMaterialCreatedCallback([&state](const std::filesystem::path& matPath) {
+        state.assetsListDirty = true;
+        const std::string utf8 = asset_io::Utf8(matPath);
+        state.pendingAsset = utf8;
+        if (state.shell)
+        {
+            state.shell->SelectAsset(utf8);
+            state.shell->PingAsset(utf8);
+        }
+        NotifyToolkitStatus(state, state.text.GetText("EditorUi.Saved") + ": " + asset_io::Utf8(matPath.filename()));
+    });
+    RefreshShaderWatchMtimes(state, false);
+
     {
         ProjectDescription description;
         std::vector<ProjectDiagnostic> projectDiagnostics;
@@ -2484,6 +2670,10 @@ std::optional<LRESULT> HandleToolkitWindowMessage(ToolkitAppState& state, HWND w
     }
     if (message == WM_ACTIVATEAPP && wParam == TRUE && window == state.hostWindow && !state.hidden && state.shell)
     {
+        if (!state.host.ExportBusy())
+        {
+            RefreshShaderWatchMtimes(state, true);
+        }
         if (!state.session.IsPlaying() && !state.host.ExportBusy() &&
             state.scriptWorkflow.CanHotReloadInProcess() && !state.scriptWorkflow.IsCompiling())
         {
@@ -2629,7 +2819,8 @@ std::optional<LRESULT> HandleToolkitWindowMessage(ToolkitAppState& state, HWND w
             else if (state.host.Ui().Selected() != 0) { state.host.Ui().Select(0); handled = true; }
         }
         const bool captured = state.viewportController.Captured();
-        if (!blocked && !handled && (captured || key))
+        const bool shaderGraphActive = state.shell->ActivePanel() == EditorPanelId::ShaderGraph;
+        if (!blocked && !handled && (captured || (key && !shaderGraphActive)))
             handled = state.viewportController.Handle(event, state.session, state.assets, onViewport);
         if (!handled && !captured && event.type == ui::UiEventType::KeyDown)
             handled = state.shell->RouteShortcut(event, blocked);
@@ -2849,6 +3040,24 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
     state.shell->SetDirty(state.host.AnyDocumentDirty(state.session, &state.ui) || state.scriptWorkflow.Dirty());
     if (state.shell->ConsumeCloseRequest()) PostMessageW(state.hostWindow, WM_CLOSE, 0, 0);
 
+    if (!state.pendingShaderDiagnostics.empty())
+    {
+        for (const std::string& diag : state.pendingShaderDiagnostics)
+        {
+            if (diag.empty() || diag == state.lastLoggedShaderDiagnostic) continue;
+            state.lastLoggedShaderDiagnostic = diag;
+            const std::string header = state.text.GetText("EditorUi.ShaderHotReloadFailed");
+            state.shell->AppendConsoleLine("[Error] " + header + ": " + diag);
+            NotifyToolkitStatus(state, header, false);
+            state.shell->FocusPanel(EditorPanelId::Console);
+        }
+        state.pendingShaderDiagnostics.clear();
+    }
+    if (state.shaderGraph && state.shaderGraph->IsOpen())
+    {
+        state.shaderGraph->TickPreview(static_cast<double>(GetTickCount64()) / 1000.0);
+    }
+
     if (state.session.IsPlaying())
     {
         if (state.assetState.previewAudioVoice)
@@ -2921,6 +3130,10 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
     }
     frame.colorLutPath = state.host.ColorLutPath();
     if (!state.session.IsPlaying()) frame.materialPreview = state.host.Material().Preview();
+    frame.shaderReloadGeneration = state.shaderReloadGeneration;
+    frame.editorShaderDiagnosticSink = [&state](const std::string& diag) {
+        state.pendingShaderDiagnostics.push_back(diag);
+    };
 
     const bool renderGameAllowed = !state.hidden || GetEnvironmentVariableW(L"FLARE_RENDER_GAME_VIEWPORT", nullptr, 0) > 0;
     const bool viewportPanelVisible = state.shell->Document().Visible(state.shell->ViewportPanel());
@@ -3043,6 +3256,7 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
                     }
                     hashFloat(frame.exposure);
                     renderKey ^= std::hash<std::string>{}(asset_io::Utf8(frame.colorLutPath));
+                    renderKey ^= state.shaderReloadGeneration * 0x9e3779b97f4a7c15ull;
 
                     const bool dynamicMode = state.session.IsPlaying() || state.clipPreview.Playing() ||
                                              state.host.TimeOfDayPreview().Ready();
@@ -3080,6 +3294,8 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
                             gameFrame.colorLutPath = frame.colorLutPath;
                         }
                         gameFrame.assets = &state.assets;
+                        gameFrame.shaderReloadGeneration = state.shaderReloadGeneration;
+                        gameFrame.editorShaderDiagnosticSink = {};
                         gameFrame.editorGuiEnabled = false;
                         gameFrame.editorGui = {};
                         gameFrame.editorFontPages.clear();
@@ -3142,6 +3358,17 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
             }
         }
     }
+    for (auto it = display.commands.begin(); it != display.commands.end(); ++it)
+    {
+        if (it->kind == ui::UiPaintCommandKind::Image && it->image == "shader-graph-canvas")
+        {
+            ui::UiDisplayList sgOverlay;
+            state.shell->PaintShaderGraphCanvas(sgOverlay, state.shell->Root());
+            it = display.commands.erase(it);
+            display.commands.insert(it, sgOverlay.commands.begin(), sgOverlay.commands.end());
+            break;
+        }
+    }
     GuiGeometry geometry;
     ui::UiGeometryStats geometryStats;
     std::vector<std::string> errors;
@@ -3175,6 +3402,12 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
                                                    static_cast<float>(state.featureTools->Preview()->width),
                                                    static_cast<float>(state.featureTools->Preview()->height)};
     }
+    if (state.shaderGraph && state.shaderGraph->Preview())
+    {
+        imageProvider.images["shader-graph-preview"] = {state.shaderGraph->PreviewToken(),
+                                                        static_cast<float>(state.shaderGraph->Preview()->width),
+                                                        static_cast<float>(state.shaderGraph->Preview()->height)};
+    }
     if (!ui::UiGeometryBuilder{}.Build(display, &state.shell->TextService(), &imageProvider, options, geometry, geometryStats, errors))
     {
         std::string detail = "EditorUi.ToolkitGeometryFailed";
@@ -3192,6 +3425,13 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
         const auto& image = *state.featureTools->Preview();
         frame.editorUiImages.push_back({state.featureTools->PreviewToken(), image.width, image.height,
                                         image.rgba8.data(), image.rgba8.size()});
+    }
+    if (state.shaderGraph && state.shaderGraph->Preview())
+    {
+        const auto& image = *state.shaderGraph->Preview();
+        frame.editorUiImages.push_back({state.shaderGraph->PreviewToken(), image.width, image.height,
+                                        image.rgba8.data(), image.rgba8.size(),
+                                        state.shaderGraph->PreviewRevision()});
     }
     if (state.assetState.previewImage && !state.assetState.previewImageKey.empty() && state.assetState.previewToken != 0)
     {

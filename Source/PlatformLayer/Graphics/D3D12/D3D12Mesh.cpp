@@ -116,7 +116,7 @@ bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3
             ||active.prepared->colorFormat!=(defaultForward?flare::rhi::ColorFormat::Rgba16Float:flare::rhi::ColorFormat::Rgba8Unorm))
         {Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;}
         if(active.prepared->alphaMode!=draw.alphaMode||!flare::IsValidMaterialAlphaMode(draw.alphaMode)||!flare::IsFinite(draw.alphaCutoff)||draw.alphaCutoff<0
-            ||(draw.alphaMode!=flare::MaterialAlphaMode::Opaque&&active.prepared->program->source.materialLayoutVersion!=flare::rhi::MaterialSurfaceLayoutVersion))
+            ||(draw.alphaMode!=flare::MaterialAlphaMode::Opaque&&!flare::rhi::IsMaterialSurfaceLayout(active.prepared->program->source.materialLayoutVersion)))
         {Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;}
         const bool instanced=flare::rhi::IsInstanced(active.prepared->program->source.kind);
         const bool instanceDraw=!draw.instances.empty()||(allowEmptyInstanced&&draws.size()==1&&instanced);
@@ -200,7 +200,7 @@ void PrepareD3D12MeshConstants(const D3D12MeshPipeline& pipeline,std::span<const
             const flare::rhi::PbrDrawConstants constants{viewProjection*draw.world,draw.world,flare::Transpose(*flare::Inverse(draw.world)),draw.tint,
                 {p.cameraPosition.x,p.cameraPosition.y,p.cameraPosition.z,1},{p.directionToLight.x,p.directionToLight.y,p.directionToLight.z,0},
                 {p.radiance.x,p.radiance.y,p.radiance.z,0},{p.metallic,p.roughness,p.normalScale,sign},
-                {p.normalMapping?1.0f:0.0f,draw.unlit?1.0f:0.0f,p.doubleSided?1.0f:0.0f,p.lodDither!=0.0f?p.lodDither:(p.receivesShadow?1.0f:0.0f)},
+                {p.normalMapping?1.0f:0.0f,draw.unlit?1.0f:0.0f,p.cullFront?2.0f:(p.doubleSided?1.0f:0.0f),p.lodDither!=0.0f?p.lodDither:(p.receivesShadow?1.0f:0.0f)},
                 draw.look,{static_cast<float>(draw.skinJointOffset),static_cast<float>(draw.skinJointCount),p.multiscatter?1.f:0.f,p.specularAA?1.f:0.f}};
             std::memcpy(slice.cpu,&constants,sizeof(constants));
         }

@@ -3,6 +3,7 @@
 #include "FunctionLayer/UI/Core/UiDocument.h"
 #include "FunctionLayer/UI/Core/UiLayout.h"
 #include "FunctionLayer/UI/Core/UiStyle.h"
+#include "FunctionLayer/UI/Interfaces/UiPaintSink.h"
 #include "FunctionLayer/UI/Widgets/UiWidgets.h"
 #include "FunctionLayer/UI/Widgets/UiTextEdit.h"
 #include "ToolLayer/Editor/EditorUi/EditorChrome.h"
@@ -30,6 +31,7 @@ struct EditorFormPanel;
 struct EditorInspectorDrag;
 struct EditorInspectorColor;
 struct EditorAssetDragState;
+struct EditorShaderGraphRuntime;
 
 // 编辑器 Toolkit 组合根的 CPU 侧：文档、Chrome、Dock、面板与命令。
 // 仍由 EditorApplication/EditorRenderer 提供窗口和 RHI；本类不拥有 GPU 资源。
@@ -270,6 +272,13 @@ public:
     [[nodiscard]] UiElementHandle UiDesignerContent() const noexcept;
     [[nodiscard]] UiElementHandle DesignerNodeElement(std::size_t index) const noexcept;
 
+    // ASE 可视化着色器连线面板（Shader Graph）：纯 DTO 视图与手势动作分发。
+    void SetShaderGraphPalette(std::vector<EditorShaderPaletteItem> items);
+    void SetShaderGraphView(EditorShaderGraphViewState view);
+    void SetShaderGraphActionHandler(std::function<void(std::string_view, std::string_view)> handler);
+    void PaintShaderGraphCanvas(UiPaintSink& sink, UiElementHandle surfaceRoot) const;
+    [[nodiscard]] UiElementHandle ShaderGraphCanvas() const noexcept;
+
     // 关闭保护：脏文档先弹保存/丢弃/取消模态；干净时直接允许关闭。
     bool RequestClose();
     [[nodiscard]] bool CloseApproved() const noexcept;
@@ -357,7 +366,7 @@ private:
     using InspectorDrag = EditorInspectorDrag;
     using InspectorColor = EditorInspectorColor;
 
-    static constexpr std::size_t kPanelCount = 15;
+    static constexpr std::size_t kPanelCount = 16;
 
     PanelSlot& Slot(EditorPanelId panel);
     const PanelSlot& Slot(EditorPanelId panel) const;
@@ -400,6 +409,10 @@ private:
     void UpdateFormRects(EditorPanelId panel);
     void BuildDesignerPanel(PanelSlot& slot);
     void RefreshDesignerNodes();
+    void BuildShaderGraphPanel(PanelSlot& slot);
+    void LayoutShaderGraphPanel(float width, float height);
+    void RefreshShaderGraphChrome();
+    [[nodiscard]] bool RouteShaderGraphKey(const UiInputEvent& event, bool textFieldFocused);
     void BuildChrome();
     void BindRootInputHandlers();
     void RegisterDefaultShortcuts();
@@ -683,6 +696,7 @@ private:
     std::string viewportImage_;
     std::string gameImage_;
     std::vector<std::string> lines_;
+    std::unique_ptr<EditorShaderGraphRuntime> shaderGraph_;
 
     UiElementHandle root_{};
     UiElementHandle menuBar_{};

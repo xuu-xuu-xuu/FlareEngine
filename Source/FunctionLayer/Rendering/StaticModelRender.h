@@ -26,6 +26,8 @@ struct PbrRenderMaterial
     float alphaCutoff=.5f;
     // 材质引用的用户 PBR 产物；空表示使用调用方传入的默认 PBR Pipeline。
     rhi::Pipeline pipeline;
+    std::shared_ptr<const UserSurfaceShaderSource> userSurface;
+    std::array<Vec4,8> userParams{};
     rhi::ShadingMaterialBindings layers;
     std::array<rhi::Texture,6> layerTextures{}; // b6 六贴图的自有句柄，顺序与 t19..24 相同。
 };
@@ -57,6 +59,10 @@ public:
     // 调用方先等待最后的 GPU 使用结束。
     std::shared_ptr<const PbrRenderMaterial> LoadMaterial(AssetStore& assets,const AssetId& id,
         rhi::Device& device,std::vector<AssetDiagnostic>& diagnostics,const MaterialDocument* preview=nullptr);
+    void InvalidateMaterials() noexcept
+    {
+        for (auto& [_, rev] : materials_) rev.shaderKey.clear();
+    }
     void Clear() noexcept { models_.clear();attempted_.clear();materials_.clear();textures_.clear();bakeCache_.Clear();compressedUploads_=0;residency_.Clear();residencyFrame_=0;pendingDegradations_=0; }
     void Prune(const AssetStore* assets,std::span<const AssetId> needed,std::span<const AssetId> neededMaterials={});
     std::size_t TextureCount() const noexcept;
@@ -142,8 +148,10 @@ void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
     rhi::PipelineHandle pipeline,const Mat4& viewProjection,Vec3 camera,Vec3 directionToLight,Vec3 radiance,
     std::uint32_t lodLevel=0,float lodDither=0,const Mat4* previousWorld=nullptr,
     Vec4 look={},std::span<const std::byte> skinPalette={},std::uint32_t skinJointCount=0,
-    rhi::PipelineHandle skinPipeline={});
+    rhi::PipelineHandle skinPipeline={},
+    std::vector<std::shared_ptr<const UserSurfaceShaderSource>>* outUserSurfaces=nullptr);
 void AppendShadowModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,std::vector<rhi::DrawIndexed>& output,
     std::uint32_t lodLevel=0,std::span<const std::byte> skinPalette={},std::uint32_t skinJointCount=0,
-    rhi::PipelineHandle skinPipeline={},std::span<const std::shared_ptr<const PbrRenderMaterial>> overrides={});
+    rhi::PipelineHandle skinPipeline={},std::span<const std::shared_ptr<const PbrRenderMaterial>> overrides={},
+    std::vector<std::shared_ptr<const UserSurfaceShaderSource>>* outUserSurfaces=nullptr);
 }

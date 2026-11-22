@@ -158,6 +158,27 @@ void UiDisplayList::Line(float x0, float y0, float x1, float y1, float lineWidth
     commands.push_back(std::move(command));
 }
 
+void UiDisplayList::CubicBezier(float x0, float y0,
+                                float c0x, float c0y,
+                                float c1x, float c1y,
+                                float x1, float y1,
+                                float lineWidth, const UiColor& color)
+{
+    UiPaintCommand command;
+    command.kind = UiPaintCommandKind::CubicBezier;
+    command.x0 = x0;
+    command.y0 = y0;
+    command.c0x = c0x;
+    command.c0y = c0y;
+    command.c1x = c1x;
+    command.c1y = c1y;
+    command.x1 = x1;
+    command.y1 = y1;
+    command.lineWidth = lineWidth;
+    command.color = color;
+    commands.push_back(std::move(command));
+}
+
 void UiDisplayList::CanvasRect(const UiRect& rect, const UiColor& color)
 {
     UiPaintCommand command;
@@ -390,7 +411,18 @@ struct GeometryContext
                         std::uint64_t texture,
                         const UiRect& clip)
     {
-        if (geometry.vertices.size() / 3 >= 65536)
+        if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(b.x) || !std::isfinite(b.y) ||
+            !std::isfinite(c.x) || !std::isfinite(c.y) || Empty(clip))
+        {
+            return true;
+        }
+        const float minX = std::min({a.x, b.x, c.x}), maxX = std::max({a.x, b.x, c.x});
+        const float minY = std::min({a.y, b.y, c.y}), maxY = std::max({a.y, b.y, c.y});
+        if (maxX <= clip.x || minX >= clip.x + clip.width || maxY <= clip.y || minY >= clip.y + clip.height)
+        {
+            return true;
+        }
+        if (geometry.vertices.size() / 3 >= 65536 || geometry.indices.size() + 3u > 65536u * 6u)
         {
             return Reject("UI.PaintCapacity");
         }
@@ -483,6 +515,143 @@ struct GeometryContext
         return band(std::max(0.0f, inner - half), clear, inner + half, solid) &&
                band(inner + half, solid, radius - half, solid) &&
                band(radius - half, solid, radius + half, clear);
+    }
+
+    // 连续法线带 + 物理像素羽化边，消除斜线与贝塞尔连线的阶梯锯齿和接头重影。
+    bool AppendFeatheredRibbon(const Vec2* points, const Vec2* normals, std::size_t count,
+                               float width, const UiColor& color, std::uint64_t texture,
+                               const UiRect& clip, float feather)
+    {
+        if (count < 2 || width <= 0.0f || color.a <= 0.0f || Empty(clip))
+        {
+            return true;
+        }
+        const float aa = std::max(0.75f, feather * 1.25f);
+        const bool hasSolidCore = width > aa;
+        const std::size_t vertsPerPoint = hasSolidCore ? 4u : 3u;
+        const std::size_t indicesPerSeg = hasSolidCore ? 18u : 12u;
+        if ((geometry.vertices.size() + count * vertsPerPoint) / 3 >= 65536 ||
+            geometry.indices.size() + (count - 1u) * indicesPerSeg > 65536u * 6u)
+        {
+            return Reject("UI.PaintCapacity");
+        }
+        const std::uint32_t base = static_cast<std::uint32_t>(geometry.vertices.size());
+        const std::uint32_t firstIndex = static_cast<std::uint32_t>(geometry.indices.size());
+        const std::uint32_t clear = PackColor({color.r, color.g, color.b, 0.0f});
+        if (hasSolidCore)
+        {
+            const float innerHalf = (width - aa) * 0.5f;
+            const float outerHalf = (width + aa) * 0.5f;
+            const std::uint32_t solid = PackColor(color);
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                const Vec2 p = points[i];
+                const Vec2 n = normals[i];
+                geometry.vertices.push_back(GuiVertex{{p.x - n.x * outerHalf, p.y - n.y * outerHalf}, {}, clear});
+                geometry.vertices.push_back(GuiVertex{{p.x - n.x * innerHalf, p.y - n.y * innerHalf}, {}, solid});
+                geometry.vertices.push_back(GuiVertex{{p.x + n.x * innerHalf, p.y + n.y * innerHalf}, {}, solid});
+                geometry.vertices.push_back(GuiVertex{{p.x + n.x * outerHalf, p.y + n.y * outerHalf}, {}, clear});
+            }
+            for (std::size_t i = 0; i + 1 < count; ++i)
+            {
+                const std::uint32_t b0 = base + static_cast<std::uint32_t>(i * 4u);
+                const std::uint32_t b1 = b0 + 4u;
+                geometry.indices.insert(geometry.indices.end(), {
+                    b0 + 0, b1 + 0, b1 + 1, b0 + 0, b1 + 1, b0 + 1,
+                    b0 + 1, b1 + 1, b1 + 2, b0 + 1, b1 + 2, b0 + 2,
+                    b0 + 2, b1 + 2, b1 + 3, b0 + 2, b1 + 3, b0 + 3,
+                });
+                stats.quads += 3;
+            }
+        }
+        else
+        {
+            const float outerHalf = aa * 0.85f;
+            const std::uint32_t peak = PackColor({color.r, color.g, color.b, color.a * std::clamp(width / aa, 0.0f, 1.0f)});
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                const Vec2 p = points[i];
+                const Vec2 n = normals[i];
+                geometry.vertices.push_back(GuiVertex{{p.x - n.x * outerHalf, p.y - n.y * outerHalf}, {}, clear});
+                geometry.vertices.push_back(GuiVertex{p, {}, peak});
+                geometry.vertices.push_back(GuiVertex{{p.x + n.x * outerHalf, p.y + n.y * outerHalf}, {}, clear});
+            }
+            for (std::size_t i = 0; i + 1 < count; ++i)
+            {
+                const std::uint32_t b0 = base + static_cast<std::uint32_t>(i * 3u);
+                const std::uint32_t b1 = b0 + 3u;
+                geometry.indices.insert(geometry.indices.end(), {
+                    b0 + 0, b1 + 0, b1 + 1, b0 + 0, b1 + 1, b0 + 1,
+                    b0 + 1, b1 + 1, b1 + 2, b0 + 1, b1 + 2, b0 + 2,
+                });
+                stats.quads += 2;
+            }
+        }
+        const std::uint32_t addedIndices = static_cast<std::uint32_t>(geometry.indices.size()) - firstIndex;
+        const Vec4 scissor{clip.x, clip.y, clip.x + clip.width, clip.y + clip.height};
+        if (!geometry.commands.empty() && geometry.commands.back().texture == texture &&
+            geometry.commands.back().textureIsData == false && SameClip(geometry.commands.back().clip, clip))
+        {
+            geometry.commands.back().indexCount += addedIndices;
+        }
+        else
+        {
+            geometry.commands.push_back({scissor, texture, firstIndex, addedIndices, 0, false});
+        }
+        return true;
+    }
+
+    bool AppendCircle(float cx, float cy, float radius, const UiColor& color,
+                      std::uint64_t texture, const UiRect& clip, float feather)
+    {
+        if (radius <= 0.0f || color.a <= 0.0f)
+        {
+            return true;
+        }
+        const float aa = std::max(0.75f, feather * 1.15f);
+        const float outerR = radius + aa * 0.5f;
+        const UiRect bounds{cx - outerR, cy - outerR, outerR * 2.0f, outerR * 2.0f};
+        if (!Finite(bounds) || Empty(Intersect(bounds, clip)))
+        {
+            return true;
+        }
+        const int segments = radius > 12.0f ? 40 : 28;
+        const float innerR = std::max(0.0f, radius - aa * 0.5f);
+        const std::uint32_t solid = PackColor(innerR > 0.0f
+            ? color
+            : UiColor{color.r, color.g, color.b, color.a * std::clamp(radius * 2.0f / aa, 0.0f, 1.0f)});
+        const std::uint32_t clear = PackColor({color.r, color.g, color.b, 0.0f});
+        const Vec2 center{cx, cy};
+        for (int index = 0; index < segments; ++index)
+        {
+            const float a0 = static_cast<float>(index) * 6.28318530718f / static_cast<float>(segments);
+            const float a1 = static_cast<float>(index + 1) * 6.28318530718f / static_cast<float>(segments);
+            const float c0 = std::cos(a0), s0 = std::sin(a0);
+            const float c1 = std::cos(a1), s1 = std::sin(a1);
+            if (innerR > 0.0f)
+            {
+                const Vec2 i0{cx + c0 * innerR, cy + s0 * innerR};
+                const Vec2 i1{cx + c1 * innerR, cy + s1 * innerR};
+                const Vec2 o0{cx + c0 * outerR, cy + s0 * outerR};
+                const Vec2 o1{cx + c1 * outerR, cy + s1 * outerR};
+                if (!AppendTriangle(center, solid, i0, solid, i1, solid, texture, clip) ||
+                    !AppendTriangle(i0, solid, i1, solid, o1, clear, texture, clip) ||
+                    !AppendTriangle(i0, solid, o1, clear, o0, clear, texture, clip))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                const Vec2 o0{cx + c0 * outerR, cy + s0 * outerR};
+                const Vec2 o1{cx + c1 * outerR, cy + s1 * outerR};
+                if (!AppendTriangle(center, solid, o0, clear, o1, clear, texture, clip))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 };
 } // namespace
@@ -700,19 +869,39 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
         }
         case UiPaintCommandKind::Line:
         {
+            if (!std::isfinite(command.x0) || !std::isfinite(command.y0) || !std::isfinite(command.x1) ||
+                !std::isfinite(command.y1) || !std::isfinite(command.lineWidth) || command.lineWidth <= 0.0f ||
+                command.color.a <= 0.0f)
+            {
+                break;
+            }
+            const float pad = command.lineWidth * 0.5f + feather * 2.0f;
+            const UiRect bounds{std::min(command.x0, command.x1) - pad,
+                                std::min(command.y0, command.y1) - pad,
+                                std::abs(command.x1 - command.x0) + pad * 2.0f,
+                                std::abs(command.y1 - command.y0) + pad * 2.0f};
+            if (!Finite(bounds) || Empty(Intersect(bounds, clip)))
+            {
+                break;
+            }
             const float dx = command.x1 - command.x0;
             const float dy = command.y1 - command.y0;
             const float length = std::hypot(dx, dy);
-            if (length <= 0.0f || command.lineWidth <= 0.0f)
+            if (!std::isfinite(length) || length <= 0.0f)
             {
+                break;
+            }
+            // 纯水平/纯垂直网格线直接走硬边矩形保持 1px 锐度；斜线走羽化抗锯齿带。
+            if (std::abs(dx) > 1e-3f && std::abs(dy) > 1e-3f)
+            {
+                const Vec2 n{-dy / length, dx / length};
+                const Vec2 pts[2]{{command.x0, command.y0}, {command.x1, command.y1}};
+                const Vec2 nrms[2]{n, n};
+                context.AppendFeatheredRibbon(pts, nrms, 2, command.lineWidth, command.color, options.whiteTexture, clip, feather);
                 break;
             }
             const float ox = -dy / length * command.lineWidth * 0.5f;
             const float oy = dx / length * command.lineWidth * 0.5f;
-            const UiRect bounds{std::min(command.x0, command.x1) - std::abs(ox),
-                                std::min(command.y0, command.y1) - std::abs(oy),
-                                std::abs(dx) + std::abs(ox) * 2.0f,
-                                std::abs(dy) + std::abs(oy) * 2.0f};
             context.AppendTriangle({command.x0 + ox, command.y0 + oy},
                                    {command.x1 + ox, command.y1 + oy},
                                    {command.x1 - ox, command.y1 - oy},
@@ -721,7 +910,76 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
                                    {command.x1 - ox, command.y1 - oy},
                                    {command.x0 - ox, command.y0 - oy},
                                    command.color, options.whiteTexture, clip);
-            (void)bounds;
+            break;
+        }
+        case UiPaintCommandKind::CubicBezier:
+        {
+            if (!std::isfinite(command.lineWidth) || command.lineWidth <= 0.0f || command.color.a <= 0.0f)
+            {
+                break;
+            }
+            const float pad = command.lineWidth * 0.5f + feather * 2.0f;
+            const float minX = std::min({command.x0, command.c0x, command.c1x, command.x1}) - pad;
+            const float maxX = std::max({command.x0, command.c0x, command.c1x, command.x1}) + pad;
+            const float minY = std::min({command.y0, command.c0y, command.c1y, command.y1}) - pad;
+            const float maxY = std::max({command.y0, command.c0y, command.c1y, command.y1}) + pad;
+            const UiRect bounds{minX, minY, maxX - minX, maxY - minY};
+            if (!Finite(bounds) || Empty(Intersect(bounds, clip)))
+            {
+                break;
+            }
+            const float approxLen = std::hypot(command.c0x - command.x0, command.c0y - command.y0) +
+                                    std::hypot(command.c1x - command.c0x, command.c1y - command.c0y) +
+                                    std::hypot(command.x1 - command.c1x, command.y1 - command.c1y);
+            if (!std::isfinite(approxLen) || approxLen <= 1e-3f)
+            {
+                break;
+            }
+            const int steps = std::clamp(static_cast<int>(std::ceil(approxLen / 5.0f)), 20, 64);
+            std::array<Vec2, 65> pts{};
+            std::array<Vec2, 65> nrms{};
+            float fallbackDx = command.x1 - command.x0;
+            float fallbackDy = command.y1 - command.y0;
+            float fallbackLen = std::hypot(fallbackDx, fallbackDy);
+            if (fallbackLen <= 1e-4f)
+            {
+                fallbackDx = command.c0x - command.x0;
+                fallbackDy = command.c0y - command.y0;
+                fallbackLen = std::hypot(fallbackDx, fallbackDy);
+            }
+            Vec2 prevNormal = fallbackLen > 1e-4f
+                ? Vec2{-fallbackDy / fallbackLen, fallbackDx / fallbackLen}
+                : Vec2{0.0f, 1.0f};
+            for (int i = 0; i <= steps; ++i)
+            {
+                const float t = static_cast<float>(i) / static_cast<float>(steps);
+                const float u = 1.0f - t;
+                pts[i] = {
+                    u * u * u * command.x0 + 3.0f * u * u * t * command.c0x +
+                        3.0f * u * t * t * command.c1x + t * t * t * command.x1,
+                    u * u * u * command.y0 + 3.0f * u * u * t * command.c0y +
+                        3.0f * u * t * t * command.c1y + t * t * t * command.y1,
+                };
+                const float tx = 3.0f * u * u * (command.c0x - command.x0) +
+                                 6.0f * u * t * (command.c1x - command.c0x) +
+                                 3.0f * t * t * (command.x1 - command.c1x);
+                const float ty = 3.0f * u * u * (command.c0y - command.y0) +
+                                 6.0f * u * t * (command.c1y - command.c0y) +
+                                 3.0f * t * t * (command.y1 - command.c1y);
+                const float tlen = std::hypot(tx, ty);
+                if (tlen > 1e-4f)
+                {
+                    Vec2 cand{-ty / tlen, tx / tlen};
+                    if (i > 0 && (cand.x * prevNormal.x + cand.y * prevNormal.y) < -0.5f)
+                    {
+                        cand = {-cand.x, -cand.y};
+                    }
+                    prevNormal = cand;
+                }
+                nrms[i] = prevNormal;
+            }
+            context.AppendFeatheredRibbon(pts.data(), nrms.data(), static_cast<std::size_t>(steps + 1),
+                                          command.lineWidth, command.color, options.whiteTexture, clip, feather);
             break;
         }
         case UiPaintCommandKind::CanvasRect:
@@ -729,21 +987,9 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
                                options.whiteTexture, clip);
             break;
         case UiPaintCommandKind::CanvasCircle:
-        {
-            constexpr int segments = 32;
-            for (int index = 0; index < segments; ++index)
-            {
-                const float a0 = static_cast<float>(index) * 6.28318530718f / segments;
-                const float a1 = static_cast<float>(index + 1) * 6.28318530718f / segments;
-                context.AppendTriangle({command.centerX, command.centerY},
-                                       {command.centerX + std::cos(a0) * command.radius,
-                                        command.centerY + std::sin(a0) * command.radius},
-                                       {command.centerX + std::cos(a1) * command.radius,
-                                        command.centerY + std::sin(a1) * command.radius},
-                                       command.color, options.whiteTexture, clip);
-            }
+            context.AppendCircle(command.centerX, command.centerY, command.radius, command.color,
+                                 options.whiteTexture, clip, feather);
             break;
-        }
         }
     }
     stats.drawCalls = static_cast<std::uint32_t>(geometry.commands.size());

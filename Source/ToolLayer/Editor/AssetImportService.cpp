@@ -302,7 +302,7 @@ bool AssetImportService::SupportedExtension(const std::filesystem::path& path)
 {
     const std::string lower = Lower(path.filename().string());
     return IsModel(path)||IsImage(path)||IsAudio(path)||Lower(path.extension().string())==".sebin"
-        ||lower.ends_with(".material.json")||lower.ends_with(".prefab.json");
+        ||IsUserSurfaceAssetPath(path)||lower.ends_with(".material.json")||lower.ends_with(".prefab.json");
 }
 AssetImportPlan AssetImportService::Plan(const AssetImportRequest& request)
 {

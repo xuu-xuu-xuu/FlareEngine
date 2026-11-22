@@ -1,5 +1,6 @@
 #include "AssetStore.h"
 #include "AssetIO.h"
+#include "ShaderGraph.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
@@ -553,6 +554,46 @@ bool AssetStore::LoadShaderArtifact(const AssetId& id,ShaderArtifactSource& outp
     if(key.empty()){Diagnostic(diagnostics,"Assets.ShaderArtifactInvalid",id);return false;}
     output={record->second.source,key};return true;
 }
+bool AssetStore::LoadSurfaceShader(const AssetId& id,UserSurfaceShaderSource& output,std::vector<AssetDiagnostic>& diagnostics) const
+{
+    const auto record=records_.find(id);
+    if(record==records_.end()){Diagnostic(diagnostics,"Assets.UnknownId",id);return false;}
+    const auto& source=record->second.source;
+    if(!IsUserSurfaceAssetPath(source))
+    {Diagnostic(diagnostics,"Assets.SurfaceShaderInvalid",asset_io::Utf8(source));return false;}
+    std::vector<std::uint8_t> bytes;
+    if(!asset_io::Read(source,bytes)||bytes.empty()||bytes.size()>512*1024)
+    {Diagnostic(diagnostics,"Assets.ReadFailed",asset_io::Utf8(source));return false;}
+    const auto key=asset_io::Hash(bytes);
+    if(key.empty()){Diagnostic(diagnostics,"Assets.SurfaceShaderInvalid",id);return false;}
+    const std::string_view rawText(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+    std::string parseError;
+    SurfaceShaderMetadata metadata;
+    if(IsShaderGraphPath(source))
+    {
+        ShaderGraphDocument graph;
+        std::string generatedHlsl;
+        if(!DeserializeShaderGraph(rawText,graph,parseError)||
+           !CompileShaderGraphToHlsl(graph,generatedHlsl,parseError)||
+           !ParseSurfaceShaderSource(generatedHlsl,metadata,parseError))
+        {Diagnostic(diagnostics,"Assets.SurfaceShaderInvalid",parseError);return false;}
+    }
+    else if(!ParseSurfaceShaderSource(rawText,metadata,parseError))
+    {Diagnostic(diagnostics,"Assets.SurfaceShaderInvalid",parseError);return false;}
+    output={source,key,std::move(metadata)};
+    return true;
+}
+bool AssetStore::IsValidMaterialShaderReference(const AssetId& id,std::vector<AssetDiagnostic>& diagnostics) const
+{
+    const auto source=Resolve(id);
+    if(IsUserSurfaceAssetPath(source))
+    {
+        UserSurfaceShaderSource surface;
+        return LoadSurfaceShader(id,surface,diagnostics);
+    }
+    ShaderArtifactSource artifact;
+    return LoadShaderArtifact(id,artifact,diagnostics);
+}
 bool AssetStore::SaveMaterialSource(const std::filesystem::path& requested,const MaterialDocument& material,
     AssetId& id,std::vector<AssetDiagnostic>& diagnostics,bool replaceExisting)
 {
@@ -566,7 +607,7 @@ bool AssetStore::SaveMaterialSource(const std::filesystem::path& requested,const
         if(!ValidateMaterialDocument(material)){Diagnostic(diagnostics,"Assets.InvalidMaterial");return false;}
         // 先验证所有依赖类型和已存在的元数据，再修改源文件。
         for(const auto& texture:MaterialTextureDependencies(material))if(!LoadTextureImage(texture,diagnostics))return false;
-        if(!material.shader.empty()){ShaderArtifactSource artifact;if(!LoadShaderArtifact(material.shader,artifact,diagnostics))return false;}
+        if(!material.shader.empty()){if(!IsValidMaterialShaderReference(material.shader,diagnostics))return false;}
         const auto metadataPath=Metadata(path);
         if(!asset_io::Within(sourceRoot_,metadataPath)){Diagnostic(diagnostics,"Assets.ReferenceOutsideRoot");return false;}
         const bool hadSource=std::filesystem::exists(path),hadMetadata=std::filesystem::exists(metadataPath);

@@ -135,6 +135,15 @@ bool EditorFloatingWindows::Render(const FrameData& base,ui::UiImageProvider& im
             for(auto it=display.commands.begin();it!=display.commands.end();++it)
                 if(it->kind==ui::UiPaintCommandKind::Image&&it->image=="scene")
                 {display.commands.insert(it+1,overlay.commands.begin(),overlay.commands.end());break;}
+        for(auto it=display.commands.begin();it!=display.commands.end();++it)
+            if(it->kind==ui::UiPaintCommandKind::Image&&it->image=="shader-graph-canvas")
+            {
+                ui::UiDisplayList sgOverlay;
+                shell_.PaintShaderGraphCanvas(sgOverlay,shell_.SurfaceRoot(entry->id));
+                it=display.commands.erase(it);
+                display.commands.insert(it,sgOverlay.commands.begin(),sgOverlay.commands.end());
+                break;
+            }
         FrameData data=base;ui::UiGeometryStats geometryStats;std::vector<std::string> errors;
         ui::UiGeometryOptions options=MakeEditorUiGeometryOptions({dpi,dpi});
         if(!ui::UiGeometryBuilder{}.Build(display,&entry->text,&images,options,data.editorGui,geometryStats,errors))

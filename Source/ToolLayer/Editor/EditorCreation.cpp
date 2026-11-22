@@ -4,9 +4,12 @@
 #include "ResourceLayer/Assets/AssetIO.h"
 #include "ResourceLayer/Assets/AssetStore.h"
 #include "ResourceLayer/Assets/Primitives.h"
+#include "ResourceLayer/Assets/ShaderGraph.h"
+#include "ResourceLayer/Assets/SurfaceShader.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "CoreLayer/Localization.h"
 #include <algorithm>
+#include <fstream>
 
 namespace flare
 {
@@ -117,7 +120,8 @@ bool CreateEditorAsset(std::string_view kind, const std::filesystem::path& proje
                        const std::filesystem::path& targetDirectory)
 {
     created.clear();
-    if (kind != "folder" && kind != "material" && kind != "script" && kind != "tod")
+    if (kind != "folder" && kind != "material" && kind != "script" && kind != "tod" &&
+        kind != "shader-hlsl" && kind != "shader-graph")
     {
         error = "Editor.OperationFailed";
         return false;
@@ -173,6 +177,50 @@ bool CreateEditorAsset(std::string_view kind, const std::filesystem::path& proje
             if(!SaveTODProfile(path,TODProfile{},error))return false;AssetId id;std::vector<AssetDiagnostic> diagnostics;
             if(!assets.RegisterSource(path,{},id,diagnostics)){error=diagnostics.empty()?"Assets.WriteFailed":diagnostics.back().key;return false;}
             created=path;std::vector<EditorAssetIssue> issues;if(EditorAssetActions::SyncProjectAssets(project,assets,issues))return true;error=issues.empty()?"Assets.WriteFailed":issues.front().key;return false;
+        }
+        if (kind == "shader-hlsl")
+        {
+            const std::string shaderName = "NewSurfaceShader" + suffix;
+            const auto path = contentDir / (shaderName + ".fshader.hlsl");
+            if (std::filesystem::exists(path)) continue;
+            {
+                std::ofstream out(path, std::ios::binary | std::ios::trunc);
+                const std::string tpl = MakeDefaultSurfaceShaderTemplate(shaderName);
+                out.write(tpl.data(), static_cast<std::streamsize>(tpl.size()));
+                if (!out.good()) { error = "Assets.WriteFailed"; return false; }
+            }
+            AssetId id;
+            std::vector<AssetDiagnostic> diagnostics;
+            if (!assets.RegisterSource(path, {}, id, diagnostics))
+            {
+                error = diagnostics.empty() ? "Assets.WriteFailed" : diagnostics.back().key;
+                return false;
+            }
+            created = path;
+            std::vector<EditorAssetIssue> issues;
+            if (EditorAssetActions::SyncProjectAssets(project, assets, issues)) return true;
+            error = issues.empty() ? "Assets.WriteFailed" : issues.front().key;
+            return false;
+        }
+        if (kind == "shader-graph")
+        {
+            const std::string graphName = "NewShaderGraph" + suffix;
+            const auto path = contentDir / (graphName + ".fshader.json");
+            if (std::filesystem::exists(path)) continue;
+            const ShaderGraphDocument graph = MakeDefaultShaderGraph(graphName);
+            if (!SaveShaderGraph(path, graph, error)) return false;
+            AssetId id;
+            std::vector<AssetDiagnostic> diagnostics;
+            if (!assets.RegisterSource(path, {}, id, diagnostics))
+            {
+                error = diagnostics.empty() ? "Assets.WriteFailed" : diagnostics.back().key;
+                return false;
+            }
+            created = path;
+            std::vector<EditorAssetIssue> issues;
+            if (EditorAssetActions::SyncProjectAssets(project, assets, issues)) return true;
+            error = issues.empty() ? "Assets.WriteFailed" : issues.front().key;
+            return false;
         }
         MaterialDocument material;
         material.name = "NewMaterial" + suffix;
