@@ -531,7 +531,7 @@ public Vector3? JointPosition(string joint)
 - **返回值**：`Vector3?` — 找到关节时返回其世界坐标（米）；未挂骨骼或关节名不存在时返回 `null`。
 
 ```csharp
-if (Entity.JointPosition("RightHand") is { } handPos)
+if (Entity.JointPosition("RightHand") is { } handPos && MuzzleEffect is { IsValid: true })
 {
     MuzzleEffect.WorldPosition = handPos;
 }

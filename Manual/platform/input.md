@@ -90,7 +90,7 @@ using FlareEngine;
 
 public sealed class PlayerInputDemo : F_Behaviour
 {
-    public override void OnUpdate(float deltaSeconds)
+    public override void F_Update(float deltaSeconds)
     {
         Vector2 move = Actions.GetAxis2D("Move");      // WASD + 左摇杆统一归一化向量
         float zoom   = Actions.GetAxis1D("Zoom");      // 滚轮或扳机 1D 轴

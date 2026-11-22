@@ -46,10 +46,10 @@ public sealed class HudController : F_Behaviour
     private F_UiElement? _button;
     private IDisposable? _actionToken;
 
-    public override void OnStart()
+    public override void F_Start()
     {
         // 创建按钮并绑定持久化动作名，脚本热重载后依然有效
-        _button = Session.Ui.Create(UiKind.Button);
+        _button = Ui.Create(UiKind.Button);
         _button.SetStyle(UiStyle.Default with { Offset = new Vector2(32, 32), Size = new Vector2(180, 44) });
         _button.SetText("开始游戏");
 
@@ -60,7 +60,7 @@ public sealed class HudController : F_Behaviour
         _button.Bind(UiEventKind.Click, this, "StartGame");
     }
 
-    public override void OnDestroy() => _actionToken?.Dispose();
+    public override void F_Destroy() => _actionToken?.Dispose();
 }
 ```
 

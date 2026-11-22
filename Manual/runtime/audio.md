@@ -86,17 +86,17 @@ const float right = baseVolume + (gain3DRight - baseVolume) * blend;
 
 ### 5. C# 托管脚本接口（`F_Audio`）
 
-C# 脚本通过 `Session.Audio`（[`FlareEngine.F_Audio`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Scripting/Managed/Audio.cs#L106)，兼容无前缀子类 `Audio`）触发一次性音效或操控实体上的音源组件：
+C# 脚本在 `F_Behaviour` 中直接通过 `Audio` 属性（底层即 `Scripts.Session.Audio`，类型为 [`FlareEngine.F_Audio`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Scripting/Managed/Audio.cs#L106)，兼容无前缀子类 `Audio`）触发一次性音效或操控实体上的音源组件：
 
 ```csharp
 // 在指定 3D 世界坐标播放一次空间衰减音效
-F_AudioVoiceHandle hit = Session.Audio.PlayOneShotAt(
+F_AudioVoiceHandle hit = Audio.PlayOneShotAt(
     clipAssetId, hitPoint, volume: 0.9f, minDistance: 1.5f, maxDistance: 25f);
 
 // 控制实体上挂载的 AudioSource 组件
-Session.Audio.PlaySource(Entity);
-if (Session.Audio.IsSourcePlaying(Entity))
-    Session.Audio.StopSource(Entity);
+Audio.PlaySource(Entity);
+if (Audio.IsSourcePlaying(Entity))
+    Audio.StopSource(Entity);
 ```
 
 ## 常用接口速查

@@ -110,16 +110,16 @@ if (const auto* character = scenePhysics.Character(record->stableId))
 
 ### 6. C# 托管脚本接口（`F_Navigation`）
 
-C# 脚本通过 `Session.Navigation`（[`FlareEngine.F_Navigation`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Scripting/Managed/Navigation.cs#L33)，兼容子类 `Navigation`）发起一次性路径查询或控制场景内的导航代理：
+C# 脚本在 `F_Behaviour` 中直接通过 `Navigation` 属性（底层即 `Scripts.Session.Navigation`，类型为 [`FlareEngine.F_Navigation`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Scripting/Managed/Navigation.cs#L33)，兼容子类 `Navigation`）发起一次性路径查询或控制场景内的导航代理：
 
 ```csharp
 // 1. 驱动挂载了 NavigationAgent 的实体自动寻路
-Session.Navigation.SetDestination(Entity, targetPos);
-float left = Session.Navigation.RemainingDistanceMeters(Entity);
+Navigation.SetDestination(Entity, targetPos);
+float left = Navigation.RemainingDistanceMeters(Entity);
 
 // 2. 纯查询路径拐点（不移动任何实体）
-NavPath path = Session.Navigation.FindPath(navAssetId, startPos, goalPos);
-if (path.Status == NavPathStatus.Complete) { /* 遍历 path.Waypoints */ }
+F_NavPath path = Navigation.FindPath(navAssetId, startPos, goalPos);
+if (path.Status == F_NavPathStatus.Complete) { /* 遍历 path.Waypoints */ }
 ```
 
 ## 常用接口速查

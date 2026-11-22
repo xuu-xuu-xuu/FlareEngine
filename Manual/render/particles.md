@@ -90,7 +90,7 @@ return float4(max(input.color.rgb, 0.0f) * alpha, alpha);
 
 ## Particles
 
-C# 脚本通过 `Session.Particles`（[`FlareEngine.F_Particles`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Scripting/Managed/Particles.cs#L4)，同时保留兼容别名 `Particles`）实时控制发射器，不直接改写只读世界组件，因此在物理回调或带挂起命令的帧内也可安全调用：
+C# 脚本在 `F_Behaviour` 中直接通过 `Particles` 属性（底层即 `Scripts.Session.Particles`，类型为 [`FlareEngine.F_Particles`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Scripting/Managed/Particles.cs#L4)，同时保留兼容别名 `Particles`）实时控制发射器，不直接改写只读世界组件，因此在物理回调或带挂起命令的帧内也可安全调用：
 
 | 方法 / 属性 | 签名 | 说明 |
 | --- | --- | --- |
@@ -104,9 +104,9 @@ C# 脚本通过 `Session.Particles`（[`FlareEngine.F_Particles`](https://github
 // 在脚本行为中触发一次火花爆发
 public void OnImpact(F_Entity sparkEntity)
 {
-    uint spawned = Session.Particles.EmitBurst(sparkEntity, 48);
+    uint spawned = Particles.EmitBurst(sparkEntity, 48);
     if (spawned == 0)
-        Session.Particles.SetPlaying(sparkEntity, true);
+        Particles.SetPlaying(sparkEntity, true);
 }
 ```
 
