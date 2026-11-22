@@ -1,31 +1,74 @@
 # 环境光照、大气与反射
 
-## 环境贴图进入渲染器
+这篇文档说明 HDR 环境贴图如何烘焙成 IBL 三件套进入渲染器、全局与局部 9 系数球谐（SH）漫反射探针如何采样，以及不透明前向绘制完成后，室内实时间接漫反射（SSGI）、屏幕空间反射（SSR）与局部光体积雾如何在同一通道里完成合成。
 
-[DecodeRadiance()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ResourceLayer/Assets/HdrImage.cpp#L19) 把 Radiance HDR 解码为浮点像素。[BakeEnvironment()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ResourceLayer/Assets/Environment.h#L31) 从全景图生成辐照度立方体、预滤波辐射立方体和 BRDF 查找表，[EnvironmentRenderCache](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/EnvironmentRender.h#L14) 保存当前资源版本并上传。[PrepareEnvironmentBindings()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/EnvironmentRender.cpp#L50) 将结果交给天空和材质绘制。
+## 环境与室内实时光照数据流
 
-## 大气与雾的 CPU 模型
+```text
+Radiance .hdr ──▶ DecodeRadiance() ──▶ BakeEnvironment() ──▶ .seenv 资产
+                                             │  EnvironmentRenderCache::Load/Upload
+                                             ▼  t4(辐照度) / t5(预滤波镜面) / t6(BRDF LUT)
+DiffuseProbeCooker ──▶ .sedp 探针资产 ──▶ ShadingResourceCache (b5 全局 SH + t15 局部网格)
+                                             │
+                                             ▼
+                      Opaque Forward Shading（直接光 + IBL/SH 间接光）
+                                             │  复制只读线性 HDR + 读取 DepthNormals(D32/RG16F/RGBA16F)
+                                             ▼
+             RecordD3D12IndoorLighting()（Resources/Shaders/IndoorLighting.hlsl）
+             ├─ 1/4 屏 DiffuseBounce ──▶ CSTemporalAccumulate ──▶ 3× CSATrousFilter
+             ├─ 全屏合成：ReconstructDiffuse (SSGI) + ReflectedChange (SSR) + ApplyFog (体积雾)
+             └─ 之后再进入 Transparent 半透明物体绘制
+```
 
-[Atmosphere](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/Atmosphere.h#L22) 根据大气参数重建透射率查找表，[SkyRadiance()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/Atmosphere.cpp#L114) 沿视线积分天空散射。[FogTransmittance()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/Atmosphere.cpp#L152) 按相机高度和视距计算雾的透射率。时间变化的数据来源见[昼夜系统](../runtime/daylight.md)。
+## 环境贴图进入渲染器（IBL）
 
-## 探针与屏幕空间反射的 CPU 参考实现
+1. **解码 HDR**：[`DecodeRadiance()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ResourceLayer/Assets/HdrImage.cpp#L19) 将 32-bit RLE RGBE 全景图解码为非负有限的浮点像素（显式拒绝含未支持 `EXPOSURE=` / `PRIMARIES=` 元数据的文件，避免色彩误解）。
+2. **离线烘焙三件套**：[`BakeEnvironment()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ResourceLayer/Assets/Environment.h#L31) 生成 3 张 `RGBA16F` 纹理：漫反射辐照度立方体（`irradiance`）、按粗糙度分级 Mip 的预滤波镜面立方体（`prefiltered radiance`）与 GGX `BRDF LUT`。
+3. **版本上传与绑定**：[`EnvironmentRenderCache`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/EnvironmentRender.h#L14) 负责缓存当前版本与引擎默认环境（`Resources/Environments/soft.seenv`）；[`PrepareEnvironmentBindings()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/EnvironmentRender.cpp#L61) 钳制曝光强度（`[0, 64]`）并提取去除平移后的相机天空逆矩阵交给天空与材质着色器。
 
-[BoxProjectReflection()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/Reflection.cpp#L66) 将反射方向修正到探针包围盒。[BlendReflectionProbes()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/Reflection.cpp#L95) 混合邻近探针的权重，[PrefilterGgx()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/Reflection.cpp#L131) 按粗糙度预滤波。[TraceScreenSpaceReflection()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Rendering/Reflection.cpp#L157) 则沿反射射线查询屏幕深度并报告命中。
+## 全局与局部漫反射探针（9 系数 SH）
 
-## 全局与局部漫反射探针
+开启 `render.diffuseSh` 后，漫反射间接光改由 2 阶 9 系数球谐（L0–L2）重建，预滤波立方体继续负责镜面反射。
 
-`render.diffuseSh` 启用九系数球谐漫反射。环境辐照数据可提供全局系数，预滤波环境立方体继续提供镜面光。启用 `render.localDiffuseSh` 并指定有效的 `render.diffuseProbe` 资产后，着色器在格子八角间插值。位置超出网格、格子跨墙或任一角探针无效时，采样回到全局系数。局部烘焙值含场景照明，原样参与着色，全局环境贡献乘环境强度。[帧绑定与资源缓存](https://github.com/xuu-xuu-xuu/FlareEngine/blob/34bad2e/Source/FunctionLayer/Rendering/ShadingResources.cpp#L173) · [CPU 插值参考](https://github.com/xuu-xuu-xuu/FlareEngine/blob/34bad2e/Source/ResourceLayer/Assets/DiffuseProbeBake.cpp#L218)
+- **全局与局部无缝回退**：在 [`ShadingResourceCache::Prepare()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/ShadingResources.cpp#L173) 中，全局 9 系数可来自探针资产或直接由当前环境贴图投影写入 `b5`；当同时开启 `render.localDiffuseSh` 并指定有效 `render.diffuseProbe` 资产时，局部 3D 探针网格上传至 `t15`（宽 10 像素 × 最多 `16,384` 行，第 0–8 列存 SH 系数，第 9 列 `x/y` 分别存探针和网格单元有效位）。
+- **防跨墙漏光**：着色器 [`DiffuseSh()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Resources/Shaders/ShadingBindings.hlsli#L48)（与 CPU 参考 [`SampleDiffuseProbeGrid()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ResourceLayer/Assets/DiffuseProbeBake.cpp#L218) 同构）在单元 8 个角点间做三线性插值；若位置越界、网格单元被墙体阻断或任一角探针无效，自动回退到全局 SH 系数。
+- **离线烘焙工具**：[`DiffuseProbeCooker`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Tools/DiffuseProbeCooker.cpp#L67) 的 `local` 模式调用 [`BakeDiffuseProbeGrid()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ResourceLayer/Assets/DiffuseProbeBake.cpp#L196)，追踪静态几何与光源的首跳直接光反弹输出规则网格（移动静态几何或灯光后需重新烘焙）。
 
-`DiffuseProbeCooker` 的 `local` 模式读取静态场景、点光和 HDR 环境。射线首个交点接收有遮挡的直接光，其表面颜色决定反弹到探针的漫反射。离线烘焙输出规则网格，移动灯光或几何后需重新烘焙。模板“渲染工作室”使用全局环境系数，局部网格默认关闭。[离线网格烘焙](https://github.com/xuu-xuu-xuu/FlareEngine/blob/34bad2e/Source/ResourceLayer/Assets/DiffuseProbeBake.cpp#L196) · [工具参数](https://github.com/xuu-xuu-xuu/FlareEngine/blob/34bad2e/Source/ToolLayer/Tools/DiffuseProbeCooker.cpp#L37)
+## 室内实时光照（SSGI / SSR / 体积雾）
 
-## 室内实时光照
+[`ApplyFeatureFrameData()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Application/FeatureFrameData.cpp#L45) 将 `render.indirect`、`render.reflections`、`render.volumetricFog` 及强度/雾距参数写入 `FrameData::indoor`。不透明前向绘制完成后、`Transparent` 透明合成之前，后端调用 [`RecordD3D12IndoorLighting()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/PlatformLayer/Graphics/D3D12/D3D12IndoorLighting.cpp#L131)，将线性 HDR 颜色复制为只读快照，连同同分辨率 `DepthNormals` 的深度、法线与材质输出交给 [`IndoorLighting.hlsl`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Resources/Shaders/IndoorLighting.hlsl#L119)。
 
-`ApplyFeatureFrameData()` 把场景的 `render.indirect`、`render.reflections`、`render.volumetricFog` 写入当前帧。`D3D12Presentation.cpp` 在不透明前向绘制完成后调用 `RecordD3D12IndoorLighting()`，将线性 HDR 复制为只读输入，与同分辨率深度、几何法线和材质数据一同传给 `Resources/Shaders/IndoorLighting.hlsl`。透明物体在这个通道之后合成。预绘制覆盖不完整时保留原帧，避免使用错误的遮挡或材质。
+当启用 `render.indirect` 时，[`D3D12IndoorHistory`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/PlatformLayer/Graphics/D3D12/D3D12IndoorLighting.h#L8) 额外维护双帧乒乓历史缓冲（`historyIrradiance`、`historyMoments`）与 2 张 À-Trous 缓冲，运行 **1/4 分辨率采样 → 时域重投影方差夹取 (`CSTemporalAccumulate`) → 3 趟法线/深度加权 `CSATrousFilter` → 全屏重建合成**，在 1080p 下抑制屏幕空间 GI 噪点（切场景或改分辨率时自动清零历史有效位）。
 
-| 开关 | 着色器与数据 | 画面边界 |
+```hlsl
+// Resources/Shaders/IndoorLighting.hlsl#L521（全屏合成主入口核心片段）
+if (strengths.x > 0)
+    color.rgb += strengths.x * ReconstructDiffuse(pixel, p, n) * ((1 - metal) * material.rgb * (1 - f0));
+if (strengths.y > 0)
+    color.rgb += strengths.y * ReflectedChange(p, n, eye, f0, rough);
+// 体积雾最后沿视线积分（在所有不透明表面光照之后、透明物体之前）
+if (strengths.z > 0)
+    color.rgb = ApplyFog(max(color.rgb, 0), nearView, p);
+```
+
+| 场景开关 | 核心着色器函数与机制 | 适用范围与画面边界 |
 | --- | --- | --- |
-| `render.indirect` | `DiffuseBounce()` 在宽高各四分之一的缓冲区采样周围可见表面，用两端法线、遮挡、距离和源表面的金属度估计一次漫反射。`ReconstructDiffuse()` 以平面距离和几何法线重建全分辨率入射光，再乘接收表面的漫反射颜色 | 基础环境光或探针光保留。画面外的光源表面无法贡献这次反弹 |
-| `render.reflections` | `ReflectionHit()` 在视空间追踪可见表面并细分命中位置，`ReflectedChange()` 按菲涅耳、粗糙度和命中置信度替换相应的环境镜面贡献 | 未命中时保留原始环境反射。掠过屏边时逐渐退回环境，粗糙度达到 0.68 后跳过追踪 |
-| `render.volumetricFog` | `ApplyFog()` 按 Beer–Lambert 定律计算均匀介质的透射率。有方向光阴影时沿射线取 16 个可见度样本。每盏局部灯在射线穿过其影响球的区间取 16 个等角度样本，以便密集采样近灯处的亮度和遮挡 | 积到第一个不透明表面或 `render.fogDistance`。透明表面自身的深度不参与这次积分 |
+| `render.indirect` | [`DiffuseBounce()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Resources/Shaders/IndoorLighting.hlsl#L119) 在 1/4 分辨率采样周围可见表面计算单次漫反射反弹，经 `CSTemporalAccumulate` + 3 趟 `CSATrousFilter` 降噪后，由 [`ReconstructDiffuse()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Resources/Shaders/IndoorLighting.hlsl#L322) 结合平面距离与法线重建到全屏 | 保留基础环境/探针光；屏幕外的发光或高反光表面无法提供反弹（需屏幕外反弹请用 [硬件光追 RTGI](ray-tracing.md)） |
+| `render.reflections` | [`ReflectionHit()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Resources/Shaders/IndoorLighting.hlsl#L346) 在视空间追踪并二分细分命中，[`ReflectedChange()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Resources/Shaders/IndoorLighting.hlsl#L388) 按菲涅耳与置信度替换环境镜面项 | 粗糙度 `≥ 0.68` 直接跳过追踪；未命中或临近屏幕边缘时平滑退回环境立方体 |
+| `render.volumetricFog` | [`ApplyFog()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Resources/Shaders/IndoorLighting.hlsl#L478) 按 Beer–Lambert 计算透射率：方向光沿射线采样 16 点阴影可见度；每盏局部灯在射线穿过其影响球的区间取 16 个等角度样本以密集捕捉近灯体积光束 | 积分截止于首个不透明表面深度或 `render.fogDistance`；透明物体深度不参与本次体积积分 |
 
-可从启动器的“室内展厅”模板对照这三项设置，也可分别在已有项目的场景渲染设置组件启用。[室内展厅的编辑器操作](../user/indoor-lighting.md) · [正式包同镜头画面对比](../user/indoor-lighting.md#gallery-comparison)
+## 大气、雾与反射的 CPU 参考模型
+
+以下纯 CPU 数学模型用于昼夜参数预演、离线烘焙与像素级单元测试：
+
+| 模块与入口 | 源码位置 | 职责 |
+| --- | --- | --- |
+| `Atmosphere` | [`Atmosphere.h#L22`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/Atmosphere.h#L22) | 按大气参数缓存 64×32 透射率 LUT；[`SkyRadiance()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/Atmosphere.cpp#L114) 16 段单次散射积分 |
+| `FogTransmittance()` | [`Atmosphere.cpp#L152`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/Atmosphere.cpp#L152) | 16 段梯形解析积分高度雾透射率（与 [昼夜系统](../runtime/daylight.md) 联动） |
+| `BoxProjectReflection()` / `BlendReflectionProbes()` | [`Reflection.cpp#L66`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/Reflection.cpp#L66) / [`#L95`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/Reflection.cpp#L95) | 视差包围盒校正反射方向与多探针权重混合 |
+| `PrefilterGgx()` / `TraceScreenSpaceReflection()` | [`Reflection.cpp#L131`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/Reflection.cpp#L131) / [`#L157`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/Reflection.cpp#L157) | GGX 粗糙度预滤波与 CPU 屏幕空间反射追踪对照 |
+
+::: tip 实践对比与注意事项
+- `DepthNormals` 预绘制覆盖不完整（例如有自定义不支持的绘制）时，`RecordD3D12IndoorLighting()` 会直接保留原 HDR 帧，防止错误法线/深度造成黑斑或伪影。
+- 可在启动器打开“室内展厅”模板直观对比这三项开关，操作见 [室内展厅的编辑器操作](../user/indoor-lighting.md) 与 [正式包同镜头画面对比](../user/indoor-lighting.md#gallery-comparison)。
+:::
