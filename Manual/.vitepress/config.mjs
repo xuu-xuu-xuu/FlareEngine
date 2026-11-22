@@ -32,6 +32,13 @@ export default defineConfig({
             { text: '编写与挂载 C# 脚本', link: '/user/scripting' },
             { text: '运行预览与实时调参', link: '/user/run-preview' }
           ] },
+          { text: 'C# API 参考手册', items: [
+            { text: 'API 总览与速查导航', link: '/user/api/' },
+            { text: '核心：行为、实体、场景与特性', link: '/user/api/core' },
+            { text: '输入、相机、时间、数学与异步', link: '/user/api/input-math' },
+            { text: '物理、射线、碰撞与角色控制', link: '/user/api/physics' },
+            { text: '音频、粒子、导航、UI 与事件', link: '/user/api/systems' }
+          ] },
           { text: '材质、布光与画质', items: [
             { text: '用渲染工作室调光', link: '/user/rendering-studio' },
             { text: '给室内展厅布光', link: '/user/indoor-lighting' },

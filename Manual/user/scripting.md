@@ -283,6 +283,10 @@ public class FirstPersonMover : F_Behaviour
 
 ## 6. 常用 `FlareEngine` 高频 API 速查表
 
+::: tip 需要查看每个 API 的完整参数表、结构体字段与用法示例？
+前往 [**FlareEngine C# API 参考手册**](api/index.md)：[核心（实体/场景/特性）](api/core.md) · [输入/相机/数学/异步](api/input-math.md) · [物理/射线/角色](api/physics.md) · [音频/粒子/导航/UI/事件](api/systems.md)。
+:::
+
 | 需求分类 | 常用写法 |
 | :--- | :--- |
 | **生命周期回调** | `F_Awake()` → `F_Enable()` → `F_Start()` → `F_PreUpdate(dt)` / `F_FixedUpdate(fdt)` / `F_Update(dt)` / `F_LateUpdate(dt)` → `F_Disable()` → `F_Destroy()` |
