@@ -115,6 +115,7 @@ Shader "NewSurfaceShader"
   - `tex2D(_MainTex, IN.uv)`（或 `SampleMainTex(IN.uv)`）：采样材质基础色贴图，返回 `float4`
   - `UnpackNormal(tex2D(_BumpMap, IN.uv))`（或 `SampleNormalTS(IN.uv)`）：采样并解包切线空间法线，返回 `float3`
   - `tex2D(_MetallicGlossMap, IN.uv)`：采样金属粗糙度贴图（`.r` 金属度，`.g` 粗糙度，`.a` 光滑度）
+  - `tex2Dlod(_MainTex, float4(v.uv, 0, 0))`：在顶点函数 `vert()` 内按指定 Mip 级采样高度图/置换贴图（同样支持 `_BumpMap` 与 `_MetallicGlossMap`）
 - **Unity 风格全局动画时间（编辑视口与运行模式均实时递增）**：
   - `_Time`：`float4(t/20, t, t*2, t*3)`，常用 **`_Time.y` 表示当前累计秒数 `t`**
   - `_SinTime`：`float4(sin(t/8), sin(t/4), sin(t/2), sin(t))`
@@ -181,7 +182,7 @@ Shader "FX/HologramShield"
 
 ### 6. 实战示例 2：带阴影同步的顶点波浪 `vert(inout VertexInput v)`
 
-需要做水面波浪、旗帜飘动、受击膨胀时，只需在 `HLSLPROGRAM` 中多写一个 `void vert(inout VertexInput v)` 修改 `v.vertex`（可读 `v.vertex`、`v.normal`、`v.uv` 与 `_Time`）——**主渲染与方向光阴影 Pass 都会自动执行它**，物体投在地上的影子也会跟着一起波动：
+需要做水面波浪、旗帜飘动、地形高度图置换或受击膨胀时，只需在 `HLSLPROGRAM` 中多写一个 `void vert(inout VertexInput v)` 修改 `v.vertex`（可读 `v.vertex`、`v.normal`、`v.uv`、`_Time` 以及 `tex2Dlod(_MainTex, float4(v.uv, 0, 0))`）——**主渲染与方向光阴影 Pass 都会自动执行它**，物体投在地上的影子也会跟着一起波动：
 
 ```hlsl
 Shader "Stylized/WaveWater"

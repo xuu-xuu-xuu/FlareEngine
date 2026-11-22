@@ -32,7 +32,7 @@ Flare Engine 严格遵循自底向上的**五层单向依赖架构**（高层可
 | 你想了解什么 | 推荐阅读顺序 |
 | :--- | :--- |
 | **第一次读源码 / 准备提 PR** | [命名规范](development/命名规范.md) → [从窗口消息到一帧画面](platform/frame.md) → [实体、层级与组件存储](runtime/entities.md) |
-| **研究 D3D12 渲染与软阴影 / 光追** | [前向管线与帧图](render/pipeline.md) → [阴影、分簇灯光与环境遮蔽](render/shadows.md) → [DXR 1.1 混合硬件光追](render/ray-tracing.md) → [Mesh Shader 双轨管线](render/mesh-shader.md) |
+| **研究 D3D12 渲染与软阴影 / 光追** | [前向管线与帧图](render/pipeline.md) → [光照着色与多 Pass / ASE Shader](render/materials.md) → [阴影、分簇灯光与环境遮蔽](render/shadows.md) → [DXR 1.1 混合硬件光追](render/ray-tracing.md) → [Mesh Shader 双轨管线](render/mesh-shader.md) |
 | **扩展 C# 游戏 API 或热重载宿主** | [C# 行为与零重启热重载](scripts/behaviours.md) → [统一 F_ 游戏 API](scripts/api.md) → [反射、卸载与 IDE 智能提示](scripts/lifetime.md) → [托管宿主与原生 ABI](scripts/bridge.md) |
 | **定制编辑器面板、检视器或视口工具** | [编辑器入口与外壳](editor/workspace.md) → [五层属性面板与布局](editor/panels.md) → [编辑会话与运行态隔离](editor/session.md) → [场景视口与 3D 控制柄](editor/viewport.md) |
 
@@ -79,7 +79,7 @@ Flare Engine 严格遵循自底向上的**五层单向依赖架构**（高层可
 ---
 
 ::: info 文档源码基线与本地预览
-本版开发者文档与使用者文档对照仓库最新主线源码（含 Unity 风格多 Pass 表面着色器与 138 节点 ASE 可视化连线系统）核对实现、行号与界面交互。
+本版开发者文档与使用者文档对照仓库主线源码基线（含 commit [**`2318549`**](https://github.com/xuu-xuu-xuu/FlareEngine/tree/2318549) 的 Unity 风格多 Pass 表面着色器与 138 节点 ASE 可视化连线系统）核对实现、行号与界面交互。
 
 在仓库根目录执行以下命令即可在本地实时预览双手册：
 

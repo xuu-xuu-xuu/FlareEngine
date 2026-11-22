@@ -72,6 +72,14 @@ struct EditorExternalDocuments
 2. **[`EditorMaterialWorkflow`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorMaterialWorkflow.h#L17)**：在 `MaterialEditSession` 外层叠加磁盘路径、资产 ID、`EditorFileStamp` 外部冲突检测与实时渲染热预览 `Preview()`。
 3. **[`RenderMaterialThumbnail()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/MaterialThumbnail.h#L16)**：按当前 `baseColor / metallic / roughness` 在 CPU 侧实时渲染 PBR 球体缩略图，供资源列表与材质表单预览。
 
+## 表面着色器与 ASE 连线图工作流（`EditorShaderGraphController`）
+
+自定义表面着色器（`.fshader.hlsl`）与 138 节点可视化连线图（`.fshader.json`）与材质及资产系统深度协同：
+
+- **[`EditorShaderGraphController`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ToolLayer/Editor/EditorShaderGraphController.cpp#L276)**：管理当前打开的 `ShaderGraphDocument`、64 步 `undo_ / redo_` 栈、磁盘外部修改重载（`ReloadIfModifiedOnDisk()`）与 CPU `112×112` 动态预览球（`TickPreview()`）。每次编辑自动原子写盘并推进 `shaderReloadGeneration`，同时监听 `NotifyAssetMoved()` 与 `NotifyAssetDeleted()` 保持重命名/删除资产时面板路径同步或安全收起。
+- **一键配套材质生成（[`CreateCompanionShaderMaterial()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ToolLayer/Editor/EditorShaderGraphController.cpp#L186)）**：在着色器 Inspector 或连线面板顶栏点击新建材质时，自动提取 `Properties` 默认值生成 `*_Mat.material.json`、登记 `project.json`，并在当前正选中网格实体时直接赋给实体材质槽。
+- **草稿态不阻塞资产同步**：当用户正在外部编辑器编写尚未写完、暂时存在语法错误的 `.fshader.hlsl` 时，`SyncProjectAssets()` 对 `AssetKind::Shader` 采用安全登记回退，确保新建配套材质或导入其他资源不会被半成品着色器阻断。
+
 ## 预制体工作流（`PrefabWorkflow`）
 
 [`PrefabWorkflow.h`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/PrefabWorkflow.h#L1) 承接编辑器内全部 `.prefab.json` 创作与双向覆盖同步（运行时格式详见[预制体格式、实例化与覆盖同步](../runtime/prefab.md)）：

@@ -67,7 +67,7 @@ export default defineConfig({
       { text: '渲染与光照', collapsed: true, items: [
         { text: '灯光组件', link: '/runtime/light' },
         { text: '前向管线与帧图', link: '/render/pipeline' },
-        { text: '光照着色、材质接口与 Shader 包', link: '/render/materials' },
+        { text: '光照着色、材质接口与多 Pass / ASE Shader', link: '/render/materials' },
         { text: '阴影、分簇灯光与环境遮蔽', link: '/render/shadows' },
         { text: '环境光照、大气与反射', link: '/render/environment' },
         { text: 'DXR 1.1 混合硬件光线追踪与 SVGF 降噪', link: '/render/ray-tracing' },

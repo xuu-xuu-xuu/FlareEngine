@@ -198,15 +198,15 @@ assetDragCursor_ = compatible ? EditorDragCursor::Allow : EditorDragCursor::Forb
 | 6 | 场景层级行内重命名框 | [`EditorShellPanels.cpp#L873`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorShellPanels.cpp#L873) |
 | 7 | 资源面板关键词过滤框 | [`EditorShellPanels.cpp#L1325`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorShellPanels.cpp#L1325) |
 | 8 | 资源面板行内重命名框 | [`EditorShellPanels.cpp#L1416`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorShellPanels.cpp#L1416) |
-| 9 | 着色器连线暴露参数名编辑框 | `EditorShaderGraphSurface.cpp` (`sg.paramNameEdit`) |
-| 10 | 着色器连线节点默认值编辑框 | `EditorShaderGraphSurface.cpp` (`sg.valueEdit`) |
-| 11 | 着色器连线 138 节点模糊搜索框 | `EditorShaderGraphSurface.cpp` (`sg.searchEdit`) |
+| 9 | 着色器连线暴露参数名编辑框 | [`EditorShaderGraphSurface.cpp#L652`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ToolLayer/Editor/EditorUi/EditorShaderGraphSurface.cpp#L652) (`sg.paramNameEdit`) |
+| 10 | 着色器连线节点默认值编辑框 | [`EditorShaderGraphSurface.cpp#L653`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ToolLayer/Editor/EditorUi/EditorShaderGraphSurface.cpp#L653) (`sg.valueEdit`) |
+| 11 | 着色器连线 138 节点模糊搜索框 | [`EditorShaderGraphSurface.cpp#L743`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ToolLayer/Editor/EditorUi/EditorShaderGraphSurface.cpp#L743) (`sg.searchEdit`) |
 
 ## ASE 风格可视化着色器面板（`Shader Graph`）
 
 `EditorPanelId::ShaderGraph` 的 `openNear` 默认指向 `EditorPanelId::Console`，在新建/打开 `.fshader.json` 或点击菜单打开时自动停靠在左下方页签组（与 `Game`、`Console` 并列），确保创作时左上方 `Viewport` 里的真实场景模型不被遮挡；同时支持拖出为独立浮动副屏窗口：
 
-- **UI 与文档双层解耦**：画布渲染与手势交互位于 `Source/ToolLayer/Editor/EditorUi/EditorShaderGraphSurface.cpp`，通过纯值视图 `EditorShaderGraphViewState` 与动作回调 `EditorShell::SetShaderGraphActionHandler` 通信；文档读写、撤销重做栈、拓扑热编译和预览球更新由 `Source/ToolLayer/Editor/EditorShaderGraphController.cpp` 承接。
+- **UI 与文档双层解耦**：画布渲染与手势交互位于 [`EditorShaderGraphSurface.cpp`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ToolLayer/Editor/EditorUi/EditorShaderGraphSurface.cpp)，通过纯值视图 `EditorShaderGraphViewState` 与动作回调 `EditorShell::SetShaderGraphActionHandler` 通信；文档读写、撤销重做栈、拓扑热编译和预览球更新由 [`EditorShaderGraphController.cpp`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ToolLayer/Editor/EditorShaderGraphController.cpp#L276) 承接。
 - **平滑连线与交互手感**：连线使用 `UiPaintSink::CubicBezier`（解析法线平滑条带 + 顶点 Alpha 抗锯齿羽化）和抗锯齿 `CanvasCircle` 端口；支持约 `20px` 合法端口磁吸、点击已连输入口拔插改连、`Alt + 左键` / 右键点击连线一键秒断、拖线至空白边缘自动平移、以及松手弹出带 9 大分类筛选标签与滚轮翻页的 **138 节点搜索菜单**并自动接线。
 - **双路实时反馈**：每次编辑后自动落盘并推进 `shaderReloadGeneration` 触发主视口真实模型热编译，同时驱动右下角 `112×112` 可拖拽旋转光源的迷你动态预览球，顶部支持一键 **新建配套材质** 与 **打开生成的 HLSL**。
 

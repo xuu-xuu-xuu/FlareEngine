@@ -115,12 +115,12 @@ const auto status = graph.Compile();
 | 组件 | 源码位置 | 职责 |
 | --- | --- | --- |
 | `StaticModelRenderCache` | [`StaticModelRender.h#L46`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/StaticModelRender.h#L46) | 上传网格顶点/索引（支持普通 48B、压缩、80B 蒙皮及多级 LOD / Meshlet）、纹理压缩（BC1/BC5/BC7）与显存驻留管理 |
-| `SortOpaqueDraws()` | [`RenderQueue.cpp#L19`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/RenderQueue.cpp#L19) | 按 `Pipeline → 纹理三件套 → 材质标量/开关 → VB/IB → AlphaMode` 构建稳定排序键，尽量让同状态绘制相邻 |
-| `SortTransparentDraws()` | [`RenderQueue.cpp#L26`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/RenderQueue.cpp#L26) | 按相机视空间深度从远到近排序（等深按稳定实体 ID），保证半透明混合顺序确定 |
+| `SortOpaqueDraws()` | [`RenderQueue.cpp#L19`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/FunctionLayer/Rendering/RenderQueue.cpp#L19) | 按 `Pipeline → 纹理三件套 → 材质标量/开关 → VB/IB → subPassIndex → AlphaMode` 构建稳定排序键，既聚合相同状态绘制，又严格保证多 Pass 不透明材质按 `Pass 0 → Pass 1 → ...` 顺序提交 |
+| `SortTransparentDraws()` | [`RenderQueue.cpp#L26`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/FunctionLayer/Rendering/RenderQueue.cpp#L26) | 按相机视空间深度从远到近排序（等深按稳定实体 ID 与 Pass 顺序），保证半透明与发光叠加混合顺序确定 |
 | `PbrInstanceBatcher` | [`Instancing.h#L14`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/Instancing.h#L14) | 把共享同一网格和材质的多次绘制合并为 `PbrInstanceBatch`（每实例 240 字节结构写入 `t7` SRV） |
 
 ::: tip 调试帧图与排查 Pass 依赖
 - 调用 [`FrameGraph::WriteDot()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/FrameGraph.cpp#L896) 或 [`FrameGraph::WriteJson()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/FrameGraph.cpp#L952) 可导出当前帧完整的 Pass 拓扑、资源生存期区间和物理别名分组。
 - 排查某一 Pass 的画面问题时，可用 `FrameGraph::SetPassLimit(N)` 仅保留排序后的前 `N` 个 Pass 进行二分定位。
-- 像素着色阶段、材质绑定与自定义着色器打包见 [光照着色、材质接口与 Shader 包](materials.md)；阴影与分簇细节见 [阴影、分簇灯光与环境遮蔽](shadows.md)。
+- 像素着色阶段、材质绑定与多 Pass / ASE 着色器热编译见 [光照着色、材质接口与多 Pass / ASE Shader](materials.md)；阴影与分簇细节见 [阴影、分簇灯光与环境遮蔽](shadows.md)。
 :::

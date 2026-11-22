@@ -1,6 +1,6 @@
-# 光照着色、材质接口与 Shader 包
+# 光照着色、材质接口与多 Pass / ASE Shader
 
-这篇文档讲清引擎如何在像素着色阶段计算表面光照（基础受光与 PBR）、CPU 常量/纹理如何与 HLSL 寄存器严格对齐、分层材质与矩形面光如何运作，以及用户自定义 PBR 着色器如何安全打包进入运行时。
+这篇文档讲清引擎如何在像素着色阶段计算表面光照（基础受光与 PBR）、CPU 常量/纹理如何与 HLSL 寄存器严格对齐、分层材质与矩形面光如何运作，以及用户自定义着色器（含离线 `.sebin` 包、Unity 风格单/多 Pass `.fshader.hlsl` 与 138 节点 ASE 连线图 `.fshader.json`）如何安全进入运行时。
 
 ## 材质与着色数据流
 
@@ -136,18 +136,18 @@ SurfaceShaderMetadata
                      └─ SandboxRenderer 按 Pass 独立分发至 opaque / transparent 队列
 ```
 
-1. **零额外根签名槽位复用**：原有逐 Draw `MaterialSurfaceConstants`（`register(b4)`，32B）已按 D3D12 CBV 硬件要求分配 256B 对齐切片；布局 `43` 直接复用剩余字节扩展为 176B 的 `UserMaterialSurfaceConstants`（追加 `flareTime` 与 `flareUserParams[8]` 共 32 个标量槽位），并将 `b4` 可见性扩为 `D3D12_SHADER_VISIBILITY_ALL` 以同时驱动 `vert`（`FlareVertex`）与 `surf`（`FlareSurface`）。
-2. **Unity ShaderLab 风格多 Pass 解析与桥接**：
-   - `Source/ResourceLayer/Assets/SurfaceShader.cpp` 解析 `Shader "Name" { Properties { ... } SubShader { [HLSLINCLUDE ... ENDHLSL] Pass { Name / Shading / Blend / Cull / ZWrite / ZTest / HLSLPROGRAM ... ENDHLSL } } }`（单着色器最多 `MaxSurfaceShaderPasses = 8`，并 100% 向后兼容旧版 `// @FlareShader` 指令与 `CGPROGRAM` / `#pragma surface` / `struct Input` 粘贴代码）。
-   - `Resources/Shaders/UserSurfaceContract.hlsli` 提供 `FlareSurfInput` / `FlareSurfOutput` / `FlareVertexData`、`_Time` / `_SinTime` / `_CosTime` / `unity_DeltaTime`，以及通过宏桥接避开 HLSL 内置重载冲突的 `tex2D(_MainTex / _BumpMap / _MetallicGlossMap, uv)`、`tex2Dlod` 与 `UnpackNormal`。
-   - `BuildSurfaceShaderUserInclude()` 为每个 Pass 生成带 `#line` 原始文件行号映射的 `FlareUserSurfaceBody.hlsli`，并仅在该作用域内 `#define` / `#undef` `Input`、`SurfaceOutput`、`VertexInput`、`fixed*` 与 `Properties` 参数名，避免与 `Pbr.hlsl` 自身结构体冲突。
+1. **零额外根签名槽位复用与全阶段采样**：原有逐 Draw `MaterialSurfaceConstants`（`register(b4)`，32B）已按 D3D12 CBV 硬件要求分配 256B 对齐切片；布局 `43` 直接复用剩余字节扩展为 176B 的 `UserMaterialSurfaceConstants`（追加 `flareTime` 与 `flareUserParams[8]` 共 32 个标量槽位），并将 `b4`、材质基础贴图 `t0..t2` 及各向异性采样器 `s0` 的可见性统一扩为 `D3D12_SHADER_VISIBILITY_ALL`，使 `vert()`（`VSMain` 顶点位移高度图 `tex2Dlod`）与 `surf()`（`PSMain`）均可直接读取材质参数与贴图。
+2. **Unity ShaderLab 风格多 Pass 解析与词法桥接**：
+   - [`ParseSurfaceShaderSource()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ResourceLayer/Assets/SurfaceShader.cpp#L1283) 解析 `Shader "Name" { Properties { ... } SubShader { [HLSLINCLUDE ... ENDHLSL] Pass { Name / Shading / Blend / Cull / ZWrite / ZTest / HLSLPROGRAM ... ENDHLSL } } }`（单着色器最多 `MaxSurfaceShaderPasses = 8`，保留显式 `Shading` 不被 `#pragma surface` 覆盖，并 100% 向后兼容旧版 `// @FlareShader` 指令与 `CGPROGRAM` / `struct Input` 粘贴代码）。
+   - [`UserSurfaceContract.hlsli`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Resources/Shaders/UserSurfaceContract.hlsli#L92) 提供 `FlareSurfInput`（含 `uv`、`worldPos`、`localPos`、`objectPos`、`viewDir`、`lightDir`、`lightColor`、`screenUV`、`facing` 等）/ `FlareSurfOutput` / `FlareVertexData`、`_Time` / `_SinTime` / `_CosTime` / `unity_DeltaTime`，以及通过宏桥接避开 HLSL 内置重载冲突的 `tex2D(_MainTex / _BumpMap / _MetallicGlossMap, uv)`、`tex2Dlod` 与 `UnpackNormal`。
+   - [`BuildSurfaceShaderUserInclude()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ResourceLayer/Assets/SurfaceShader.cpp#L1617) 为每个 Pass 生成带 `#line` 原始文件行号映射的 `FlareUserSurfaceBody.hlsli`：对 `Input`、`SurfaceOutput`、`VertexInput`、`fixed*` 使用作用域内宏桥接，而对 `Properties` 参数名采用词法级独立标识符替换 [`ExpandUserParamReferences()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ResourceLayer/Assets/SurfaceShader.cpp#L1486)（跳过注释、字符串与 `.` 成员访问，确保用户声明同名属性时写 `o.Metallic = Metallic;` 不会破坏结构体字段且 1:1 保留行号）。
 3. **多 Pass D3D12 管线状态扩展**：
    - **发光叠加与隔墙透视**：`rhi::BlendMode::Additive`（`SrcAlpha + One`）与 `rhi::DepthMode::ReadOnlyGreater`（`D3D12_COMPARISON_FUNC_GREATER` 配合只读 `transparentDsv` 实现角色隔墙 X-Ray 轮廓）；`ValidMaterialSurfacePipeline()` 仅对 `UserSurfaceMaterialLayoutVersion` 开放上述扩展组合，不破坏既有内建材质校验契约。
-   - **镜像安全的 `Cull Front`**：`DrawIndexed::Pbr::cullFront` 写入 `b0.options.z = 2.0` 与 `b4.surfaceCoverage.z = 2.0`，在 `Pbr.hlsl`、`MaterialCoverage.hlsli`、`DepthNormals.hlsl` 与 `ShadowDepthSurface.hlsli` 中统一依据 `logicalFront` 丢弃正面保留背面，使背面法线外扩描边在负缩放镜像物体与深度法线预绘下同样成立。
+   - **镜像安全且不污染屏幕缓冲的 `Cull Front`**：`DrawIndexed::Pbr::cullFront` 写入 `b0.options.z = 2.0` 与 `b4.surfaceCoverage.z = 2.0`，在 `Pbr.hlsl`、`MaterialCoverage.hlsli` 与 `ShadowDepthSurface.hlsli` 中依据 `logicalFront` 丢弃正面保留背面（兼容负缩放镜像物体）；同时 [`D3D12DepthNormals.cpp#L181`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/PlatformLayer/Graphics/D3D12/D3D12DepthNormals.cpp#L181) 在屏幕空间深度法线预绘中显式跳过 `cullFront` 外扩描边壳，防止反向法线污染 GTAO / SSR / SSGI。
    - **智能阴影 Pass 选择**：`FinalizeMetadataPasses()` 自动计算 `shadowPassIndex`（优先第一个非 `Cull Front` 且写深度的不透明/镂空 Pass），避免外扩描边或外层护盾污染阴影贴图；同时通过 `usesAlphaCoverage` 在任意 Pass 需要 Alpha 时自动保护纹理槽位使用 `TextureRole::CoverageColor`。
 4. **ASE 节点图（138 节点）与热重载保底**：
-   - `Source/ResourceLayer/Assets/ShaderGraph.cpp` 内置 **9 大分类 138 个节点**（`Input`、`Property`、`Texture`、`UV`、`Math`、`Vector`、`Color`、`Procedural`、`Artistic` 及 `MasterSurface`），经环检测与拓扑排序、自动向量宽度转换后生成统一 `Shader / Properties / SubShader` 源码，并同步提供 CPU `112×112` 动态光源预览球渲染（`RenderShaderGraphPreviewSphere()`）。
-   - `MaterialSurfacePipelineCache::LoadUserSurface()` 按 `(sha256, passIndex, kind, alphaMode, blend, depth, ...)` 缓存 PSO 与 `.sebin`；编辑保存触发 `WM_ACTIVATEAPP` 热编译失败时，逐 Pass 回退到 `lastGoodUserPipelines_` 保证视口零黑屏，并将带原始文件行列号的诊断推送至控制台支持双击直达。
+   - [`CompileShaderGraphToHlsl()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ResourceLayer/Assets/ShaderGraph.cpp#L983) 内置 **9 大分类 138 个节点**（`Input`、`Property`、`Texture`、`UV`、`Math`、`Vector`、`Color`、`Procedural`、`Artistic` 及 `MasterSurface`），经环检测与双通道独立拓扑排序（`WorldOffset` 仅提取顶点可达子图写入 `vert()`）、自动向量宽度转换后生成统一 `Shader / Properties / SubShader` 源码，并同步提供 CPU `112×112` 动态光源预览球渲染（[`RenderShaderGraphPreviewSphere()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/ResourceLayer/Assets/ShaderGraph.cpp#L2233)）。
+   - [`MaterialSurfacePipelineCache::LoadUserSurface()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/FunctionLayer/Rendering/MaterialSurfacePipelines.cpp#L53) 按 `(sha256, passIndex, kind, alphaMode, blend, depth, ...)` 缓存 PSO 与 `.sebin`；编辑保存触发 `WM_ACTIVATEAPP` 热编译失败时，逐 Pass 回退到 `lastGoodUserPipelines_` 保证视口零黑屏，并将带原始文件行列号的诊断推送至控制台支持双击直达。
 
 ::: warning 修改材质常量布局必检三处
 改动任意 `b0`–`b7` 结构体或 `t*` 纹理槽时，必须同步核对：

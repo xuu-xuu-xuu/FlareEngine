@@ -91,9 +91,9 @@ if (rtFlags.z != 0u)
 
 ### PrepareD3D12RayTracing
 
-[`PrepareD3D12RayTracing()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/PlatformLayer/Graphics/D3D12/D3D12RayTracing.cpp#L844) 在每帧录制前收集不透明绘制与全部阴影投射物：
+[`PrepareD3D12RayTracing()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/2318549/Source/PlatformLayer/Graphics/D3D12/D3D12RayTracing.cpp#L844) 在每帧录制前收集不透明绘制与全部阴影投射物：
 - **跨帧持久 BLAS 缓存**：静态网格按底层几何缓冲身份缓存 BLAS，命中计入 `blasCacheHits`，首次构建计入 `blasBuilds`。
-- **帧槽 TLAS 与无绑定几何表**：构建最多 `4,096` 个实例的 TLAS（`MaxRtInstances`）和最多 `64` 种唯一网格（`MaxUniqueRtMeshes`）的顶点、索引与反照率描述符表，使镜头外的物体同样能投射正确软阴影、出现在镜面反射里并贡献反弹漫反射颜色。
+- **帧槽 TLAS、多 Pass 共面去重与无绑定几何表**：对多 Pass 不透明材质在同一网格与世界变换下产生的多次共面 Draw 先按几何缓冲与变换键去重（避免 DXR 1.1 自相交阴影/RTAO 粉刺），再构建最多 `4,096` 个实例的 TLAS（`MaxRtInstances`）和最多 `64` 种唯一网格（`MaxUniqueRtMeshes`）的顶点、索引与反照率描述符表，使镜头外的物体同样能投射正确软阴影、出现在镜面反射里并贡献反弹漫反射颜色。
 
 ### RecordD3D12RayTracingPreOpaque
 
