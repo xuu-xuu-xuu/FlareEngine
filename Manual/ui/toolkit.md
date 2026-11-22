@@ -126,8 +126,8 @@ struct UiInputEvent
 
 绘制链路分为两步，中间彻底隔离文档指针与 GPU 对象：
 
-1. **`UiPainter::Build()`** 遍历可见节点，调用 [`UiPaintSink`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/UI/Interfaces/UiPaintSink.h#L14) 录制值类型命令到 `UiDisplayList`（裁剪栈 `ClipPush/ClipPop`、矩形、圆角边框、九宫格 `NineSlice`、文本、图片、线条与画布图元）。
-2. **`UiGeometryBuilder::Build()`** 消费 `UiDisplayList`，调用 `UiTextService::LayoutGlyphs()` 生成字形四边形、调用 [`UiImageProvider::Resolve()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/UI/Interfaces/UiImageProvider.h#L17) 把图片名映射为不透明纹理 token，最终产出只读 [`GuiGeometry`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/CoreLayer/GuiGeometry.h#L18)（每顶点固定 20 字节：`position + uv + packed sRGB color`）。
+1. **`UiPainter::Build()`** 遍历可见节点，调用 [`UiPaintSink`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/UI/Interfaces/UiPaintSink.h#L14) 录制值类型命令到 `UiDisplayList`（裁剪栈 `ClipPush/ClipPop`、矩形、圆角边框、九宫格 `NineSlice`、文本、图片、线条、抗锯齿圆 `CanvasCircle` 与连续法线羽化贝塞尔曲线 `CubicBezier`）。
+2. **`UiGeometryBuilder::Build()`** 消费 `UiDisplayList`，调用 `UiTextService::LayoutGlyphs()` 生成字形四边形、调用 [`UiImageProvider::Resolve()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/UI/Interfaces/UiImageProvider.h#L17) 把图片名映射为不透明纹理 token，并为斜线、`CanvasCircle` 与 `CubicBezier` 生成带 `1.25px` 顶点 Alpha 羽化边的平滑抗锯齿三角带（供 `Shader Graph` 节点连线与画布图元使用），最终产出只读 [`GuiGeometry`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/CoreLayer/GuiGeometry.h#L18)（每顶点固定 20 字节：`position + uv + packed sRGB color`）。
 
 ```cpp
 // Source/CoreLayer/GuiGeometry.h

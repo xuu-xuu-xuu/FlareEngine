@@ -40,6 +40,7 @@ export default defineConfig({
             { text: '音频、粒子、导航、UI 与事件', link: '/user/api/systems' }
           ] },
           { text: '材质、布光与画质', items: [
+            { text: '自定义 Shader 与 ASE 连线图', link: '/user/custom-shader' },
             { text: '用渲染工作室调光', link: '/user/rendering-studio' },
             { text: '给室内展厅布光', link: '/user/indoor-lighting' },
             { text: '给玩家提供画质设置', link: '/user/player-quality' }

@@ -7,17 +7,17 @@
 [`DefaultEditorDockLayout()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorDock.cpp#L57) 采用贴合创作直觉的 **2×3** 分屏结构——左侧占 `46%` 宽为上下双视窗，右侧占 `54%` 宽为三列通高工作区：
 
 ```text
-+---------------------------+------------+----------------+--------------------+
-|  Viewport | UiDesigner    |            |                |                    |
-|  (场景视口 · 62% 高)       | Hierarchy  |    Assets      |     Inspector      |
-+---------------------------+  (场景层级) |    (资源)      |     (属性面板)     |
-|  Game | Console           |  右侧 27%  |  余下 43%      |     余下 57%       |
-|  (摄像机视口 · 38% 高)     |            |                |                    |
-+---------------------------+------------+----------------+--------------------+
-          左侧 46%                               右侧 54%
++-------------------------------+------------+----------------+--------------------+
+|  Viewport | UiDesigner        |            |                |                    |
+|  (场景视口 · 62% 高)           | Hierarchy  |    Assets      |     Inspector      |
++-------------------------------+  (场景层级) |    (资源)      |     (属性面板)     |
+|  Game | Console | ShaderGraph |  右侧 27%  |  余下 43%      |     余下 57%       |
+|  (摄像机/日志/连线图 · 38% 高) |            |                |                    |
++-------------------------------+------------+----------------+--------------------+
+           左侧 46%                                   右侧 54%
 ```
 
-- **数据隔离**：UI 层不直接持有 `EditorSession*`、`World*` 或 `AssetStore*`。只读工作区信息通过 [`EditorContext`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorContext.h#L52) 暴露，各面板数据通过纯值模型同步：[`EditorHierarchyModel`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorPanels.h#L28)、[`EditorAssetsModel`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorPanels.h#L140) 与 [`EditorInspectorModel`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorPanels.h#L106)。
+- **数据隔离**：UI 层不直接持有 `EditorSession*`、`World*` 或 `AssetStore*`。只读工作区信息通过 [`EditorContext`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorContext.h#L52) 暴露，各面板数据通过纯值模型同步：[`EditorHierarchyModel`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorPanels.h#L28)、[`EditorAssetsModel`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorPanels.h#L140)、[`EditorInspectorModel`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorPanels.h#L106) 与 `EditorShaderGraphView`。
 - **摄像机视口（`Game`）**：顶栏提供 **窗口预览** 与 **全屏预览** 两种模式切换，底层映射到 [`EditorShell::MaximizeOnPlay()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorShell.h#L179) 与 [`SetGameMaximized()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorShellChrome.cpp#L877)。Play Mode 在 `Game` 视口独立呈现，不劫持编辑用 `Viewport` 镜头。
 - **控制台面板（`Console`）**：顶栏集成 **清空**、**折叠重复**、**运行清空**（`ConsoleClearOnPlay()`）及右侧 **信息 / 警告 / 错误** 计数过滤按钮；双击含 `File.cs(line,col)` 的日志行通过 `consoleActivateHandler_` 调起外部 IDE 精准跳转行列。
 - **资源面板（`Assets`）**：支持列表/网格双视图、目录树与面包屑导航、类型过滤与关键词过滤；右上角布局菜单可将自定义分屏树持久化至 `.editor-ui.custom.json`（见[面板拖出与吸附](docking.md)）。
@@ -198,6 +198,14 @@ assetDragCursor_ = compatible ? EditorDragCursor::Allow : EditorDragCursor::Forb
 | 6 | 场景层级行内重命名框 | [`EditorShellPanels.cpp#L873`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorShellPanels.cpp#L873) |
 | 7 | 资源面板关键词过滤框 | [`EditorShellPanels.cpp#L1325`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorShellPanels.cpp#L1325) |
 | 8 | 资源面板行内重命名框 | [`EditorShellPanels.cpp#L1416`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ToolLayer/Editor/EditorUi/EditorShellPanels.cpp#L1416) |
+
+## ASE 风格可视化着色器面板（`Shader Graph`）
+
+`EditorPanelId::ShaderGraph` 默认停靠在左下方页签组（与 `Game`、`Console` 并列），确保创作时左上方 `Viewport` 里的真实场景模型不被遮挡；同时支持拖出为独立浮动副屏窗口：
+
+- **UI 与文档双层解耦**：画布渲染与手势交互位于 `Source/ToolLayer/Editor/EditorUi/EditorShaderGraphSurface.cpp`，通过纯值视图 `EditorShaderGraphView` 与动作回调 `EditorShaderGraphActions` 通信；文档读写、撤销重做栈、拓扑热编译和预览球更新由 `Source/ToolLayer/Editor/EditorShaderGraphController.cpp` 承接。
+- **平滑连线与交互手感**：连线使用 `UiPaintSink::CubicBezier`（解析法线平滑条带 + 顶点 Alpha 抗锯齿羽化）和抗锯齿 `CanvasCircle` 端口；支持约 `20px` 合法端口磁吸、点击已连输入口拔插改连、`Alt + 左键` / 右键点击连线一键秒断、拖线至空白边缘自动平移、以及松手弹出带 9 大分类筛选标签与滚轮翻页的 **138 节点搜索菜单**并自动接线。
+- **双路实时反馈**：每次编辑后自动落盘并推进 `shaderReloadGeneration` 触发主视口真实模型热编译，同时驱动右下角 `112×112` 可拖拽旋转光源的迷你动态预览球，顶部支持一键 **新建材质** 与 **查看生成 HLSL**。
 
 ## `FormPanel` 表单提交闭环
 

@@ -37,6 +37,7 @@ public:
     std::shared_ptr<const ImageData>        LoadTextureImage(const AssetId& id, ...);
     std::shared_ptr<const MaterialDocument> LoadMaterial(const AssetId& id, ...);
     bool LoadShaderArtifact(const AssetId& id, ShaderArtifactSource& output, ...) const;
+    bool LoadSurfaceShader(const AssetId& id, UserSurfaceShaderSource& output, ...) const;
     std::shared_ptr<const EnvironmentAsset> LoadEnvironment(const AssetId& id, ...);
     std::shared_ptr<const TODProfile>       LoadTODProfile(const AssetId& id, ...);
     std::shared_ptr<const AudioClip>        LoadAudioClip(const AssetId& id, ...);
@@ -72,7 +73,7 @@ public:
 
 ## 材质与着色器变体
 
-- **可序列化材质资产**：[`MaterialDocument`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ResourceLayer/Assets/MaterialDocument.h#L8) 保存所有贴图 `AssetId`（BaseColor、Normal、MetallicRoughness 及多层扩展贴图）、可选自定义着色器 `.sebin`（`shader` 字段）、透明度模式（`Opaque` / `Mask` / `Blend`）与四套进阶材质层（`ClearCoat`、`Sheen`、`Anisotropy`、`Subsurface`）。属性读写走统一的元数据通道 [`WriteMaterialProperty()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ResourceLayer/Assets/MaterialMetadata.cpp#L75)。
+- **可序列化材质资产**：[`MaterialDocument`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ResourceLayer/Assets/MaterialDocument.h#L8) 保存所有贴图 `AssetId`（BaseColor、Normal、MetallicRoughness 及多层扩展贴图）、可选自定义着色器引用（`shader` 字段，同时支持离线 `.sebin`、热编译单/多 Pass `.fshader.hlsl` 与 ASE 节点图 `.fshader.json`）、自定义表面参数覆盖表（`shaderParameters`，打包至 `b4` `flareUserParams[8]`）、透明度模式（`Opaque` / `Mask` / `Blend`）与四套进阶材质层（`ClearCoat`、`Sheen`、`Anisotropy`、`Subsurface`）。多 Pass 着色器若任一 Pass 使用 `Cutout` / `Transparent`（`usesAlphaCoverage`），基础色贴图自动走保留 Alpha 的 `TextureRole::CoverageColor`。属性读写走统一的元数据通道 [`WriteMaterialProperty()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/ResourceLayer/Assets/MaterialMetadata.cpp#L75)。
 - **CPU 材质实例**：[`ResolveMaterialInstance()`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/MaterialInstance.h#L32) 基于父 `PbrRenderMaterial` 叠加局部标量/贴图覆盖与 `addFeatures` / `removeFeatures` 位掩码，生成只读渲染材质，不修改父材质且共享未覆盖纹理。
 - **着色器变体宏**：[`MaterialFeature`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/MaterialVariants.h#L10) 定义 10 个不可复用的稳定位标志，[`VariantMacros(mask)`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/4030e29/Source/FunctionLayer/Rendering/MaterialVariants.h#L50) 按固定表顺序生成着色器编译宏，`VariantId(mask)` 输出 8 位十六进制稳定缓存键：
 

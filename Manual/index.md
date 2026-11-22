@@ -40,7 +40,7 @@ Flare Engine 严格遵循自底向上的**五层单向依赖架构**（高层可
 
 ### 渲染与光照
 
-- [灯光组件](runtime/light.md) · [前向管线与帧图](render/pipeline.md) · [光照着色、材质接口与 Shader 包](render/materials.md)
+- [灯光组件](runtime/light.md) · [前向管线与帧图](render/pipeline.md) · [光照着色、材质接口与多 Pass / ASE Shader](render/materials.md)
 - [阴影、分簇灯光与环境遮蔽](render/shadows.md)（PSSM、三次 B 样条 PCF、16-Tap Vogel PCSS 与 12-Tap 局部光阴影）
 - [环境光照、大气与反射](render/environment.md) · [DXR 1.1 混合硬件光线追踪与 SVGF 降噪](render/ray-tracing.md) · [后处理、抗锯齿与调色](render/post.md)
 - [可见性、Hi-Z 与间接绘制](render/visibility.md) · [Mesh Shader 双轨管线与渲染优化](render/mesh-shader.md) · [确定性粒子模拟与 GPU 绘制](render/particles.md)
