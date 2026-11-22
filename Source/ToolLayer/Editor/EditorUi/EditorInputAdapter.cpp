@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 namespace
 {
@@ -163,6 +163,7 @@ bool EditorInputAdapter::Translate(UINT message, WPARAM wparam, LPARAM lparam, U
         event.shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         event.control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         event.alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+        event.isRepeat = (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) && ((static_cast<DWORD_PTR>(lparam) & (1ull << 30)) != 0);
         return true;
     case WM_CHAR:
     {
@@ -301,4 +302,4 @@ const UiImeCandidateAnchor& EditorInputAdapter::CandidateAnchor() const noexcept
     return candidateAnchor_;
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

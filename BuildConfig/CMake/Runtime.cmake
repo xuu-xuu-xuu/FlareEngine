@@ -7,7 +7,7 @@ add_library(EngineCore STATIC
     Source/CoreLayer/Hash.cpp
     Source/CoreLayer/Math/SphericalHarmonics.cpp
     Source/CoreLayer/Spatial/BoundsIndex.cpp)
-se_target(EngineCore)
+flare_target(EngineCore)
 target_link_libraries(EngineCore PRIVATE bcrypt)
 # UI 核心只依赖 EngineCore。
 
@@ -19,29 +19,29 @@ add_library(EngineUiCore STATIC
     Source/FunctionLayer/UI/Core/UiLayout.cpp
     Source/FunctionLayer/UI/Core/UiStyle.cpp
     Source/FunctionLayer/UI/Core/UiInput.cpp)
-se_target(EngineUiCore)
+flare_target(EngineUiCore)
 target_link_libraries(EngineUiCore PUBLIC EngineCore)
 
 add_library(EngineUiRender STATIC Source/FunctionLayer/Rendering/UiPaint.cpp)
-se_target(EngineUiRender)
+flare_target(EngineUiRender)
 target_link_libraries(EngineUiRender PUBLIC EngineUiCore EngineCore)
 
 add_library(EngineUiWidgets STATIC
     Source/FunctionLayer/UI/Widgets/UiTextEdit.cpp
     Source/FunctionLayer/UI/Widgets/UiWidgets.cpp)
-se_target(EngineUiWidgets)
+flare_target(EngineUiWidgets)
 target_link_libraries(EngineUiWidgets PUBLIC EngineUiCore EngineCore)
 
 # 色彩 LUT 的 CPU 实现同时被后处理（EngineSandboxRenderer）与编辑器 LUT 面板使用，
 # 单独成库避免同一符号被两个静态库重复链接。
 
 add_library(EngineColorGrading STATIC Source/FunctionLayer/Rendering/ColorGrading.cpp Source/FunctionLayer/Rendering/ColorLutFile.cpp)
-se_target(EngineColorGrading)
+flare_target(EngineColorGrading)
 target_include_directories(EngineColorGrading PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Source")
 target_link_libraries(EngineColorGrading PUBLIC EngineCore)
 
 add_library(EngineEnvironmentAssets STATIC Source/ResourceLayer/Environment/TODProfile.cpp)
-se_target(EngineEnvironmentAssets)
+flare_target(EngineEnvironmentAssets)
 target_link_libraries(EngineEnvironmentAssets PUBLIC EngineCore)
 
 add_library(EngineRuntime STATIC
@@ -62,7 +62,7 @@ add_library(EngineRuntime STATIC
     Source/FunctionLayer/Runtime/SceneSpatialIndex.cpp
     Source/FunctionLayer/Runtime/TODSystem.cpp
     Source/FunctionLayer/Runtime/SkeletalAnimation.cpp)
-se_target(EngineRuntime)
+flare_target(EngineRuntime)
 target_link_libraries(EngineRuntime PUBLIC EngineCore EngineEnvironmentAssets)
 
 add_library(EnginePhysics STATIC
@@ -70,11 +70,11 @@ add_library(EnginePhysics STATIC
     Source/FunctionLayer/Physics/TriggerTracker.cpp
     Source/FunctionLayer/Physics/PhysicsWorld.cpp
     Source/FunctionLayer/Physics/CharacterController.cpp)
-se_target(EnginePhysics)
+flare_target(EnginePhysics)
 target_link_libraries(EnginePhysics PUBLIC EngineCore)
 
 add_library(EngineScenePhysics STATIC Source/FunctionLayer/Physics/ScenePhysics.cpp)
-se_target(EngineScenePhysics)
+flare_target(EngineScenePhysics)
 target_link_libraries(EngineScenePhysics PUBLIC EngineRuntime EnginePhysics)
 
 add_library(ufbx STATIC ThirdParty/ufbx/ufbx.c)
@@ -120,7 +120,7 @@ add_library(EngineAssets STATIC
     Source/ResourceLayer/Assets/HlodBake.cpp
     Source/ResourceLayer/Assets/MeshletBake.cpp
     Source/ResourceLayer/Assets/ImpostorBake.cpp)
-se_target(EngineAssets)
+flare_target(EngineAssets)
 if(MSVC)
     set_source_files_properties(Source/ResourceLayer/Assets/DrWav.c PROPERTIES COMPILE_OPTIONS "/W0")
 endif()
@@ -129,7 +129,7 @@ target_link_libraries(EngineAssets PUBLIC EngineCore EngineEnvironmentAssets PRI
 
 # 离线场景辐照准备只依赖CPU世界和资产，不拉入RHI。
 add_library(EngineDiffuseProbes STATIC Source/FunctionLayer/Rendering/DiffuseProbePreparation.cpp)
-se_target(EngineDiffuseProbes)
+flare_target(EngineDiffuseProbes)
 target_link_libraries(EngineDiffuseProbes PUBLIC EngineRuntime EngineAssets)
 
 add_library(EngineGameUI STATIC
@@ -140,50 +140,50 @@ add_library(EngineGameUI STATIC
     Source/FunctionLayer/GameUI/UiTextPresentation.cpp
     Source/FunctionLayer/GameUI/UiControlGeometry.cpp
     Source/FunctionLayer/GameUI/UiTransitionDemo.cpp)
-se_target(EngineGameUI)
+flare_target(EngineGameUI)
 target_link_libraries(EngineGameUI PUBLIC EngineCore PRIVATE dwrite)
 
 add_library(EngineInput STATIC
     Source/FunctionLayer/Input/InputActionAsset.cpp
     Source/FunctionLayer/Input/InputActionMap.cpp)
-se_target(EngineInput)
+flare_target(EngineInput)
 target_link_libraries(EngineInput PUBLIC EngineCore)
 
 add_library(EngineAudio STATIC Source/FunctionLayer/Audio/AudioWorld.cpp)
-se_target(EngineAudio)
+flare_target(EngineAudio)
 target_link_libraries(EngineAudio PUBLIC EngineCore)
 
 add_library(EngineSceneAudio STATIC Source/FunctionLayer/Audio/SceneAudio.cpp)
-se_target(EngineSceneAudio)
+flare_target(EngineSceneAudio)
 target_link_libraries(EngineSceneAudio PUBLIC EngineRuntime EngineAudio EngineAssets)
 
 add_library(EngineParticles STATIC Source/FunctionLayer/Particles/ParticleSimulator.cpp)
-se_target(EngineParticles)
+flare_target(EngineParticles)
 target_link_libraries(EngineParticles PUBLIC EngineCore)
 
 add_library(EngineSceneParticles STATIC Source/FunctionLayer/Particles/SceneParticles.cpp)
-se_target(EngineSceneParticles)
+flare_target(EngineSceneParticles)
 target_link_libraries(EngineSceneParticles PUBLIC EngineRuntime EngineParticles)
 
 add_library(EngineNavigation STATIC
     Source/FunctionLayer/Navigation/NavMeshData.cpp
     Source/FunctionLayer/Navigation/NavMeshBaker.cpp
     Source/FunctionLayer/Navigation/NavPathfinder.cpp)
-se_target(EngineNavigation)
+flare_target(EngineNavigation)
 target_link_libraries(EngineNavigation PUBLIC EngineCore)
 
 add_library(EngineSceneNavigation STATIC Source/FunctionLayer/Navigation/SceneNavigation.cpp)
-se_target(EngineSceneNavigation)
+flare_target(EngineSceneNavigation)
 target_link_libraries(EngineSceneNavigation PUBLIC EngineRuntime EngineNavigation EngineScenePhysics EngineAssets)
 
 add_library(EngineNative SHARED Source/FunctionLayer/Scripting/NativeBridge/EngineNative.cpp Source/FunctionLayer/Scripting/NativeBridge/WindowProfile.cpp
     Source/FunctionLayer/Scripting/NativeBridge/PlayerQualityMenu.cpp)
-se_target(EngineNative)
+flare_target(EngineNative)
 target_link_libraries(EngineNative PRIVATE EngineRuntime EnginePhysics EngineScenePhysics EngineAudio EngineSceneAudio EngineParticles EngineSceneParticles EngineNavigation EngineSceneNavigation EngineGameUI EngineInput EngineSandboxHost EngineSandboxRenderer EngineEditorApp EngineEditorRenderer)
 
 add_library(EngineApplication STATIC Source/FunctionLayer/Application/FrameData.cpp Source/FunctionLayer/Application/FeatureFrameData.cpp Source/FunctionLayer/Application/FreeCameraInput.cpp
     Source/FunctionLayer/Application/PlayerQuality.cpp)
-se_target(EngineApplication)
+flare_target(EngineApplication)
 target_link_libraries(EngineApplication PUBLIC EngineRuntime EnginePhysics EngineSceneParticles EngineGameUI EngineAssets)
 
 add_library(EnginePlatform STATIC
@@ -200,21 +200,21 @@ add_library(EnginePlatform STATIC
     Source/PlatformLayer/Windows/UiDirectWriteTextService.cpp
     Source/PlatformLayer/Windows/Win32UiPlatformServices.cpp
     Source/PlatformLayer/Windows/XAudio2Backend.cpp)
-se_target(EnginePlatform)
+flare_target(EnginePlatform)
 target_link_libraries(EnginePlatform PUBLIC EngineCore EngineGameUI PRIVATE user32 imm32 shell32 xaudio2)
 
 add_library(EngineSandboxHost STATIC Source/FunctionLayer/Application/SandboxApp.cpp Source/FunctionLayer/Application/SandboxDiagnostics.cpp)
-se_target(EngineSandboxHost)
+flare_target(EngineSandboxHost)
 target_link_libraries(EngineSandboxHost PUBLIC EnginePlatform EngineApplication)
 
 add_library(EngineProject STATIC Source/ToolLayer/Tools/Project.cpp)
-se_target(EngineProject)
+flare_target(EngineProject)
 target_link_libraries(EngineProject PUBLIC EngineRuntime EngineAssets EngineGameUI EnginePhysics EngineInput EngineNavigation EngineCore)
 
 add_library(EngineProjectSession STATIC Source/ToolLayer/Editor/ProjectWorkspaceSession.cpp)
-se_target(EngineProjectSession)
+flare_target(EngineProjectSession)
 target_link_libraries(EngineProjectSession PUBLIC EngineProject EnginePlatform)
 
 add_executable(ProjectTool Source/ToolLayer/Tools/ProjectTool.cpp)
-se_target(ProjectTool)
+flare_target(ProjectTool)
 target_link_libraries(ProjectTool PRIVATE EngineProject)

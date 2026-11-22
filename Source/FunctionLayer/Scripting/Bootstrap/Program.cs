@@ -65,9 +65,7 @@ try
         var resolvedScene=scenePath is null?null:Path.GetFullPath(ProjectFile(scenePath));
         var resolvedUi=Option("--ui") is { } editorUi?Path.GetFullPath(ProjectFile(editorUi)):null;
         Environment.SetEnvironmentVariable("FLARE_EDITOR_SCENE_FILE",resolvedScene);
-        Environment.SetEnvironmentVariable("SELFENGINE_EDITOR_SCENE_FILE",resolvedScene);
         Environment.SetEnvironmentVariable("FLARE_EDITOR_UI_FILE",resolvedUi);
-        Environment.SetEnvironmentVariable("SELFENGINE_EDITOR_UI_FILE",resolvedUi);
     }
     if (scenePath is not null) session.ImportScene(File.ReadAllText(ProjectFile(scenePath)));
     if(Option("--ui") is { } uiPath)session.Ui.Load(File.ReadAllText(ProjectFile(uiPath)));

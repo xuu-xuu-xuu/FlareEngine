@@ -2,7 +2,7 @@
 #include <bit>
 #include <cstdint>
 
-namespace se
+namespace flare
 {
 // IEEE binary16，round-to-nearest-even；有限资源的范围验证由调用方负责。
 inline std::uint16_t FloatToHalf(float value) noexcept

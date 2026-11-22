@@ -11,17 +11,17 @@
 
 namespace
 {
-se::FloatImage Sample(bool contrast)
+flare::FloatImage Sample(bool contrast)
 {
-    se::FloatImage image{256,128,{}};image.pixels.reserve(size_t(image.width)*image.height);
-    const auto key=se::Normalize(se::Vec3{0.3f,0.7f,-0.6f}),fill=se::Normalize(se::Vec3{-0.7f,0.3f,0.5f});
+    flare::FloatImage image{256,128,{}};image.pixels.reserve(size_t(image.width)*image.height);
+    const auto key=flare::Normalize(flare::Vec3{0.3f,0.7f,-0.6f}),fill=flare::Normalize(flare::Vec3{-0.7f,0.3f,0.5f});
     for(std::uint32_t y=0;y<image.height;++y)for(std::uint32_t x=0;x<image.width;++x)
     {
-        const double theta=(double(y)+0.5)/image.height*se::Pi,phi=((double(x)+0.5)/image.width-0.5)*2*se::Pi;
-        const se::Vec3 direction{float(std::sin(theta)*std::cos(phi)),float(std::cos(theta)),float(std::sin(theta)*std::sin(phi))};
-        const float upper=std::max(direction.y,0.0f),hot=std::pow(std::max(se::Dot(direction,key),0.0f),contrast?64.0f:4.0f),cool=std::pow(std::max(se::Dot(direction,fill),0.0f),8.0f);
-        const auto color=contrast?se::Vec3{0.04f,0.06f,0.12f}*(0.2f+upper*0.8f)+se::Vec3{12,10,6}*hot+se::Vec3{0.4f,0.7f,1.8f}*cool
-            :se::Vec3{0.12f,0.18f,0.3f}*(0.4f+upper*0.6f)+se::Vec3{0.6f,0.5f,0.35f}*hot;
+        const double theta=(double(y)+0.5)/image.height*flare::Pi,phi=((double(x)+0.5)/image.width-0.5)*2*flare::Pi;
+        const flare::Vec3 direction{float(std::sin(theta)*std::cos(phi)),float(std::cos(theta)),float(std::sin(theta)*std::sin(phi))};
+        const float upper=std::max(direction.y,0.0f),hot=std::pow(std::max(flare::Dot(direction,key),0.0f),contrast?64.0f:4.0f),cool=std::pow(std::max(flare::Dot(direction,fill),0.0f),8.0f);
+        const auto color=contrast?flare::Vec3{0.04f,0.06f,0.12f}*(0.2f+upper*0.8f)+flare::Vec3{12,10,6}*hot+flare::Vec3{0.4f,0.7f,1.8f}*cool
+            :flare::Vec3{0.12f,0.18f,0.3f}*(0.4f+upper*0.6f)+flare::Vec3{0.6f,0.5f,0.35f}*hot;
         image.pixels.push_back(color);
     }
     return image;
@@ -40,26 +40,26 @@ int wmain(int argc,wchar_t** argv)
     if(!text.Load(GetExecutableDirectory()/"Resources/Localization/en-US.txt",error))
     {std::cerr<<"EnvironmentCooker could not load localization: "<<error<<'\n';return 1;}
     const auto usage=[&]{Log(LogLevel::Error,text.GetText("EnvironmentCooker.Usage"));return 2;};
-    if(argc!=4&&argc!=8)return usage();const std::wstring_view mode=argv[1];std::vector<se::AssetDiagnostic> diagnostics;bool success=false,hit=false;
+    if(argc!=4&&argc!=8)return usage();const std::wstring_view mode=argv[1];std::vector<flare::AssetDiagnostic> diagnostics;bool success=false,hit=false;
     if(mode==L"sample"&&argc==4)
     {
         const std::wstring_view kind=argv[2];if(kind!=L"soft"&&kind!=L"contrast")return usage();
-        success=se::WriteRadiance(argv[3],Sample(kind==L"contrast"),diagnostics);
+        success=flare::WriteRadiance(argv[3],Sample(kind==L"contrast"),diagnostics);
     }
     else if(mode==L"cook")
     {
-        se::EnvironmentSettings settings;
+        flare::EnvironmentSettings settings;
         if(argc==8&&(!Number(argv[4],settings.cubeSize)||!Number(argv[5],settings.irradianceSize)||!Number(argv[6],settings.lutSize)||!Number(argv[7],settings.samples)))return usage();
         const auto destination=std::filesystem::absolute(argv[3]);
-        success=se::CookEnvironment(argv[2],destination,settings,hit,diagnostics);
+        success=flare::CookEnvironment(argv[2],destination,settings,hit,diagnostics);
         if(success)
         {
-            se::AssetStore catalog(destination.parent_path(),destination.parent_path()/"Cache");se::AssetId id;
+            flare::AssetStore catalog(destination.parent_path(),destination.parent_path()/"Cache");flare::AssetId id;
             success=catalog.RegisterSource(destination.filename(),{},id,diagnostics);
         }
     }
     else return usage();
     for(const auto& diagnostic:diagnostics)Log(diagnostic.warning?LogLevel::Warning:LogLevel::Error,text.GetText(diagnostic.key)+": "+diagnostic.detail);
-    if(success)Log(LogLevel::Info,text.GetText(hit?"EnvironmentCooker.CacheHit":"EnvironmentCooker.Complete")+": "+se::asset_io::Utf8(argv[3]));
+    if(success)Log(LogLevel::Info,text.GetText(hit?"EnvironmentCooker.CacheHit":"EnvironmentCooker.Complete")+": "+flare::asset_io::Utf8(argv[3]));
     return success?0:1;
 }

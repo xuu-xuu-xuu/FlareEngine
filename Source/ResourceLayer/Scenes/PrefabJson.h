@@ -6,7 +6,7 @@
 #include <string_view>
 #include <unordered_set>
 
-namespace se::detail
+namespace flare::detail
 {
 inline bool OnlyJsonKeys(const nlohmann::json& object, std::initializer_list<std::string_view> keys)
 {
@@ -171,4 +171,4 @@ inline bool ReadPrefabLinkJson(const nlohmann::json& json, PrefabLink& outLink, 
     outLink = std::move(link);
     return true;
 }
-} // namespace se::detail
+} // namespace flare::detail

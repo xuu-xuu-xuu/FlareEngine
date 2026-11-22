@@ -11,7 +11,7 @@
 #include <cstring>
 #include <limits>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -362,4 +362,4 @@ bool DecodeAudioContainer(
     output = std::move(clip);
     return true;
 }
-} // namespace se
+} // namespace flare

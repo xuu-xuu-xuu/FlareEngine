@@ -4,7 +4,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // 兼容的属性/快照值描述；实际运行时存储由对应的 ComponentBase 包装拥有。
 struct CameraComponent {float verticalFovRadians=Pi/3;float nearPlane=.1f;float farPlane=1000;bool primary=false;};

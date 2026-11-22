@@ -11,7 +11,7 @@
 #include <string>
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 using namespace detail;
 
@@ -137,4 +137,4 @@ UiElementHandle EditorShell::DesignerNodeElement(std::size_t index) const noexce
     return index < designerNodeElements_.size() ? designerNodeElements_[index] : UiElementHandle{};
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

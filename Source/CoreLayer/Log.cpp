@@ -51,7 +51,7 @@ std::filesystem::path CurrentLogPath()
 bool SampleDiagnosticFrame(std::uint64_t frame) noexcept
 {
     // 验证进程可增加开头的有限帧采样，上限 120；正常进程只记录前三帧和心跳。
-    static const auto initial=[]() noexcept{const auto* value=std::getenv("SELFENGINE_DIAGNOSTIC_FRAMES");
+    static const auto initial=[]() noexcept{const auto* value=std::getenv("FLARE_DIAGNOSTIC_FRAMES");
         if(!value)return 3ul;char* end=nullptr;const auto parsed=std::strtoul(value,&end,10);
         return end!=value&&*end=='\0'&&parsed>=3&&parsed<=120?parsed:3ul;}();
     return frame<=initial||frame%600==0;

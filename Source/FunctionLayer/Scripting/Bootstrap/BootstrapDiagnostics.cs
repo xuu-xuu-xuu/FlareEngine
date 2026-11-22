@@ -8,11 +8,11 @@ internal sealed class BootstrapDiagnostics : IDisposable
     private readonly Stopwatch elapsed = Stopwatch.StartNew();
     public BootstrapDiagnostics(string projectRoot)
     {
-        var directory = Environment.GetEnvironmentVariable("SELFENGINE_LOG_DIRECTORY");
+        var directory = Environment.GetEnvironmentVariable("FLARE_LOG_DIRECTORY");
         if (string.IsNullOrEmpty(directory))
         {
             directory = Path.Combine(projectRoot, "out", "Logs");
-            Environment.SetEnvironmentVariable("SELFENGINE_LOG_DIRECTORY", directory);
+            Environment.SetEnvironmentVariable("FLARE_LOG_DIRECTORY", directory);
         }
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, $"managed-{DateTime.UtcNow:yyyyMMdd-HHmmssfff}-{Environment.ProcessId}.log");

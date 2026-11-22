@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace se::launcher_style
+namespace flare::launcher_style
 {
 enum class ButtonRole : unsigned int
 {
@@ -31,14 +31,14 @@ void SetButtonRole(HWND button, ButtonRole role, bool active = false);
 void SetPlaceholder(HWND control, const wchar_t* text);
 int ShowPopupMenu(HWND owner, int screenX, int screenY, int minWidth,
                   const std::vector<PopupMenuItem>& items, HFONT font = nullptr);
-void Fill(HDC dc, RECT rect, flare::Color color);
-void Frame(HDC dc, RECT rect, flare::Color color, int thickness = 1);
+void Fill(HDC dc, RECT rect, flare::palette::Color color);
+void Frame(HDC dc, RECT rect, flare::palette::Color color, int thickness = 1);
 // GDI+ 抗锯齿圆角；GDI+ 不可用时退回直角 Fill/Frame。
 bool GdiplusReady();
-void FillRound(HDC dc, RECT rect, flare::Color color, int radius, BYTE alpha = 255);
-void FrameRound(HDC dc, RECT rect, flare::Color color, int radius, float thickness = 1.0f, BYTE alpha = 255);
+void FillRound(HDC dc, RECT rect, flare::palette::Color color, int radius, BYTE alpha = 255);
+void FrameRound(HDC dc, RECT rect, flare::palette::Color color, int radius, float thickness = 1.0f, BYTE alpha = 255);
 // 以 (x, y) 为中心的径向柔光，中心 alpha 向外渐隐为 0。
-void Glow(HDC dc, int x, int y, int radius, flare::Color color, BYTE alpha);
+void Glow(HDC dc, int x, int y, int radius, flare::palette::Color color, BYTE alpha);
 // 水平细线，两端渐隐。
-void FadeLine(HDC dc, RECT rect, flare::Color color, BYTE alpha = 255);
+void FadeLine(HDC dc, RECT rect, flare::palette::Color color, BYTE alpha = 255);
 }

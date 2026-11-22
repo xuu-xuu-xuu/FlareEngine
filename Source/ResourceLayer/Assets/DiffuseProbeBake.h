@@ -4,7 +4,7 @@
 #include <array>
 #include <span>
 
-namespace se
+namespace flare
 {
 // 复用既有 equirect 的世界方向：u=atan2(z,x)/(2*pi)+.5，v=acos(y)/pi。
 // 每行使用精确 Δphi*(cos(theta0)-cos(theta1))，所有 texel 总固角为 4*pi。

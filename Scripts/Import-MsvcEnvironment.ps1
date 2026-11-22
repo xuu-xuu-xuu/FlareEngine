@@ -15,9 +15,9 @@ function Import-EngineMsvcEnvironment {
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($export))
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = Join-Path $env:SystemRoot 'System32/cmd.exe'
-    $info.Arguments = '/d /s /v:off /c ""%SELFENGINE_VSDEVCMD%" -no_logo -arch=amd64 -host_arch=amd64 >nul && "%SELFENGINE_ENV_EXPORTER%" -NoLogo -NoProfile -NonInteractive -EncodedCommand ' + $encoded + '"'
-    $info.EnvironmentVariables['SELFENGINE_VSDEVCMD'] = $devcmd
-    $info.EnvironmentVariables['SELFENGINE_ENV_EXPORTER'] = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    $info.Arguments = '/d /s /v:off /c ""%FLARE_VSDEVCMD%" -no_logo -arch=amd64 -host_arch=amd64 >nul && "%FLARE_ENV_EXPORTER%" -NoLogo -NoProfile -NonInteractive -EncodedCommand ' + $encoded + '"'
+    $info.EnvironmentVariables['FLARE_VSDEVCMD'] = $devcmd
+    $info.EnvironmentVariables['FLARE_ENV_EXPORTER'] = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
@@ -41,7 +41,7 @@ function Import-EngineMsvcEnvironment {
             $name = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($parts[0]))
             $value = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($parts[1]))
             if ($name.StartsWith('=')) { continue }
-            if ($name -eq 'SELFENGINE_VSDEVCMD' -or $name -eq 'SELFENGINE_ENV_EXPORTER') { continue }
+            if ($name -eq 'FLARE_VSDEVCMD' -or $name -eq 'FLARE_ENV_EXPORTER') { continue }
             $environment[$name] = $value
         }
         if ($environment['VSCMD_ARG_TGT_ARCH'] -ne 'x64' -or -not $environment['VCINSTALLDIR']) { throw 'MSVC x64 environment was not initialized.' }

@@ -24,7 +24,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se
+namespace flare
 {
 
 // 拥有编辑器非 UI 宿主的全部文档、设置、恢复、导出与构建控制工作流。
@@ -222,4 +222,4 @@ private:
     std::string errorKey_;
 };
 
-} // namespace se
+} // namespace flare

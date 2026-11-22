@@ -11,13 +11,13 @@
 using Microsoft::WRL::ComPtr;
 namespace
 {
-struct LineVertex {se::Vec4 position,color;float hiddenAlpha;};
-struct Constants {se::Mat4 clipFromLocal;se::Vec4 options;se::Mat4 worldFromClip;};
+struct LineVertex {flare::Vec4 position,color;float hiddenAlpha;};
+struct Constants {flare::Mat4 clipFromLocal;flare::Vec4 options;flare::Mat4 worldFromClip;};
 static_assert(sizeof(Constants)==36*sizeof(float));
 // 齐次空间裁剪，保留透视正确的深度；避免跨近面或超远网格产生巨型三角形。
-bool Clip(se::Vec4& a,se::Vec4& b)
+bool Clip(flare::Vec4& a,flare::Vec4& b)
 {
-    const auto distance=[](se::Vec4 p,int plane)
+    const auto distance=[](flare::Vec4 p,int plane)
     {
         switch(plane){case 0:return p.w-.0001f;case 1:return p.z;case 2:return p.w-p.z;
         case 3:return p.w+p.x;case 4:return p.w-p.x;case 5:return p.w+p.y;default:return p.w-p.y;}
@@ -29,7 +29,7 @@ bool Clip(se::Vec4& a,se::Vec4& b)
         if((x<0)!=(y<0))
         {
             const float t=x/(x-y);
-            const se::Vec4 p{a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,a.z+(b.z-a.z)*t,a.w+(b.w-a.w)*t};
+            const flare::Vec4 p{a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,a.z+(b.z-a.z)*t,a.w+(b.w-a.w)*t};
             if(x<0)a=p;else b=p;
         }
     }
@@ -40,13 +40,13 @@ std::vector<LineVertex> Vertices(const D3D12FrameContent& c,UINT width,UINT heig
     std::vector<LineVertex> result;result.reserve(c.sceneLines.size()*6);
     for(const auto& line:c.sceneLines)
     {
-        auto a=c.viewProjection*se::Vec4{line.a.x,line.a.y,line.a.z,1};
-        auto b=c.viewProjection*se::Vec4{line.b.x,line.b.y,line.b.z,1};
+        auto a=c.viewProjection*flare::Vec4{line.a.x,line.a.y,line.a.z,1};
+        auto b=c.viewProjection*flare::Vec4{line.b.x,line.b.y,line.b.z,1};
         if(!Clip(a,b))continue;
         const float dx=(b.x/b.w-a.x/a.w)*width,dy=(b.y/b.w-a.y/a.w)*height;
         const float length=std::hypot(dx,dy);if(length<.001f)continue;
         const float x=-dy/length*line.width*c.sceneLineScale/width,y=dx/length*line.width*c.sceneLineScale/height;
-        const auto vertex=[&](se::Vec4 p,float side)
+        const auto vertex=[&](flare::Vec4 p,float side)
         {
             p.x+=side*x*p.w;p.y+=side*y*p.w;
             // 微量偏移只解决网格与地面共面，不写入场景深度。
@@ -133,8 +133,8 @@ bool D3D12SceneOverlay::Record(D3D12Presentation& p,D3D12FrameContext& frame,con
         auto& f=*frame.sceneOverlay;
         if(f.mask.color.width!=maskWidth||f.mask.color.height!=maskHeight)
         {
-            D3D12GuiTarget replacement;const se::Vec4 clear{};
-            if(!CreateD3D12GuiTarget(p,{maskWidth,maskHeight,false,false,se::rhi::TextureFormat::Rgba8},replacement,text,&clear))return false;
+            D3D12GuiTarget replacement;const flare::Vec4 clear{};
+            if(!CreateD3D12GuiTarget(p,{maskWidth,maskHeight,false,false,flare::rhi::TextureFormat::Rgba8},replacement,text,&clear))return false;
             f.mask=std::move(replacement);
         }
         const auto maskRtv=f.mask.rtv->Cpu();
@@ -165,7 +165,7 @@ bool D3D12SceneOverlay::Record(D3D12Presentation& p,D3D12FrameContext& frame,con
     commands.OMSetRenderTargets(1,&color,FALSE,&depth);
     if(c.sceneGrid)
     {
-        const auto inverse=se::Inverse(c.viewProjection);if(!inverse)return false;
+        const auto inverse=flare::Inverse(c.viewProjection);if(!inverse)return false;
         constants.clipFromLocal=c.viewProjection;constants.worldFromClip=*inverse;
         constants.options={c.sceneLineScale,0,1.f/width,1.f/height};
         commands.SetPipelineState(pipelines_[GroundGrid].Get());

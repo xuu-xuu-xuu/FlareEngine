@@ -13,7 +13,7 @@
 #include <optional>
 
 struct InputState;
-namespace se
+namespace flare
 {
 class AssetStore;
 class Profiler;
@@ -87,6 +87,7 @@ struct FrameData
     bool editorGridEnabled=false; // Y=0 的固定世界单位程序化网格。
     std::vector<rhi::SceneLine> editorSceneLines;
     StableEntityId editorSelected=0; // 仅编辑模式的可见模型轮廓。
+    std::vector<StableEntityId> editorSelectedEntities; // 多选或悬停目标的模型轮廓集合。
     GuiGeometry editorGui; // Tool 完整复制后的自有数据，Function 不解释 ImGui。
     std::optional<CameraSnapshot> editorCamera; // 当前布局尺寸下的独立编辑镜头，Play 留空。
     std::optional<MaterialPreview> materialPreview;

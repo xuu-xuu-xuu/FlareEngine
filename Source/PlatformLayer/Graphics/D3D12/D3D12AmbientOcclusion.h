@@ -3,8 +3,8 @@
 #include "D3D12UploadArena.h"
 struct alignas(16) D3D12AmbientOcclusionConstants
 {
-    se::Mat4 clipFromView,viewFromClip,viewFromWorld;
-    se::Vec4 viewport,ao,contact,lightDirection,modes;
+    flare::Mat4 clipFromView,viewFromClip,viewFromWorld;
+    flare::Vec4 viewport,ao,contact,lightDirection,modes;
 };
 static_assert(sizeof(D3D12AmbientOcclusionConstants)==272&&offsetof(D3D12AmbientOcclusionConstants,viewport)==192);
 struct D3D12AmbientOcclusionOutput
@@ -21,7 +21,7 @@ struct D3D12AmbientOcclusionFrame
 {
     std::shared_ptr<D3D12AmbientOcclusionOutput> output;
     D3D12UploadSlice constants;
-    se::rhi::ScreenSpaceOcclusionStatistics statistics;
+    flare::rhi::ScreenSpaceOcclusionStatistics statistics;
 };
 class D3D12AmbientOcclusion
 {
@@ -39,7 +39,7 @@ private:
 };
 // ShaderBuilder 的纯 CPU 产物入口；运行时不发布文件，缺失/过期才回源编译。
 bool WriteD3D12AmbientOcclusionShaders(const std::filesystem::path& source,const std::filesystem::path& outputBase,const Localization& text);
-bool ValidD3D12ScreenSpaceSettings(const se::rhi::ScreenSpaceOcclusionSettings& settings);
+bool ValidD3D12ScreenSpaceSettings(const flare::rhi::ScreenSpaceOcclusionSettings& settings);
 bool PrepareD3D12AmbientOcclusion(D3D12Presentation& presentation,D3D12FrameContext& frame,const D3D12FrameContent& content,
     UINT width,UINT height,const Localization& text);
 bool RecordD3D12AmbientOcclusion(D3D12Presentation& presentation,D3D12FrameContext& frame,D3D12StateRecording& states,const Localization& text);

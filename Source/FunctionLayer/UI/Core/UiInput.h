@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 
 using UiKeyCode = std::uint32_t;
@@ -66,6 +66,7 @@ struct UiInputEvent
     bool shift = false;
     bool control = false;
     bool alt = false;
+    bool isRepeat = false;
     std::uint32_t codepoint = 0;
     std::string_view text;
     bool propagationStopped = false;
@@ -138,4 +139,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

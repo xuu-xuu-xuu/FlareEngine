@@ -3,7 +3,7 @@
 #include "CoreLayer/PropertyMetadata.h"
 #include <span>
 
-namespace se
+namespace flare
 {
 std::span<const PropertyDescriptor> MaterialProperties();
 const PropertyDescriptor* FindMaterialProperty(std::string_view key);

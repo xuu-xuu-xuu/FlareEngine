@@ -7,16 +7,16 @@
     <ApplicationIcon>$(FlareEngineRepositoryRoot)Resources/Branding/Flare.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="$(FlareEngineRepositoryRoot)Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj" /></ItemGroup>
-  <ItemGroup><ProjectReference Include="$(FlareEngineRepositoryRoot)Source/FunctionLayer/Scripting/LegacyManaged/SelfEngine.Managed.csproj" ReferenceOutputAssembly="false" /></ItemGroup>
   <ItemGroup><ProjectReference Include="$(FlareEngineRepositoryRoot)Source/FunctionLayer/Scripting/BuiltInScripts/ProjectScripts.csproj" ReferenceOutputAssembly="false" /></ItemGroup>
   <Target Name="CopyProjectScripts" AfterTargets="Build">
-    <ItemGroup><SampleScript Include="$(FlareEngineManagedOutputRoot)ProjectScripts\$(Configuration)\net10.0\FlareEngine.ProjectScripts.*" /></ItemGroup>
+    <ItemGroup>
+      <SampleScript Include="$(FlareEngineManagedOutputRoot)ProjectScripts\$(Configuration)\net10.0\FlareEngine.ProjectScripts.*" />
+      <SampleScript Condition="'@(SampleScript)' == ''" Include="$(FlareEngineManagedOutputRoot)ProjectScripts\$(Platform)\$(Configuration)\net10.0\FlareEngine.ProjectScripts.*" />
+    </ItemGroup>
     <Copy SourceFiles="@(SampleScript)" DestinationFolder="$(TargetDir)ProjectScripts" />
-    <Copy SourceFiles="$(FlareEngineManagedOutputRoot)SelfEngine.Managed\$(Configuration)\net10.0\SelfEngine.Managed.dll" DestinationFolder="$(TargetDir)" />
   </Target>
   <Target Name="PublishProjectScripts" AfterTargets="Publish">
     <ItemGroup><PublishedScript Include="$(TargetDir)ProjectScripts\*" /></ItemGroup>
     <Copy SourceFiles="@(PublishedScript)" DestinationFolder="$(PublishDir)ProjectScripts" />
-    <Copy SourceFiles="$(TargetDir)SelfEngine.Managed.dll" DestinationFolder="$(PublishDir)" />
   </Target>
 </Project>

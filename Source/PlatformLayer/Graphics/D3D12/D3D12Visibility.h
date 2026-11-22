@@ -27,7 +27,7 @@ class D3D12Visibility
 public:
     HRESULT Initialize(D3D12Context& context,const std::filesystem::path& shader,const Localization& text);
     HRESULT CreateOutput(UINT capacity,D3D12VisibilityOutput& output) const;
-    HRESULT Prepare(D3D12UploadArena& arena,std::span<const se::VisibilityItem> items,const se::VisibilityFrustum& frustum,
+    HRESULT Prepare(D3D12UploadArena& arena,std::span<const flare::VisibilityItem> items,const flare::VisibilityFrustum& frustum,
         UINT capacity,D3D12VisibilityPrepared& output) const;
     // 可选时间戳：Reset前、Reset后、UAV依赖及Cull后；不创建读回或等待。
     HRESULT Record(ID3D12GraphicsCommandList& commands,D3D12StateRecording& states,const D3D12VisibilityPrepared& prepared,

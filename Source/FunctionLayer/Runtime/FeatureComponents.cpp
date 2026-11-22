@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -81,7 +81,7 @@ const std::array rendering{
     P{"render.aoRadius","Feature.Render.AoRadius",PropertyType::Number,.6f,.001f,100.f},
     P{"render.aoIntensity","Feature.Render.AoIntensity",PropertyType::Number,.8f,0.f,1.f},
     P{"render.contactShadows","Feature.Render.ContactShadows",PropertyType::Boolean,true},
-    P{"render.contactLength","Feature.Render.ContactLength",PropertyType::Number,.5f,0.f,10.f},
+    P{"render.contactLength","Feature.Render.ContactLength",PropertyType::Number,.25f,0.f,10.f},
     P{"render.diffuseSh","Feature.Render.DiffuseSh",PropertyType::Boolean,false},
     P{"render.localDiffuseSh","Feature.Render.LocalDiffuseSh",PropertyType::Boolean,false},
     P{"render.diffuseProbe","Feature.Render.DiffuseProbe",PropertyType::AssetId,std::string{}},

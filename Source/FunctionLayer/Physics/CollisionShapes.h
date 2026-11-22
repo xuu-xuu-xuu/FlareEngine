@@ -5,7 +5,7 @@
 #include <optional>
 #include <vector>
 
-namespace se
+namespace flare
 {
 /// 刚体/碰撞体支持的几何形状种类（与 ColliderSettingsComponent 属性值一致）。
 enum class ColliderShapeKind : std::uint8_t
@@ -70,4 +70,4 @@ struct CapsuleContact
 
 [[nodiscard]] std::optional<CapsuleContact> CollideCapsuleBox(Vec3 center, float segmentHalfHeight, float radius, const BoxShape& box);
 [[nodiscard]] std::optional<CapsuleContact> CollideCapsuleSphere(Vec3 center, float segmentHalfHeight, float radius, const SphereShape& sphere);
-} // namespace se
+} // namespace flare

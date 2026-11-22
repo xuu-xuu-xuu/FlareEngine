@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-namespace se::ui
+namespace flare::ui
 {
 
 enum class UiBindingProperty : std::uint8_t
@@ -45,4 +45,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

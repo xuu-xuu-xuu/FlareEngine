@@ -1,7 +1,7 @@
 #include "UiControlGeometry.h"
 #include <algorithm>
 #include <cmath>
-namespace se
+namespace flare
 {
 float UiValueRatio(double value,double minimum,double maximum)noexcept
 {const double range=maximum-minimum;return std::isfinite(value)&&std::isfinite(minimum)&&std::isfinite(maximum)&&std::isfinite(range)&&range>0?static_cast<float>((std::clamp(value,minimum,maximum)-minimum)/range):0;}

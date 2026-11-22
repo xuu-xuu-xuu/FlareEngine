@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string_view>
 
-namespace se::ui
+namespace flare::ui
 {
 
 // 绘制命令接收端；UiDisplayList 和测试用 sink 实现它。
@@ -35,4 +35,4 @@ public:
     virtual void CanvasCircle(float centerX, float centerY, float radius, const UiColor& color) = 0;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

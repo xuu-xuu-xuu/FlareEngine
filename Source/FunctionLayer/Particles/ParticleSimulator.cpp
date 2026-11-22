@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -289,4 +289,4 @@ ParticleSample ParticleSimulator::SampleAt(std::size_t index) const noexcept
         desc_.softFactor
     };
 }
-} // namespace se
+} // namespace flare

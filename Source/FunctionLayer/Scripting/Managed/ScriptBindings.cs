@@ -143,12 +143,16 @@ public sealed class ScriptBindings
                 foreach(var field in ScriptFields.Describe(instance))
                 {
                     var value=field.Value is EntityReference reference?JsonValue.Create(reference.StableId.ToString(CultureInfo.InvariantCulture))
+                        :field.Kind=="enum"?JsonValue.Create(field.Value?.ToString()??"")
                         :JsonSerializer.SerializeToNode(field.Value,field.Value?.GetType()??typeof(string),Options);
                     var item=new JsonObject{["Name"]=field.Name,["Kind"]=field.Kind,["Value"]=value};
                     if(!string.IsNullOrEmpty(field.Header))item["Header"]=field.Header;
                     if(!string.IsNullOrEmpty(field.Tooltip))item["Tooltip"]=field.Tooltip;
                     if(field.Min.HasValue)item["Min"]=field.Min.Value;
                     if(field.Max.HasValue)item["Max"]=field.Max.Value;
+                    if(field.Space.HasValue&&field.Space.Value>0f)item["Space"]=field.Space.Value;
+                    if(field.ReadOnly)item["ReadOnly"]=true;
+                    if(field.Options is { Length: > 0 })item["Options"]=new JsonArray(field.Options.Select(o=>(JsonNode?)JsonValue.Create(o)).ToArray());
                     fields.Add(item);
                 }
                 if(!next.TryAdd(id,fields))throw new InvalidOperationException("Script.DuplicateType");
@@ -211,7 +215,7 @@ public sealed class ScriptBindings
                     if(savedFields?.TryGetPropertyValue(name,out var savedNode)==true)
                     {
                         if(savedNode is not JsonObject saved||saved["Kind"] is not JsonValue kindNode||!kindNode.TryGetValue<string>(out var savedKind)||savedKind!=kind)Warn("Script.FieldTypeChanged",name);
-                        else if(!ValidValue(kind,saved["Value"]))Warn("Script.FieldValueInvalid",name);
+                        else if(!ValidValue(kind,saved["Value"],field))Warn("Script.FieldValueInvalid",name);
                         else item["Value"]=saved["Value"]?.DeepClone();
                     }
                     if(kind=="entity"&&referenceExists is not null&&ulong.TryParse(item["Value"]?.GetValue<string>(),NumberStyles.None,CultureInfo.InvariantCulture,out var reference)&&reference!=0&&!referenceExists(reference))Warn("Script.ReferenceMissing",name);
@@ -245,6 +249,43 @@ public sealed class ScriptBindings
             if(removed)ReplaceDocument(next);
             return;
         }
+        if(change["CloneMap"] is JsonObject cloneMap && cloneMap.Count > 0)
+        {
+            var remap = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var kv in cloneMap)
+            {
+                if (!string.IsNullOrEmpty(kv.Key) && kv.Value?.GetValue<string>() is { Length: > 0 } dstId)
+                    remap[kv.Key] = dstId;
+            }
+            var snapshot = list.OfType<JsonObject>().ToArray();
+            bool clonedAny = false;
+            foreach (var (srcId, dstId) in remap)
+            {
+                foreach (var srcEntry in snapshot)
+                {
+                    if (srcEntry["Entity"]?.GetValue<string>() != srcId) continue;
+                    var copy = (JsonObject)srcEntry.DeepClone();
+                    copy["Entity"] = dstId;
+                    if (copy["Fields"] is JsonObject copyFields)
+                    {
+                        foreach (var fk in copyFields)
+                        {
+                            if (fk.Value is JsonObject fObj &&
+                                fObj["Kind"]?.GetValue<string>() == "entity" &&
+                                fObj["Value"]?.GetValue<string>() is { } refVal &&
+                                remap.TryGetValue(refVal, out var mappedRef))
+                            {
+                                fObj["Value"] = mappedRef;
+                            }
+                        }
+                    }
+                    list.Add(copy);
+                    clonedAny = true;
+                }
+            }
+            if (clonedAny) ReplaceDocument(next);
+            return;
+        }
         var type=change["Type"]?.GetValue<string>()??throw new JsonException("Script.TypeMissing");
         var id=entityStableId.ToString(CultureInfo.InvariantCulture);
         var entry=list.OfType<JsonObject>().FirstOrDefault(e=>e["Entity"]?.GetValue<string>()==id&&e["Type"]?.GetValue<string>()==type);
@@ -257,20 +298,68 @@ public sealed class ScriptBindings
             list.Add(new JsonObject{["Type"]=type,["Entity"]=id,["Enabled"]=true,["Fields"]=fields});ReplaceDocument(next);return;
         }
         if(entry is null)throw new InvalidOperationException("Script.InvalidAttachment");
+        if(change["Reset"]?.GetValue<bool>()==true)
+        {
+            var resetFields=new JsonObject();
+            foreach(var field in schema.OfType<JsonObject>())
+                resetFields[field["Name"]!.GetValue<string>()]=new JsonObject{["Kind"]=field["Kind"]!.DeepClone(),["Value"]=field["Value"]?.DeepClone()};
+            entry["Enabled"]=true;
+            entry["Fields"]=resetFields;
+            ReplaceDocument(next);
+            return;
+        }
+        if(change["MoveDelta"] is not null)
+        {
+            int delta=change["MoveDelta"]!.GetValue<int>();
+            if(delta!=0)
+            {
+                var entityIndices=new List<int>();
+                int posInEntity=-1;
+                for(int idx=0;idx<list.Count;++idx)
+                {
+                    if(list[idx] is JsonObject obj&&obj["Entity"]?.GetValue<string>()==id)
+                    {
+                        if(ReferenceEquals(obj,entry))posInEntity=entityIndices.Count;
+                        entityIndices.Add(idx);
+                    }
+                }
+                if(posInEntity>=0)
+                {
+                    int targetPos=Math.Clamp(posInEntity+delta,0,entityIndices.Count-1);
+                    if(targetPos!=posInEntity)
+                    {
+                        int a=entityIndices[posInEntity],b=entityIndices[targetPos];
+                        var tmpA=list[a]?.DeepClone();
+                        var tmpB=list[b]?.DeepClone();
+                        list[a]=tmpB;
+                        list[b]=tmpA;
+                        ReplaceDocument(next);
+                    }
+                }
+            }
+            return;
+        }
         if(change["Enabled"] is not null)entry["Enabled"]=change["Enabled"]!.GetValue<bool>();
         if(change["Field"] is not null)
         {
             var name=change["Field"]!.GetValue<string>();var field=schema.OfType<JsonObject>().FirstOrDefault(f=>f["Name"]!.GetValue<string>()==name)??throw new InvalidOperationException("Script.FieldMissing");
             var kind=field["Kind"]!.GetValue<string>();var value=change["Value"];
-            if(!ValidValue(kind,value))throw new ArgumentException("Script.FieldValueInvalid");
+            if(!ValidValue(kind,value,field))throw new ArgumentException("Script.FieldValueInvalid");
             entry["Fields"]![name]=new JsonObject{["Kind"]=kind,["Value"]=value?.DeepClone()};
         }
         ReplaceDocument(next);
     }
-    private static bool ValidValue(string kind,JsonNode? value)
+    private static bool ValidValue(string kind,JsonNode? value,JsonObject? schemaField=null)
     {
         try
         {
+            if(kind=="enum")
+            {
+                if(value is not JsonValue enumNode||!enumNode.TryGetValue<string>(out var enumText)||string.IsNullOrEmpty(enumText))return false;
+                if(schemaField?["Options"] is JsonArray opts&&opts.Count>0)
+                    return opts.Any(o=>o is JsonValue ov&&ov.TryGetValue<string>(out var s)&&s==enumText);
+                return true;
+            }
             using var json=JsonDocument.Parse(value?.ToJsonString()??"null");return ScriptFields.TryReadValue(kind,json.RootElement,out _);
         }
         catch(Exception exception)when(exception is JsonException or InvalidOperationException or FormatException or OverflowException or NullReferenceException or ArgumentException){return false;}

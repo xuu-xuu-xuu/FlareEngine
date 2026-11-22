@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G03：16 字节压缩顶点。位置按网格包围盒量化，法线八面体 8 位，
 // UV 半精度，切线 4×8 位。仅 CPU 烘焙格式；GPU 布局由渲染层转换。

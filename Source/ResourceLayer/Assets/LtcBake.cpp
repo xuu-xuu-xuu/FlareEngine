@@ -9,7 +9,7 @@
 #include "LtcFitAdapter.h"
 #pragma warning(pop)
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -150,7 +150,7 @@ bool EncodeLtc(const LtcLut& lut,std::vector<std::uint8_t>& output,std::vector<A
     std::vector<std::uint8_t> payload;payload.reserve(lut.inverseMatrices.size()*24);
     for(const auto m:lut.inverseMatrices)for(const auto v:{m.x,m.y,m.z,m.w})U32(payload,std::bit_cast<std::uint32_t>(v));
     for(const auto m:lut.magnitudeFresnel)for(const auto v:{m.x,m.y})U32(payload,std::bit_cast<std::uint32_t>(v));
-    const auto header=Json{{"format","SelfEngine.Ltc"},{"schema",1},{"algorithm",LtcCookerVersion},{"upstream",upstream},{"bake_key",lut.bakeKey},
+    const auto header=Json{{"format","FlareEngine.Ltc"},{"schema",1},{"algorithm",LtcCookerVersion},{"upstream",upstream},{"bake_key",lut.bakeKey},
         {"settings",SettingsJson(lut.settings)},{"mapping",mapping},{"minimum_nv",LtcMinimumNv},{"minimum_roughness",LtcMinimumRoughness},{"layout",layout},
         {"count",lut.inverseMatrices.size()},{"payload_bytes",payload.size()},{"payload_sha256",Sha256(payload)}}.dump();
     if(header.size()>MaximumHeader||header.size()+12+payload.size()>MaximumBytes)return Invalid(diagnostics,"size limit");
@@ -163,7 +163,7 @@ bool DecodeLtc(std::span<const std::uint8_t> bytes,LtcLut& output,std::vector<As
     try
     {
         const auto h=Json::parse(bytes.begin()+12,bytes.begin()+12+length);
-        if(h.at("format")!="SelfEngine.Ltc"||h.at("schema")!=1||h.at("algorithm")!=LtcCookerVersion||h.at("upstream")!=upstream){asset_io::Diagnostic(diagnostics,"Ltc.VersionUnsupported");return false;}
+        if(h.at("format")!="FlareEngine.Ltc"||h.at("schema")!=1||h.at("algorithm")!=LtcCookerVersion||h.at("upstream")!=upstream){asset_io::Diagnostic(diagnostics,"Ltc.VersionUnsupported");return false;}
         LtcLut result;const auto& settings=h.at("settings");
         if(!Uint(settings.at("size"),result.settings.size)||!Uint(settings.at("sample_side"),result.settings.sampleSide)||!ValidateLtcSettings(result.settings))return Invalid(diagnostics,"settings");
         result.bakeKey=h.at("bake_key").get<std::string>();const auto count=std::size_t(result.settings.size)*result.settings.size,expected=count*24;
@@ -191,7 +191,7 @@ bool CookLtc(const std::filesystem::path& path,const LtcBakeSettings& s,bool& ca
 bool EvaluateLtcRectangle(const LtcLut& lut,const RectangleEmitter& e,Vec3 p,Vec3 n,Vec3 v,float r,Vec3 f0,Vec3& output)
 {
     if(!Emitter(e,p)||!Unit(n)||!Unit(v)||!IsFinite(f0)||f0.x<0||f0.y<0||f0.z<0||f0.x>1||f0.y>1||f0.z>1)return false;
-    LtcSample sample;if(!SampleLtc(lut,std::clamp(se::Dot(n,v),-1.0f,1.0f),r,sample))return false;
+    LtcSample sample;if(!SampleLtc(lut,std::clamp(flare::Dot(n,v),-1.0f,1.0f),r,sample))return false;
     D3 tangent,bitangent;Frame(D(n),D(v),tangent,bitangent);const auto integral=Polygon(e,D(p),D(n),tangent,bitangent,sample.inverse);
     const auto magnitude=sample.magnitudeFresnel;const auto scale=[&](float f){return float((f*magnitude.x+(1-f)*magnitude.y)*integral);};
     const auto result=Hadamard(e.radiance,{scale(f0.x),scale(f0.y),scale(f0.z)});if(!IsFinite(result))return false;output=result;return true;

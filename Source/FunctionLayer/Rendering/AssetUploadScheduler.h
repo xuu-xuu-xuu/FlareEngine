@@ -2,7 +2,7 @@
 #include "StaticModelRender.h"
 #include "ResourceLayer/Assets/AsyncAssetLoader.h"
 
-namespace se
+namespace flare
 {
 class Profiler;
 struct RenderImageAsset final : RenderAssetLease

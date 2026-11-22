@@ -22,9 +22,10 @@
 #include <unordered_map>
 #include <vector>
 class Localization;
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 enum class EditorPropertyEditPhase { Begin, Commit, Cancel };
+enum class EditorDragCursor : std::uint8_t { None = 0, Allow, Forbid };
 struct EditorFormPanel;
 struct EditorInspectorDrag;
 struct EditorInspectorColor;
@@ -53,7 +54,7 @@ struct EditorDesignerNode
 class EditorShell
 {
 public:
-    explicit EditorShell(UiTextService* textService = nullptr);
+    explicit EditorShell(UiTextService* textService = nullptr, UiPlatformServices* platformServices = nullptr);
     ~EditorShell();
 
     EditorShell(const EditorShell&) = delete;
@@ -97,9 +98,17 @@ public:
     }
     bool ApplyLayoutPreset(std::string_view preset);
     void SetHierarchy(std::vector<EditorHierarchyNode> nodes);
+    void SetHierarchySelection(const std::vector<std::uint64_t>& ids, std::uint64_t primary = 0);
+    [[nodiscard]] const EditorHierarchyModel& HierarchyModel() const noexcept { return hierarchyModel_; }
     void SetAssets(std::vector<EditorAssetEntry> entries);
     void SetInspector(std::uint64_t id, std::string label, std::vector<EditorProperty> properties);
     void SetSelectionHandler(std::function<void(std::uint64_t)> handler);
+    void SetMultiSelectionHandler(std::function<void(const std::vector<std::uint64_t>&, std::uint64_t)> handler)
+    {
+        multiSelectionHandler_ = std::move(handler);
+    }
+    [[nodiscard]] EditorDragCursor AssetDragCursor() const noexcept { return assetDragCursor_; }
+    [[nodiscard]] UiElementHandle TooltipBubble() const noexcept { return tooltipBubble_; }
     void SetPropertyHandler(std::function<bool(std::uint64_t, std::string, std::string)> handler);
     void SetPropertyChoices(std::function<std::string(std::uint64_t,EditorProperty&)> handler){propertyChoices_=std::move(handler);}
     void SetPropertyEditHandler(std::function<bool(std::uint64_t, EditorPropertyEditPhase)> handler);
@@ -130,6 +139,32 @@ public:
     {
         hierarchyAssetDropHandler_ = std::move(handler);
     }
+    struct ScopedPickerItem
+    {
+        std::string label;
+        std::string value;
+    };
+
+    [[nodiscard]] bool InspectorLocked() const noexcept { return inspectorLocked_; }
+    void SetInspectorLocked(bool locked);
+    void SetInspectorLockHandler(std::function<void(bool)> handler) { inspectorLockHandler_ = std::move(handler); }
+    [[nodiscard]] UiElementHandle InspectorLockButton() const noexcept;
+    void SetPlayKeepArmed(bool armed);
+    [[nodiscard]] bool PlayKeepArmed() const noexcept { return playKeepArmed_; }
+    void PingEntity(std::uint64_t id);
+    void PingAsset(const std::string& path);
+    void SetReferencePingHandler(std::function<void(std::string_view, std::string_view)> handler)
+    {
+        referencePingHandler_ = std::move(handler);
+    }
+    void SetScopedAssetChoicesHandler(std::function<void(std::string_view, std::vector<ScopedPickerItem>&)> handler)
+    {
+        scopedAssetChoicesHandler_ = std::move(handler);
+    }
+    [[nodiscard]] bool ScopedPickerOpen() const noexcept { return scopedPickerPopup_.IsValid(); }
+    [[nodiscard]] UiElementHandle ScopedPickerPopup() const noexcept { return scopedPickerPopup_; }
+    [[nodiscard]] UiElementHandle ScopedPickerSearchEdit() const noexcept { return scopedPickerSearchElement_; }
+
     void SetSuggestedScriptClassName(std::string name) { addCompDefaultClass_ = std::move(name); }
     [[nodiscard]] bool AddComponentPopupOpen() const noexcept { return addCompPopup_.IsValid(); }
     [[nodiscard]] UiElementHandle AddComponentPopup() const noexcept { return addCompPopup_; }
@@ -190,8 +225,15 @@ public:
     [[nodiscard]] bool BeginHierarchyRename(std::uint64_t id);
     void EndHierarchyRename(bool commit);
     [[nodiscard]] UiElementHandle HierarchyEdit() const noexcept { return hierarchyEditElement_; }
+    [[nodiscard]] UiElementHandle HierarchyEditSelection() const noexcept { return hierarchyEditSelection_; }
     [[nodiscard]] bool BeginAssetRename(const std::string& path);
     void EndAssetRename(bool commit);
+    [[nodiscard]] UiElementHandle AssetsRenameEdit() const noexcept { return assetsRenameElement_; }
+    [[nodiscard]] UiElementHandle AssetsRenameSelection() const noexcept { return assetsRenameSelection_; }
+    [[nodiscard]] bool HasPendingRename() const noexcept
+    {
+        return pendingHierarchyRenameId_ != 0 || !pendingAssetRenamePath_.empty();
+    }
     void OpenCreateMenu(EditorPanelId panel, float x, float y, std::uint64_t parent = 0);
     // 资产图片预览；空 image 隐藏。width/height 为源图尺寸（仅用于记录）。
     void SetAssetPreviewImage(std::string image,float width,float height);
@@ -293,6 +335,7 @@ private:
         UiElementHandle tabBar{};
         UiElementHandle focusLine{};
         UiElementHandle previousTab{}, nextTab{};
+        UiElementHandle lockButton{};
         std::vector<UiElementHandle> tabButtons;
         std::vector<UiElementHandle> closeButtons;
         std::vector<float> widths;
@@ -336,6 +379,9 @@ private:
     void OpenAddComponentPopup(float anchorX, float anchorY);
     void RebuildAddComponentPopupItems();
     void CloseAddComponentPopup();
+    void OpenScopedPickerPopup(std::size_t fieldIndex, float anchorX, float anchorY);
+    void RebuildScopedPickerPopupItems();
+    void CloseScopedPickerPopup();
     [[nodiscard]] std::optional<std::size_t> InspectorSlotAt(float x, float y, bool entitySlotOnly = false) const;
     std::optional<std::size_t> InspectorNumericAt(float x, float y) const;
     void BeginInspectorDrag(std::size_t index, const UiInputEvent& event);
@@ -407,6 +453,9 @@ private:
     UiDocument document_;
     UiStubTextService stub_;
     UiTextService* text_ = &stub_;
+    UiPlatformServices* platform_ = nullptr;
+    std::unique_ptr<UiPlatformServices> defaultPlatform_;
+    [[nodiscard]] UiPlatformServices* PlatformServices() const noexcept { return platform_ ? platform_ : defaultPlatform_.get(); }
     UiLayoutEngine layout_;
     UiStyleEngine style_;
     UiDispatcher dispatcher_;
@@ -465,6 +514,7 @@ private:
         bool closed = false;
         std::vector<std::size_t> fields;
         std::vector<std::size_t> menuActions;
+        std::string spatialGizmoKey;
     };
     std::vector<InspectorRow> inspectorRows_;
     std::vector<std::size_t> addComponentActions_;
@@ -473,9 +523,35 @@ private:
     std::unique_ptr<UiTextEdit> addCompSearch_;
     std::vector<UiElementHandle> addCompItemButtons_;
     std::string addCompDefaultClass_ = "NewBehaviour";
+    UiElementHandle scopedPickerPopup_{};
+    UiElementHandle scopedPickerSearchElement_{};
+    std::unique_ptr<UiTextEdit> scopedPickerSearch_;
+    std::vector<UiElementHandle> scopedPickerButtons_;
+    std::vector<ScopedPickerItem> scopedPickerAllItems_;
+    std::string scopedPickerFieldKey_;
+    std::uint64_t scopedPickerTarget_ = 0;
+    bool inspectorLocked_ = false;
+    bool playKeepArmed_ = false;
+    std::function<void(bool)> inspectorLockHandler_;
+    std::function<void(std::string_view, std::string_view)> referencePingHandler_;
+    std::function<void(std::string_view, std::vector<ScopedPickerItem>&)> scopedAssetChoicesHandler_;
+    std::uint64_t pingedHierarchyId_ = 0;
+    std::string pingedAssetPath_;
+    std::uint64_t pingUntilTick_ = 0;
     std::unordered_map<std::string, bool> inspectorFolds_;
     float inspectorWidth_ = 0.0f;
     std::function<void(std::uint64_t)> selectionHandler_;
+    std::function<void(const std::vector<std::uint64_t>&, std::uint64_t)> multiSelectionHandler_;
+    EditorDragCursor assetDragCursor_ = EditorDragCursor::None;
+    UiElementHandle tooltipBubble_{};
+    std::string hoverTooltipCandidate_;
+    std::string activeTooltipText_;
+    std::uint64_t hoverTooltipSinceTick_ = 0;
+    float hoverMouseX_ = 0.0f;
+    float hoverMouseY_ = 0.0f;
+    std::string activeLayoutPreset_ = "2by3";
+    [[nodiscard]] std::string ResolveTooltipAt(float x, float y) const;
+    void UpdateTooltipOverlay(std::uint64_t nowTick);
     std::function<bool(std::uint64_t, std::string, std::string)> propertyHandler_;
     std::function<std::string(std::uint64_t,EditorProperty&)> propertyChoices_;
     std::function<bool(std::uint64_t, EditorPropertyEditPhase)> propertyEditHandler_;
@@ -534,6 +610,11 @@ private:
     void LayoutConsoleToolbar(float panelWidth);
     UiElementHandle gamePlaceholder_{};
     void CancelAssetDrag();
+    void PaintInlineTextEdit(UiTextEdit& edit, UiElementHandle element, UiElementHandle selectionEl,
+                             float& scroll, float width, float height);
+    void PlaceInlineTextCaret(UiTextEdit& edit, UiElementHandle element, UiElementHandle selectionEl,
+                              float& scroll, float clickX, bool extendSelection);
+    EditorPanelId panelWasActiveBeforePointerDown_ = EditorPanelId::None;
     std::uint64_t dragHierarchyId_ = 0;
     float hierarchyDragStartX_ = 0.0f, hierarchyDragStartY_ = 0.0f;
     bool draggingHierarchy_ = false;
@@ -544,17 +625,29 @@ private:
     std::uint64_t lastHierarchyClickTick_ = 0;
     std::uint64_t pendingHierarchyRenameId_ = 0;
     std::uint64_t pendingHierarchyRenameTick_ = 0;
+    std::uint64_t pendingHierarchyRenameDownTick_ = 0;
+    std::uint64_t hierarchyRenameDownTick_ = 0;
     bool wasSelectedOnHierarchyDown_ = false;
     std::unique_ptr<UiTextEdit> hierarchyEdit_;
     UiElementHandle hierarchyEditElement_{};
+    UiElementHandle hierarchyEditSelection_{};
+    float hierarchyEditScroll_ = 0.0f;
+    bool hierarchyEditSelecting_ = false;
+    std::uint64_t hierarchyEditLastClickTick_ = 0;
     std::uint64_t hierarchyEditingId_ = 0;
     std::string lastAssetClickPath_;
     std::uint64_t lastAssetClickTick_ = 0;
     std::string pendingAssetRenamePath_;
     std::uint64_t pendingAssetRenameTick_ = 0;
+    std::uint64_t pendingAssetRenameDownTick_ = 0;
+    std::uint64_t assetRenameDownTick_ = 0;
     bool wasSelectedOnAssetDown_ = false;
     std::unique_ptr<UiTextEdit> assetsRename_;
     UiElementHandle assetsRenameElement_{};
+    UiElementHandle assetsRenameSelection_{};
+    float assetsRenameScroll_ = 0.0f;
+    bool assetsRenameSelecting_ = false;
+    std::uint64_t assetsRenameLastClickTick_ = 0;
     std::string assetsRenamingPath_;
     std::string menuTargetAssetPath_;
     bool menuPressedFromBar_ = false;
@@ -657,4 +750,4 @@ private:
     [[nodiscard]] static DockZone ContentDropZone(const UiRect& group, float x, float y, DockZone previous);
 };
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

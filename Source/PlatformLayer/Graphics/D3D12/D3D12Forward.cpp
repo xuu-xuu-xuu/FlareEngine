@@ -36,7 +36,7 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
         device->CreateShaderResourceView(hdr.Get(),&view,srv->Cpu());
         p.hdr=std::move(hdr);p.hdrRtv=std::move(rtv);p.hdrSrv=std::move(srv);++p.hdrCreations;
     }
-    const auto& lighting=*content.forward;se::rhi::ForwardFrameConstants constants{};
+    const auto& lighting=*content.forward;flare::rhi::ForwardFrameConstants constants{};
     constants.directionAndEnabled={lighting.directionToLight.x,lighting.directionToLight.y,lighting.directionToLight.z,lighting.directionalEnabled?1.0f:0.0f};
     constants.directionalRadiance={lighting.directionalRadiance.x,lighting.directionalRadiance.y,lighting.directionalRadiance.z,0};
     constants.skyAndExposure={lighting.sky.x,lighting.sky.y,lighting.sky.z,lighting.exposure};constants.pointCount.x=static_cast<float>(lighting.pointCount);
@@ -54,7 +54,7 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
     {
         const auto& shadow=*content.shadow;
         constants.pointCount.y=shadow.enabled?1.f:0.f;constants.pointCount.z=shadow.pcf?1.f:0.f;
-        const se::rhi::CascadedShadowFrameConstants csm{constants,shadow.cascadeClipFromWorld,
+        const flare::rhi::CascadedShadowFrameConstants csm{constants,shadow.cascadeClipFromWorld,
             {shadow.cascadeSplits[0],shadow.cascadeSplits[1],shadow.cascadeSplits[2],shadow.cascadeNear},
             shadow.cascadeViewDepth,{1.f/float(frame.shadow->resolution),shadow.depthBias,shadow.slopeBias,shadow.normalBias},
             {float(shadow.cascadeCount),shadow.cascadeBlend,shadow.cascadeDebug?1.f:0.f,0},{}};
@@ -63,14 +63,14 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
     else if(content.shadow)
     {
         constants.pointCount.y=content.shadow->enabled?1.0f:0.0f;constants.pointCount.z=content.shadow->pcf?1.0f:0.0f;
-        const se::rhi::ShadowFrameConstants shadow{constants,content.shadow->clipFromWorld,
+        const flare::rhi::ShadowFrameConstants shadow{constants,content.shadow->clipFromWorld,
             {1.0f/float(frame.shadow->resolution),content.shadow->depthBias,content.shadow->slopeBias,content.shadow->normalBias}};
         std::memcpy(frame.forwardConstants.cpu,&shadow,sizeof(shadow));
     }
     else std::memcpy(frame.forwardConstants.cpu,&constants,sizeof(constants));
     if(clustered)
     {
-        se::rhi::ClusteredFrameConstants clusteredFrame{};
+        flare::rhi::ClusteredFrameConstants clusteredFrame{};
         auto& base=clusteredFrame.shadow;base.lights=constants;
         if(cascaded)std::memcpy(&base,frame.forwardConstants.cpu,sizeof(base));
         else if(content.shadow)
@@ -84,7 +84,7 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
         // 直接使用 ConfigureForward 已校验的相机投影矩阵，避免 viewProjection * Inverse(view) 产生大远近比浮点抵消误差。
         clusteredFrame.projection=config.clipFromView;
         if(!ValidD3D12ClusterProjection(clusteredFrame.projection,config.nearPlane,config.farPlane))return CheckGraphicsResult(E_INVALIDARG,text,"Rhi.BackendFailure");
-        const auto inverseProjection=se::Inverse(clusteredFrame.projection);if(!inverseProjection)return false;
+        const auto inverseProjection=flare::Inverse(clusteredFrame.projection);if(!inverseProjection)return false;
         clusteredFrame.inverseProjection=*inverseProjection;
         clusteredFrame.clusterParameters={config.nearPlane,config.farPlane,float(config.lights.size()),float(config.capacity)};
         const UINT scale=content.post&&content.post->supersample4x?2:1;
@@ -104,9 +104,9 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
         if(!CheckGraphicsResult(p.clusterBuilder->Prepare(*frame.clusters,config),text,"Rhi.BackendFailure"))return false;
         frame.clusterDescriptorIncrement=device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     }
-    if(content.meshPipeline&&se::rhi::IsShadowFilterLayout(content.meshPipeline->prepared->program->source.layoutVersion))
+    if(content.meshPipeline&&flare::rhi::IsShadowFilterLayout(content.meshPipeline->prepared->program->source.layoutVersion))
     {
-        se::rhi::ShadowFilterConstants filter;
+        flare::rhi::ShadowFilterConstants filter;
         if(!content.shadow||!PrepareD3D12ShadowFilterConstants(*content.shadow,filter))return CheckGraphicsResult(E_INVALIDARG,text,"Rhi.BackendFailure");
         if(!CheckGraphicsResult(frame.uploads.Allocate(256,256,frame.shadowFilterConstants),text,"D3D12.UploadCapacityExceeded"))return false;
         std::memset(frame.shadowFilterConstants.cpu,0,256);std::memcpy(frame.shadowFilterConstants.cpu,&filter,sizeof(filter));
@@ -114,8 +114,8 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
     if(content.environment)
     {
         const auto& environment=*content.environment;
-        const se::Vec4 parameters{environment.intensity,std::cos(environment.yaw),std::sin(environment.yaw),float(content.environmentTextures[1]->mipLevels-1)};
-        const auto environmentOffset=(clustered||cascaded)?offsetof(se::rhi::CascadedShadowFrameConstants,environment):offsetof(se::rhi::EnvironmentFrameConstants,environment);
+        const flare::Vec4 parameters{environment.intensity,std::cos(environment.yaw),std::sin(environment.yaw),float(content.environmentTextures[1]->mipLevels-1)};
+        const auto environmentOffset=(clustered||cascaded)?offsetof(flare::rhi::CascadedShadowFrameConstants,environment):offsetof(flare::rhi::EnvironmentFrameConstants,environment);
         std::memcpy(frame.forwardConstants.cpu+environmentOffset,&parameters,sizeof(parameters));
         if(frame.environmentDescriptors.Maximum()!=1&&!frame.environmentDescriptors.Configure(1,1))return false;
         const auto source=content.environmentTextures[1]->views->Cpu(1);
@@ -124,7 +124,7 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
     if(content.post)return true;
     // G15：输出 LUT 布局在 t2 追加 strip。ShadowOutput 的表为场景/阴影预览/LUT；
     // FinalOutput 不读 t1，但描述符表必须覆盖 t0..t2，因此 t1 绑定同一 LUT 仅作占位。
-    const bool outputLut=content.outputPipeline->prepared->program->source.layoutVersion==se::rhi::OutputLutLayoutVersion;
+    const bool outputLut=content.outputPipeline->prepared->program->source.layoutVersion==flare::rhi::OutputLutLayoutVersion;
     if(outputLut&&!content.colorLut)return false;
     const UINT count=outputLut?3:(content.shadow?2:1);
     if(frame.outputDescriptors.Maximum()!=count&&!frame.outputDescriptors.Configure(count,count))return false;
@@ -140,7 +140,7 @@ void RecordD3D12ForwardOutput(D3D12Presentation& p,D3D12FrameContext& frame,cons
     const auto& pipeline=*content.outputPipeline;auto& commands=*p.commandList.Get();
     (void)rtv; // 输出目标已由 D3D12Presentation 绑定，此处只记录全屏三角形。
     commands.SetPipelineState(pipeline.pipeline.Get());commands.SetGraphicsRootSignature(pipeline.rootSignature.Get());
-    const se::Vec4 exposure{content.forward->exposure,content.shadow&&content.shadow->preview?1.0f:0.0f,float(width),float(height)};commands.SetGraphicsRoot32BitConstants(0,4,&exposure,0);
+    const flare::Vec4 exposure{content.forward->exposure,content.shadow&&content.shadow->preview?1.0f:0.0f,float(width),float(height)};commands.SetGraphicsRoot32BitConstants(0,4,&exposure,0);
     ID3D12DescriptorHeap* heaps[]{frame.outputDescriptors.Heap()};commands.SetDescriptorHeaps(1,heaps);commands.SetGraphicsRootDescriptorTable(1,frame.outputDescriptors.Draw(0));
     const D3D12_VIEWPORT viewport{0,0,float(width),float(height),0,1};const D3D12_RECT scissor{0,0,LONG(width),LONG(height)};
     commands.RSSetViewports(1,&viewport);commands.RSSetScissorRects(1,&scissor);commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);commands.DrawInstanced(3,1,0,0);
@@ -149,10 +149,10 @@ void RecordD3D12ForwardSky(D3D12Presentation& p,D3D12FrameContext& frame,const D
 {
     auto& commands=*p.commandList.Get();const auto& pipeline=*content.skyPipeline;
     commands.SetPipelineState(pipeline.pipeline.Get());commands.SetGraphicsRootSignature(pipeline.rootSignature.Get());
-    if(pipeline.prepared->program->source.kind==se::rhi::PipelineKind::EnvironmentSky)
+    if(pipeline.prepared->program->source.kind==flare::rhi::PipelineKind::EnvironmentSky)
     {
         const auto& environment=*content.environment;
-        const se::rhi::EnvironmentSkyConstants constants{environment.skyFromClip,{environment.intensity,std::cos(environment.yaw),std::sin(environment.yaw),0}};
+        const flare::rhi::EnvironmentSkyConstants constants{environment.skyFromClip,{environment.intensity,std::cos(environment.yaw),std::sin(environment.yaw),0}};
         commands.SetGraphicsRoot32BitConstants(0,20,&constants,0);
         ID3D12DescriptorHeap* heaps[]{frame.environmentDescriptors.Heap()};commands.SetDescriptorHeaps(1,heaps);
         commands.SetGraphicsRootDescriptorTable(1,frame.environmentDescriptors.Draw(0));
@@ -160,9 +160,9 @@ void RecordD3D12ForwardSky(D3D12Presentation& p,D3D12FrameContext& frame,const D
     else
     {
         const auto& sky=content.forward->skySettings;
-        se::rhi::SkyConstants constants{};
-        const auto inverse=se::Inverse(content.viewProjection);
-        constants.skyFromClip=inverse.value_or(se::Mat4{});
+        flare::rhi::SkyConstants constants{};
+        const auto inverse=flare::Inverse(content.viewProjection);
+        constants.skyFromClip=inverse.value_or(flare::Mat4{});
         // 逆 VP 含透视除法，直接清最后一列会同时抹掉前向基，导致天空朝地面。
         // Shader 以远近两点的齐次差消除平移，保持正确的旋转和 FOV。
         const auto clamp01=[](float value){return std::isfinite(value)?std::clamp(value,0.0f,1.0f):0.0f;};
@@ -170,7 +170,7 @@ void RecordD3D12ForwardSky(D3D12Presentation& p,D3D12FrameContext& frame,const D
         constants.horizonColor={clamp01(sky.horizonColor.x),clamp01(sky.horizonColor.y),clamp01(sky.horizonColor.z),1};
         constants.groundColor={clamp01(sky.groundColor.x),clamp01(sky.groundColor.y),clamp01(sky.groundColor.z),1};
         constants.sunColor={clamp01(sky.sunColor.x),clamp01(sky.sunColor.y),clamp01(sky.sunColor.z),1};
-        const auto direction=se::Normalize(content.forward->directionToLight);
+        const auto direction=flare::Normalize(content.forward->directionToLight);
         const auto radius=std::isfinite(sky.sunAngularRadius)?std::clamp(sky.sunAngularRadius,0.001f,0.10f):0.012f;
         constants.sunDirectionIntensity={direction.x,direction.y,direction.z,
             std::isfinite(sky.sunIntensity)?std::clamp(sky.sunIntensity,0.0f,1000.0f):12.0f};

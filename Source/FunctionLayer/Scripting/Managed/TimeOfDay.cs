@@ -22,10 +22,10 @@ public sealed unsafe class TimeOfDayService(EngineSession session)
 }
 internal static unsafe partial class NativeMethods
 {
-    [LibraryImport(Library,EntryPoint="se_tod_snapshot")]
+    [LibraryImport(Library,EntryPoint="flare_tod_snapshot")]
     internal static partial int TODSnapshot(ulong session,byte* buffer,uint capacity,out uint required);
-    [LibraryImport(Library,EntryPoint="se_tod_set_time")]
+    [LibraryImport(Library,EntryPoint="flare_tod_set_time")]
     internal static partial int TODSetTime(ulong session,long day,double time,int replayBoundaries);
-    [LibraryImport(Library,EntryPoint="se_tod_set_rate")]
+    [LibraryImport(Library,EntryPoint="flare_tod_set_rate")]
     internal static partial int TODSetRate(ulong session,double rate);
 }

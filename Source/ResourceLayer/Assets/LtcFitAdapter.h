@@ -7,7 +7,7 @@
 #include <LtcReference/fit/brdf.h>
 #include <LtcReference/fit/brdf_ggx.h>
 #include <LtcReference/fit/nelder_mead.h>
-namespace se::ltc_reference
+namespace flare::ltc_reference
 {
 inline thread_local int sampleSide=32;
 inline constexpr float minimumRoughness=.045f,minimumNv=.0001f;

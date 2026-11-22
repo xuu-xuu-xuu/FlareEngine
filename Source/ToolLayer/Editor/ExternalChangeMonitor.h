@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <string>
 
-namespace se
+namespace flare
 {
 struct EditorFileStamp
 {
@@ -33,4 +33,4 @@ private:
     std::uintmax_t size_ = 0;
     bool valid_ = false;
 };
-} // namespace se
+} // namespace flare

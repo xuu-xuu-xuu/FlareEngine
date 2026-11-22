@@ -4,7 +4,7 @@
 #include <span>
 #include <vector>
 
-namespace se::asset_mip
+namespace flare::asset_mip
 {
 // 沿用现有RGBA字节空间2×2盒式mip；所有BC格式共用相同源mip，旧链逐字节保持。
 inline void DownsampleHalf(std::span<const std::uint8_t> source,std::uint32_t width,std::uint32_t height,

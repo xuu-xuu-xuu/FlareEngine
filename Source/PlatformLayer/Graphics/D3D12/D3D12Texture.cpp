@@ -14,62 +14,62 @@
 
 namespace
 {
-bool ValidFloatingTexels(se::rhi::TextureFormat format,const se::rhi::TextureSubresource& source,UINT64 width,UINT64 height,UINT64 pitch)
+bool ValidFloatingTexels(flare::rhi::TextureFormat format,const flare::rhi::TextureSubresource& source,UINT64 width,UINT64 height,UINT64 pitch)
 {
-    if(format!=se::rhi::TextureFormat::Rgba32Float&&format!=se::rhi::TextureFormat::Rgba16Float&&format!=se::rhi::TextureFormat::Rg16Float)return true;
-    const UINT channels=format==se::rhi::TextureFormat::Rg16Float?2u:4u,componentBytes=format==se::rhi::TextureFormat::Rgba32Float?4u:2u;
+    if(format!=flare::rhi::TextureFormat::Rgba32Float&&format!=flare::rhi::TextureFormat::Rgba16Float&&format!=flare::rhi::TextureFormat::Rg16Float)return true;
+    const UINT channels=format==flare::rhi::TextureFormat::Rg16Float?2u:4u,componentBytes=format==flare::rhi::TextureFormat::Rgba32Float?4u:2u;
     for(UINT64 row=0;row<height;++row)for(UINT64 component=0;component<width*channels;++component)
     {
         float value=0;const auto* data=source.bytes.data()+row*pitch+component*componentBytes;
-        if(componentBytes==4)std::memcpy(&value,data,4);else {std::uint16_t half=0;std::memcpy(&half,data,2);value=se::HalfToFloat(half);}
+        if(componentBytes==4)std::memcpy(&value,data,4);else {std::uint16_t half=0;std::memcpy(&half,data,2);value=flare::HalfToFloat(half);}
         if(!std::isfinite(value))return false;
     }
     return true;
 }
-bool BcFormat(se::rhi::TextureFormat format)
+bool BcFormat(flare::rhi::TextureFormat format)
 {
-    return format==se::rhi::TextureFormat::Bc1Unorm||format==se::rhi::TextureFormat::Bc1UnormSrgb
-        ||format==se::rhi::TextureFormat::Bc5Unorm||format==se::rhi::TextureFormat::Bc4Unorm
-        ||format==se::rhi::TextureFormat::Bc7Unorm||format==se::rhi::TextureFormat::Bc7UnormSrgb;
+    return format==flare::rhi::TextureFormat::Bc1Unorm||format==flare::rhi::TextureFormat::Bc1UnormSrgb
+        ||format==flare::rhi::TextureFormat::Bc5Unorm||format==flare::rhi::TextureFormat::Bc4Unorm
+        ||format==flare::rhi::TextureFormat::Bc7Unorm||format==flare::rhi::TextureFormat::Bc7UnormSrgb;
 }
-UINT BcBlockBytes(se::rhi::TextureFormat format)
+UINT BcBlockBytes(flare::rhi::TextureFormat format)
 {
-    return format==se::rhi::TextureFormat::Bc5Unorm||format==se::rhi::TextureFormat::Bc7Unorm||format==se::rhi::TextureFormat::Bc7UnormSrgb?16:8;
+    return format==flare::rhi::TextureFormat::Bc5Unorm||format==flare::rhi::TextureFormat::Bc7Unorm||format==flare::rhi::TextureFormat::Bc7UnormSrgb?16:8;
 }
-DXGI_FORMAT StorageFormat(se::rhi::TextureFormat format)
+DXGI_FORMAT StorageFormat(flare::rhi::TextureFormat format)
 {
-    if(format==se::rhi::TextureFormat::Rgba8)return DXGI_FORMAT_R8G8B8A8_TYPELESS;
-    if(format==se::rhi::TextureFormat::Rgba16Float)return DXGI_FORMAT_R16G16B16A16_FLOAT;
-    if(format==se::rhi::TextureFormat::Rg16Float)return DXGI_FORMAT_R16G16_FLOAT;
-    if(format==se::rhi::TextureFormat::Rgba32Float)return DXGI_FORMAT_R32G32B32A32_FLOAT;
-    if(format==se::rhi::TextureFormat::Bc5Unorm)return DXGI_FORMAT_BC5_TYPELESS;
-    if(format==se::rhi::TextureFormat::Bc4Unorm)return DXGI_FORMAT_BC4_TYPELESS;
-    if(format==se::rhi::TextureFormat::Bc7Unorm||format==se::rhi::TextureFormat::Bc7UnormSrgb)return DXGI_FORMAT_BC7_TYPELESS;
+    if(format==flare::rhi::TextureFormat::Rgba8)return DXGI_FORMAT_R8G8B8A8_TYPELESS;
+    if(format==flare::rhi::TextureFormat::Rgba16Float)return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if(format==flare::rhi::TextureFormat::Rg16Float)return DXGI_FORMAT_R16G16_FLOAT;
+    if(format==flare::rhi::TextureFormat::Rgba32Float)return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    if(format==flare::rhi::TextureFormat::Bc5Unorm)return DXGI_FORMAT_BC5_TYPELESS;
+    if(format==flare::rhi::TextureFormat::Bc4Unorm)return DXGI_FORMAT_BC4_TYPELESS;
+    if(format==flare::rhi::TextureFormat::Bc7Unorm||format==flare::rhi::TextureFormat::Bc7UnormSrgb)return DXGI_FORMAT_BC7_TYPELESS;
     return DXGI_FORMAT_BC1_TYPELESS;
 }
-DXGI_FORMAT SrgbViewFormat(se::rhi::TextureFormat format)
+DXGI_FORMAT SrgbViewFormat(flare::rhi::TextureFormat format)
 {
-    if(format==se::rhi::TextureFormat::Rgba8)return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-    if(format==se::rhi::TextureFormat::Rgba16Float)return DXGI_FORMAT_R16G16B16A16_FLOAT;
-    if(format==se::rhi::TextureFormat::Rg16Float)return DXGI_FORMAT_R16G16_FLOAT;
-    if(format==se::rhi::TextureFormat::Rgba32Float)return DXGI_FORMAT_R32G32B32A32_FLOAT;
-    if(format==se::rhi::TextureFormat::Bc5Unorm)return DXGI_FORMAT_BC5_UNORM; // BC5 没有 sRGB 变体。
-    if(format==se::rhi::TextureFormat::Bc4Unorm)return DXGI_FORMAT_BC4_UNORM; // BC4 没有 sRGB 变体。
-    if(format==se::rhi::TextureFormat::Bc7Unorm||format==se::rhi::TextureFormat::Bc7UnormSrgb)return DXGI_FORMAT_BC7_UNORM_SRGB;
+    if(format==flare::rhi::TextureFormat::Rgba8)return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    if(format==flare::rhi::TextureFormat::Rgba16Float)return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if(format==flare::rhi::TextureFormat::Rg16Float)return DXGI_FORMAT_R16G16_FLOAT;
+    if(format==flare::rhi::TextureFormat::Rgba32Float)return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    if(format==flare::rhi::TextureFormat::Bc5Unorm)return DXGI_FORMAT_BC5_UNORM; // BC5 没有 sRGB 变体。
+    if(format==flare::rhi::TextureFormat::Bc4Unorm)return DXGI_FORMAT_BC4_UNORM; // BC4 没有 sRGB 变体。
+    if(format==flare::rhi::TextureFormat::Bc7Unorm||format==flare::rhi::TextureFormat::Bc7UnormSrgb)return DXGI_FORMAT_BC7_UNORM_SRGB;
     return DXGI_FORMAT_BC1_UNORM_SRGB;
 }
-DXGI_FORMAT LinearViewFormat(se::rhi::TextureFormat format)
+DXGI_FORMAT LinearViewFormat(flare::rhi::TextureFormat format)
 {
-    if(format==se::rhi::TextureFormat::Rgba8)return DXGI_FORMAT_R8G8B8A8_UNORM;
-    if(format==se::rhi::TextureFormat::Rgba16Float)return DXGI_FORMAT_R16G16B16A16_FLOAT;
-    if(format==se::rhi::TextureFormat::Rg16Float)return DXGI_FORMAT_R16G16_FLOAT;
-    if(format==se::rhi::TextureFormat::Rgba32Float)return DXGI_FORMAT_R32G32B32A32_FLOAT;
-    if(format==se::rhi::TextureFormat::Bc5Unorm)return DXGI_FORMAT_BC5_UNORM;
-    if(format==se::rhi::TextureFormat::Bc4Unorm)return DXGI_FORMAT_BC4_UNORM;
-    if(format==se::rhi::TextureFormat::Bc7Unorm||format==se::rhi::TextureFormat::Bc7UnormSrgb)return DXGI_FORMAT_BC7_UNORM;
+    if(format==flare::rhi::TextureFormat::Rgba8)return DXGI_FORMAT_R8G8B8A8_UNORM;
+    if(format==flare::rhi::TextureFormat::Rgba16Float)return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if(format==flare::rhi::TextureFormat::Rg16Float)return DXGI_FORMAT_R16G16_FLOAT;
+    if(format==flare::rhi::TextureFormat::Rgba32Float)return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    if(format==flare::rhi::TextureFormat::Bc5Unorm)return DXGI_FORMAT_BC5_UNORM;
+    if(format==flare::rhi::TextureFormat::Bc4Unorm)return DXGI_FORMAT_BC4_UNORM;
+    if(format==flare::rhi::TextureFormat::Bc7Unorm||format==flare::rhi::TextureFormat::Bc7UnormSrgb)return DXGI_FORMAT_BC7_UNORM;
     return DXGI_FORMAT_BC1_UNORM;
 }
-D3D12_RESOURCE_DESC ResourceDescription(const se::rhi::TextureDescription& description)
+D3D12_RESOURCE_DESC ResourceDescription(const flare::rhi::TextureDescription& description)
 {
     D3D12_RESOURCE_DESC image{};image.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     image.Width=description.width;image.Height=description.height;
@@ -88,26 +88,26 @@ bool InitializeD3D12Texture(D3D12Texture& output,const D3D12Context& context,
     D3D12Presentation& p,D3D12TexturePixels pixels,const Localization& text)
 {
     if(!ValidD3D12TexturePixels(pixels)){Log(LogLevel::Error,text.GetText("D3D12.MeshInputsInvalid"));return false;}
-    const se::rhi::TextureDescription description{pixels.width,pixels.height};const se::rhi::TextureSubresource data{pixels.rgba8,0};
+    const flare::rhi::TextureDescription description{pixels.width,pixels.height};const flare::rhi::TextureSubresource data{pixels.rgba8,0};
     return InitializeD3D12Texture(output,context,p,description,std::span(&data,1),text);
 }
-bool ValidD3D12TextureDescription(const se::rhi::TextureDescription& description)
+bool ValidD3D12TextureDescription(const flare::rhi::TextureDescription& description)
 {
     if(!description.width||!description.height||description.width>16384||description.height>16384||description.samples!=1
         ||!description.mipLevels||description.mipLevels>static_cast<std::uint32_t>(std::bit_width(std::max(description.width,description.height)))
         ||!description.arrayLayers||description.arrayLayers>6
         ||(description.cube&&(description.arrayLayers!=6||description.width!=description.height))
-        ||(description.format!=se::rhi::TextureFormat::Rgba8&&description.format!=se::rhi::TextureFormat::Rgba16Float
-            &&description.format!=se::rhi::TextureFormat::Rg16Float&&description.format!=se::rhi::TextureFormat::Rgba32Float&&!BcFormat(description.format)))return false;
+        ||(description.format!=flare::rhi::TextureFormat::Rgba8&&description.format!=flare::rhi::TextureFormat::Rgba16Float
+            &&description.format!=flare::rhi::TextureFormat::Rg16Float&&description.format!=flare::rhi::TextureFormat::Rgba32Float&&!BcFormat(description.format)))return false;
     return true;
 }
-bool ValidD3D12TextureSubrange(const se::rhi::TextureDescription& description,std::uint32_t firstMip,
-    std::span<const se::rhi::TextureSubresource> subresources)
+bool ValidD3D12TextureSubrange(const flare::rhi::TextureDescription& description,std::uint32_t firstMip,
+    std::span<const flare::rhi::TextureSubresource> subresources)
 {
     if(!ValidD3D12TextureDescription(description)||description.arrayLayers!=1||description.cube
         ||!subresources.size()||firstMip>=description.mipLevels
         ||subresources.size()>description.mipLevels-firstMip)return false;
-    const bool bc=BcFormat(description.format);const UINT bpp=description.format==se::rhi::TextureFormat::Rgba8||description.format==se::rhi::TextureFormat::Rg16Float?4:description.format==se::rhi::TextureFormat::Rgba32Float?16:8;
+    const bool bc=BcFormat(description.format);const UINT bpp=description.format==flare::rhi::TextureFormat::Rgba8||description.format==flare::rhi::TextureFormat::Rg16Float?4:description.format==flare::rhi::TextureFormat::Rgba32Float?16:8;
     const UINT blockBytes=bc?BcBlockBytes(description.format):0;UINT64 total=0;
     for(size_t index=0;index<subresources.size();++index)
     {
@@ -122,10 +122,10 @@ bool ValidD3D12TextureSubrange(const se::rhi::TextureDescription& description,st
     }
     return total<=256ull*1024*1024;
 }
-bool ValidD3D12TextureData(const se::rhi::TextureDescription& description,std::span<const se::rhi::TextureSubresource> subresources)
+bool ValidD3D12TextureData(const flare::rhi::TextureDescription& description,std::span<const flare::rhi::TextureSubresource> subresources)
 {
     if(!ValidD3D12TextureDescription(description)||subresources.size()!=size_t(description.arrayLayers)*description.mipLevels)return false;
-    const bool bc=BcFormat(description.format);const UINT bpp=description.format==se::rhi::TextureFormat::Rgba8||description.format==se::rhi::TextureFormat::Rg16Float?4:description.format==se::rhi::TextureFormat::Rgba32Float?16:8;
+    const bool bc=BcFormat(description.format);const UINT bpp=description.format==flare::rhi::TextureFormat::Rgba8||description.format==flare::rhi::TextureFormat::Rg16Float?4:description.format==flare::rhi::TextureFormat::Rgba32Float?16:8;
     const UINT blockBytes=bc?BcBlockBytes(description.format):0;UINT64 total=0;
     for(size_t index=0;index<subresources.size();++index)
     {
@@ -141,7 +141,7 @@ bool ValidD3D12TextureData(const se::rhi::TextureDescription& description,std::s
     return total<=256ull*1024*1024;
 }
 bool AllocateD3D12Texture(D3D12Texture& output,const D3D12Context& context,
-    const se::rhi::TextureDescription& description,const Localization& text)
+    const flare::rhi::TextureDescription& description,const Localization& text)
 {
     if(output.resource||output.views||!context.srvDescriptors||!context.memory||!ValidD3D12TextureDescription(description))return false;
     D3D12Texture candidate;const auto image=ResourceDescription(description);
@@ -183,10 +183,10 @@ bool AllocateD3D12TextureViews(D3D12Texture& output,const D3D12Context& context,
     output.views=std::move(views);output.mostDetailedMip=mostDetailedMip;return true;
 }
 bool UploadD3D12TextureMips(D3D12Texture& texture,const D3D12Context& context,D3D12Presentation& p,
-    std::uint32_t firstMip,std::span<const se::rhi::TextureSubresource> subresources,const Localization& text)
+    std::uint32_t firstMip,std::span<const flare::rhi::TextureSubresource> subresources,const Localization& text)
 {
     if(!texture.resource||!texture.views||!CanUploadD3D12(context,p))return false;
-    se::rhi::TextureDescription description{texture.width,texture.height,texture.mipLevels,1,texture.format};
+    flare::rhi::TextureDescription description{texture.width,texture.height,texture.mipLevels,1,texture.format};
     description.arrayLayers=texture.arrayLayers;description.cube=texture.cube;
     // 完整上传允许 cube/array；只有按 mip 区间补传（2D）才走单层子区间校验。
     const bool fullUpload=firstMip==0&&subresources.size()==std::size_t(description.arrayLayers)*description.mipLevels;
@@ -228,7 +228,7 @@ bool UploadD3D12TextureMips(D3D12Texture& texture,const D3D12Context& context,D3
     return operation.Finish();
 }
 bool InitializeD3D12Texture(D3D12Texture& output,const D3D12Context& context,D3D12Presentation& p,
-    const se::rhi::TextureDescription& description,std::span<const se::rhi::TextureSubresource> subresources,const Localization& text)
+    const flare::rhi::TextureDescription& description,std::span<const flare::rhi::TextureSubresource> subresources,const Localization& text)
 {
     if(output.resource||output.views||!context.srvDescriptors||!CanUploadD3D12(context,p)||!ValidD3D12TextureData(description,subresources))
     {Log(LogLevel::Error,text.GetText("D3D12.MeshInputsInvalid"));return false;}

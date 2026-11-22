@@ -2,7 +2,7 @@
 #include "ResourceLayer/Assets/StaticModel.h"
 #include <string_view>
 
-namespace se
+namespace flare
 {
 inline constexpr char BuiltinCubeAssetId[]="00000000000000000000000000000001";
 inline constexpr char BuiltinSphereAssetId[]="00000000000000000000000000000002";

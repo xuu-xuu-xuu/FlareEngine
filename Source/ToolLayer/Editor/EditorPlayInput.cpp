@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -153,8 +153,11 @@ EditorInputRoute EditorPlayInput::Process(HWND window, UINT message, WPARAM wPar
     }
     if (Keyboard(message) && active_)
     {
+        const bool ctrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+        const bool altDown = (GetKeyState(VK_MENU) & 0x8000) != 0;
         if ((message == WM_KEYDOWN || message == WM_KEYUP || message == WM_SYSKEYDOWN || message == WM_SYSKEYUP) &&
-            (wParam == VK_F5 || wParam == VK_F6 || wParam == VK_F7 || wParam == VK_F8 || wParam == VK_F11))
+            (wParam == VK_F5 || wParam == VK_F6 || wParam == VK_F7 || wParam == VK_F8 || wParam == VK_F11 ||
+             (ctrlDown && !altDown && wParam == 'P')))
         {
             return result;
         }
@@ -258,4 +261,4 @@ void EditorPlayInput::EndFrame()
     }
 }
 
-} // namespace se
+} // namespace flare

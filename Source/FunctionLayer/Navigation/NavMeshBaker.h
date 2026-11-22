@@ -4,7 +4,7 @@
 #include <span>
 #include <string>
 
-namespace se
+namespace flare
 {
 /// 从纯三角形汤烘焙凸多边形导航网格：体素化、可行走净高过滤、半径腐蚀、矩形/T型接缝闭合与邻接构建。
 bool BakeNavMesh(
@@ -13,4 +13,4 @@ bool BakeNavMesh(
     const NavBakeSettings& settings,
     NavMeshData& output,
     std::string& errorKey);
-} // namespace se
+} // namespace flare

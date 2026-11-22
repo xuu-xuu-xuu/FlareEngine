@@ -3,7 +3,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 void EditorCommandBus::Register(EditorCommandId id, EditorCommandHandler handler)
@@ -69,4 +69,4 @@ const char* EditorCommandName(EditorCommandId id) noexcept
     return "unknown";
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

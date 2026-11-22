@@ -7,7 +7,7 @@
 #include <limits>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -234,7 +234,11 @@ bool PhysicsWorld::Step(float seconds)
         auto collision=CollideBodyShapes(ad,bd,0.005f);if(!collision)continue;
         const PairKey key{pair.a.Pack(),pair.b.Pack()};currentPairs.insert(key);
         touching[pair.a.index]=touching[pair.b.index]=true;
-        if(!cache_.contains(key))events_.push_back({pair.a,pair.b,ad.entityStableId,bd.entityStableId,true,false});
+        if(!cache_.contains(key))
+        {
+            const Vec3 initialPt=collision->points.empty()?(ad.shape.center+bd.shape.center)*0.5f:collision->points.front().position;
+            events_.push_back({pair.a,pair.b,ad.entityStableId,bd.entityStableId,true,false,initialPt,collision->normal,0.0f});
+        }
         contacts_.push_back({pair.a,pair.b,*collision});statistics_.contacts+=collision->points.size();
         const auto moving=[](const Body& value){return value.inverseMass>0&&!value.state.sleeping
             &&(LengthSquared(value.state.linearVelocity)>0.04f||LengthSquared(value.state.angularVelocity)>0.04f);};
@@ -292,10 +296,39 @@ bool PhysicsWorld::Step(float seconds)
         if(length>limit&&length>0){c.tangent1*=limit/length;c.tangent2*=limit/length;}
         impulse=c.t1*(c.tangent1-old1)+c.t2*(c.tangent2-old2);AddImpulse(a,-impulse,c.point);AddImpulse(b,impulse,c.point);
     }
+    for(auto& ev:events_)
+    {
+        if(!ev.began)continue;
+        const PairKey key{ev.a.Pack(),ev.b.Pack()};
+        Vec3 weightedPt{},avgPt{};
+        float impulseSum=0.0f;
+        std::size_t count=0;
+        for(const auto& c:constraints)
+        {
+            if(!(c.key==key))continue;
+            avgPt=avgPt+c.point;
+            weightedPt=weightedPt+c.point*c.normalImpulse;
+            impulseSum+=c.normalImpulse;
+            ev.normal=c.normal;
+            ++count;
+        }
+        if(count>0)
+        {
+            ev.point=impulseSum>1e-6f?(weightedPt*(1.0f/impulseSum)):(avgPt*(1.0f/static_cast<float>(count)));
+            ev.normalImpulse=impulseSum;
+        }
+    }
     for(const auto& [key,points]:cache_)if(!currentPairs.contains(key))
     {
-        (void)points;const BodyHandle a{static_cast<std::uint32_t>(key.a),static_cast<std::uint32_t>(key.a>>32)},b{static_cast<std::uint32_t>(key.b),static_cast<std::uint32_t>(key.b>>32)};
-        events_.push_back({a,b,IsAlive(a)?bodies_[a.index].state.description.entityStableId:0,IsAlive(b)?bodies_[b.index].state.description.entityStableId:0,false,true});
+        const BodyHandle a{static_cast<std::uint32_t>(key.a),static_cast<std::uint32_t>(key.a>>32)},b{static_cast<std::uint32_t>(key.b),static_cast<std::uint32_t>(key.b>>32)};
+        Vec3 exitPt{},exitNormal{0.0f,1.0f,0.0f};
+        if(!points.empty())
+        {
+            exitNormal=points.front().normal;
+            if(IsAlive(a))exitPt=bodies_[a.index].state.description.shape.center+Rotate(bodies_[a.index].state.description.shape.rotation,points.front().localA);
+            else if(IsAlive(b))exitPt=bodies_[b.index].state.description.shape.center+Rotate(bodies_[b.index].state.description.shape.rotation,points.front().localB);
+        }
+        events_.push_back({a,b,IsAlive(a)?bodies_[a.index].state.description.entityStableId:0,IsAlive(b)?bodies_[b.index].state.description.entityStableId:0,false,true,exitPt,exitNormal,0.0f});
     }
     cache_.clear();for(const auto& c:constraints)cache_[c.key].push_back({c.localA,c.localB,c.normal,c.t1*c.tangent1+c.t2*c.tangent2,c.normalImpulse,c.feature});
     triggerTracker_.Update(triggerOverlaps);

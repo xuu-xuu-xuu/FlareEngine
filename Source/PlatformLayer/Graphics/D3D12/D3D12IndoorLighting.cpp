@@ -66,7 +66,7 @@ bool CreateHistory(D3D12Presentation& p,UINT width,UINT height,UINT bounceWidth,
     return true;
 }
 
-se::Vec4 Vector(se::Vec3 value,float w=0){return {value.x,value.y,value.z,w};}
+flare::Vec4 Vector(flare::Vec3 value,float w=0){return {value.x,value.y,value.z,w};}
 }
 
 bool D3D12IndoorLighting::Initialize(ID3D12Device& device,const std::filesystem::path& shader,const Localization& text)
@@ -135,8 +135,8 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
     if(!frame.depthNormals||!frame.depthNormals->statistics.valid||!frame.depthNormals->statistics.complete||!content.meshPipeline)return true;
     const auto& target=*frame.depthNormals->target;const auto& lighting=*content.forward;const auto& indoor=lighting.indoor;
     if(target.width!=width||target.height!=height||(indoor.SurfaceEnabled()&&!target.material))return true;
-    const auto inverseView=se::Inverse(indoor.view),inverseProjection=se::Inverse(indoor.clipFromView);
-    if(!inverseView||!inverseProjection||!se::IsFinite(*inverseView)||!se::IsFinite(*inverseProjection))return false;
+    const auto inverseView=flare::Inverse(indoor.view),inverseProjection=flare::Inverse(indoor.clipFromView);
+    if(!inverseView||!inverseProjection||!flare::IsFinite(*inverseView)||!flare::IsFinite(*inverseProjection))return false;
     ComPtr<ID3D12Device> device;if(!CheckGraphicsResult(p.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf())),text,"D3D12.CreatePipelineFailed"))return false;
     if(!p.indoorLighting)
     {
@@ -154,7 +154,7 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
     const UINT bounceWidth=(width+stride-1)/stride,bounceHeight=(height+stride-1)/stride;
     const bool bounce=indoor.indirect&&indoor.indirectStrength>0;
 
-    se::rhi::IndoorLightingConstants constants{};
+    flare::rhi::IndoorLightingConstants constants{};
     constants.view=indoor.view;constants.projection=indoor.clipFromView;
     constants.inverseView=*inverseView;constants.inverseProjection=*inverseProjection;
     constants.viewport={float(width),float(height),1.f/width,1.f/height};
@@ -200,8 +200,8 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
         currHistory=1u-prevHistory;
         const bool validHistory=indoor.historyValid&&history.frames>0
             &&history.lastSubmission==p.submittedFrames&&history.lastSceneToken==indoor.sceneToken
-            &&se::IsFinite(indoor.previousClipFromWorld);
-        constants.previousClipFromWorld=validHistory?indoor.previousClipFromWorld:se::Mat4::Identity();
+            &&flare::IsFinite(indoor.previousClipFromWorld);
+        constants.previousClipFromWorld=validHistory?indoor.previousClipFromWorld:flare::Mat4::Identity();
         constants.frameIndex=indoor.frameIndex;
         constants.historyBlendWeight=std::isfinite(indoor.historyBlendWeight)?std::clamp(indoor.historyBlendWeight,0.f,0.96f):0.88f;
         constants.historyValid=validHistory?1.f:0.f;

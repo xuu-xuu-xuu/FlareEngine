@@ -8,12 +8,13 @@ using System.Text.Json.Serialization;
 
 namespace FlareEngine;
 
+/// <summary>跨脚本事件投递的派发阶段。</summary>
 public enum EventPhase:uint {NextFrame,AfterPhysics,AfterLogic}
+/// <summary>事件发布结果状态码。</summary>
 public enum EventPostResult:uint {Accepted,Closed,UnknownType,UnsupportedVersion,InvalidScope,InvalidTarget,Full,TooLarge,SequenceExhausted}
+/// <summary>标记值类型结构体为可跨脚本发布与订阅的强类型事件载荷。</summary>
 [AttributeUsage(AttributeTargets.Struct,Inherited=false)]
 public class F_EventAttribute(string key,uint version=1):Attribute {public string Key{get;}=key;public uint Version{get;}=version;}
-[AttributeUsage(AttributeTargets.Struct,Inherited=false)]
-public class EventIdAttribute(string key,uint version=1):F_EventAttribute(key,version);
 public readonly record struct SceneStateChanged(bool Active,uint FormatVersion);
 [StructLayout(LayoutKind.Sequential)]
 public readonly struct EventHeader
@@ -250,22 +251,22 @@ public sealed unsafe partial class EngineSession
 }
 internal static unsafe partial class NativeMethods
 {
-    [LibraryImport(Library,EntryPoint="se_event_set_callback")]
+    [LibraryImport(Library,EntryPoint="flare_event_set_callback")]
     internal static partial int SetEventCallback(ulong session,delegate* unmanaged[Cdecl]<ulong,ulong,EventHeader*,byte*,uint,nint,int> callback,nint context);
-    [LibraryImport(Library,EntryPoint="se_event_register_type",StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library,EntryPoint="flare_event_register_type",StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int EventRegisterType(ulong session,ulong type,uint version,string key,uint length,uint maximum);
-    [LibraryImport(Library,EntryPoint="se_event_publisher_create")]
+    [LibraryImport(Library,EntryPoint="flare_event_publisher_create")]
     internal static partial int EventPublisherCreate(ulong session,out ulong publisher);
-    [LibraryImport(Library,EntryPoint="se_event_publisher_close")]
+    [LibraryImport(Library,EntryPoint="flare_event_publisher_close")]
     internal static partial int EventPublisherClose(ulong publisher);
-    [LibraryImport(Library,EntryPoint="se_event_publish")]
+    [LibraryImport(Library,EntryPoint="flare_event_publish")]
     internal static partial int EventPublish(ulong publisher,ulong type,uint version,uint phase,byte* bytes,uint length,ulong source,ulong stable,ulong target,ulong scene,out uint result);
-    [LibraryImport(Library,EntryPoint="se_event_subscribe")]
+    [LibraryImport(Library,EntryPoint="flare_event_subscribe")]
     internal static partial int EventSubscribe(ulong session,ulong publisher,ulong component,ulong type,ulong target,ulong scene,out ulong subscription);
-    [LibraryImport(Library,EntryPoint="se_event_unsubscribe")]
+    [LibraryImport(Library,EntryPoint="flare_event_unsubscribe")]
     internal static partial int EventUnsubscribe(ulong session,ulong subscription);
-    [LibraryImport(Library,EntryPoint="se_event_stats")]
+    [LibraryImport(Library,EntryPoint="flare_event_stats")]
     internal static partial int EventStats(ulong session,out EventStatistics stats);
-    [LibraryImport(Library,EntryPoint="se_event_trace")]
+    [LibraryImport(Library,EntryPoint="flare_event_trace")]
     internal static partial int EventTrace(ulong session,byte* buffer,uint capacity,out uint required);
 }

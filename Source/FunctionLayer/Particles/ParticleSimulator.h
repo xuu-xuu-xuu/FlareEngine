@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace se
+namespace flare
 {
 /// 确定性 32 位 XorShift 伪随机数生成器（禁止使用非确定性随机源）。
 class XorShift32
@@ -128,4 +128,4 @@ private:
     std::vector<float> size_, rotation_;
     std::vector<float> colorR_, colorG_, colorB_, colorA_;
 };
-} // namespace se
+} // namespace flare

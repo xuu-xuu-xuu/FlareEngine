@@ -1,6 +1,6 @@
 #include "FunctionLayer/Application/FreeCameraInput.h"
 
-namespace se
+namespace flare
 {
 FreeCameraInput FreeCameraInputRouter::Capture(const InputState& input, bool focused,
     bool keyboardConsumed, bool pointerConsumed)

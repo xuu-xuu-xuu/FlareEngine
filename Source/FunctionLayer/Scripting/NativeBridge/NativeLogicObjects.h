@@ -9,16 +9,16 @@
 // C ABI 的数字令牌由会话拥有，句柄只在当前世界的堆中解析。
 class NativeLogicObjects
 {
-    struct State final : se::HeapObject
+    struct State final : flare::HeapObject
     {
         explicit State(double initial) : value(initial) {}
         double value;
-        se::ObjectHandle<State> next;
-        void Trace(se::ObjectTracer& tracer) const override { tracer.Strong(next); }
+        flare::ObjectHandle<State> next;
+        void Trace(flare::ObjectTracer& tracer) const override { tracer.Strong(next); }
     };
-    using Handle = se::ObjectHandle<State>;
+    using Handle = flare::ObjectHandle<State>;
     std::unordered_map<std::uint64_t, Handle> handles_;
-    std::unordered_map<std::uint64_t, se::ObjectRoot<State>> roots_;
+    std::unordered_map<std::uint64_t, flare::ObjectRoot<State>> roots_;
     std::uint64_t heap_ = 0;
     static std::uint64_t Token()
     {
@@ -34,7 +34,7 @@ class NativeLogicObjects
 public:
     // 0 create, 1 read, 2 write, 3 strong link, 4 retain, 5 release,
     // 6 collect. outToken 为对象/根令牌，outValue 为数值/收集后的存活数。
-    bool Execute(se::ObjectHeap& heap, std::uint32_t operation, std::uint64_t object,
+    bool Execute(flare::ObjectHeap& heap, std::uint32_t operation, std::uint64_t object,
                  std::uint64_t target, double value, std::uint64_t& outToken, double& outValue)
     {
         outToken = 0;outValue = 0;

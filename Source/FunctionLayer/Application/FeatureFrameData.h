@@ -1,6 +1,6 @@
 #pragma once
 #include "FrameData.h"
-namespace se
+namespace flare
 {
 class SceneParticles;
 void ApplyFeatureFrameData(const World&,FrameData&,RenderDefaults defaults=RenderDefaults::Project);

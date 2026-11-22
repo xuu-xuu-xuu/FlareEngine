@@ -50,19 +50,19 @@ int wmain(int argc,wchar_t** argv)
     const auto mode=pcss?shadingMode.substr(5):shadingMode;
     const bool depthNormals=mode==L"depth-normals"||mode==L"depth-normals-basic";
     const std::array clusterModes{
-        std::pair{L"clustered-forward",se::rhi::PipelineKind::ClusteredForwardMesh},
-        std::pair{L"clustered-shadowed",se::rhi::PipelineKind::ClusteredShadowedMesh},
-        std::pair{L"clustered-environment",se::rhi::PipelineKind::ClusteredEnvironmentMesh},
-        std::pair{L"clustered-basiclit",se::rhi::PipelineKind::ClusteredBasicLitMesh},
-        std::pair{L"clustered-cascaded-shadowed",se::rhi::PipelineKind::ClusteredCascadedShadowedMesh},
-        std::pair{L"clustered-cascaded-environment",se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh},
-        std::pair{L"clustered-cascaded-basiclit",se::rhi::PipelineKind::ClusteredCascadedBasicLitMesh},
-        std::pair{L"clustered-skinned-forward",se::rhi::PipelineKind::ClusteredForwardMesh},
-        std::pair{L"clustered-skinned-shadowed",se::rhi::PipelineKind::ClusteredShadowedMesh},
-        std::pair{L"clustered-skinned-environment",se::rhi::PipelineKind::ClusteredEnvironmentMesh},
-        std::pair{L"clustered-cascaded-skinned-forward",se::rhi::PipelineKind::ClusteredCascadedShadowedMesh},
-        std::pair{L"clustered-cascaded-skinned-environment",se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh}};
-    bool clustered=false;auto clusterKind=se::rhi::PipelineKind::Triangle;
+        std::pair{L"clustered-forward",flare::rhi::PipelineKind::ClusteredForwardMesh},
+        std::pair{L"clustered-shadowed",flare::rhi::PipelineKind::ClusteredShadowedMesh},
+        std::pair{L"clustered-environment",flare::rhi::PipelineKind::ClusteredEnvironmentMesh},
+        std::pair{L"clustered-basiclit",flare::rhi::PipelineKind::ClusteredBasicLitMesh},
+        std::pair{L"clustered-cascaded-shadowed",flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh},
+        std::pair{L"clustered-cascaded-environment",flare::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh},
+        std::pair{L"clustered-cascaded-basiclit",flare::rhi::PipelineKind::ClusteredCascadedBasicLitMesh},
+        std::pair{L"clustered-skinned-forward",flare::rhi::PipelineKind::ClusteredForwardMesh},
+        std::pair{L"clustered-skinned-shadowed",flare::rhi::PipelineKind::ClusteredShadowedMesh},
+        std::pair{L"clustered-skinned-environment",flare::rhi::PipelineKind::ClusteredEnvironmentMesh},
+        std::pair{L"clustered-cascaded-skinned-forward",flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh},
+        std::pair{L"clustered-cascaded-skinned-environment",flare::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh}};
+    bool clustered=false;auto clusterKind=flare::rhi::PipelineKind::Triangle;
     for(const auto& [name,kind]:clusterModes)if(mode==name){clustered=true;clusterKind=kind;break;}
     const bool userSurface=mode==L"user-pbr"||mode==L"user-forward"||mode==L"user-shadowed"||mode==L"user-environment";
     // W03：蒙皮变体使用 31 号绑定布局 + v3 顶点布局；宏与运行时 PipelineDescription 完全一致，
@@ -76,62 +76,62 @@ int wmain(int argc,wchar_t** argv)
         &&mode!=L"skinned-forward"&&mode!=L"skinned-environment"&&mode!=L"skinned-shadowdepth"
         &&mode!=L"bloomextract"&&mode!=L"bloomblur"&&mode!=L"tonemap"&&mode!=L"fxaa"&&mode!=L"overlay"&&mode!=L"gui"&&mode!=L"user-pbr"&&mode!=L"basiclit"))
     {Log(LogLevel::Error,text.GetText("ShaderBuilder.Usage"));return 1;}
-    se::rhi::PipelineDescription description;
+    flare::rhi::PipelineDescription description;
     const bool userPbr=userSurface;
-    description.kind=mode==L"pbr"?se::rhi::PipelineKind::PbrMesh:mode==L"mesh"?se::rhi::PipelineKind::TexturedMesh:se::rhi::PipelineKind::Triangle;
-    if(userPbr)description.kind=se::rhi::PipelineKind::PbrMesh;
-    if(depthNormals){description.kind=se::rhi::PipelineKind::PbrMesh;description.macros.push_back({"SE_DEPTH_NORMALS","1"});}
-    if(mode==L"user-forward")description.kind=se::rhi::PipelineKind::ForwardMesh;
-    if(mode==L"user-shadowed")description.kind=se::rhi::PipelineKind::ShadowedMesh;
-    if(mode==L"user-environment")description.kind=se::rhi::PipelineKind::EnvironmentMesh;
+    description.kind=mode==L"pbr"?flare::rhi::PipelineKind::PbrMesh:mode==L"mesh"?flare::rhi::PipelineKind::TexturedMesh:flare::rhi::PipelineKind::Triangle;
+    if(userPbr)description.kind=flare::rhi::PipelineKind::PbrMesh;
+    if(depthNormals){description.kind=flare::rhi::PipelineKind::PbrMesh;description.macros.push_back({"SE_DEPTH_NORMALS","1"});}
+    if(mode==L"user-forward")description.kind=flare::rhi::PipelineKind::ForwardMesh;
+    if(mode==L"user-shadowed")description.kind=flare::rhi::PipelineKind::ShadowedMesh;
+    if(mode==L"user-environment")description.kind=flare::rhi::PipelineKind::EnvironmentMesh;
     if(userSurface&&mode!=L"user-pbr")description.macros.push_back({"SE_FORWARD","1"});
     if(mode==L"user-shadowed"||mode==L"user-environment")description.macros.push_back({"SE_SHADOWS","1"});
     if(mode==L"user-environment")description.macros.push_back({"SE_ENVIRONMENT","1"});
-    if(mode==L"forward")description.kind=se::rhi::PipelineKind::ForwardMesh;
-    if(mode==L"output")description.kind=se::rhi::PipelineKind::FinalOutput;
-    if(mode==L"sky")description.kind=se::rhi::PipelineKind::Sky;
-    if(mode==L"basiclit")description.kind=se::rhi::PipelineKind::BasicLitMesh;
-    if(mode==L"shadowed")description.kind=se::rhi::PipelineKind::ShadowedMesh;
-    if(mode==L"shadowdepth")description.kind=se::rhi::PipelineKind::ShadowDepth;
-    if(mode==L"skinned-forward")description.kind=se::rhi::PipelineKind::ShadowedMesh;
-    if(mode==L"skinned-shadowdepth")description.kind=se::rhi::PipelineKind::ShadowDepth;
-    if(mode==L"shadowoutput")description.kind=se::rhi::PipelineKind::ShadowOutput;
-    if(mode==L"environment"||mode==L"skinned-environment")description.kind=se::rhi::PipelineKind::EnvironmentMesh;
-    if(mode==L"environmentsky")description.kind=se::rhi::PipelineKind::EnvironmentSky;
-    if(mode==L"bloomextract")description.kind=se::rhi::PipelineKind::BloomExtract;
-    if(mode==L"bloomblur")description.kind=se::rhi::PipelineKind::BloomBlur;
-    if(mode==L"tonemap")description.kind=se::rhi::PipelineKind::ToneMap;
-    if(mode==L"fxaa")description.kind=se::rhi::PipelineKind::Fxaa;
-    if(mode==L"overlay")description.kind=se::rhi::PipelineKind::UiOverlay;
-    if(mode==L"pbr-instanced")description.kind=se::rhi::PipelineKind::PbrInstancedMesh;
-    if(mode==L"pbr-forward-instanced")description.kind=se::rhi::PipelineKind::PbrForwardInstancedMesh;
-    if(mode==L"gui")description.kind=se::rhi::PipelineKind::Gui;
-    if(mode==L"cascaded-shadowed"||mode==L"cascaded-skinned-forward")description.kind=se::rhi::PipelineKind::CascadedShadowedMesh;
-    if(mode==L"cascaded-environment"||mode==L"cascaded-skinned-environment")description.kind=se::rhi::PipelineKind::CascadedEnvironmentMesh;
-    if(mode==L"cascaded-basiclit")description.kind=se::rhi::PipelineKind::CascadedBasicLitMesh;
-    if(mode==L"cascaded-output")description.kind=se::rhi::PipelineKind::CascadedShadowOutput;
+    if(mode==L"forward")description.kind=flare::rhi::PipelineKind::ForwardMesh;
+    if(mode==L"output")description.kind=flare::rhi::PipelineKind::FinalOutput;
+    if(mode==L"sky")description.kind=flare::rhi::PipelineKind::Sky;
+    if(mode==L"basiclit")description.kind=flare::rhi::PipelineKind::BasicLitMesh;
+    if(mode==L"shadowed")description.kind=flare::rhi::PipelineKind::ShadowedMesh;
+    if(mode==L"shadowdepth")description.kind=flare::rhi::PipelineKind::ShadowDepth;
+    if(mode==L"skinned-forward")description.kind=flare::rhi::PipelineKind::ShadowedMesh;
+    if(mode==L"skinned-shadowdepth")description.kind=flare::rhi::PipelineKind::ShadowDepth;
+    if(mode==L"shadowoutput")description.kind=flare::rhi::PipelineKind::ShadowOutput;
+    if(mode==L"environment"||mode==L"skinned-environment")description.kind=flare::rhi::PipelineKind::EnvironmentMesh;
+    if(mode==L"environmentsky")description.kind=flare::rhi::PipelineKind::EnvironmentSky;
+    if(mode==L"bloomextract")description.kind=flare::rhi::PipelineKind::BloomExtract;
+    if(mode==L"bloomblur")description.kind=flare::rhi::PipelineKind::BloomBlur;
+    if(mode==L"tonemap")description.kind=flare::rhi::PipelineKind::ToneMap;
+    if(mode==L"fxaa")description.kind=flare::rhi::PipelineKind::Fxaa;
+    if(mode==L"overlay")description.kind=flare::rhi::PipelineKind::UiOverlay;
+    if(mode==L"pbr-instanced")description.kind=flare::rhi::PipelineKind::PbrInstancedMesh;
+    if(mode==L"pbr-forward-instanced")description.kind=flare::rhi::PipelineKind::PbrForwardInstancedMesh;
+    if(mode==L"gui")description.kind=flare::rhi::PipelineKind::Gui;
+    if(mode==L"cascaded-shadowed"||mode==L"cascaded-skinned-forward")description.kind=flare::rhi::PipelineKind::CascadedShadowedMesh;
+    if(mode==L"cascaded-environment"||mode==L"cascaded-skinned-environment")description.kind=flare::rhi::PipelineKind::CascadedEnvironmentMesh;
+    if(mode==L"cascaded-basiclit")description.kind=flare::rhi::PipelineKind::CascadedBasicLitMesh;
+    if(mode==L"cascaded-output")description.kind=flare::rhi::PipelineKind::CascadedShadowOutput;
     if(clustered)description.kind=clusterKind;
-    description.bindingLayoutVersion=se::rhi::BindingLayout(description.kind);
+    description.bindingLayoutVersion=flare::rhi::BindingLayout(description.kind);
     if(skinned)
     {
-        description.bindingLayoutVersion=clustered?se::rhi::SkinnedClusteredLayoutVersion:cascaded?se::rhi::SkinnedCascadedLayoutVersion:se::rhi::SkinnedLayoutVersion;
-        description.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;
+        description.bindingLayoutVersion=clustered?flare::rhi::SkinnedClusteredLayoutVersion:cascaded?flare::rhi::SkinnedCascadedLayoutVersion:flare::rhi::SkinnedLayoutVersion;
+        description.vertexLayoutVersion=flare::rhi::VertexLayoutVersionSkinned;
         description.macros.push_back({"SE_SKINNED","1"});
     }
     if(pcss)
     {
-        description.bindingLayoutVersion=se::rhi::ShadowFilterBindingLayout(description.kind,skinned);
-        if(!se::rhi::ValidShadowFilterBindingLayout(description.kind,description.bindingLayoutVersion,skinned))
+        description.bindingLayoutVersion=flare::rhi::ShadowFilterBindingLayout(description.kind,skinned);
+        if(!flare::rhi::ValidShadowFilterBindingLayout(description.kind,description.bindingLayoutVersion,skinned))
         {Log(LogLevel::Error,text.GetText("Shader.SourceInvalid"));return 1;}
     }
-    if(surface)description.materialLayoutVersion=se::rhi::MaterialSurfaceLayoutVersion;
-    if(shading)description.shadingLayoutVersion=se::rhi::ShadingExtensionLayoutVersion;
+    if(surface)description.materialLayoutVersion=flare::rhi::MaterialSurfaceLayoutVersion;
+    if(shading)description.shadingLayoutVersion=flare::rhi::ShadingExtensionLayoutVersion;
     description.shader=argv[2];
     for(int index=4;index<argc;++index)
     {
         std::u16string units;for(const wchar_t c:std::wstring_view(argv[index]))units+=static_cast<char16_t>(c);
         std::u32string decoded;std::string macro;
-        if(!se::DecodeUtf16(units,decoded)||!se::EncodeUtf8(decoded,macro)){Log(LogLevel::Error,text.GetText("Shader.SourceInvalid"));return 1;}
+        if(!flare::DecodeUtf16(units,decoded)||!flare::EncodeUtf8(decoded,macro)){Log(LogLevel::Error,text.GetText("Shader.SourceInvalid"));return 1;}
         const auto equals=macro.find('=');description.macros.push_back({macro.substr(0,equals),equals==std::string::npos?"1":macro.substr(equals+1)});
     }
     D3D12ShaderSource source;if(!ReadD3D12ShaderSource(description,source,text))return 1;

@@ -2,7 +2,7 @@
 #include "Math.h"
 #include <array>
 
-namespace se
+namespace flare
 {
 // 正交归一实 SH，l<=2，世界 xyz：Y00,Y1-1(y),Y10(z),Y11(x),
 // Y2-2(xy),Y2-1(yz),Y20(3z²-1),Y21(xz),Y22(x²-y²)。场景仍为右手 Y-up。

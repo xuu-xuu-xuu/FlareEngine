@@ -1,5 +1,5 @@
 {
-  "type": "SelfEngine.Material",
+  "type": "FlareEngine.Material",
   "version": 1,
   "name": "01 清漆",
   "baseColor": [0.32, 0.055, 0.025, 1],

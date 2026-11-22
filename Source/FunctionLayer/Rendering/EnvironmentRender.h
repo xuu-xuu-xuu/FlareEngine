@@ -3,7 +3,7 @@
 #include "FunctionLayer/Runtime/Camera.h"
 #include "PlatformLayer/Graphics/Rhi.h"
 
-namespace se
+namespace flare
 {
 struct RenderEnvironment
 {

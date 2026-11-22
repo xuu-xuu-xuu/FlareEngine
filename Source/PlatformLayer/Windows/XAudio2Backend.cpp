@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 XAudio2Backend::~XAudio2Backend()
 {
@@ -307,4 +307,4 @@ void XAudio2Backend::StopAll() noexcept
         entry.submitted = false;
     }
 }
-} // namespace se
+} // namespace flare

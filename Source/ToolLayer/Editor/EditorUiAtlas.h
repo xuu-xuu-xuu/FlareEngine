@@ -8,7 +8,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace se
+namespace flare
 {
 
 [[nodiscard]] inline ui::UiGeometryOptions MakeEditorUiGeometryOptions(Vec2 textPixelScale) noexcept
@@ -46,4 +46,4 @@ namespace se
     return true;
 }
 
-} // namespace se
+} // namespace flare

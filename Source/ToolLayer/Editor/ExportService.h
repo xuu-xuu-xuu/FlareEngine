@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 struct ExportRequest
 {

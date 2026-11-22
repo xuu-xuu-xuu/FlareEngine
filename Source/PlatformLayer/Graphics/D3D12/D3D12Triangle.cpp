@@ -23,15 +23,15 @@ using Vertex=D3D12TriangleVertex;
 bool InitializeD3D12Triangle(D3D12Triangle& triangle,const D3D12Context& context,
     const std::filesystem::path& shaderPath,const Localization& localization)
 {
-    se::rhi::PipelineDescription description;description.kind=se::rhi::PipelineKind::Triangle;description.shader=shaderPath;
+    flare::rhi::PipelineDescription description;description.kind=flare::rhi::PipelineKind::Triangle;description.shader=shaderPath;
     return InitializeD3D12Triangle(triangle,context,description,localization);
 }
 bool InitializeD3D12Triangle(D3D12Triangle& triangle,const D3D12Context& context,
-    const se::rhi::PipelineDescription& description,const Localization& localization)
+    const flare::rhi::PipelineDescription& description,const Localization& localization)
 {
     if(triangle.rootSignature||triangle.pipeline||triangle.vertices||triangle.prepared)
     {Log(LogLevel::Error,localization.GetText("D3D12.TriangleNotEmpty"));return false;}
-    if(!context.device||!context.states||!context.pipelines||description.shader.empty()||description.kind!=se::rhi::PipelineKind::Triangle)
+    if(!context.device||!context.states||!context.pipelines||description.shader.empty()||description.kind!=flare::rhi::PipelineKind::Triangle)
     {Log(LogLevel::Error,localization.GetText("D3D12.TriangleInputsInvalid"));return false;}
     D3D12Triangle initialized;
     initialized.prepared=context.pipelines->Prepare(description,localization);if(!initialized.prepared)return false;
@@ -72,7 +72,7 @@ bool InitializeD3D12Triangle(D3D12Triangle& triangle,const D3D12Context& context
 }
 
 void RecordD3D12Triangle(const D3D12Triangle& triangle, ID3D12GraphicsCommandList& commands,
-    UINT width, UINT height, const se::Mat4& clipFromWorld)
+    UINT width, UINT height, const flare::Mat4& clipFromWorld)
 {
     const D3D12_VIEWPORT viewport{ 0, 0, static_cast<float>(width), static_cast<float>(height), 0, 1 };
     const D3D12_RECT scissor{ 0, 0, static_cast<LONG>(width), static_cast<LONG>(height) };

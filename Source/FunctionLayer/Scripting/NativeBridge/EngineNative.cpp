@@ -1,4 +1,4 @@
-#define SELFENGINE_NATIVE_EXPORTS
+#define FLARE_NATIVE_EXPORTS
 #include "FunctionLayer/Scripting/NativeBridge/EngineNative.h"
 #include "FunctionLayer/Runtime/World.h"
 #include "FunctionLayer/Runtime/Environment.h"
@@ -58,9 +58,9 @@ std::recursive_mutex sessionsMutex;
 struct RuntimeAppearance
 {
     float lookMode=-1,lookBlend=0;
-    std::optional<se::SkyView> sky;
+    std::optional<flare::SkyView> sky;
 
-    void Apply(se::FrameData& frame) const
+    void Apply(flare::FrameData& frame) const
     {
         if(lookMode>=0){frame.lookMode=lookMode;frame.lookBlend=lookBlend;}
         if(sky)frame.sky=*sky;
@@ -72,7 +72,7 @@ struct Session
     {
         environment.ConfigureClock(1.0/60,8,false);
         environment.Events().RegisterType({4,"engine.scene_state",1,8});
-        audioBackend=std::make_unique<se::XAudio2Backend>();
+        audioBackend=std::make_unique<flare::XAudio2Backend>();
         if(audioBackend->Initialize())audio.SetBackend(audioBackend.get());
         else audioBackend.reset();
     }
@@ -89,48 +89,48 @@ struct Session
         world.Clear();
         while(world.HasPendingCommands())world.FlushCommands();
     }
-    se::Environment environment;
+    flare::Environment environment;
     NativeLogicObjects logicObjects;
-    se::World& world=environment.GetWorld();
-    se::Environment* borrowedEnvironment=nullptr;
-    se::Environment& Env(){return borrowedEnvironment?*borrowedEnvironment:environment;}
-    const se::Environment& ReadEnvironment()const{return borrowedEnvironment?*borrowedEnvironment:editor?editor->EditEnvironment():environment;}
-    se::World* borrowedWorld=nullptr;
-    se::World& WorldRef() { return borrowedWorld?*borrowedWorld:world; }
-    const se::World& ReadWorld() const {return borrowedWorld?*borrowedWorld:editor?editor->EditWorld():world;}
-    se::PhysicsWorld physics;
-    se::ScenePhysics scenePhysics;
-    std::unique_ptr<se::XAudio2Backend> audioBackend;
-    se::AudioWorld audio;
-    se::SceneAudio sceneAudio;
-    se::SceneParticles sceneParticles;
-    se::SceneNavigation sceneNavigation;
-    std::unordered_map<std::uint64_t,se::EntityHandle> bodyOwners;
+    flare::World& world=environment.GetWorld();
+    flare::Environment* borrowedEnvironment=nullptr;
+    flare::Environment& Env(){return borrowedEnvironment?*borrowedEnvironment:environment;}
+    const flare::Environment& ReadEnvironment()const{return borrowedEnvironment?*borrowedEnvironment:editor?editor->EditEnvironment():environment;}
+    flare::World* borrowedWorld=nullptr;
+    flare::World& WorldRef() { return borrowedWorld?*borrowedWorld:world; }
+    const flare::World& ReadWorld() const {return borrowedWorld?*borrowedWorld:editor?editor->EditWorld():world;}
+    flare::PhysicsWorld physics;
+    flare::ScenePhysics scenePhysics;
+    std::unique_ptr<flare::XAudio2Backend> audioBackend;
+    flare::AudioWorld audio;
+    flare::SceneAudio sceneAudio;
+    flare::SceneParticles sceneParticles;
+    flare::SceneNavigation sceneNavigation;
+    std::unordered_map<std::uint64_t,flare::EntityHandle> bodyOwners;
     bool physicsDebugDraw=true;
-    se::FixedStepClock physicsClock;
-    std::vector<SE_ContactEvent> contactEvents;
-    std::vector<SE_TriggerEvent> triggerEvents;
-    se::TriggerTracker characterTriggerTracker;
-    se::UiTree ui;
-    se::UiTree* borrowedUi=nullptr;
-    se::UiTree& UiRef() { return borrowedUi?*borrowedUi:ui; }
-    std::vector<se::UiEvent> uiEvents;
-    SE_InputState input{};
-    SE_PointerState pointer{};
-    SE_Vector2 mouseDelta{};
+    flare::FixedStepClock physicsClock;
+    std::vector<FLARE_ContactEvent> contactEvents;
+    std::vector<FLARE_TriggerEvent> triggerEvents;
+    flare::TriggerTracker characterTriggerTracker;
+    flare::UiTree ui;
+    flare::UiTree* borrowedUi=nullptr;
+    flare::UiTree& UiRef() { return borrowedUi?*borrowedUi:ui; }
+    std::vector<flare::UiEvent> uiEvents;
+    FLARE_InputState input{};
+    FLARE_PointerState pointer{};
+    FLARE_Vector2 mouseDelta{};
     bool cursorLocked=false,cursorVisible=true,cursorLockPausedByEsc=false;
     bool cursorClipApplied=false,cursorHiddenApplied=false;
     HWND activeGameWindow=nullptr;
     RECT activeGameScreenRect{};
     POINT lockedCenterScreen{};
-    se::InputActionMap inputActions{se::DefaultInputActionDocument()};
-    std::unordered_map<SE_Entity,se::CharacterController> characters;
+    flare::InputActionMap inputActions{flare::DefaultInputActionDocument()};
+    std::unordered_map<FLARE_Entity,flare::CharacterController> characters;
     Localization localization;
-    std::unique_ptr<se::AssetStore> assets;
+    std::unique_ptr<flare::AssetStore> assets;
     bool windowRunning=false,stopWindow=false;
-    std::unique_ptr<se::PlayerQualityPreference> playerQuality;
+    std::unique_ptr<flare::PlayerQualityPreference> playerQuality;
     bool showPlayerQualityMenu=true;
-    se::QualityProfiles qualityProfiles=se::DefaultQualityProfiles;
+    flare::QualityProfiles qualityProfiles=flare::DefaultQualityProfiles;
     std::filesystem::path windowCapture;
     std::uint64_t windowCaptureFrame=0;
     // 普通 Player 的固定回放尺寸与固定步长；序列抓帧用同一组值保证 updateIndex 与 tick 一一对应。
@@ -141,26 +141,26 @@ struct Session
     RuntimeAppearance appearance;
     std::filesystem::path windowProfile;
     std::uint32_t profileWidth=0,profileHeight=0;
-    se::EditorSession* editor=nullptr;
+    flare::EditorSession* editor=nullptr;
     int32_t pendingPlay=-1;
-    SE_EditorCallback editorCallback=nullptr;
+    FLARE_EditorCallback editorCallback=nullptr;
     void* editorContext=nullptr;
-    SE_EditorDataCallback editorDataCallback=nullptr;
+    FLARE_EditorDataCallback editorDataCallback=nullptr;
     void* editorDataContext=nullptr;
     std::string inspectorError;
     std::thread::id thread = std::this_thread::get_id();
-    SE_UpdateCallback callback = nullptr;
+    FLARE_UpdateCallback callback = nullptr;
     void* context = nullptr;
-    SE_UpdateCallback postStepCallback = nullptr;
+    FLARE_UpdateCallback postStepCallback = nullptr;
     void* postStepContext = nullptr;
     bool stepping = false;
-    SE_TickCallback tickCallback=nullptr;
+    FLARE_TickCallback tickCallback=nullptr;
     void* tickContext=nullptr;
-    SE_EventCallback eventCallback=nullptr;
+    FLARE_EventCallback eventCallback=nullptr;
     void* eventContext=nullptr;
-    SE_SceneCallback sceneCallback=nullptr;
+    FLARE_SceneCallback sceneCallback=nullptr;
     void* sceneContext=nullptr;
-    std::unordered_map<std::uint64_t,se::EventBus::SubscriptionToken> eventSubscriptions;
+    std::unordered_map<std::uint64_t,flare::EventBus::SubscriptionToken> eventSubscriptions;
     bool environmentDriven=false,environmentPhysics=false,pendingEnvironmentRelease=false,callbackFailed=false;
     double value = 0.0;
     uint64_t stepCount = 0;
@@ -171,9 +171,9 @@ struct Slot
     uint32_t generation = 1;
 };
 std::vector<Slot> slots;
-struct EventPublisher {SE_Session session;se::EventBus::Publisher value;};
+struct EventPublisher {FLARE_Session session;flare::EventBus::Publisher value;};
 std::unordered_map<std::uint64_t,EventPublisher> eventPublishers;
-se::EventBus& EventsFor(Session& session)
+flare::EventBus& EventsFor(Session& session)
 {
     auto& events=session.Env().Events();
     if(!session.Env().Closing()&&!events.BindWorld(session.WorldRef()))throw std::runtime_error("Event.ContextMismatch");
@@ -181,7 +181,7 @@ se::EventBus& EventsFor(Session& session)
     for(auto it=session.eventSubscriptions.begin();it!=session.eventSubscriptions.end();)if(!it->second.Active())it=session.eventSubscriptions.erase(it);else ++it;
     return events;
 }
-void CloseEventPublishers(SE_Session handle)
+void CloseEventPublishers(FLARE_Session handle)
 {
     for(auto it=eventPublishers.begin();it!=eventPublishers.end();)
         if(it->second.session==handle){it->second.value.Close();it=eventPublishers.erase(it);}else ++it;
@@ -197,29 +197,29 @@ int32_t Error(int32_t code, const char* key) noexcept
 }
 template<class Function> int32_t Protect(Function&& function) noexcept
 {
-    try { std::lock_guard lock(sessionsMutex); Error(SE_OK, "Bridge.Success"); return function(); }
-    catch (const std::bad_alloc&) { return Error(SE_OUT_OF_MEMORY, "Bridge.OutOfMemory"); }
-    catch (...) { return Error(SE_INTERNAL_ERROR, "Bridge.NativeException"); }
+    try { std::lock_guard lock(sessionsMutex); Error(FLARE_OK, "Bridge.Success"); return function(); }
+    catch (const std::bad_alloc&) { return Error(FLARE_OUT_OF_MEMORY, "Bridge.OutOfMemory"); }
+    catch (...) { return Error(FLARE_INTERNAL_ERROR, "Bridge.NativeException"); }
 }
-Session* Find(SE_Session handle, bool checkThread = true)
+Session* Find(FLARE_Session handle, bool checkThread = true)
 {
     const uint32_t encodedIndex = static_cast<uint32_t>(handle);
     const uint32_t generation = static_cast<uint32_t>(handle >> 32);
     if (encodedIndex == 0 || encodedIndex - 1 >= slots.size()
         || slots[encodedIndex - 1].generation != generation || !slots[encodedIndex - 1].value)
     {
-        Error(SE_INVALID_HANDLE, "Bridge.InvalidSession");
+        Error(FLARE_INVALID_HANDLE, "Bridge.InvalidSession");
         return nullptr;
     }
     Session* session = slots[encodedIndex - 1].value.get();
     if (checkThread && session->thread != std::this_thread::get_id())
     {
-        Error(SE_WRONG_THREAD, "Bridge.WrongThread");
+        Error(FLARE_WRONG_THREAD, "Bridge.WrongThread");
         return nullptr;
     }
     return session;
 }
-int32_t MissingSession() { return std::strcmp(lastError.data(), "Bridge.WrongThread") == 0 ? SE_WRONG_THREAD : SE_INVALID_HANDLE; }
+int32_t MissingSession() { return std::strcmp(lastError.data(), "Bridge.WrongThread") == 0 ? FLARE_WRONG_THREAD : FLARE_INVALID_HANDLE; }
 bool ValidUtf8(const char* text, uint32_t size)
 {
     if (!text && size != 0) return false;
@@ -246,28 +246,28 @@ bool ValidUtf8(const char* text, uint32_t size)
 }
 int32_t CopyText(const std::string_view text, char* buffer, uint32_t capacity, uint32_t* required)
 {
-    if (!required || (capacity != 0 && !buffer)) return SE_INVALID_ARGUMENT;
+    if (!required || (capacity != 0 && !buffer)) return FLARE_INVALID_ARGUMENT;
     *required = static_cast<uint32_t>(text.size() + 1);
-    if (capacity < *required) return SE_BUFFER_TOO_SMALL;
+    if (capacity < *required) return FLARE_BUFFER_TOO_SMALL;
     std::memcpy(buffer, text.data(), text.size());
     buffer[text.size()] = '\0';
-    return SE_OK;
+    return FLARE_OK;
 }
-nlohmann::json BindingJson(const se::UiEventBinding& binding)
+nlohmann::json BindingJson(const flare::UiEventBinding& binding)
 {return {{"Event",static_cast<int>(binding.event)},{"Entity",binding.entity},{"Script",binding.script},{"Action",binding.action}};}
-bool ValidTransform(const SE_Transform& t)
+bool ValidTransform(const FLARE_Transform& t)
 {
-    const se::Transform transform{{t.px,t.py,t.pz},{t.qx,t.qy,t.qz,t.qw},{t.sx,t.sy,t.sz}};
-    return se::IsValid(transform)&&std::abs(t.sx)>1e-6f&&std::abs(t.sy)>1e-6f&&std::abs(t.sz)>1e-6f;
+    const flare::Transform transform{{t.px,t.py,t.pz},{t.qx,t.qy,t.qz,t.qw},{t.sx,t.sy,t.sz}};
+    return flare::IsValid(transform)&&std::abs(t.sx)>1e-6f&&std::abs(t.sy)>1e-6f&&std::abs(t.sz)>1e-6f;
 }
-se::BodyHandle BodyFromPacked(SE_Body handle) { return {static_cast<uint32_t>(handle),static_cast<uint32_t>(handle>>32)}; }
-se::Vec3 Vector(SE_Vector3 value) { return {value.x,value.y,value.z}; }
+flare::BodyHandle BodyFromPacked(FLARE_Body handle) { return {static_cast<uint32_t>(handle),static_cast<uint32_t>(handle>>32)}; }
+flare::Vec3 Vector(FLARE_Vector3 value) { return {value.x,value.y,value.z}; }
 std::filesystem::path ResourceDirectory()
 {
     // 候选/便携运行时携带构建后的 shader 资源；源码 ENGINE_ROOT 仅定位工具与配置。
     HMODULE module=nullptr;wchar_t modulePath[32768]{};
     if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&se_session_run_window),&module))return {};
+        reinterpret_cast<LPCWSTR>(&flare_session_run_window),&module))return {};
     const DWORD pathLength=GetModuleFileNameW(module,modulePath,32768);
     if(!pathLength||pathLength>=32768)return {};
     return std::filesystem::path(modulePath).parent_path()/L"Resources";
@@ -286,7 +286,7 @@ bool HasBody(Session& session, uint64_t stableId)
     for (auto body:session.physics.Bodies()) if (session.physics.GetBody(body)->description.entityStableId==stableId) return true;
     return false;
 }
-bool BodyAlive(Session& session,SE_Body body)
+bool BodyAlive(Session& session,FLARE_Body body)
 {
     if(!session.physics.IsAlive(BodyFromPacked(body)))return false;
     const auto owner=session.bodyOwners.find(body);
@@ -297,36 +297,36 @@ void SweepBodies(Session& session)
     for (auto body:session.physics.Bodies())
         if(!BodyAlive(session,body.Pack())||!session.WorldRef().IsAlive(session.WorldRef().FindByStableId(session.physics.GetBody(body)->description.entityStableId)))session.physics.DestroyBody(body);
     std::erase_if(session.bodyOwners,[&](const auto& item){return !session.physics.IsAlive(BodyFromPacked(item.first));});
-    std::erase_if(session.characters,[&](const auto& item){return !session.WorldRef().IsAlive(se::EntityHandle::FromPacked(item.first));});
+    std::erase_if(session.characters,[&](const auto& item){return !session.WorldRef().IsAlive(flare::EntityHandle::FromPacked(item.first));});
 }
-se::SceneManager& ScenesFor(Session& session)
+flare::SceneManager& ScenesFor(Session& session)
 {
     EventsFor(session);auto& scenes=session.Env().Scenes();if(!session.Env().Closing()&&!scenes.BindWorld(session.WorldRef()))throw std::logic_error("Scene.ContextMismatch");return scenes;
 }
-void SceneServices(Session& session,SE_Session handle)
+void SceneServices(Session& session,FLARE_Session handle)
 {
     session.Env().Events().RegisterType({4,"engine.scene_state",1,8});
     if(session.assets||!session.borrowedEnvironment)session.Env().SetTODResolver([&session](const std::string& id,std::string& error){
-        std::vector<se::AssetDiagnostic> diagnostics;auto profile=session.assets?session.assets->LoadTODProfile(id,diagnostics):nullptr;
+        std::vector<flare::AssetDiagnostic> diagnostics;auto profile=session.assets?session.assets->LoadTODProfile(id,diagnostics):nullptr;
         if(!profile)error=diagnostics.empty()?"TOD.ResolveFailed":diagnostics.back().key;return profile;
     });
-    session.Env().Scenes().SetValidator([&session](const se::World& candidate,std::string& error){
+    session.Env().Scenes().SetValidator([&session](const flare::World& candidate,std::string& error){
         for(const auto entity:candidate.Entities())if(const auto* mesh=candidate.GetMesh(entity))
         {
-            std::vector<se::AssetDiagnostic> diagnostics;
+            std::vector<flare::AssetDiagnostic> diagnostics;
             if(!session.assets||!session.assets->LoadModel(mesh->meshAsset,diagnostics)){error="Scene.DependencyFailed";return false;}
             for(const auto& material:mesh->materials)if(!material.empty()&&!session.assets->LoadMaterial(material,diagnostics)){error="Scene.DependencyFailed";return false;}
         }
         return true;
     });
-    session.Env().Scenes().SetUnloadHook([&session,handle](se::SceneHandle scene,std::span<const se::EntityHandle> members,std::span<const se::StableEntityId> invalidated){
+    session.Env().Scenes().SetUnloadHook([&session,handle](flare::SceneHandle scene,std::span<const flare::EntityHandle> members,std::span<const flare::StableEntityId> invalidated){
         bool failed=false;const bool previous=session.stepping;session.stepping=true;
         struct Restore{Session& session;bool previous;~Restore(){session.stepping=previous;}} restore{session,previous};
         try
         {
             if(session.sceneCallback)
             {
-                std::vector<SE_Entity> packed;packed.reserve(members.size());for(const auto entity:members)packed.push_back(entity.Pack());
+                std::vector<FLARE_Entity> packed;packed.reserve(members.size());for(const auto entity:members)packed.push_back(entity.Pack());
                 struct Unlock{Unlock(){sessionsMutex.unlock();}~Unlock(){sessionsMutex.lock();}} unlock;
                 failed=session.sceneCallback(handle,scene.value,packed.data(),static_cast<uint32_t>(packed.size()),invalidated.data(),static_cast<uint32_t>(invalidated.size()),session.sceneContext)!=0;
             }
@@ -363,7 +363,7 @@ void CaptureInput(Session& session,const InputState& input,bool consumed,bool po
 {
             session.inputActions.Update(input, consumed, pointerConsumed);
             session.pointer={};session.pointer.x=input.mouseX;session.pointer.y=input.mouseY;session.pointer.consumed=pointerConsumed?1:0;
-            session.mouseDelta=pointerConsumed?SE_Vector2{0,0}:SE_Vector2{static_cast<float>(input.mouseDeltaX),static_cast<float>(input.mouseDeltaY)};
+            session.mouseDelta=pointerConsumed?FLARE_Vector2{0,0}:FLARE_Vector2{static_cast<float>(input.mouseDeltaX),static_cast<float>(input.mouseDeltaY)};
             if(!consumed)
             {
                 for(const auto& ev:input.keyEvents)
@@ -449,11 +449,11 @@ void CaptureInput(Session& session,const InputState& input,bool consumed,bool po
 }
 int32_t PhysicsStep(Session& session, double dt)
 {
-    if (!std::isfinite(dt)||dt<=0||dt>1) return Error(SE_INVALID_ARGUMENT,"Bridge.InvalidDelta");
+    if (!std::isfinite(dt)||dt<=0||dt>1) return Error(FLARE_INVALID_ARGUMENT,"Bridge.InvalidDelta");
     SweepBodies(session);
-    if(!session.scenePhysics.Synchronize(session.WorldRef(),session.physics))return Error(SE_INVALID_ARGUMENT,"Bridge.PhysicsFailed");
+    if(!session.scenePhysics.Synchronize(session.WorldRef(),session.physics))return Error(FLARE_INVALID_ARGUMENT,"Bridge.PhysicsFailed");
     const bool stepped=session.environmentDriven?session.physics.StepFromEnvironment(static_cast<float>(dt)):session.physics.Step(static_cast<float>(dt));
-    if(!stepped)return Error(SE_INVALID_ARGUMENT,"Bridge.PhysicsFailed");
+    if(!stepped)return Error(FLARE_INVALID_ARGUMENT,"Bridge.PhysicsFailed");
     for (auto body:session.physics.Bodies())
     {
         if(session.scenePhysics.Owns(body))continue;
@@ -464,37 +464,37 @@ int32_t PhysicsStep(Session& session, double dt)
             auto transform=*original;
             transform.position=state.description.shape.center;
             transform.rotation=state.description.shape.rotation;
-            if (!session.WorldRef().SetTransform(entity,transform)) return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
+            if (!session.WorldRef().SetTransform(entity,transform)) return Error(FLARE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
         }
     }
-    if(!session.scenePhysics.ApplyTransforms(session.WorldRef(),session.physics))return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
+    if(!session.scenePhysics.ApplyTransforms(session.WorldRef(),session.physics))return Error(FLARE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
     session.sceneNavigation.StepAgents(session.WorldRef(),session.physics,session.scenePhysics,session.assets.get(),static_cast<float>(dt));
-    if(!session.scenePhysics.AdvanceCharacters(session.WorldRef(),session.physics,static_cast<float>(dt)))return Error(SE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
+    if(!session.scenePhysics.AdvanceCharacters(session.WorldRef(),session.physics,static_cast<float>(dt)))return Error(FLARE_INTERNAL_ERROR,"Bridge.WorldOperationFailed");
     for (const auto& event:session.physics.Events())
-        session.contactEvents.push_back({event.entityA,event.entityB,event.began?1:0,event.ended?1:0});
+        session.contactEvents.push_back({event.entityA,event.entityB,event.began?1:0,event.ended?1:0,{event.point.x,event.point.y,event.point.z},{event.normal.x,event.normal.y,event.normal.z},event.normalImpulse,0});
     for (const auto& event:session.physics.TriggerEvents())
         session.triggerEvents.push_back({event.triggerEntity,event.otherEntity,event.entered?1:0,0});
 
-    std::vector<se::TriggerOverlap> characterOverlaps;
-    const auto collectCharacterTriggers=[&](se::StableEntityId charStableId,const se::CharacterController& character)
+    std::vector<flare::TriggerOverlap> characterOverlaps;
+    const auto collectCharacterTriggers=[&](flare::StableEntityId charStableId,const flare::CharacterController& character)
     {
         if(!charStableId)return;
-        const se::BodyHandle syntheticChar{static_cast<std::uint32_t>(charStableId),static_cast<std::uint32_t>(charStableId>>32)};
+        const flare::BodyHandle syntheticChar{static_cast<std::uint32_t>(charStableId),static_cast<std::uint32_t>(charStableId>>32)};
         for(const auto body:session.physics.Bodies())
         {
             const auto* state=session.physics.GetBody(body);
             if(!state||!state->description.isTrigger||!state->description.entityStableId)continue;
             const auto& desc=state->description;
-            const auto contact=desc.shapeKind==se::ColliderShapeKind::Sphere
-                ?se::CollideCapsuleSphere(character.position,character.segmentHalfHeight,character.radius,{desc.shape.center,desc.radius})
-                :se::CollideCapsuleBox(character.position,character.segmentHalfHeight,character.radius,desc.shape);
+            const auto contact=desc.shapeKind==flare::ColliderShapeKind::Sphere
+                ?flare::CollideCapsuleSphere(character.position,character.segmentHalfHeight,character.radius,{desc.shape.center,desc.radius})
+                :flare::CollideCapsuleBox(character.position,character.segmentHalfHeight,character.radius,desc.shape);
             if(contact&&contact->depth>1e-5f)
                 characterOverlaps.push_back({body,syntheticChar,desc.entityStableId,charStableId});
         }
     };
     for(const auto& [packedEntity,character]:session.characters)
     {
-        const auto* record=session.WorldRef().Get(se::EntityHandle::FromPacked(packedEntity));
+        const auto* record=session.WorldRef().Get(flare::EntityHandle::FromPacked(packedEntity));
         if(record)collectCharacterTriggers(record->stableId,character);
     }
     for(const auto& [charStableId,character]:session.scenePhysics.Characters())
@@ -502,30 +502,30 @@ int32_t PhysicsStep(Session& session, double dt)
     session.characterTriggerTracker.Update(characterOverlaps);
     for(const auto& event:session.characterTriggerTracker.Events())
         session.triggerEvents.push_back({event.triggerEntity,event.otherEntity,event.entered?1:0,0});
-    return SE_OK;
+    return FLARE_OK;
 }
-int32_t EnvironmentCallback(Session& session,SE_Session handle,std::uint64_t component,std::uint32_t phase,const se::TickContext& context)
+int32_t EnvironmentCallback(Session& session,FLARE_Session handle,std::uint64_t component,std::uint32_t phase,const flare::TickContext& context)
 {
     if(!session.tickCallback)return 0;
     struct Unlock{Unlock(){sessionsMutex.unlock();}~Unlock(){sessionsMutex.lock();}} unlock;
     const auto result=session.tickCallback(handle,component,phase,context.deltaSeconds,context.frame,context.fixedStep,session.tickContext);
     if(result)session.callbackFailed=true;return result;
 }
-se::EnvironmentHooks EnvironmentHooks(Session& session,SE_Session handle)
+flare::EnvironmentHooks EnvironmentHooks(Session& session,FLARE_Session handle)
 {
-    se::EnvironmentHooks hooks;
-    hooks.phase=[&session,handle](se::EnvironmentPhase phase,const se::TickContext& context){
-        if(phase==se::EnvironmentPhase::FrameBegin&&session.callback)
+    flare::EnvironmentHooks hooks;
+    hooks.phase=[&session,handle](flare::EnvironmentPhase phase,const flare::TickContext& context){
+        if(phase==flare::EnvironmentPhase::FrameBegin&&session.callback)
         {
             struct Unlock{Unlock(){sessionsMutex.unlock();}~Unlock(){sessionsMutex.lock();}} unlock;
             if(session.callback(handle,context.deltaSeconds,session.context)){session.callbackFailed=true;return false;}
         }
-        if(phase==se::EnvironmentPhase::BeforePhysics)SweepBodies(session);
+        if(phase==flare::EnvironmentPhase::BeforePhysics)SweepBodies(session);
         if(EnvironmentCallback(session,handle,0,0x100u|static_cast<std::uint32_t>(phase),context))return false;
-        if(phase==se::EnvironmentPhase::FrameEnd)session.UiRef().Update(context.frameSeconds);
+        if(phase==flare::EnvironmentPhase::FrameEnd)session.UiRef().Update(context.frameSeconds);
         return true;
     };
-    hooks.physics=[&session](double seconds){return !session.environmentDriven||!session.environmentPhysics||PhysicsStep(session,seconds)==SE_OK;};
+    hooks.physics=[&session](double seconds){return !session.environmentDriven||!session.environmentPhysics||PhysicsStep(session,seconds)==FLARE_OK;};
     return hooks;
 }
 void FinishEnvironmentRelease(Session& session)
@@ -536,14 +536,14 @@ void FinishEnvironmentRelease(Session& session)
     if(!session.Env().Closing()){session.Env().ConfigureClock(1.0/60,8,false);session.Env().SetPaused(false);}session.physicsClock.ClearRemainder();
 }
 // 调用者持有 sessionsMutex；普通帧与编辑器单步共用回调、物理、UI 和退出清理边界。
-int32_t AdvanceSession(Session& session,SE_Session handle,double seconds,bool singleStep)
+int32_t AdvanceSession(Session& session,FLARE_Session handle,double seconds,bool singleStep)
 {
-    if(session.stepping)return Error(SE_BUSY,"Bridge.SessionBusy");
+    if(session.stepping)return Error(FLARE_BUSY,"Bridge.SessionBusy");
     if(!singleStep&&session.Env().FramePaused()&&!session.Env().Closing())
     {
         session.sceneAudio.Synchronize(session.WorldRef(),session.assets.get(),session.audio,true);
         session.sceneParticles.Synchronize(session.WorldRef(),0.0,true);
-        return SE_OK;
+        return FLARE_OK;
     }
     struct SteppingGuard{Session& value;~SteppingGuard(){value.stepping=false;}} guard{session};
     session.stepping=true;session.callbackFailed=false;
@@ -558,19 +558,19 @@ int32_t AdvanceSession(Session& session,SE_Session handle,double seconds,bool si
         session.sceneParticles.Synchronize(session.WorldRef(),particleDt,audioPaused);
     }
     FinishEnvironmentRelease(session);
-    if(!result)return session.callbackFailed?Error(SE_CALLBACK_FAILED,"Bridge.CallbackFailed"):Error(SE_INTERNAL_ERROR,session.Env().LastError().c_str());
-    ++session.stepCount;return SE_OK;
+    if(!result)return session.callbackFailed?Error(FLARE_CALLBACK_FAILED,"Bridge.CallbackFailed"):Error(FLARE_INTERNAL_ERROR,session.Env().LastError().c_str());
+    ++session.stepCount;return FLARE_OK;
 }
-bool EditorDocumentRequest(SE_Session handle,Session& session,const nlohmann::json& request,bool snapshot,
+bool EditorDocumentRequest(FLARE_Session handle,Session& session,const nlohmann::json& request,bool snapshot,
     nlohmann::json& response,std::string& error)
 {
     error.clear();std::string reply;
     const auto command=request.dump();
     const auto result=Protect([&]()->int32_t{
         if(Find(handle)!=&session)return MissingSession();
-        if(!session.editor||!session.editorDataCallback)return Error(SE_INVALID_ARGUMENT,"Bridge.EditorNotRunning");
+        if(!session.editor||!session.editorDataCallback)return Error(FLARE_INVALID_ARGUMENT,"Bridge.EditorNotRunning");
         const auto operation=request.value("Document",std::string{});
-        if(session.editor->IsPlaying()&&(operation=="Save"||operation=="Restore"))return Error(SE_BUSY,"Bridge.EditorReadOnly");
+        if(session.editor->IsPlaying()&&(operation=="Save"||operation=="Restore"))return Error(FLARE_BUSY,"Bridge.EditorReadOnly");
         const bool prior=session.stepping;session.stepping=true;
         struct Restore{Session& session;bool prior;~Restore(){sessionsMutex.lock();session.stepping=prior;}} restore{session,prior};
         sessionsMutex.unlock();
@@ -578,17 +578,17 @@ bool EditorDocumentRequest(SE_Session handle,Session& session,const nlohmann::js
         if(snapshot)
         {
             const auto measured=session.editorDataCallback(handle,0,command.data(),static_cast<std::uint32_t>(command.size()),nullptr,0,&required,session.editorDataContext);
-            if((measured!=SE_OK&&measured!=SE_BUFFER_TOO_SMALL)||required==0||required>32u*1024*1024)
-                return Error(SE_CALLBACK_FAILED,"Script.MetadataFailed");
+            if((measured!=FLARE_OK&&measured!=FLARE_BUFFER_TOO_SMALL)||required==0||required>32u*1024*1024)
+                return Error(FLARE_CALLBACK_FAILED,"Script.MetadataFailed");
             buffer.resize(required);
         }
         else buffer.resize(4096); // 命令结果仅 {} 或 Error；长度不足也不能重试有副作用的命令。
         const auto called=session.editorDataCallback(handle,0,command.data(),static_cast<std::uint32_t>(command.size()),buffer.data(),
             static_cast<std::uint32_t>(buffer.size()),&required,session.editorDataContext);
-        if(called!=SE_OK||required==0||required>buffer.size()||buffer[required-1]!='\0')return Error(SE_CALLBACK_FAILED,"Script.MetadataFailed");
-        reply.assign(buffer.data(),required-1);return SE_OK;
+        if(called!=FLARE_OK||required==0||required>buffer.size()||buffer[required-1]!='\0')return Error(FLARE_CALLBACK_FAILED,"Script.MetadataFailed");
+        reply.assign(buffer.data(),required-1);return FLARE_OK;
     });
-    if(result!=SE_OK){error=lastError.data();return false;}
+    if(result!=FLARE_OK){error=lastError.data();return false;}
     try
     {
         response=nlohmann::json::parse(reply);
@@ -599,16 +599,16 @@ bool EditorDocumentRequest(SE_Session handle,Session& session,const nlohmann::js
     catch(const std::exception&){error="Script.DocumentInvalid";return false;}
 }
 }
-static_assert(sizeof(SE_Transform) == 40);
-static_assert(sizeof(SE_EventHeader)==88&&sizeof(SE_EventStats)==104);
-static_assert(sizeof(SE_BodyState)==72);
-static_assert(sizeof(SE_AbiInfo) == 16);
-static_assert(sizeof(SE_ModelInfo)==16);
-static_assert(sizeof(SE_Vector3)==12 && sizeof(SE_BoxBodyDesc)==32 && sizeof(SE_SphereBodyDesc)==32 && sizeof(SE_RayHit)==48);
-static_assert(sizeof(SE_ContactEvent)==24 && sizeof(SE_TriggerEvent)==24 && sizeof(SE_UiStyle)==56 && sizeof(SE_InputState)==772);
-static_assert(sizeof(SE_PointerState)==28 && sizeof(SE_CharacterDesc)==20 && sizeof(SE_CharacterState)==20);
-static_assert(sizeof(SE_AudioPlayDesc)==40);
-static_assert(sizeof(SE_NavPathInfo)==12);
+static_assert(sizeof(FLARE_Transform) == 40);
+static_assert(sizeof(FLARE_EventHeader)==88&&sizeof(FLARE_EventStats)==104);
+static_assert(sizeof(FLARE_BodyState)==72);
+static_assert(sizeof(FLARE_AbiInfo) == 16);
+static_assert(sizeof(FLARE_ModelInfo)==16);
+static_assert(sizeof(FLARE_Vector3)==12 && sizeof(FLARE_BoxBodyDesc)==32 && sizeof(FLARE_SphereBodyDesc)==32 && sizeof(FLARE_RayHit)==48);
+static_assert(sizeof(FLARE_ContactEvent)==56 && sizeof(FLARE_TriggerEvent)==24 && sizeof(FLARE_UiStyle)==56 && sizeof(FLARE_InputState)==772);
+static_assert(sizeof(FLARE_PointerState)==28 && sizeof(FLARE_CharacterDesc)==20 && sizeof(FLARE_CharacterState)==20);
+static_assert(sizeof(FLARE_AudioPlayDesc)==40);
+static_assert(sizeof(FLARE_NavPathInfo)==12);
 
 #include "NativeSessionExports.inl"
 #include "NativeRenderExports.inl"

@@ -9,7 +9,7 @@
 #include <memory>
 #include <optional>
 
-namespace se
+namespace flare
 {
 // 一个项目、一份 UI 文档。每个 HWND 只拥有自己的呈现与输入适配资源。
 class EditorFloatingWindows

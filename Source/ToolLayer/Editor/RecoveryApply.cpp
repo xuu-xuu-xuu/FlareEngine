@@ -2,7 +2,7 @@
 
 #include <fstream>
 
-namespace se
+namespace flare
 {
 bool ApplyRecoveryScene(const RecoveryGroup& group, const std::filesystem::path& directory,
     EditorSession& session, std::string& error)
@@ -38,4 +38,4 @@ bool ApplyRecoveryScene(const RecoveryGroup& group, const std::filesystem::path&
     error = "Editor.RecoveryNoScene";
     return false;
 }
-} // namespace se
+} // namespace flare

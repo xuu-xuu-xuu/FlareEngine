@@ -1,7 +1,7 @@
 #include "UiTransitionDemo.h"
 #include <cmath>
 
-namespace se
+namespace flare
 {
 bool BuildUiTransitionDemo(UiTree& output,const Localization& text,UiTransitionDemo& demo)
 {

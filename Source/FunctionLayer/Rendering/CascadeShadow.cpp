@@ -5,11 +5,23 @@
 #include <limits>
 #include <vector>
 
-namespace se
+namespace flare
 {
 namespace
 {
-constexpr std::array<float,CascadeShadowMaximumCascades> NormalizedSplits{0.10f,0.35f,1.0f};
+constexpr std::array<float,CascadeShadowMaximumCascades> LegacyNormalizedSplits{0.10f,0.35f,1.0f};
+// PSSM 实用对数-线性混合切分（Zhang et al.）：大幅加密第 0/1 级联近景纹素密度，同时保证远端平滑衔接。
+float ComputePracticalSplitDistance(float nearPlane,float shadowDistance,std::uint32_t cascadeIndex)
+{
+    if(cascadeIndex+1>=CascadeShadowMaximumCascades)return shadowDistance;
+    const double n=std::max(double(nearPlane),1e-4);
+    const double f=std::max(double(shadowDistance),n+1e-4);
+    const double t=double(cascadeIndex+1)/double(CascadeShadowMaximumCascades);
+    const double logarithmic=n*std::pow(f/n,t);
+    const double uniform=n+(f-n)*t;
+    constexpr double lambda=0.80;
+    return float(lambda*logarithmic+(1.0-lambda)*uniform);
+}
 bool ValidDepth(float value){return std::isfinite(value)&&value>0;}
 bool Unproject(const Mat4& inverse,float x,float y,float z,Vec3& output)
 {
@@ -19,7 +31,8 @@ bool Unproject(const Mat4& inverse,float x,float y,float z,Vec3& output)
 }
 bool Fit(const std::array<Vec3,4>& nearCorners,const std::array<Vec3,4>& farCorners,
     float actualNear,float actualFar,float nearPlane,float shadowDistance,const Vec3& directionToLight,
-    std::uint32_t count,std::uint32_t resolution,float casterPadding,float filterGuardTexels,float filterGuardWorld,CascadeShadowSettings& output)
+    std::uint32_t count,std::uint32_t resolution,float casterPadding,float filterGuardTexels,float filterGuardWorld,
+    bool legacyLinearSplits,CascadeShadowSettings& output)
 {
     if(count<1||count>CascadeShadowMaximumCascades||resolution<256||resolution>4096
         ||!ValidDepth(nearPlane)||!ValidDepth(actualNear)||!ValidDepth(actualFar)||actualFar<=actualNear)return false;
@@ -33,7 +46,12 @@ bool Fit(const std::array<Vec3,4>& nearCorners,const std::array<Vec3,4>& farCorn
     const auto x=Normalize(Cross(up,z)),y=Cross(z,x);
     CascadeShadowSettings candidate;candidate.cascadeCount=count;candidate.resolution=resolution;
     candidate.blendFraction=.10f;candidate.casterDepthPadding=casterPadding;
-    for(std::uint32_t i=0;i<count;++i)candidate.splitDistances[i]=nearPlane+(shadowDistance-nearPlane)*NormalizedSplits[i];
+    for(std::uint32_t i=0;i<count;++i)
+    {
+        candidate.splitDistances[i]=legacyLinearSplits
+            ? (nearPlane+(shadowDistance-nearPlane)*LegacyNormalizedSplits[i])
+            : ComputePracticalSplitDistance(nearPlane,shadowDistance,i);
+    }
     candidate.coverageDistance=candidate.splitDistances[count-1];
     for(std::uint32_t cascade=0;cascade<count;++cascade)
     {
@@ -103,7 +121,7 @@ bool PrepareCascadeShadows(const Mat4& view,const Mat4& projection,float nearPla
     // 这里比实际反投影的视深，容差随远近比反映 float32 投影逆矩阵的 ULP 量化下界。
     const float farTolerance=std::clamp((farPlane/nearPlane)*2e-6f,.002f,.05f);
     if(std::abs(actualNear-nearPlane)>nearPlane*.002f||std::abs(actualFar-farPlane)>farPlane*farTolerance)return false;
-    return Fit(nearCorners,farCorners,actualNear,actualFar,nearPlane,shadowDistance,directionToLight,count,resolution,casterPadding,filterGuardTexels,filterGuardWorld,output);
+    return Fit(nearCorners,farCorners,actualNear,actualFar,nearPlane,shadowDistance,directionToLight,count,resolution,casterPadding,filterGuardTexels,filterGuardWorld,false,output);
 }
 bool PrepareCascadeShadows(const Mat4& viewProjection,float nearPlane,float farPlane,const Vec3& directionToLight,
     std::uint32_t count,std::uint32_t resolution,CascadeShadowSettings& output)
@@ -116,7 +134,7 @@ bool PrepareCascadeShadows(const Mat4& viewProjection,float nearPlane,float farP
     for(size_t i=0;i<4;++i)if(!Unproject(*inverse,coordinates[i][0],coordinates[i][1],0,nearCorners[i])
         ||!Unproject(*inverse,coordinates[i][0],coordinates[i][1],1,farCorners[i]))return false;
     const auto actualFar=nearPlane+Length(farCenter-nearCenter);
-    return Fit(nearCorners,farCorners,nearPlane,actualFar,nearPlane,farPlane,directionToLight,count,resolution,100.f,3.f,0.f,output);
+    return Fit(nearCorners,farCorners,nearPlane,actualFar,nearPlane,farPlane,directionToLight,count,resolution,100.f,3.f,0.f,true,output);
 }
 CascadeSelection SelectCascade(const CascadeShadowSettings& settings,float viewDepth)
 {

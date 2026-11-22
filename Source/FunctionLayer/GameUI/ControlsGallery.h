@@ -3,7 +3,7 @@
 #include "CoreLayer/Localization.h"
 #include <span>
 
-namespace se
+namespace flare
 {
 struct ControlsGallery
 {

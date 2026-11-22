@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G15：`.selut` 资产热重载状态。revision 只在成功读取并替换数据时递增；
 // 失败时保留最近一次成功的 LUT，只更新 error/failures，下一次文件变化再重试。

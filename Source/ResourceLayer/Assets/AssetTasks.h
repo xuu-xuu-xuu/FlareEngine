@@ -3,7 +3,7 @@
 #include "CoreLayer/TaskQueue.h"
 #include <functional>
 
-namespace se
+namespace flare
 {
 template<class T> struct AssetTaskResult
 {

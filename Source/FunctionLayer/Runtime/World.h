@@ -18,16 +18,30 @@
 #include <unordered_set>
 #include <vector>
 
-namespace se
+namespace flare
 {
 class SceneDocument;
 enum class TransformWriteMode { Normalize,PreserveUnit };
+namespace EntityStaticFlags
+{
+constexpr std::uint32_t None = 0u;
+constexpr std::uint32_t Batching = 1u << 0;
+constexpr std::uint32_t Navigation = 1u << 1;
+constexpr std::uint32_t GlobalIllumination = 1u << 2;
+constexpr std::uint32_t Occluder = 1u << 3;
+constexpr std::uint32_t All = Batching | Navigation | GlobalIllumination | Occluder;
+constexpr std::uint32_t Explicit = 1u << 7; // 用户已在编辑器显式声明动静契约（覆盖默认动态组件启发式）
+}
+
 struct EntityRecord
 {
     StableEntityId stableId = 0;
     std::string name;
     EntityHandle parent{};
     bool enabled = true;
+    std::string tag = "Untagged";
+    std::uint32_t layer = 0;
+    std::uint32_t staticFlags = 0;
     std::optional<PrefabLink> prefabLink;
 };
 
@@ -84,6 +98,10 @@ public:
     bool Rename(EntityHandle entity, std::string name);
     bool SetEnabled(EntityHandle entity, bool enabled);
     bool IsEnabled(EntityHandle entity) const; // 个人状态与祖先状态的有效值。
+    bool SetTag(EntityHandle entity, std::string tag);
+    bool SetLayer(EntityHandle entity, std::uint32_t layer);
+    bool SetStaticFlags(EntityHandle entity, std::uint32_t staticFlags);
+    bool MoveComponent(EntityHandle owner, ComponentTypeId type, int delta);
     const PrefabLink* GetPrefabLink(EntityHandle entity) const;
     bool SetPrefabLink(EntityHandle entity, std::optional<PrefabLink> link);
     bool SetParent(EntityHandle entity, EntityHandle parent); // 保持局部变换，不自动分解世界矩阵。

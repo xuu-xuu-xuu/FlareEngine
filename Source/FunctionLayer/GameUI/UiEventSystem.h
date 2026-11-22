@@ -1,6 +1,6 @@
 #pragma once
 #include "UiTree.h"
-namespace se
+namespace flare
 {
 struct UiEventRoute {UiId target=0;std::vector<UiId> path;};
 // 命中与路由只读，不拥有第二份 hover/capture/focus 或控件生命周期。

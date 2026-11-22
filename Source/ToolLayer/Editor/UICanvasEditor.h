@@ -2,7 +2,7 @@
 #include "FunctionLayer/GameUI/UiTree.h"
 #include <optional>
 
-namespace se
+namespace flare
 {
 enum class UiCanvasDrag { Move, Resize };
 struct UiCanvasAnchors {UiRect rectangle;UiPoint minimum,maximum,pivot;};

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace se::flare
+namespace flare::palette
 {
 // sRGB 界面色，取自 FlareMark 图标：曜石黑底 + 香槟金。金色只做点睛（焦点、激活、主操作），大面积保持中性暗色。
 struct Color { std::uint8_t r, g, b; };

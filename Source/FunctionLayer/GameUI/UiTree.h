@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se
+namespace flare
 {
 using UiId = std::uint64_t;
 struct UiPoint { float x = 0, y = 0;bool operator==(const UiPoint&)const=default; };

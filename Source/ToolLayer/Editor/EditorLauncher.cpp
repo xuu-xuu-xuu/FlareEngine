@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -358,7 +358,7 @@ bool StartWorker(const LauncherState& state, const std::filesystem::path& projec
 {
     if (RejectPackageProject(state, projectRoot)) return false;
     SetEnvironmentVariableW(L"FLARE_EDITOR_SAFE_MODE", state.safeMode ? L"1" : nullptr);
-    SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SAFE_MODE", state.safeMode ? L"1" : nullptr);
+    SetEnvironmentVariableW(L"FLARE_EDITOR_SAFE_MODE", state.safeMode ? L"1" : nullptr);
     std::wstring command = L"\"" + state.executable.wstring() + L"\" --worker --project \"" + projectRoot.wstring() + L"\" --language " + Wide(state.locale);
     if (!extraArguments.empty()) command += L" " + extraArguments;
     STARTUPINFOW startup{};
@@ -639,7 +639,7 @@ LRESULT CALLBACK NewProjectProcedure(HWND window, UINT message, WPARAM wParam, L
     {
         RECT rect{};
         GetClientRect(window, &rect);
-        launcher_style::Fill(reinterpret_cast<HDC>(wParam), rect, flare::Background);
+        launcher_style::Fill(reinterpret_cast<HDC>(wParam), rect, flare::palette::Background);
         return 1;
     }
     case WM_PAINT:
@@ -648,15 +648,15 @@ LRESULT CALLBACK NewProjectProcedure(HWND window, UINT message, WPARAM wParam, L
         HDC dc = BeginPaint(window, &ps);
         RECT rect{};
         GetClientRect(window, &rect);
-        launcher_style::Fill(dc, rect, flare::Background);
+        launcher_style::Fill(dc, rect, flare::palette::Background);
         if (dialog && dialog->preview)
         {
             RECT banner{};
             GetWindowRect(dialog->preview, &banner);
             MapWindowPoints(HWND_DESKTOP, window, reinterpret_cast<LPPOINT>(&banner), 2);
             InflateRect(&banner, ScaleWindow(window, 10), ScaleWindow(window, 6));
-            launcher_style::FillRound(dc, banner, flare::Surface, ScaleWindow(window, 8));
-            launcher_style::FrameRound(dc, banner, dialog->previewWarning ? flare::Warning : flare::Border, ScaleWindow(window, 8));
+            launcher_style::FillRound(dc, banner, flare::palette::Surface, ScaleWindow(window, 8));
+            launcher_style::FrameRound(dc, banner, dialog->previewWarning ? flare::palette::Warning : flare::palette::Border, ScaleWindow(window, 8));
         }
         EndPaint(window, &ps);
         return 0;
@@ -671,7 +671,7 @@ LRESULT CALLBACK NewProjectProcedure(HWND window, UINT message, WPARAM wParam, L
         if (dialog && child == dialog->preview)
         {
             SetTextColor(reinterpret_cast<HDC>(wParam),
-                         flare::Native(dialog->previewWarning ? flare::Gold : flare::Silver));
+                         flare::palette::Native(dialog->previewWarning ? flare::palette::Gold : flare::palette::Silver));
         }
         return brush;
     }
@@ -793,7 +793,7 @@ bool RunNewProjectDialog(LauncherState& launcher, bool autoCreate)
     if (!dialog.window) { EnableWindow(launcher.window, TRUE); return false; }
 
     ApplyAppIcon(dialog.window);
-    flare::StyleTitleBar(dialog.window);
+    flare::palette::StyleTitleBar(dialog.window);
     CreateNewProjectDialogControls(dialog, launcher);
     ShowWindow(dialog.window, SW_SHOW);
     SetFocus(dialog.name);
@@ -837,13 +837,13 @@ void PaintLauncherBackground(const LauncherState& state, HDC dc)
 
     RECT sidebar{0, 0, std::min<int>(sidebarW, client.right), client.bottom};
     RECT mainArea{sidebar.right, 0, client.right, client.bottom};
-    launcher_style::Fill(dc, sidebar, flare::Surface);
-    launcher_style::Fill(dc, mainArea, flare::Background);
+    launcher_style::Fill(dc, sidebar, flare::palette::Surface);
+    launcher_style::Fill(dc, mainArea, flare::palette::Background);
 
     // 品牌标志背后的日冕柔光，呼应图标里的金色星芒；标志自己画，避免静态控件的方形底色盖住光晕。
     const int markSize = ScaleWindow(state.window, 44);
     const int markX = ScaleWindow(state.window, 20), markY = ScaleWindow(state.window, 24);
-    launcher_style::Glow(dc, markX + markSize / 2, markY + markSize / 2, ScaleWindow(state.window, 96), flare::Gold, 46);
+    launcher_style::Glow(dc, markX + markSize / 2, markY + markSize / 2, ScaleWindow(state.window, 96), flare::palette::Gold, 46);
     if (launcher_style::GdiplusReady()) DrawFlareMark(dc, markX + markSize / 2, markY + markSize / 2, markSize);
     else DrawIconEx(dc, markX, markY, AppIcon(48), markSize, markSize, 0, nullptr, DI_NORMAL);
 
@@ -855,16 +855,16 @@ void PaintLauncherBackground(const LauncherState& state, HDC dc)
         MapWindowPoints(HWND_DESKTOP, state.window, reinterpret_cast<LPPOINT>(&field), 2);
         InflateRect(&field, ScaleWindow(state.window, 10), ScaleWindow(state.window, 5));
         const int radius = ScaleWindow(state.window, 7);
-        launcher_style::FillRound(dc, field, flare::Surface, radius);
+        launcher_style::FillRound(dc, field, flare::palette::Surface, radius);
         const bool focused = GetFocus() == state.recentSearch;
-        launcher_style::FrameRound(dc, field, focused ? flare::Gold : flare::Border, radius, 1.0f, focused ? 200 : 255);
+        launcher_style::FrameRound(dc, field, focused ? flare::palette::Gold : flare::palette::Border, radius, 1.0f, focused ? 200 : 255);
     }
 
     // 顶部渐隐金线与侧栏右分隔线
     RECT accentTop{0, 0, client.right, ScaleWindow(state.window, 2)};
-    launcher_style::FadeLine(dc, accentTop, flare::Gold, 220);
+    launcher_style::FadeLine(dc, accentTop, flare::palette::Gold, 220);
     RECT divider{sidebar.right - 1, 0, sidebar.right, client.bottom};
-    launcher_style::Fill(dc, divider, flare::Border);
+    launcher_style::Fill(dc, divider, flare::palette::Border);
 
     const int contentLeft = sidebar.right + ScaleWindow(state.window, 26);
     const int contentRight = client.right - ScaleWindow(state.window, 26);
@@ -872,7 +872,7 @@ void PaintLauncherBackground(const LauncherState& state, HDC dc)
     {
         const int headerLineY = ScaleWindow(state.window, 62);
         RECT headerDivider{contentLeft, headerLineY, contentRight, headerLineY + 1};
-        launcher_style::FadeLine(dc, headerDivider, flare::Silver, 70);
+        launcher_style::FadeLine(dc, headerDivider, flare::palette::Silver, 70);
     }
 }
 
@@ -1090,12 +1090,12 @@ LRESULT CALLBACK LauncherProcedure(HWND window, UINT message, WPARAM wParam, LPA
         const bool muted = state && (child == state->note || child == state->subtitle);
         const auto brush = launcher_style::ControlColors(message, reinterpret_cast<HDC>(wParam), muted, onSidebar);
         if (state && (child == state->title || child == state->recentLabel))
-            SetTextColor(reinterpret_cast<HDC>(wParam), flare::Native(flare::Heading));
+            SetTextColor(reinterpret_cast<HDC>(wParam), flare::palette::Native(flare::palette::Heading));
         // 最近项目列表与主区同底，卡片自己承担层次。
         if (state && child == state->recentList)
         {
-            SetBkColor(reinterpret_cast<HDC>(wParam), flare::Native(flare::Background));
-            SetDCBrushColor(reinterpret_cast<HDC>(wParam), flare::Native(flare::Background));
+            SetBkColor(reinterpret_cast<HDC>(wParam), flare::palette::Native(flare::palette::Background));
+            SetDCBrushColor(reinterpret_cast<HDC>(wParam), flare::palette::Native(flare::palette::Background));
             return reinterpret_cast<LRESULT>(GetStockObject(DC_BRUSH));
         }
         // 品牌标题叠在光晕上：透明底，文字不变所以无需擦除旧字。
@@ -1335,7 +1335,7 @@ int RunLauncherWindow(LauncherState& state, const EditorLaunchOptions& options, 
     if (!state.window) return 5;
 
     ApplyAppIcon(state.window);
-    flare::StyleTitleBar(state.window);
+    flare::palette::StyleTitleBar(state.window);
     state.RebuildFonts(GetDpiForWindow(state.window));
     if (!CreateControls(state)) { state.ReleaseFonts(); DestroyWindow(state.window); return 5; }
     if (state.safeMode) SetNote(state, state.strings.safeMode);
@@ -1568,4 +1568,4 @@ int RunEditorLauncher(const EditorLaunchOptions& options)
     if (FAILED(apartment.value) && apartment.value != RPC_E_CHANGED_MODE) return 5;
     return RunLauncherWindow(state, options, options.smokeLauncherMs, options.smokeOpenProject);
 }
-} // namespace se
+} // namespace flare

@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 using AssetId = std::string; // 128 位随机 ID，以 32 个小写十六进制字符保存。
 // CPU 中间数据，右手 Y-up、米，矩阵按列存储并乘列向量；不是 GPU 顶点布局。
@@ -134,7 +134,7 @@ struct ImportOptions
 };
 
 inline constexpr std::uint32_t StaticModelFormatVersion = 2;
-inline constexpr const char* StaticModelImporterVersion = "SelfEngine.StaticModel.2/ufbx-0.17.1/cgltf-1.15/skin1/alpha1/clearcoat1/sheen1/aniso1/skinDiffuse1";
+inline constexpr const char* StaticModelImporterVersion = "FlareEngine.StaticModel.2/ufbx-0.17.1/cgltf-1.15/skin1/alpha1/clearcoat1/sheen1/aniso1/skinDiffuse1";
 
 // 所有数据由引擎独立拥有；失败不改变 output。诊断只携带稳定文本键与细节。
 bool ImportStaticModel(const std::filesystem::path& path, const ImportOptions& options,

@@ -2,7 +2,7 @@
 
 ## ComponentBase
 
-[`se::ComponentBase`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Runtime/ComponentBase.h#L10) 是原生运行时组件的共同基类。[World](world.md#world) 维护组件的身份和状态，调用方通过只读接口访问它们。复制组件的属性时，副本不会继承原组件的运行身份。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Runtime/ComponentBase.h#L10)
+[`flare::ComponentBase`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Runtime/ComponentBase.h#L10) 是原生运行时组件的共同基类。[World](world.md#world) 维护组件的身份和状态，调用方通过只读接口访问它们。复制组件的属性时，副本不会继承原组件的运行身份。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Runtime/ComponentBase.h#L10)
 
 | 想知道什么 | 公开接口 |
 | --- | --- |

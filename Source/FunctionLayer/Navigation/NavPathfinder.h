@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace se
+namespace flare
 {
 enum class NavPathStatus : std::uint8_t
 {
@@ -25,4 +25,4 @@ struct NavPathResult
     Vec3 start,
     Vec3 goal,
     Vec3 queryHalfExtents = {2.0f, 4.0f, 2.0f});
-} // namespace se
+} // namespace flare

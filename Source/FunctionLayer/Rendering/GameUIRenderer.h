@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 struct FrameData;
 struct GameUiRenderStatistics

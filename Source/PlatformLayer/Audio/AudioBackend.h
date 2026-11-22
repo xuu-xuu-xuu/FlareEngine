@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace se
+namespace flare
 {
 using AudioVoiceHandle = std::uint64_t;
 
@@ -189,4 +189,4 @@ private:
     std::size_t submitCount_ = 0;
     bool initialized_ = false;
 };
-} // namespace se
+} // namespace flare

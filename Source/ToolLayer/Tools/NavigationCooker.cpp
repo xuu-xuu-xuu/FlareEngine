@@ -26,7 +26,7 @@ bool ParseFloat(std::wstring_view arg, float& outValue) noexcept
         narrow.push_back(static_cast<char>(wc));
     }
     auto [ptr, ec] = std::from_chars(narrow.data(), narrow.data() + narrow.size(), outValue);
-    return ec == std::errc{} && ptr == narrow.data() + narrow.size() && se::IsFinite(outValue);
+    return ec == std::errc{} && ptr == narrow.data() + narrow.size() && flare::IsFinite(outValue);
 }
 } // namespace
 
@@ -56,7 +56,7 @@ int wmain(int argc, wchar_t** argv)
     const fs::path contentRoot = fs::absolute(argv[3]);
     const fs::path outputPath = fs::absolute(argv[4]);
 
-    se::NavBakeSettings settings{};
+    flare::NavBakeSettings settings{};
     for (int i = 5; i < argc; ++i)
     {
         const std::wstring_view opt = argv[i];
@@ -72,36 +72,36 @@ int wmain(int argc, wchar_t** argv)
         else return fail("NavigationCooker.Usage");
     }
 
-    se::World world;
+    flare::World world;
     std::string sceneError;
-    if (!se::LoadScene(scenePath, world, sceneError))
+    if (!flare::LoadScene(scenePath, world, sceneError))
     {
         return fail(sceneError.empty() ? "NavigationCooker.SceneLoadFailed" : sceneError.c_str(),
-            se::asset_io::Utf8(scenePath));
+            flare::asset_io::Utf8(scenePath));
     }
 
-    se::AssetStore assets(contentRoot, outputPath.parent_path() / ".nav-cook-cache");
-    std::vector<se::AssetDiagnostic> scanDiags;
+    flare::AssetStore assets(contentRoot, outputPath.parent_path() / ".nav-cook-cache");
+    std::vector<flare::AssetDiagnostic> scanDiags;
     assets.Scan(scanDiags);
 
-    std::vector<se::Vec3> vertices;
+    std::vector<flare::Vec3> vertices;
     std::vector<std::uint32_t> indices;
-    se::CollectNavigationSceneGeometry(world, &assets, vertices, indices);
+    flare::CollectNavigationSceneGeometry(world, &assets, vertices, indices);
 
-    se::NavMeshData navMesh;
+    flare::NavMeshData navMesh;
     std::string bakeError;
-    if (!se::BakeNavMesh(vertices, indices, settings, navMesh, bakeError))
+    if (!flare::BakeNavMesh(vertices, indices, settings, navMesh, bakeError))
     {
         return fail(bakeError.empty() ? "Navigation.BakeFailed" : bakeError.c_str());
     }
 
     std::vector<std::uint8_t> bytes;
-    if (!navMesh.Serialize(bytes) || !se::asset_io::WriteAtomic(outputPath, bytes))
+    if (!navMesh.Serialize(bytes) || !flare::asset_io::WriteAtomic(outputPath, bytes))
     {
-        return fail("Assets.WriteFailed", se::asset_io::Utf8(outputPath));
+        return fail("Assets.WriteFailed", flare::asset_io::Utf8(outputPath));
     }
 
-    std::cout << text.GetText("NavigationCooker.Complete") << ": " << se::asset_io::Utf8(outputPath)
+    std::cout << text.GetText("NavigationCooker.Complete") << ": " << flare::asset_io::Utf8(outputPath)
               << " (" << navMesh.Polygons().size() << " polygons)\n";
     return 0;
 }

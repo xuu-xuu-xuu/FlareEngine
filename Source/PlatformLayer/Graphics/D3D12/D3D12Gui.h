@@ -15,7 +15,7 @@ struct D3D12GuiTarget
 struct D3D12GuiLayer
 {
     const D3D12MeshPipeline* pipeline=nullptr;
-    const se::GuiGeometry* geometry=nullptr;
+    const flare::GuiGeometry* geometry=nullptr;
     std::span<const D3D12Texture* const> textures;
 };
 struct D3D12GuiContent
@@ -25,8 +25,8 @@ struct D3D12GuiContent
     D3D12GuiLayer layer;
 };
 struct D3D12GuiUpload {D3D12UploadSlice vertices,indices;};
-bool CreateD3D12GuiTarget(D3D12Presentation& p,const se::rhi::RenderTargetDescription& description,
-    D3D12GuiTarget& output,const Localization& text,const se::Vec4* optimizedClear=nullptr,bool sampleDepth=false);
+bool CreateD3D12GuiTarget(D3D12Presentation& p,const flare::rhi::RenderTargetDescription& description,
+    D3D12GuiTarget& output,const Localization& text,const flare::Vec4* optimizedClear=nullptr,bool sampleDepth=false);
 bool PrepareD3D12Gui(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12GuiLayer& content,D3D12FrameDescriptors& descriptors,
     D3D12GuiUpload& upload,const Localization& text);
 bool RecordD3D12GuiLayer(D3D12Presentation& p,const D3D12GuiLayer& content,D3D12FrameDescriptors& descriptors,

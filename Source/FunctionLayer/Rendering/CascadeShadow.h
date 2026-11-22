@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <span>
 
-namespace se
+namespace flare
 {
 // 级划分使用归一化距离 {0.10,0.35,1.0}；count=2/1 保留前两级/最近一级，
 // 因而属于明确缩短远端距离的降级，不重新分配分割点。实际拟合覆盖相邻混合带。

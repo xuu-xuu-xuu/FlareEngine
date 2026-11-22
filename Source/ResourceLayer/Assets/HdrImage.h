@@ -3,7 +3,7 @@
 #include "CoreLayer/Math/Math.h"
 #include <span>
 
-namespace se
+namespace flare
 {
 struct FloatImage
 {

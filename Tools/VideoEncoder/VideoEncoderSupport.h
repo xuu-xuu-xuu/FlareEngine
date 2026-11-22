@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se::videoencoder
+namespace flare::videoencoder
 {
 // 退出码：成功为 0；自检失败固定为 1（便于 CTest 直接判定）；其余按失败类别区分，
 // 调用脚本可以只凭退出码区分“缺帧/重复帧/尺寸不一致/编码失败/验证失败”。
@@ -126,4 +126,4 @@ private:
     std::string pendingKey_;
     std::vector<Frame> stack_;
 };
-} // namespace se::videoencoder
+} // namespace flare::videoencoder

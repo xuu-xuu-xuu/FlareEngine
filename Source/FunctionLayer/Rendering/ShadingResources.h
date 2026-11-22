@@ -4,7 +4,7 @@
 #include "ResourceLayer/Assets/DiffuseProbeAsset.h"
 #include <memory>
 
-namespace se
+namespace flare
 {
 // 只检查本帧实际引用的 CPU 材质/预览；加载失败保守要求扩展，避免旧有效层材质选到旧 PSO。
 bool RequiresMaterialShading(const FrameData& frame);

@@ -2,7 +2,7 @@
 #include "ComponentMetadata.h"
 #include <algorithm>
 
-namespace se
+namespace flare
 {
 ComponentHandle World::ReserveComponent(EntityHandle owner,ComponentTypeId type)
 {

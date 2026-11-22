@@ -6,7 +6,7 @@
 #include "PlatformLayer/Graphics/Rhi.h"
 #include <array>
 
-namespace se
+namespace flare
 {
 // 视口交互拥有者：所有坐标为逻辑像素，渲染/拾取/手柄共用同一 CameraSnapshot。
 class EditorViewportController
@@ -36,13 +36,28 @@ public:
     bool Grid()const{return grid_;}
     bool Gizmos()const{return gizmos_;}
     float Speed()const{return speed_;}
+    [[nodiscard]] std::size_t ComponentHandleCount()const noexcept{return componentHandles_.size();}
+    [[nodiscard]] std::optional<Vec2> ComponentHandleScreenPos(std::string_view propertyKey)const;
     const std::string& LastError()const{return gizmo_.LastError();}
 private:
-    enum class Gesture {None,Fly,Pan,Orbit,Zoom,Gizmo};
+    enum class Gesture {None,Fly,Pan,Orbit,Zoom,Gizmo,ComponentHandle};
     enum class PickIntent { Surface, Handle, Context };
     struct HandleSegment {Vec2 a,b;int axis;};
+    struct ComponentHandleDot
+    {
+        Vec2 screen{};
+        Vec3 worldOrigin{};
+        Vec3 worldAxis{};
+        std::string propertyKey;
+        float initialValue = 0.0f;
+        float minVal = 0.001f;
+        float maxVal = 10000.0f;
+        float scaleFactor = 1.0f;
+        ui::UiColor color{1.0f, 0.82f, 0.28f, 1.0f};
+    };
     void Draw(EditorSession&,AssetStore&);
-    void SelectAt(Vec2 mouse, EditorSession&, AssetStore&, PickIntent intent = PickIntent::Surface);
+    void AppendComponentHandles(const World&,EntityHandle,const CameraSnapshot&);
+    void SelectAt(Vec2 mouse, EditorSession&, AssetStore&, PickIntent intent = PickIntent::Surface, bool toggle = false);
     void Dolly(float amount);
     const World& ActiveWorld(const EditorSession&)const noexcept;
     Vec3 Pivot(const World&,AssetStore&,EntityHandle)const;
@@ -54,6 +69,11 @@ private:
     ui::UiDisplayList overlay_;
     std::vector<rhi::SceneLine> sceneLines_;
     std::vector<HandleSegment> handles_;
+    std::vector<ComponentHandleDot> componentHandles_;
+    std::optional<ComponentHandleDot> activeComponentHandle_;
+    int hoverComponentHandle_ = -1;
+    Transform multiPrimaryBefore_{};
+    std::vector<std::pair<StableEntityId, Transform>> multiFollowersBefore_;
     std::array<bool,256> keys_{};
     Gesture gesture_=Gesture::None;
     GizmoMode mode_=GizmoMode::Translate;

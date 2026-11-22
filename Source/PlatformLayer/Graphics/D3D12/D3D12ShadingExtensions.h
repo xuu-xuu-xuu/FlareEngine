@@ -12,7 +12,7 @@ struct D3D12ShadingFrame
     D3D12UploadSlice defaultUpload;
     D3D12UploadSlice localLightConstants;
     std::shared_ptr<D3D12ShadowTarget> localShadow;
-    std::vector<se::Mat4> localShadowMatrices;
+    std::vector<flare::Mat4> localShadowMatrices;
     std::vector<std::array<D3D12_CPU_DESCRIPTOR_HANDLE,D3D12ShadingTextureCount>> views;
     std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> resources;
     std::vector<std::shared_ptr<D3D12DescriptorRange>> leases;

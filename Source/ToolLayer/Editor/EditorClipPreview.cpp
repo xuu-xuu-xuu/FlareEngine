@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 bool EditorClipPreview::Matches(const EditorSession& session,StableEntityId id)const
 {

@@ -16,7 +16,7 @@
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
-namespace rhi = se::rhi;
+namespace rhi = flare::rhi;
 namespace
 {
 using Json = nlohmann::json;
@@ -76,8 +76,8 @@ Json ParticleIdentity(const std::filesystem::path& source)
         {"flags", D3D12ShaderCompileFlags() | D3DCOMPILE_IEEE_STRICTNESS},
         {"constants", sizeof(rhi::ParticleFrameConstants)},
         {"instance_stride", sizeof(rhi::ParticleInstanceGpuData)},
-        {"source_sha256", se::Sha256(mainBytes)},
-        {"bindings_sha256", se::Sha256(bindingsBytes)}
+        {"source_sha256", flare::Sha256(mainBytes)},
+        {"bindings_sha256", flare::Sha256(bindingsBytes)}
     };
 }
 
@@ -165,26 +165,26 @@ bool TryLoadArtifact(const std::filesystem::path& source, ComPtr<ID3DBlob>& vs, 
     return true;
 }
 
-se::Vec3 SafeNormalized(se::Vec3 value, se::Vec3 fallback) noexcept
+flare::Vec3 SafeNormalized(flare::Vec3 value, flare::Vec3 fallback) noexcept
 {
-    const float lenSq = se::LengthSquared(value);
+    const float lenSq = flare::LengthSquared(value);
     return lenSq > 1e-6f ? value * (1.0f / std::sqrt(lenSq)) : fallback;
 }
 
-void ResolveCameraBasis(const D3D12FrameContent& content, se::Vec3& rightOut, se::Vec3& upOut) noexcept
+void ResolveCameraBasis(const D3D12FrameContent& content, flare::Vec3& rightOut, flare::Vec3& upOut) noexcept
 {
-    if (se::LengthSquared(content.particles.cameraRight) > 1e-6f
-        && se::LengthSquared(content.particles.cameraUp) > 1e-6f)
+    if (flare::LengthSquared(content.particles.cameraRight) > 1e-6f
+        && flare::LengthSquared(content.particles.cameraUp) > 1e-6f)
     {
         rightOut = SafeNormalized(content.particles.cameraRight, {1.0f, 0.0f, 0.0f});
         upOut = SafeNormalized(content.particles.cameraUp, {0.0f, 1.0f, 0.0f});
         return;
     }
-    if (const auto inv = se::Inverse(content.viewProjection))
+    if (const auto inv = flare::Inverse(content.viewProjection))
     {
-        const auto center = se::TransformPoint(*inv, {0.0f, 0.0f, 0.5f});
-        const auto rightPt = se::TransformPoint(*inv, {0.5f, 0.0f, 0.5f});
-        const auto upPt = se::TransformPoint(*inv, {0.0f, 0.5f, 0.5f});
+        const auto center = flare::TransformPoint(*inv, {0.0f, 0.0f, 0.5f});
+        const auto rightPt = flare::TransformPoint(*inv, {0.5f, 0.0f, 0.5f});
+        const auto upPt = flare::TransformPoint(*inv, {0.0f, 0.5f, 0.5f});
         rightOut = SafeNormalized(rightPt - center, {1.0f, 0.0f, 0.0f});
         upOut = SafeNormalized(upPt - center, {0.0f, 1.0f, 0.0f});
         return;
@@ -208,8 +208,8 @@ bool WriteD3D12ParticleShader(const std::filesystem::path& source, const std::fi
     const Json metadata{
         {"schema", 1},
         {"identity", identity},
-        {"vs_sha256", se::Sha256({static_cast<const std::uint8_t*>(vs->GetBufferPointer()), vs->GetBufferSize()})},
-        {"ps_sha256", se::Sha256({static_cast<const std::uint8_t*>(ps->GetBufferPointer()), ps->GetBufferSize()})}
+        {"vs_sha256", flare::Sha256({static_cast<const std::uint8_t*>(vs->GetBufferPointer()), vs->GetBufferSize()})},
+        {"ps_sha256", flare::Sha256({static_cast<const std::uint8_t*>(ps->GetBufferPointer()), ps->GetBufferSize()})}
     };
     const auto jsonText = metadata.dump();
     std::vector<std::uint8_t> artifact;
@@ -365,7 +365,7 @@ bool RecordD3D12Particles(D3D12Presentation& p, D3D12FrameContext& frame, const 
         cursor += batch.instances.size();
     }
 
-    se::Vec3 cameraRight{}, cameraUp{};
+    flare::Vec3 cameraRight{}, cameraUp{};
     ResolveCameraBasis(content, cameraRight, cameraUp);
 
     rhi::ParticleFrameConstants frameConstants{};

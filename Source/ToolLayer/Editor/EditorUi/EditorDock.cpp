@@ -5,7 +5,7 @@
 #include <string_view>
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 namespace
 {
@@ -627,4 +627,4 @@ bool EditorDock::DragSplitter(const std::vector<std::size_t>& path, float deltaP
     return true;
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

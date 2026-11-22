@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace se
+namespace flare
 {
 struct EditorApplicationHooks;
 
@@ -53,6 +53,31 @@ void RecordOverrideAfterPropertyEdit(World& world, AssetStore* assets, EntityHan
     std::string_view inspectorOrPropertyKey,
     std::string& error);
 
+[[nodiscard]] bool ApplyPropertyOverrideToPrefab(
+    EditorSession& session,
+    AssetStore& assets,
+    const std::filesystem::path& projectRoot,
+    StableEntityId entityId,
+    std::string_view inspectorOrPropertyKey,
+    std::string& error,
+    EditorApplicationHooks* hooks = nullptr);
+
+[[nodiscard]] bool RevertComponentOverrides(
+    EditorSession& session,
+    AssetStore& assets,
+    StableEntityId entityId,
+    std::string_view componentKey,
+    std::string& error);
+
+[[nodiscard]] bool ApplyComponentOverridesToPrefab(
+    EditorSession& session,
+    AssetStore& assets,
+    const std::filesystem::path& projectRoot,
+    StableEntityId entityId,
+    std::string_view componentKey,
+    std::string& error,
+    EditorApplicationHooks* hooks = nullptr);
+
 [[nodiscard]] bool RevertAllOverrides(
     EditorSession& session,
     AssetStore& assets,
@@ -73,4 +98,4 @@ void RecordOverrideAfterPropertyEdit(World& world, AssetStore* assets, EntityHan
     const AssetId& prefabId,
     std::string& error,
     EditorApplicationHooks* hooks = nullptr);
-} // namespace se
+} // namespace flare

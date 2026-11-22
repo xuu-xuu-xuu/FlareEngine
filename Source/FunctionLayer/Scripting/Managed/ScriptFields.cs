@@ -6,16 +6,42 @@ using System.Text.Json;
 namespace FlareEngine;
 
 public readonly record struct ExposedField(string Name, string Kind, object? Value,
-    string? Header = null, string? Tooltip = null, float? Min = null, float? Max = null)
+    string? Header = null, string? Tooltip = null, float? Min = null, float? Max = null,
+    float? Space = null, bool ReadOnly = false, string[]? Options = null)
 {
-    public ExposedField(string Name, string Kind, object? Value) : this(Name, Kind, Value, null, null, null, null) { }
+    public ExposedField(string Name, string Kind, object? Value) : this(Name, Kind, Value, null, null, null, null, null, false, null) { }
 }
 
 public static class ScriptFields
 {
+    private static bool IsEntityRefType(Type type)
+        => type == typeof(EntityReference) || type == typeof(F_EntityReference) || typeof(F_Entity).IsAssignableFrom(type);
+
+    private static ulong ExtractEntityStableId(object? val) => val switch
+    {
+        EntityReference r => r.StableId,
+        F_EntityReference fr => fr.StableId,
+        F_Entity ent => ent.IsValid ? ent.StableId : 0,
+        _ => 0
+    };
+
+    private static object? ConvertEntityFieldValue(Type fieldType, ulong stableId, EngineSession? session)
+    {
+        if (fieldType == typeof(F_EntityReference)) return new F_EntityReference(stableId);
+        if (typeof(F_Entity).IsAssignableFrom(fieldType))
+            return stableId == 0 || session is null ? null : session.FindEntity(stableId);
+        return new EntityReference(stableId);
+    }
+
     internal static void ClearSceneReferences(F_Behaviour value,IReadOnlySet<ulong> invalidated)
     {
-        foreach(var field in Fields(value.GetType()))if(field.FieldType==typeof(EntityReference)&&field.GetValue(value) is EntityReference reference&&invalidated.Contains(reference.StableId))field.SetValue(value,new EntityReference(0));
+        foreach(var field in Fields(value.GetType()))
+        {
+            if(!IsEntityRefType(field.FieldType))continue;
+            var id=ExtractEntityStableId(field.GetValue(value));
+            if(id!=0&&invalidated.Contains(id))
+                field.SetValue(value,ConvertEntityFieldValue(field.FieldType,0,null));
+        }
     }
     private static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, WriteIndented = true };
     // 每次操作临时枚举，避免长期缓存 FieldInfo 将可卸载项目程序集保活。
@@ -23,7 +49,7 @@ public static class ScriptFields
     private static IEnumerable<FieldInfo> Fields(Type type)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
-        for (Type? current = type; current is not null && current != typeof(F_Behaviour) && current != typeof(global::SelfEngine.Behaviour) && current != typeof(object); current = current.BaseType)
+        for (Type? current = type; current is not null && current != typeof(F_Behaviour) && current != typeof(object); current = current.BaseType)
         {
             foreach (var field in current.GetFields(BindingFlags.Instance | BindingFlags.Public |
                          BindingFlags.NonPublic | BindingFlags.DeclaredOnly).OrderBy(field => field.Name, StringComparer.Ordinal))
@@ -36,8 +62,10 @@ public static class ScriptFields
     }
     private static string? Kind(Type type) => type == typeof(int) ? "i32" : type == typeof(float) ? "f32"
         : type == typeof(double) ? "f64" : type == typeof(bool) ? "bool" : type == typeof(string) ? "string"
-        : type == typeof(Vector3) ? "vec3" : type == typeof(EntityReference) ? "entity" : null;
-    internal static bool TryReadValue(string kind,JsonElement json,out object? value)
+        : type == typeof(Vector2) ? "vec2" : type == typeof(Vector3) ? "vec3"
+        : type == typeof(F_Color) ? "color" : IsEntityRefType(type) ? "entity"
+        : type.IsEnum ? "enum" : null;
+    internal static bool TryReadValue(string kind,JsonElement json,out object? value,Type? fieldType=null)
     {
         value=null;
         try
@@ -49,9 +77,27 @@ public static class ScriptFields
                 case "f64":var number=json.GetDouble();if(!double.IsFinite(number))return false;value=number;return true;
                 case "bool":value=json.GetBoolean();return true;
                 case "string":var text=json.ValueKind==JsonValueKind.Null?null:json.GetString();if(text?.Length>65536)return false;value=text;return true;
+                case "vec2":
+                    var vec2=new Vector2(json.GetProperty("X").GetSingle(),json.GetProperty("Y").GetSingle());
+                    if(!float.IsFinite(vec2.X)||!float.IsFinite(vec2.Y))return false;value=vec2;return true;
                 case "vec3":
                     var vector=new Vector3(json.GetProperty("X").GetSingle(),json.GetProperty("Y").GetSingle(),json.GetProperty("Z").GetSingle());
                     if(!float.IsFinite(vector.X)||!float.IsFinite(vector.Y)||!float.IsFinite(vector.Z))return false;value=vector;return true;
+                case "color":
+                    var cr=json.GetProperty("R").GetSingle();var cg=json.GetProperty("G").GetSingle();var cb=json.GetProperty("B").GetSingle();
+                    var ca=json.TryGetProperty("A",out var alphaElem)?alphaElem.GetSingle():1f;
+                    if(!float.IsFinite(cr)||!float.IsFinite(cg)||!float.IsFinite(cb)||!float.IsFinite(ca))return false;
+                    value=new F_Color(cr,cg,cb,ca);return true;
+                case "enum":
+                    if(json.ValueKind!=JsonValueKind.String)return false;
+                    var enumName=json.GetString();
+                    if(string.IsNullOrEmpty(enumName))return false;
+                    if(fieldType is { IsEnum: true })
+                    {
+                        if(!Enum.TryParse(fieldType,enumName,ignoreCase:false,out var enumVal)||!Enum.IsDefined(fieldType,enumVal))return false;
+                        value=enumVal;return true;
+                    }
+                    value=enumName;return true;
                 case "entity":
                     if(!ulong.TryParse(json.GetString(),NumberStyles.None,CultureInfo.InvariantCulture,out var reference))return false;value=new EntityReference(reference);return true;
                 default:return false;
@@ -66,21 +112,30 @@ public static class ScriptFields
             var header = field.GetCustomAttribute<F_HeaderAttribute>(inherit: false)?.Title;
             var tooltip = field.GetCustomAttribute<F_TooltipAttribute>(inherit: false)?.Text;
             var range = field.GetCustomAttribute<F_RangeAttribute>(inherit: false);
-            return new ExposedField(field.Name, Kind(field.FieldType)!, field.GetValue(behaviour),
-                header, tooltip, range?.Min, range?.Max);
+            var space = field.GetCustomAttribute<F_SpaceAttribute>(inherit: false)?.Pixels;
+            var readOnly = field.IsDefined(typeof(F_ReadOnlyAttribute), inherit: false);
+            var options = field.FieldType.IsEnum ? Enum.GetNames(field.FieldType) : null;
+            var k = Kind(field.FieldType)!;
+            var rawVal = field.GetValue(behaviour);
+            if (k == "entity") rawVal = new EntityReference(ExtractEntityStableId(rawVal));
+            return new ExposedField(field.Name, k, rawVal,
+                header, tooltip, range?.Min, range?.Max, space, readOnly, options);
         }).ToArray();
 
     internal static void CopyExposedFields(F_Behaviour source, F_Behaviour target, IReadOnlyDictionary<ulong, ulong>? stableIdRemap = null)
     {
         if (source.GetType() != target.GetType()) return;
+        var session = source.Owner?.Session ?? target.Owner?.Session;
         foreach (var field in Fields(source.GetType()))
         {
             if (Kind(field.FieldType) is null) continue;
             var val = field.GetValue(source);
-            if (stableIdRemap is not null && val is EntityReference reference && reference.StableId != 0
-                && stableIdRemap.TryGetValue(reference.StableId, out var mappedId))
+            if (IsEntityRefType(field.FieldType))
             {
-                val = new EntityReference(mappedId);
+                var sid = ExtractEntityStableId(val);
+                if (stableIdRemap is not null && sid != 0 && stableIdRemap.TryGetValue(sid, out var mappedId))
+                    sid = mappedId;
+                val = ConvertEntityFieldValue(field.FieldType, sid, session);
             }
             field.SetValue(target, val);
         }
@@ -100,8 +155,10 @@ public static class ScriptFields
                 ?? throw new InvalidOperationException("Script.FieldMissing");
             var kind = Kind(field.FieldType) ?? throw new InvalidOperationException("Script.FieldTypeChanged");
             using var doc = JsonDocument.Parse(command["Value"]?.ToJsonString() ?? "null");
-            if (!TryReadValue(kind, doc.RootElement, out var val))
+            if (!TryReadValue(kind, doc.RootElement, out var val, field.FieldType))
                 throw new ArgumentException("Script.FieldValueInvalid");
+            if (val is EntityReference entRef)
+                val = ConvertEntityFieldValue(field.FieldType, entRef.StableId, system.Session);
             field.SetValue(target, val);
         }
     }
@@ -118,9 +175,11 @@ public static class ScriptFields
                 field => new SavedField
                 {
                     Kind = Kind(field.FieldType)!,
-                    Value = field.FieldType == typeof(EntityReference)
-                        ? JsonSerializer.SerializeToElement(((EntityReference)field.GetValue(value)!).StableId.ToString(CultureInfo.InvariantCulture))
-                        : JsonSerializer.SerializeToElement(field.GetValue(value), field.FieldType, JsonOptions)
+                    Value = IsEntityRefType(field.FieldType)
+                        ? JsonSerializer.SerializeToElement(ExtractEntityStableId(field.GetValue(value)).ToString(CultureInfo.InvariantCulture))
+                        : field.FieldType.IsEnum
+                            ? JsonSerializer.SerializeToElement(field.GetValue(value)?.ToString() ?? "")
+                            : JsonSerializer.SerializeToElement(field.GetValue(value), field.FieldType, JsonOptions)
                 }, StringComparer.Ordinal)
         }).ToArray();
         return JsonSerializer.Serialize(new SavedDocument { Version = 1, Scripts = scripts }, JsonOptions);
@@ -167,8 +226,13 @@ public static class ScriptFields
                     { system.Report(value, "Script.FieldTypeChanged", name); continue; }
                     try
                     {
-                        if(!TryReadValue(item.Kind,item.Value,out var fieldValue))throw new JsonException();
-                        if(fieldValue is EntityReference reference&&reference.StableId!=0&&system.Session.FindEntity(reference.StableId) is null)system.Report(value,"Script.ReferenceMissing",name);
+                        if(!TryReadValue(item.Kind,item.Value,out var fieldValue,field.FieldType))throw new JsonException();
+                        if(fieldValue is EntityReference reference)
+                        {
+                            if(reference.StableId!=0&&system.Session.FindEntity(reference.StableId) is null)
+                                system.Report(value,"Script.ReferenceMissing",name);
+                            fieldValue=ConvertEntityFieldValue(field.FieldType,reference.StableId,system.Session);
+                        }
                         field.SetValue(value, fieldValue);
                     }
                     catch (Exception exception) when (exception is JsonException or InvalidOperationException or ArgumentException or FormatException)

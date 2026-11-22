@@ -4,7 +4,7 @@
 
 ## RayTracingSettings
 
-`se::rhi::RayTracingSettings` 由 `ApplyFeatureFrameData()` 从场景 `RenderSettingsComponent` 提取并写入 `ForwardLighting::rayTracing`，按作用阶段拆为两组独立子通道：
+`flare::rhi::RayTracingSettings` 由 `ApplyFeatureFrameData()` 从场景 `RenderSettingsComponent` 提取并写入 `ForwardLighting::rayTracing`，按作用阶段拆为两组独立子通道：
 
 | 子通道与场景键 | 默认值 | 说明 |
 | :--- | :--- | :--- |
@@ -33,4 +33,4 @@
 
 ## RayTracingStatistics
 
-`se::rhi::RayTracingStatistics` 向帧统计与性能诊断暴露硬件支持性、`RayTracingFallback` 回退原因、`blasCount / blasBuilds / blasCacheHits / tlasInstances` 以及加速结构、暂存缓冲与降噪目标显存字节数，不依赖额外 CPU 回读等待。
+`flare::rhi::RayTracingStatistics` 向帧统计与性能诊断暴露硬件支持性、`RayTracingFallback` 回退原因、`blasCount / blasBuilds / blasCacheHits / tlasInstances` 以及加速结构、暂存缓冲与降噪目标显存字节数，不依赖额外 CPU 回读等待。

@@ -141,13 +141,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 
             if (state->interactiveResize && state->drawable && state->drawResizeFrame)
             {
-                const ULONGLONG now = GetTickCount64();
-                if (now - state->lastResizeDrawTick >= 8 &&
-                    (state->width != state->lastResizeDrawWidth || state->height != state->lastResizeDrawHeight))
+                if (state->width != state->lastResizeDrawWidth || state->height != state->lastResizeDrawHeight)
                 {
                     state->lastResizeDrawWidth = state->width;
                     state->lastResizeDrawHeight = state->height;
-                    state->lastResizeDrawTick = now;
+                    state->lastResizeDrawTick = GetTickCount64();
                     SendMessageW(hwnd, EngineWindowDrawResizeFrame, 0, 0);
                 }
             }
@@ -258,7 +256,7 @@ bool CreateEngineWindow(WindowState& window, bool showWindow)
 	// 自动化 UI 测试可把窗口放到屏幕外，避免打断用户桌面；生产窗口保持系统默认位置。
 	int initialX = CW_USEDEFAULT, initialY = CW_USEDEFAULT;
 	wchar_t offscreen[8]{};
-	if (GetEnvironmentVariableW(L"SELFENGINE_TEST_OFFSCREEN", offscreen, 8) > 0)
+	if (GetEnvironmentVariableW(L"FLARE_TEST_OFFSCREEN", offscreen, 8) > 0)
 	{
 		initialX = -30000;
 		initialY = -30000;
@@ -295,7 +293,7 @@ bool CreateEngineWindow(WindowState& window, bool showWindow)
 	window.width = static_cast<UINT>(client.right - client.left);
 	window.height = static_cast<UINT>(client.bottom - client.top);
 	window.drawable = window.width > 0 && window.height > 0;
-	se::ApplyAppIcon(window.hwnd);
+	flare::ApplyAppIcon(window.hwnd);
 	if (showWindow) ShowWindow(window.hwnd, SW_SHOW);
 	return true;
 }

@@ -5,7 +5,7 @@
 #include <string_view>
 #include <nlohmann/json.hpp>
 
-namespace se
+namespace flare
 {
 inline constexpr std::array PlayerQualityIds{"project","performance","balanced","high"};
 inline constexpr std::array QualitySamplingIds{"scene","off","fxaa","taa","spatial4x"};

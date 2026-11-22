@@ -34,7 +34,7 @@
 #include <stdexcept>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 using ui::editor::EditorCommand;
 using ui::editor::EditorCommandId;
@@ -94,7 +94,7 @@ void OpenToolkitUtilityWindow(ToolkitAppState& state, EditorPanelId panel)
 {
     if (!state.shell) return;
     if (!IsUtilityPanel(panel) || !state.floatingWindows || state.hidden || state.hooks != nullptr ||
-        GetEnvironmentVariableW(L"SELFENGINE_EDITOR_OPEN_PANEL", nullptr, 0) > 0)
+        GetEnvironmentVariableW(L"FLARE_EDITOR_OPEN_PANEL", nullptr, 0) > 0)
     {
         state.shell->TogglePanel(panel);
         return;
@@ -474,19 +474,19 @@ bool BrowseAndImportToolkitAsset(ToolkitAppState& state)
 void ApplyStartupEnvironmentFlags(ToolkitAppState& state)
 {
     wchar_t openPanel[64]{};
-    if (GetEnvironmentVariableW(L"SELFENGINE_EDITOR_OPEN_PANEL", openPanel, 64) > 0)
+    if (GetEnvironmentVariableW(L"FLARE_EDITOR_OPEN_PANEL", openPanel, 64) > 0)
     {
         EditorPanelId panel = EditorPanelId::None;
         if (EditorPanelFromName(asset_io::Utf8(openPanel), panel)) state.shell->FocusPanel(panel);
     }
     wchar_t openAsset[512]{};
-    if (GetEnvironmentVariableW(L"SELFENGINE_EDITOR_OPEN_ASSET", openAsset, 512) > 0)
+    if (GetEnvironmentVariableW(L"FLARE_EDITOR_OPEN_ASSET", openAsset, 512) > 0)
         state.pendingAsset = asset_io::Utf8(openAsset);
     wchar_t flag[8]{};
-    state.autoExport = GetEnvironmentVariableW(L"SELFENGINE_EDITOR_AUTO_EXPORT", flag, 8) > 0;
-    state.autoExportFlow = GetEnvironmentVariableW(L"SELFENGINE_EDITOR_AUTO_EXPORT_FLOW", flag, 8) > 0;
+    state.autoExport = GetEnvironmentVariableW(L"FLARE_EDITOR_AUTO_EXPORT", flag, 8) > 0;
+    state.autoExportFlow = GetEnvironmentVariableW(L"FLARE_EDITOR_AUTO_EXPORT_FLOW", flag, 8) > 0;
     wchar_t cancelMs[16]{};
-    if (GetEnvironmentVariableW(L"SELFENGINE_EDITOR_AUTO_EXPORT_CANCEL_MS", cancelMs, 16) > 0)
+    if (GetEnvironmentVariableW(L"FLARE_EDITOR_AUTO_EXPORT_CANCEL_MS", cancelMs, 16) > 0)
         state.autoCancelMs = std::atoi(asset_io::Utf8(cancelMs).c_str());
 }
 
@@ -595,7 +595,8 @@ void SyncToolkitHierarchyAssetsAndInspector(ToolkitAppState& state)
 {
     std::vector<ui::editor::EditorHierarchyNode> hierarchy;
     const World& editWorld = state.session.EditWorld();
-    for (const EditorHierarchyItem& item : BuildEditorHierarchy(editWorld))
+    const World& hierarchyWorld = state.session.PlayWorld() ? *state.session.PlayWorld() : editWorld;
+    for (const EditorHierarchyItem& item : BuildEditorHierarchy(hierarchyWorld))
     {
         ui::editor::EditorHierarchyNode node;
         node.id = item.id;
@@ -603,23 +604,24 @@ void SyncToolkitHierarchyAssetsAndInspector(ToolkitAppState& state)
         node.depth = item.depth;
         node.hasChildren = item.hasChildren;
         node.expanded = true;
-        const EntityHandle handle = editWorld.FindByStableId(item.id);
-        if (const EntityRecord* record = editWorld.Get(handle))
+        const EntityHandle handle = hierarchyWorld.FindByStableId(item.id);
+        if (const EntityRecord* record = hierarchyWorld.Get(handle))
         {
             node.label = record->name;
-            node.enabled = editWorld.IsEnabled(handle);
-            node.prefab = editWorld.GetPrefabLink(handle) != nullptr;
-            if (editWorld.GetCamera(handle)) node.iconKind = "camera";
-            else if (editWorld.GetLight(handle) || HasComponent(editWorld, handle, "rectangle")) node.iconKind = "light";
-            else if (editWorld.GetMesh(handle)) node.iconKind = "mesh";
-            else if (HasComponent(editWorld, handle, "audio") || HasComponent(editWorld, handle, "listener")) node.iconKind = "audio";
-            else if (HasComponent(editWorld, handle, "emitter")) node.iconKind = "particle";
+            node.enabled = hierarchyWorld.IsEnabled(handle);
+            node.prefab = hierarchyWorld.GetPrefabLink(handle) != nullptr;
+            if (hierarchyWorld.GetCamera(handle)) node.iconKind = "camera";
+            else if (hierarchyWorld.GetLight(handle) || HasComponent(hierarchyWorld, handle, "rectangle")) node.iconKind = "light";
+            else if (hierarchyWorld.GetMesh(handle)) node.iconKind = "mesh";
+            else if (HasComponent(hierarchyWorld, handle, "audio") || HasComponent(hierarchyWorld, handle, "listener")) node.iconKind = "audio";
+            else if (HasComponent(hierarchyWorld, handle, "emitter")) node.iconKind = "particle";
             else node.iconKind = "empty";
         }
         else node.label = "Entity " + std::to_string(item.id);
         hierarchy.push_back(std::move(node));
     }
     state.shell->SetHierarchy(std::move(hierarchy));
+    state.shell->SetHierarchySelection(state.session.Selection(), state.session.Selected());
 
     const std::uint64_t assetScanNow = GetTickCount64();
     const bool activelyResizingUi = state.interactiveResizing || state.shell->SplitterActive();
@@ -788,47 +790,92 @@ void SyncToolkitHierarchyAssetsAndInspector(ToolkitAppState& state)
 
     std::vector<ui::editor::EditorProperty> properties;
     std::string inspectorLabel = state.text.GetText("EditorUi.NoSelection");
-    const StableEntityId selected = state.session.Selected();
     const World& activeWorld = (state.session.IsPlaying() && state.session.PlayWorld())
         ? *state.session.PlayWorld()
         : editWorld;
-    if (const auto* record = activeWorld.Get(activeWorld.FindByStableId(selected))) inspectorLabel = record->name;
-    if (state.shell->ActivePanel() == EditorPanelId::Hierarchy || state.shell->ActivePanel() == EditorPanelId::Viewport)
+    if (state.shell->InspectorLocked())
+    {
+        if (state.assetState.lockedToEntity && state.assetState.lockedEntityId != 0 &&
+            !activeWorld.FindByStableId(state.assetState.lockedEntityId))
+        {
+            state.shell->SetInspectorLocked(false);
+        }
+        else if (state.assetState.lockedToAsset)
+        {
+            std::error_code lockEc;
+            if (state.assetState.lockedAssetPath.empty() ||
+                !std::filesystem::exists(asset_io::FromUtf8(state.assetState.lockedAssetPath), lockEc) || lockEc)
+            {
+                state.shell->SetInspectorLocked(false);
+            }
+        }
+    }
+    const bool lockedEntityMode = state.shell->InspectorLocked() && state.assetState.lockedToEntity;
+    const bool lockedAssetMode = state.shell->InspectorLocked() && state.assetState.lockedToAsset &&
+                                 !state.assetState.assetName.empty();
+    const StableEntityId inspectedId = lockedEntityMode ? state.assetState.lockedEntityId : state.session.Selected();
+    if (const auto* record = activeWorld.Get(activeWorld.FindByStableId(inspectedId))) inspectorLabel = record->name;
+    if (!lockedAssetMode &&
+        (state.shell->ActivePanel() == EditorPanelId::Hierarchy || state.shell->ActivePanel() == EditorPanelId::Viewport))
+    {
         state.assetState.inspectUi = false;
-    if (state.assetState.inspectUi)
+    }
+    state.shell->SetPlayKeepArmed(state.session.IsPlaying() && inspectedId != 0 &&
+                                  state.assetState.playKeepEntities.contains(inspectedId));
+    if (!lockedEntityMode && !lockedAssetMode && state.assetState.inspectUi)
     {
         state.shell->SetInspector(state.host.Ui().Selected(), state.text.GetText("EditorUi.UiDesigner"),
                                   UiInspectorRows(state.ui, state.host.Ui().Selected(), state.text, state.session.IsPlaying()));
     }
-    else if (!state.assetState.assetName.empty())
+    else if (!lockedEntityMode && (lockedAssetMode || !state.assetState.assetName.empty()))
     {
         state.shell->SetInspector(0, state.assetState.assetName, state.assetState.rows);
     }
     else
     {
-        AppendSceneInspector(state.session, state.assets, state.text, selected, properties);
-        const auto clip = std::find_if(properties.begin(), properties.end(), [](const auto& p) { return p.key == "actor.clip"; });
-        if (clip != properties.end() && !state.session.IsPlaying())
+        std::vector<StableEntityId> lockedAliveSel;
+        if (lockedEntityMode)
         {
-            const bool active = state.clipPreview.Target() == selected;
-            const bool running = active && state.clipPreview.Playing();
-            const auto group = clip->section;
-            ui::editor::EditorProperty play{"preview.play", state.text.GetText(running ? "EditorUi.PauseClip" : "EditorUi.PlayClip"),
-                                            ui::editor::EditorPropertyType::Action, {}, false, {}, group};
-            ui::editor::EditorProperty time{"preview.time", state.text.GetText("EditorUi.ClipTime"),
-                                            ui::editor::EditorPropertyType::Number,
-                                            std::to_string(active ? std::round(state.clipPreview.Time() * 10.) / 10. : 0.), false, {}, group};
-            properties.insert(std::next(clip), {std::move(play), std::move(time)});
+            for (const StableEntityId sid : state.assetState.lockedSelection)
+                if (activeWorld.FindByStableId(sid)) lockedAliveSel.push_back(sid);
+            if (lockedAliveSel.empty() && inspectedId != 0) lockedAliveSel.push_back(inspectedId);
         }
-        AppendTodInspector(state.host.TimeOfDayPreview(), state.text, state.session.IsPlaying(), properties);
-        state.scriptWorkflow.AppendRows(selected, state.session.IsPlaying(), properties,
-            [&activeWorld](std::uint64_t refId) -> std::string {
-                if (const auto* rec = activeWorld.Get(activeWorld.FindByStableId(refId)))
-                    return rec->name;
-                return {};
-            });
+        const auto& sel = lockedEntityMode ? lockedAliveSel : state.session.Selection();
+        const auto resolveRefName = [&activeWorld](std::uint64_t refId) -> std::string {
+            if (const auto* rec = activeWorld.Get(activeWorld.FindByStableId(refId)))
+                return rec->name;
+            return {};
+        };
+        if (sel.size() > 1)
+        {
+            inspectorLabel = std::to_string(sel.size()) + " " + state.text.GetText("EditorUi.MultiSelected");
+            AppendMultiSceneInspector(state.session, state.assets, state.text, sel, properties);
+            state.scriptWorkflow.AppendMultiRows(sel, state.session.IsPlaying(), properties, resolveRefName);
+        }
+        else
+        {
+            AppendSceneInspector(state.session, state.assets, state.text, inspectedId, properties);
+            const auto clip = std::find_if(properties.begin(), properties.end(), [](const auto& p) { return p.key == "actor.clip"; });
+            if (clip != properties.end() && !state.session.IsPlaying())
+            {
+                const bool active = state.clipPreview.Target() == inspectedId;
+                const bool running = active && state.clipPreview.Playing();
+                const auto group = clip->section;
+                ui::editor::EditorProperty play{"preview.play", state.text.GetText(running ? "EditorUi.PauseClip" : "EditorUi.PlayClip"),
+                                                ui::editor::EditorPropertyType::Action, {}, false, {}, group};
+                ui::editor::EditorProperty time{"preview.time", state.text.GetText("EditorUi.ClipTime"),
+                                                ui::editor::EditorPropertyType::Number,
+                                                std::to_string(active ? std::round(state.clipPreview.Time() * 10.) / 10. : 0.), false, {}, group};
+                properties.insert(std::next(clip), {std::move(play), std::move(time)});
+            }
+            if (inspectedId == 0)
+            {
+                AppendTodInspector(state.host.TimeOfDayPreview(), state.text, state.session.IsPlaying(), properties);
+            }
+            state.scriptWorkflow.AppendRows(inspectedId, state.session.IsPlaying(), properties, resolveRefName);
+        }
         state.shell->SetSuggestedScriptClassName(state.scriptWorkflow.NextSuggestedClassName());
-        state.shell->SetInspector(selected, inspectorLabel, std::move(properties));
+        state.shell->SetInspector(inspectedId, inspectorLabel, std::move(properties));
     }
 }
 } // namespace
@@ -845,7 +892,8 @@ EditorSessionSnapshot CaptureEditorSessionSnapshot(const std::filesystem::path& 
     snapshot.project = asset_io::Utf8(canonical);
     snapshot.documents = host.SessionDocuments(session);
     snapshot.activeDocument = host.SessionActiveDocument(session);
-    if (session.Selected()) snapshot.selection.push_back(session.Selected());
+    if (!session.Selection().empty()) snapshot.selection = session.Selection();
+    else if (session.Selected()) snapshot.selection.push_back(session.Selected());
     snapshot.cameraX = camera.state.position.x;
     snapshot.cameraY = camera.state.position.y;
     snapshot.cameraZ = camera.state.position.z;
@@ -972,7 +1020,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         const std::string ext = lowerExt(target);
         if (ext == ".cs")
         {
-            if (targetId == 0) targetId = state.session.Selected();
+            if (targetId == 0 && dropPanel == EditorPanelId::Inspector) targetId = state.session.Selected();
             if (targetId == 0)
             {
                 state.shell->SetStatus(state.text.GetText("EditorUi.SelectObjectFirst"));
@@ -1002,7 +1050,8 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         }
         if (IsMaterialDocumentPath(target))
         {
-            if (targetId == 0) targetId = state.session.Selected();
+            if (targetId == 0 && dropPanel == EditorPanelId::Inspector) targetId = state.session.Selected();
+            if (targetId == 0) return false;
             AssetId matId;
             for (const auto& id : state.assets.ListIds())
             {
@@ -1014,13 +1063,8 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
                     break;
                 }
             }
-            const EntityHandle entity = state.session.EditWorld().FindByStableId(targetId);
-            const auto* mesh = state.session.EditWorld().GetMesh(entity);
-            if (!mesh || matId.empty()) return false;
-            MeshComponent updated = *mesh;
-            if (updated.materials.empty()) updated.materials.push_back(matId);
-            else updated.materials[0] = matId;
-            if (!state.session.SetMesh(targetId, updated)) return false;
+            if (matId.empty()) return false;
+            if (!ApplySceneInspector(state.session, targetId, "mesh.material", matId, &state.assets)) return false;
             state.session.Select(targetId);
             state.assetState.assetName.clear();
             const std::string msg = state.text.GetText("EditorUi.MaterialAssigned") + ": " +
@@ -1496,21 +1540,52 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         if (!active || !state.camera || state.session.IsPlaying())
         {
             state.dropWorkflow.ClearHover();
-            return;
-        }
-        const std::filesystem::path dragPath = asset_io::FromUtf8(path);
-        if (isCsScriptPath(dragPath) || IsMaterialDocumentPath(dragPath))
-        {
-            state.dropWorkflow.ClearHover();
+            state.hoverMaterialEntity = 0;
+            state.hoverMaterialAssetId.clear();
             return;
         }
         float u = 0.0f, v = 0.0f;
         ui::editor::ViewportNormalize({state.viewportRect.x, state.viewportRect.y,
                                        state.viewportRect.width, state.viewportRect.height}, x, y, u, v);
+        const std::filesystem::path dragPath = asset_io::FromUtf8(path);
+        if (IsMaterialDocumentPath(dragPath))
+        {
+            state.dropWorkflow.ClearHover();
+            const StableEntityId picked = PickEditorBounds(state.session.EditWorld(), state.assets, *state.camera, u, v);
+            const EntityHandle pickedH = state.session.EditWorld().FindByStableId(picked);
+            if (picked != 0 && state.session.EditWorld().GetMesh(pickedH) != nullptr)
+            {
+                AssetId matId;
+                for (const auto& id : state.assets.ListIds())
+                {
+                    std::error_code ec;
+                    if (state.assets.Resolve(id) == dragPath ||
+                        (std::filesystem::equivalent(state.assets.Resolve(id), dragPath, ec) && !ec))
+                    { matId = id; break; }
+                }
+                state.hoverMaterialEntity = matId.empty() ? 0 : picked;
+                state.hoverMaterialAssetId = std::move(matId);
+            }
+            else
+            {
+                state.hoverMaterialEntity = 0;
+                state.hoverMaterialAssetId.clear();
+            }
+            return;
+        }
+        state.hoverMaterialEntity = 0;
+        state.hoverMaterialAssetId.clear();
+        if (isCsScriptPath(dragPath))
+        {
+            state.dropWorkflow.ClearHover();
+            return;
+        }
         state.dropWorkflow.BeginOrUpdateHover(path, *state.camera, {u, v},
             state.session.EditWorld(), state.assets, &state.session.EditEnvironment().Spatial());
     });
     state.shell->SetAssetDropHandler([&state, applyAssetToEntity, isCsScriptPath](const std::string& path, float x, float y) {
+        state.hoverMaterialEntity = 0;
+        state.hoverMaterialAssetId.clear();
         if (!state.camera || state.session.IsPlaying())
         {
             state.dropWorkflow.ClearHover();
@@ -1524,7 +1599,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         {
             state.dropWorkflow.ClearHover();
             StableEntityId picked = PickEditorBounds(state.session.EditWorld(), state.assets, *state.camera, u, v);
-            if (picked == 0) picked = state.session.Selected();
+            if (picked == 0 && isCsScriptPath(targetPath)) picked = state.session.Selected();
             return applyAssetToEntity(path, picked, EditorPanelId::Viewport);
         }
         std::string error;
@@ -1566,7 +1641,11 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
 
     auto& commands = state.shell->Commands();
     const auto saveAll = [&state, &ctx]() {
-        if (state.session.Path().empty() && state.session.Dirty() && !state.hidden && state.hostWindow != nullptr && state.hooks == nullptr)
+        const bool isAutomatedSmoke = state.autoExportFlow ||
+            GetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_WORKFLOW", nullptr, 0) > 0 ||
+            GetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_PLAYBACK", nullptr, 0) > 0 ||
+            GetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_EXPORT", nullptr, 0) > 0;
+        if (state.session.Path().empty() && state.session.Dirty() && !state.hidden && state.hostWindow != nullptr && !isAutomatedSmoke)
         {
             if (!PromptSaveSceneAsDialog(state)) return false;
         }
@@ -1711,7 +1790,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             return true;
         }
         wchar_t requestPath[MAX_PATH]{};
-        const DWORD length = GetEnvironmentVariableW(L"SELFENGINE_EDITOR_RESTART_REQUEST", requestPath, MAX_PATH);
+        const DWORD length = GetEnvironmentVariableW(L"FLARE_EDITOR_RESTART_REQUEST", requestPath, MAX_PATH);
         if (length == 0 || length >= MAX_PATH)
         {
             state.shell->SetStatus(state.text.GetText(
@@ -1740,6 +1819,16 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
     commands.Register(EditorCommandId::Undo, [&state](const EditorCommand&) {
         if (state.assetState.inspectUi && !state.session.IsPlaying()) return state.host.Ui().Undo(state.ui);
         if (state.assetState.editTod && !state.session.IsPlaying()) return state.host.TimeOfDayPreview().Undo();
+        if (!state.session.IsPlaying() &&
+            (state.assetState.preferMaterialUndo || state.shell->ActivePanel() == EditorPanelId::Material) &&
+            state.host.Material().Undo())
+        {
+            (void)state.host.SaveMaterial(state.assets);
+            state.shell->SetFormProperties(EditorPanelId::Material, BuildMaterialFormRows(state.host.Material(), state.text));
+            if (!state.assetState.assetPath.empty() && IsMaterialDocumentPath(state.assetState.assetPath))
+                state.shell->SelectAsset(asset_io::Utf8(state.assetState.assetPath));
+            return true;
+        }
         if (!state.session.IsPlaying() && state.assetState.preferScriptUndo && state.scriptWorkflow.HasUndo())
             return state.scriptWorkflow.Undo();
         if (state.session.Undo()) return true;
@@ -1750,6 +1839,16 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
     commands.Register(EditorCommandId::Redo, [&state](const EditorCommand&) {
         if (state.assetState.inspectUi && !state.session.IsPlaying()) return state.host.Ui().Redo(state.ui);
         if (state.assetState.editTod && !state.session.IsPlaying()) return state.host.TimeOfDayPreview().Redo();
+        if (!state.session.IsPlaying() &&
+            (state.assetState.preferMaterialUndo || state.shell->ActivePanel() == EditorPanelId::Material) &&
+            state.host.Material().Redo())
+        {
+            (void)state.host.SaveMaterial(state.assets);
+            state.shell->SetFormProperties(EditorPanelId::Material, BuildMaterialFormRows(state.host.Material(), state.text));
+            if (!state.assetState.assetPath.empty() && IsMaterialDocumentPath(state.assetState.assetPath))
+                state.shell->SelectAsset(asset_io::Utf8(state.assetState.assetPath));
+            return true;
+        }
         if (!state.session.IsPlaying() && state.assetState.preferScriptUndo && state.scriptWorkflow.HasRedo())
             return state.scriptWorkflow.Redo();
         if (state.session.Redo()) return true;
@@ -1757,7 +1856,53 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             return state.scriptWorkflow.Redo();
         return false;
     });
-    commands.Register(EditorCommandId::Play, [&state](const EditorCommand&) {
+    const auto stopPlayWithKeepChanges = [&state]() {
+        std::vector<CapturedEntityPlayState> capturedEntities;
+        std::vector<std::pair<StableEntityId, std::string>> capturedScripts;
+        if (!state.assetState.playKeepEntities.empty() && state.session.PlayWorld())
+        {
+            for (const StableEntityId keepId : state.assetState.playKeepEntities)
+            {
+                CapturedEntityPlayState snap;
+                if (state.session.CaptureEntityPlayState(keepId, snap))
+                    capturedEntities.push_back(std::move(snap));
+                std::string scriptDoc = state.scriptWorkflow.CaptureLiveEntityScripts(keepId);
+                if (!scriptDoc.empty())
+                    capturedScripts.emplace_back(keepId, std::move(scriptDoc));
+            }
+        }
+        state.assetState.playKeepEntities.clear();
+        if (state.shell) state.shell->SetPlayKeepArmed(false);
+        state.session.StopPlay();
+        if (!capturedEntities.empty() || !capturedScripts.empty())
+        {
+            bool anyApplied = false;
+            if (!capturedEntities.empty() && state.session.ApplyCapturedPlayStates(capturedEntities, &state.assets))
+                anyApplied = true;
+            if (!capturedScripts.empty())
+            {
+                const bool tx = state.scriptWorkflow.BeginEdit();
+                bool anyScript = false;
+                for (const auto& [sid, doc] : capturedScripts)
+                {
+                    if (state.scriptWorkflow.ApplyCapturedEntityScripts(sid, doc)) anyScript = true;
+                }
+                if (tx)
+                {
+                    if (anyScript) (void)state.scriptWorkflow.CommitEdit();
+                    else (void)state.scriptWorkflow.CancelEdit();
+                }
+                if (anyScript) anyApplied = true;
+            }
+            if (anyApplied)
+            {
+                state.assetState.preferScriptUndo = false;
+                state.assetState.preferMaterialUndo = false;
+                NotifyToolkitStatus(state, state.text.GetText("EditorUi.PlayChangesApplied"));
+            }
+        }
+    };
+    commands.Register(EditorCommandId::Play, [&state, stopPlayWithKeepChanges](const EditorCommand&) {
         if (state.assetState.previewAudioVoice)
         {
             state.audio.Stop(state.assetState.previewAudioVoice);
@@ -1766,7 +1911,7 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         if (state.session.IsPlaying())
         {
             state.pendingPlayAfterCompile = false;
-            state.session.StopPlay();
+            stopPlayWithKeepChanges();
             Log(LogLevel::Info, "EditorUi.ToolkitPlay: stop");
             return true;
         }
@@ -1802,6 +1947,8 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         std::string reason;
         if (!state.session.ValidatePlay(reason)) { Log(LogLevel::Warning, "EditorUi.ToolkitPlay: " + reason); return false; }
         if (state.shell->ConsoleClearOnPlay()) state.shell->ClearConsole();
+        state.assetState.playKeepEntities.clear();
+        state.shell->SetPlayKeepArmed(false);
         if (!state.session.StartPlay()) { Log(LogLevel::Warning, "EditorUi.ToolkitPlay: " + state.session.LastError()); return false; }
         state.session.SetPlayPaused(false);
         state.gameplayLogged = false;
@@ -1820,10 +1967,10 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
         state.session.RequestPlayStep();
         return true;
     });
-    commands.Register(EditorCommandId::Stop, [&state](const EditorCommand&) {
+    commands.Register(EditorCommandId::Stop, [&state, stopPlayWithKeepChanges](const EditorCommand&) {
         state.pendingPlayAfterCompile = false;
         if (!state.session.IsPlaying()) return false;
-        state.session.StopPlay();
+        stopPlayWithKeepChanges();
         Log(LogLevel::Info, "EditorUi.ToolkitPlay: stop");
         return true;
     });
@@ -1908,11 +2055,64 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             }
             return false;
         }
+        const auto sel = state.session.Selection();
+        if (sel.size() > 1)
+        {
+            if (!state.session.BeginEdit("Editor.Delete")) return false;
+            bool deletedAny = false;
+            for (const StableEntityId sid : sel)
+            {
+                if (state.session.EditWorld().FindByStableId(sid) && state.session.Delete(sid))
+                    deletedAny = true;
+            }
+            if (deletedAny) return state.session.CommitEdit();
+            state.session.CancelEdit();
+            return false;
+        }
         return state.session.Selected() && state.session.Delete(state.session.Selected());
     });
     commands.Register(EditorCommandId::Duplicate, [&state](const EditorCommand&) {
-        if (state.assetState.inspectUi) return false;
-        return state.assetState.assetName.empty() && state.session.Selected() && state.session.Duplicate(state.session.Selected()) != 0;
+        if (state.assetState.inspectUi || !state.assetState.assetName.empty()) return false;
+        const auto sel = state.session.Selection();
+        std::unordered_map<StableEntityId, StableEntityId> idRemap;
+        if (sel.size() > 1)
+        {
+            if (!state.session.BeginEdit("Editor.Duplicate")) return false;
+            std::vector<StableEntityId> createdIds;
+            const World& ew = state.session.EditWorld();
+            std::vector<StableEntityId> topRoots;
+            for (const StableEntityId sid : sel)
+            {
+                const EntityHandle eh = ew.FindByStableId(sid);
+                if (!eh) continue;
+                bool ancSelected = false;
+                for (EntityHandle cur = ew.Get(eh) ? ew.Get(eh)->parent : EntityHandle{}; cur;
+                     cur = ew.Get(cur) ? ew.Get(cur)->parent : EntityHandle{})
+                {
+                    if (ew.Get(cur) && state.session.IsSelected(ew.Get(cur)->stableId)) { ancSelected = true; break; }
+                }
+                if (!ancSelected) topRoots.push_back(sid);
+            }
+            for (const StableEntityId rootId : topRoots)
+            {
+                if (const StableEntityId dup = state.session.Duplicate(rootId, &idRemap); dup != 0)
+                    createdIds.push_back(dup);
+            }
+            if (!createdIds.empty())
+            {
+                state.session.SetSelection(createdIds, createdIds.back());
+                const bool committed = state.session.CommitEdit();
+                if (committed && !idRemap.empty()) (void)state.scriptWorkflow.CloneEntityBindings(idRemap);
+                return committed;
+            }
+            state.session.CancelEdit();
+            return false;
+        }
+        if (state.session.Selected() == 0) return false;
+        const StableEntityId dup = state.session.Duplicate(state.session.Selected(), &idRemap);
+        if (dup == 0) return false;
+        if (!idRemap.empty()) (void)state.scriptWorkflow.CloneEntityBindings(idRemap);
+        return true;
     });
     commands.Register(EditorCommandId::Import, [&state](const EditorCommand&) {
         if (!state.hooks || !state.hooks->chooseAssetImportSource)
@@ -2051,9 +2251,27 @@ void BindToolkitImportAndCommands(ToolkitAppState& state, ToolkitWorkspaceContex
             NotifyToolkitStatus(state, state.text.GetText("EditorUi.AlignedWithView"));
             return true;
         }
+        const StableEntityId targetId = command.target != 0
+            ? command.target
+            : ((state.shell && state.shell->InspectorLocked() && state.assetState.lockedToEntity)
+                   ? state.assetState.lockedEntityId
+                   : state.session.Selected());
+        if (command.argument.starts_with("prefab.applyProperty:"))
+        {
+            std::string error;
+            if (!ApplyPropertyOverrideToPrefab(state.session, state.assets, state.root, targetId,
+                                               std::string_view(command.argument).substr(21), error, state.hooks))
+            {
+                state.shell->SetStatus(LocalizedToolkitStatus(state.text, error, "EditorUi.SaveFailed"));
+                return false;
+            }
+            const auto msg = state.text.GetText("EditorUi.PrefabApplied");
+            state.shell->SetStatus(msg);
+            state.shell->AppendConsoleLine(msg);
+            return true;
+        }
         if (!command.argument.starts_with("prefab.revertProperty:")) return false;
         std::string error;
-        const StableEntityId targetId = command.target != 0 ? command.target : state.session.Selected();
         if (!RevertPropertyOverride(state.session, state.assets, targetId,
                                     std::string_view(command.argument).substr(22), error))
         {
@@ -2138,7 +2356,7 @@ bool InitializeToolkitWindowUi(ToolkitAppState& state, HWND window)
 {
     if (!ReportStartup(StartupStage::Interface)) return false;
     SetWindowTextW(window, asset_io::FromUtf8(state.text.GetText("Editor.WindowTitle")).c_str());
-    flare::StyleTitleBar(window);
+    flare::palette::StyleTitleBar(window);
     DragAcceptFiles(window, TRUE);
     state.hostWindow = window;
     state.fontService = std::make_unique<UiDirectWriteTextService>(L"Segoe UI");
@@ -2187,7 +2405,7 @@ bool InitializeToolkitWindowUi(ToolkitAppState& state, HWND window)
     const UINT dpi = GetDpiForWindow(window);
     float uiScale = dpi ? static_cast<float>(dpi) / 96.0f : 1.0f;
     wchar_t dpiOverride[16]{};
-    if (GetEnvironmentVariableW(L"SELFENGINE_TEST_DPI_SCALE", dpiOverride, 16) > 0)
+    if (GetEnvironmentVariableW(L"FLARE_TEST_DPI_SCALE", dpiOverride, 16) > 0)
     {
         const float parsed = static_cast<float>(std::atof(asset_io::Utf8(dpiOverride).c_str()));
         if (parsed > 0.5f && parsed < 4.0f) { uiScale = parsed; state.dpiOverride = true; }
@@ -2204,7 +2422,7 @@ void FinalizeToolkitWindowUi(ToolkitAppState& state)
         state.text.GetText("EditorUi.DiagnosticsTitle") + "\nProject: " + asset_io::Utf8(state.root) +
         "\nScene: " + (state.session.Path().empty() ? std::string("-") : asset_io::Utf8(state.session.Path())) +
         "\nDPI: " + std::to_string(GetDpiForWindow(state.hostWindow)) + "\nUI scale: " +
-        std::to_string(state.host.Preferences().uiScale) + "\nUI: se::ui toolkit");
+        std::to_string(state.host.Preferences().uiScale) + "\nUI: flare::ui toolkit");
 
     ConfigureToolkitRecoveryPrompt(state);
     if (state.autoExport && state.exportAction) state.autoExportFn = state.exportAction;
@@ -2320,6 +2538,17 @@ std::optional<LRESULT> HandleToolkitWindowMessage(ToolkitAppState& state, HWND w
         {
             if (state.floatingWindows) state.floatingWindows->SelectSurface(window);
             const float scale = windowInput->DpiScale();
+            const auto dragCursor = state.shell->AssetDragCursor();
+            if (dragCursor == ui::editor::EditorDragCursor::Forbid)
+            {
+                SetCursor(LoadCursor(nullptr, IDC_NO));
+                return std::optional<LRESULT>{TRUE};
+            }
+            if (dragCursor == ui::editor::EditorDragCursor::Allow)
+            {
+                SetCursor(LoadCursor(nullptr, IDC_HAND));
+                return std::optional<LRESULT>{TRUE};
+            }
             if (auto axis = state.shell->SplitterCursorAt(cursor.x / scale, cursor.y / scale))
             {
                 SetCursor(LoadCursor(nullptr, *axis == ui::editor::DockAxis::Horizontal ? IDC_SIZEWE : IDC_SIZENS));
@@ -2578,8 +2807,8 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
         : state.text.GetText(state.viewportController.LastError().empty() ? "EditorUi.Ready" : state.viewportController.LastError()));
 
     const bool anyDirtyNow = state.host.AnyDocumentDirty(state.session, &state.ui) || state.scriptWorkflow.Dirty();
-    if (!state.hidden && GetEnvironmentVariableW(L"SELFENGINE_EDITOR_OPEN_PANEL", nullptr, 0) == 0 &&
-        GetEnvironmentVariableW(L"SELFENGINE_EDITOR_OPEN_ASSET", nullptr, 0) == 0)
+    if (!state.hidden && GetEnvironmentVariableW(L"FLARE_EDITOR_OPEN_PANEL", nullptr, 0) == 0 &&
+        GetEnvironmentVariableW(L"FLARE_EDITOR_OPEN_ASSET", nullptr, 0) == 0)
     {
         std::string sceneStem = state.session.Path().empty()
             ? std::string("Untitled")
@@ -2860,6 +3089,7 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
                         gameFrame.editorSceneLines.clear();
                         gameFrame.debugLines.clear();
                         gameFrame.editorSelected = 0;
+                        gameFrame.editorSelectedEntities.clear();
                         gameFrame.sceneViewport = {0.0f, 0.0f, static_cast<float>(gw), static_cast<float>(gh)};
                         const RenderFrame rf{{state.gameSurfaceWindow, gw, gh}, 1.0 / 60.0, 1.0 / 60.0,
                                              tick / 1000.0, ++state.gameUpdateIndex, &gameFrame};
@@ -2996,6 +3226,7 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
         frame.editorSceneLines.clear();
         frame.debugLines.clear();
         frame.editorSelected = 0;
+        frame.editorSelectedEntities.clear();
     }
     else
     {
@@ -3007,6 +3238,26 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
         frame.editorSceneLines = state.viewportController.SceneLines();
         if (!state.session.IsPlaying()) state.dropWorkflow.AppendPreviewLines(frame.editorSceneLines);
         frame.editorSelected = state.session.IsPlaying() ? 0 : state.session.Selected();
+        frame.editorSelectedEntities = state.session.IsPlaying()
+            ? std::vector<StableEntityId>{} : state.session.Selection();
+        if (!state.session.IsPlaying() && state.hoverMaterialEntity != 0 && !state.hoverMaterialAssetId.empty())
+        {
+            for (auto& meshInst : frame.meshes)
+            {
+                if (meshInst.entity == state.hoverMaterialEntity)
+                {
+                    if (meshInst.mesh.materials.empty())
+                        meshInst.mesh.materials.push_back(state.hoverMaterialAssetId);
+                    else
+                        meshInst.mesh.materials[0] = state.hoverMaterialAssetId;
+                }
+            }
+            if (std::find(frame.editorSelectedEntities.begin(), frame.editorSelectedEntities.end(),
+                          state.hoverMaterialEntity) == frame.editorSelectedEntities.end())
+            {
+                frame.editorSelectedEntities.push_back(state.hoverMaterialEntity);
+            }
+        }
     }
     const ui::UiRect& loggedRect = directGameScene ? gameRect : viewportRect;
     if (state.loggedViewport[0] != loggedRect.x || state.loggedViewport[1] != loggedRect.y ||
@@ -3031,4 +3282,4 @@ void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame)
         throw std::runtime_error(state.text.GetText("EditorUi.FloatingRenderFailed"));
 }
 
-} // namespace se
+} // namespace flare

@@ -8,7 +8,7 @@
 #include "CoreLayer/Localization.h"
 #include <algorithm>
 
-namespace se
+namespace flare
 {
 bool SpawnModelEntity(World& world, AssetStore& assets, const std::string& asset,
                       const std::string& name, const Transform& transform,
@@ -158,7 +158,11 @@ bool CreateEditorAsset(std::string_view kind, const std::filesystem::path& proje
             EditorScriptCreateResult result;
             std::string detail;
             if (EditorScriptTools::CreateBehaviour({project, name, "", targetDirectory}, result, error, detail))
-            { created = result.source; return true; }
+            {
+                EditorScriptTools::SyncIdeWorkspace(project);
+                created = result.source;
+                return true;
+            }
             if (error == "Script.TemplateConflict" && asset_io::FromUtf8(detail).filename() == name + ".cs") continue;
             return false;
         }

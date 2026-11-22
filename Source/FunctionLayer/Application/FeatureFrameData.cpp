@@ -4,7 +4,7 @@
 #include <unordered_map>
 #include "FunctionLayer/Particles/SceneParticles.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
-namespace se
+namespace flare
 {
 namespace
 {

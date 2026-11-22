@@ -10,7 +10,7 @@ bool D3D12SceneCoverage::Initialize(D3D12Presentation& p,UINT width,UINT height,
     if(!width||!height||width>D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION/2||height>D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION/2)return check(E_INVALIDARG);
     ComPtr<ID3D12Device> device;
     if(!check(p.queue->GetDevice(IID_PPV_ARGS(&device)))||
-        !CreateD3D12GuiTarget(p,{width*2,height*2,true,false,se::rhi::TextureFormat::Rgba16Float},samples,text,nullptr,true))return false;
+        !CreateD3D12GuiTarget(p,{width*2,height*2,true,false,flare::rhi::TextureFormat::Rgba16Float},samples,text,nullptr,true))return false;
     D3D12_DESCRIPTOR_HEAP_DESC heap{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,2,D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,0};
     if(!check(device->CreateDescriptorHeap(&heap,IID_PPV_ARGS(&views))))return false;
     auto cpu=views->GetCPUDescriptorHandleForHeapStart();

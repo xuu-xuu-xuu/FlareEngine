@@ -12,7 +12,7 @@
 #include <thread>
 #include <vector>
 
-namespace se
+namespace flare
 {
 namespace detail { struct TaskState; }
 enum class TaskStatus { Rejected, Queued, Running, Ready, Publishing, Completed, Cancelled, Failed };

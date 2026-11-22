@@ -46,7 +46,7 @@ public sealed unsafe partial class EngineSession
 
 internal static unsafe partial class NativeMethods
 {
-    [LibraryImport(Library, EntryPoint = "se_logic_operation")]
+    [LibraryImport(Library, EntryPoint = "flare_logic_operation")]
     internal static partial int LogicOperation(ulong session, uint operation, ulong token, ulong target,
         double value, out ulong result, out double scalar);
 }

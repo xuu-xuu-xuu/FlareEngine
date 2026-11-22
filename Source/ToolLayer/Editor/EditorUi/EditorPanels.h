@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 struct EditorHierarchyNode
@@ -33,7 +33,13 @@ public:
     [[nodiscard]] std::vector<std::size_t> VisibleRows() const;
     bool Toggle(std::size_t index);
     bool Select(std::uint64_t id);
+    bool SetSelection(const std::vector<std::uint64_t>& ids, std::uint64_t primary = 0);
+    bool ToggleSelection(std::uint64_t id);
+    bool SelectRange(std::uint64_t toId);
+    bool ExpandAncestors(std::uint64_t id);
     [[nodiscard]] std::uint64_t Selected() const noexcept;
+    [[nodiscard]] const std::vector<std::uint64_t>& SelectedIds() const noexcept { return selectedIds_; }
+    [[nodiscard]] bool IsSelected(std::uint64_t id) const noexcept;
     bool Rename(std::uint64_t id, std::string label);
     bool Reparent(std::uint64_t id, std::uint64_t parent);
 
@@ -41,6 +47,7 @@ private:
     [[nodiscard]] bool Visible(std::size_t index) const;
     std::vector<EditorHierarchyNode> nodes_;
     std::uint64_t selected_ = 0;
+    std::vector<std::uint64_t> selectedIds_;
 };
 
 enum class EditorPropertyType : std::uint8_t
@@ -78,9 +85,23 @@ struct EditorProperty
     bool overridden = false;
     bool slider = false;
     bool headerMenuAction = false;
+    bool mixedValue = false;
+    std::string tooltip;
+    std::string acceptedAssetKind;
+    float spaceBefore = 0.0f;
+    std::string unit;
+    std::string colorSpace;
+    bool deferredCommit = false;
+    std::uint8_t diagnosticLevel = 0; // 0=无, 1=信息, 2=警告, 3=错误
+    std::string fixActionKey;
+    std::string fixActionLabel;
+    std::string spatialGizmoKey;
+    bool multiFlag = false;
 
     bool operator==(const EditorProperty&) const = default;
 };
+
+[[nodiscard]] bool IsAssetPathCompatible(std::string_view assetPathUtf8, std::string_view acceptedKind);
 
 class EditorInspectorModel
 {
@@ -128,6 +149,7 @@ public:
     void SetCurrentFolder(std::string folderPath);
     [[nodiscard]] const std::string& CurrentFolder() const noexcept { return currentFolder_; }
     bool ToggleFolder(std::string_view folderPath);
+    void ExpandAllFolders();
     [[nodiscard]] bool IsFolderExpanded(std::string_view folderPath) const;
     void SetGridMode(bool grid) noexcept { gridMode_ = grid; }
     [[nodiscard]] bool GridMode() const noexcept { return gridMode_; }
@@ -150,4 +172,4 @@ private:
     bool gridMode_ = false;
 };
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

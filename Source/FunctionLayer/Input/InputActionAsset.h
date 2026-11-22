@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se
+namespace flare
 {
 inline constexpr std::uint32_t InputActionDocumentVersion = 1;
 inline constexpr std::string_view InputActionsRelativePath = "Settings/Input.input.json";
@@ -93,4 +93,4 @@ struct InputActionDocument
 [[nodiscard]] bool SerializeInputActionDocument(const InputActionDocument& document, std::string& outJson, std::string& errorKey);
 [[nodiscard]] bool ReadInputActionDocument(const std::filesystem::path& path, InputActionDocument& outDocument, std::string& errorKey);
 [[nodiscard]] bool WriteInputActionDocument(const std::filesystem::path& path, const InputActionDocument& document, std::string& errorKey);
-} // namespace se
+} // namespace flare

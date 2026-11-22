@@ -8,7 +8,7 @@
 #include <span>
 #include <string>
 
-namespace se
+namespace flare
 {
 // G01：固定的渲染 Pass 槽位。timestamp、PIX marker 与 CSV 列共用同一枚举，
 // 新增 Pass 只能使用 Other 之外的预留槽，不允许运行时拼接名称。

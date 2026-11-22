@@ -91,7 +91,7 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     if(frameDirection.w>0.5)
     {
         float3 l=UnitVector(frameDirection.xyz,float3(0,0,1));
-        float visibility=options.w>0.5?ShadowVisibility(input.worldPosition,n,l):1;
+        float visibility=options.w>0.5?ShadowVisibility(input.worldPosition,n,l,input.position.xy):1;
 #ifdef SE_SHADING_EXTENSIONS
         if(options.w!=0)visibility*=screenVisibility.y;
 #endif
@@ -142,7 +142,7 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     if(clusterModes.x>.5)color=ClusterHeatmap(cluster);
 #endif
 #ifdef SE_PCSS
-    if(filterParameters.w>.5&&filterOptions.x>.5)color=ShadowFilterDebugColor(input.worldPosition,n,UnitVector(frameDirection.xyz,float3(0,0,1)));
+    if(filterParameters.w>.5&&filterOptions.x>.5)color=ShadowFilterDebugColor(input.worldPosition,n,UnitVector(frameDirection.xyz,float3(0,0,1)),input.position.xy);
 #endif
 #ifdef SE_MATERIAL_SURFACE
     return float4(min(max(color,0),65504),MaterialOutputAlpha(coverageAlpha));

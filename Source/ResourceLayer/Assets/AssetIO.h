@@ -4,7 +4,7 @@
 #include <string_view>
 #include <stop_token>
 
-namespace se::asset_io
+namespace flare::asset_io
 {
 inline constexpr std::uint64_t MaxFileBytes = 256ull * 1024 * 1024;
 std::string Utf8(const std::filesystem::path& path);

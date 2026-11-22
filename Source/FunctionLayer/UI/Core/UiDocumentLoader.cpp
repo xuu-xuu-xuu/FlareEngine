@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-namespace se::ui
+namespace flare::ui
 {
 namespace
 {
@@ -228,4 +228,4 @@ UiDocumentLoadResult LoadUiDocumentJson(std::string_view json, UiDocument& docum
     }
 }
 
-} // namespace se::ui
+} // namespace flare::ui

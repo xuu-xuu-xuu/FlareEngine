@@ -3,7 +3,7 @@
 #include "FunctionLayer/GameUI/UiTree.h"
 #include "ResourceLayer/Assets/StaticModel.h"
 
-namespace se
+namespace flare
 {
 class PostProcessRenderer
 {

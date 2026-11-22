@@ -5,7 +5,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace se
+namespace flare
 {
 // 显示帧间隔累积到固定步；超出追赶预算的整步时间明确丢弃并统计。
 class FixedStepClock

@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -389,6 +389,11 @@ const PrefabNodeRecord* FindPrefabNode(const PrefabDocument& document, std::uint
 
 std::string CanonicalPrefabPropertyKey(std::string_view key)
 {
+    if (key == "entity.enabled") return "enabled";
+    if (key == "entity.tag") return "tag";
+    if (key == "entity.layer") return "layer";
+    if (key == "entity.staticFlags") return "staticFlags";
+    if (key.starts_with("feature.enabled.")) return std::string(key.substr(16)) + ".enabled";
     if (key == "position.x" || key == "position.y" || key == "position.z") return "transform.position";
     if (key == "rotation.x" || key == "rotation.y" || key == "rotation.z") return "transform.rotation";
     if (key == "scale.x" || key == "scale.y" || key == "scale.z") return "transform.scale";
@@ -541,14 +546,42 @@ bool CreatePrefabFromSelection(
     if (!rootRecord) { error = "Prefab.MissingEntity"; return false; }
 
     std::filesystem::path targetPath = requestedPath;
+    bool overwriteExplicitFile = false;
+    std::filesystem::path autoDir;
     if (targetPath.empty())
+    {
+        autoDir = assets.SourceRoot();
+    }
+    else
+    {
+        if (!targetPath.is_absolute()) targetPath = assets.SourceRoot() / targetPath;
+        std::error_code dirEc;
+        const bool isSourceRoot = std::filesystem::equivalent(targetPath, assets.SourceRoot(), dirEc);
+        dirEc.clear();
+        if ((isSourceRoot || asset_io::Within(assets.SourceRoot(), targetPath)) &&
+            std::filesystem::is_directory(targetPath, dirEc) && !dirEc)
+        {
+            autoDir = targetPath;
+            targetPath.clear();
+        }
+        else
+        {
+            if (!asset_io::Within(assets.SourceRoot(), targetPath) || !IsPrefabDocumentPath(targetPath))
+            {
+                error = "Assets.ReferenceOutsideRoot";
+                return false;
+            }
+            overwriteExplicitFile = true;
+        }
+    }
+    if (!autoDir.empty())
     {
         const std::string stem = SanitizePrefabFileStem(rootRecord->name);
         for (unsigned index = 0; index < 10000; ++index)
         {
             const std::string suffix = index == 0 ? std::string{} : std::to_string(index);
-            const std::filesystem::path candidate = assets.SourceRoot() / (stem + suffix + std::string(PrefabFileExtension));
-            const std::filesystem::path meta = assets.SourceRoot() / (stem + suffix + std::string(PrefabMetadataExtension));
+            const std::filesystem::path candidate = autoDir / (stem + suffix + std::string(PrefabFileExtension));
+            const std::filesystem::path meta = autoDir / (stem + suffix + std::string(PrefabMetadataExtension));
             if (!std::filesystem::exists(candidate) && !std::filesystem::exists(meta))
             {
                 targetPath = candidate;
@@ -556,15 +589,6 @@ bool CreatePrefabFromSelection(
             }
         }
         if (targetPath.empty()) { error = "Assets.DestinationExists"; return false; }
-    }
-    else
-    {
-        if (!targetPath.is_absolute()) targetPath = assets.SourceRoot() / targetPath;
-        if (!asset_io::Within(assets.SourceRoot(), targetPath) || !IsPrefabDocumentPath(targetPath))
-        {
-            error = "Assets.ReferenceOutsideRoot";
-            return false;
-        }
     }
 
     const std::vector<StableEntityId> subtreeIds = CollectRawEntitySubtreeIds(readWorld, rootEntityId);
@@ -577,7 +601,7 @@ bool CreatePrefabFromSelection(
         return false;
     }
 
-    if (!WritePrefabDocument(targetPath, document, error, !requestedPath.empty())) return false;
+    if (!WritePrefabDocument(targetPath, document, error, overwriteExplicitFile)) return false;
 
     std::vector<AssetDiagnostic> diagnostics;
     if (!assets.RegisterSource(targetPath, {}, createdAssetId, diagnostics))
@@ -732,6 +756,346 @@ bool RevertPropertyOverride(
     return ok;
 }
 
+namespace
+{
+PrefabNodeRecord* FindMutablePrefabNode(PrefabDocument& doc, std::uint64_t localNodeId)
+{
+    for (PrefabNodeRecord& n : doc.nodes)
+        if (n.localNodeId == localNodeId) return &n;
+    return nullptr;
+}
+
+bool WriteSingleOverrideToPrototypeNode(
+    const World& readWorld,
+    StableEntityId instanceRoot,
+    const std::string& prefabId,
+    PrefabNodeRecord& protoNode,
+    const std::string& key,
+    const PropertyValue& currentValue)
+{
+    if (key == "name")
+    {
+        if (const auto* s = std::get_if<std::string>(&currentValue)) { protoNode.name = *s; return true; }
+        return false;
+    }
+    if (key == "enabled")
+    {
+        if (const auto* b = std::get_if<bool>(&currentValue)) { protoNode.enabled = *b; return true; }
+        return false;
+    }
+    if (key == "tag")
+    {
+        if (const auto* s = std::get_if<std::string>(&currentValue)) { protoNode.tag = *s; return true; }
+        return false;
+    }
+    if (key == "layer")
+    {
+        if (const auto* f = std::get_if<float>(&currentValue)) { protoNode.layer = static_cast<std::uint32_t>(std::clamp(std::lround(*f), 0L, 31L)); return true; }
+        return false;
+    }
+    if (key == "staticFlags")
+    {
+        if (const auto* f = std::get_if<float>(&currentValue)) { protoNode.staticFlags = static_cast<std::uint32_t>(std::clamp(std::lround(*f), 0L, 255L)); return true; }
+        return false;
+    }
+    const auto dot = key.find('.');
+    if (dot == std::string::npos) return false;
+    const std::string_view compKey = std::string_view(key).substr(0, dot);
+    const ComponentDescriptor* desc = FindComponentDescriptor(compKey);
+    if (!desc) return false;
+    if (key.ends_with(".enabled"))
+    {
+        const auto* b = std::get_if<bool>(&currentValue);
+        if (!b) return false;
+        for (PrefabComponentRecord& comp : protoNode.components)
+            if (comp.type == desc->type) { comp.enabled = *b; return true; }
+        return false;
+    }
+    const auto fieldIt = std::find_if(desc->properties.begin(), desc->properties.end(),
+                                      [&](const PropertyDescriptor& f) { return f.key == key; });
+    if (fieldIt == desc->properties.end()) return false;
+    const std::string serialKey(SerializedPropertyKey(*fieldIt));
+
+    PropertyValue stored = currentValue;
+    bool localRef = false;
+    if (const auto* ref = std::get_if<PropertyEntityReference>(&stored); ref && ref->stableId != 0)
+    {
+        const auto nodeToEntity = BuildInstanceNodeMap(readWorld, instanceRoot, prefabId);
+        for (const auto& [localId, sid] : nodeToEntity)
+        {
+            if (sid == ref->stableId)
+            {
+                stored = PropertyEntityReference{localId};
+                localRef = true;
+                break;
+            }
+        }
+    }
+    for (PrefabComponentRecord& comp : protoNode.components)
+    {
+        if (comp.type != desc->type) continue;
+        for (PrefabPropertyRecord& prop : comp.properties)
+        {
+            if (prop.key == serialKey)
+            {
+                prop.value = std::move(stored);
+                prop.localEntityReference = localRef;
+                return true;
+            }
+        }
+        comp.properties.push_back({serialKey, fieldIt->type, std::move(stored), localRef});
+        return true;
+    }
+    return false;
+}
+} // namespace
+
+bool ApplyPropertyOverrideToPrefab(
+    EditorSession& session,
+    AssetStore& assets,
+    const std::filesystem::path& projectRoot,
+    StableEntityId entityId,
+    std::string_view inspectorOrPropertyKey,
+    std::string& error,
+    EditorApplicationHooks* hooks)
+{
+    if (session.IsPlaying()) { error = "Editor.EditWhilePlaying"; return false; }
+    const World& readWorld = session.EditWorld();
+    const EntityHandle readEntity = readWorld.FindByStableId(entityId);
+    const PrefabLink* readLink = readWorld.GetPrefabLink(readEntity);
+    if (!readLink) { error = "Prefab.MissingEntity"; return false; }
+
+    const std::string prefabId = readLink->prefabId;
+    const std::filesystem::path prefabPath = assets.Resolve(prefabId);
+    if (prefabPath.empty()) { error = "Assets.UnknownId"; return false; }
+
+    PrefabDocument document;
+    if (!ReadPrefabDocument(prefabPath, document, error)) return false;
+    PrefabNodeRecord* protoNode = FindMutablePrefabNode(document, readLink->localNodeId);
+    if (!protoNode) { error = "Prefab.MissingNode"; return false; }
+
+    const std::string key = CanonicalPrefabPropertyKey(inspectorOrPropertyKey);
+    PropertyValue currentValue;
+    if (!ReadEntityOverrideValue(readWorld, readEntity, key, currentValue, error)) return false;
+    const StableEntityId instanceRoot = FindEnclosingPrefabRoot(readWorld, entityId);
+    if (!WriteSingleOverrideToPrototypeNode(readWorld, instanceRoot, prefabId, *protoNode, key, currentValue) ||
+        !ValidatePrefabDocument(document, error))
+    {
+        if (error.empty()) error = "Metadata.UnknownProperty";
+        return false;
+    }
+
+    std::string originalBytes;
+    const bool haveOrig = ReadRawFileBytes(prefabPath, originalBytes);
+    const std::vector<StableEntityId> preSync = CollectAllPrefabEntityIds(readWorld, prefabId);
+    if (!session.BeginEdit("Prefab.ApplyProperty")) { error = session.LastError(); return false; }
+
+    std::vector<InstantiatedPrefabScript> scripts;
+    const bool ok = session.Apply("Prefab.ApplyProperty", [&](World& world) {
+        const EntityHandle entity = world.FindByStableId(entityId);
+        if (const PrefabLink* link = world.GetPrefabLink(entity))
+        {
+            PrefabLink cleaned = *link;
+            cleaned.overrides.erase(std::remove_if(cleaned.overrides.begin(), cleaned.overrides.end(),
+                [&](const PropertyOverride& ov) { return ov.key == key; }), cleaned.overrides.end());
+            if (!world.SetPrefabLink(entity, std::move(cleaned))) { error = world.LastError(); return false; }
+        }
+        return SyncPrefabInstancesInWorld(world, prefabId, document, error, &scripts);
+    });
+    if (!ok || !WritePrefabDocument(prefabPath, document, error, true))
+    {
+        if (error.empty()) error = session.LastError();
+        session.CancelEdit();
+        return false;
+    }
+    std::vector<EditorAssetIssue> syncIssues;
+    if (!projectRoot.empty()) (void)EditorAssetActions::SyncProjectAssets(projectRoot, assets, syncIssues);
+    const std::vector<StableEntityId> postSync = CollectAllPrefabEntityIds(session.EditWorld(), prefabId);
+    if (!SyncScriptsViaHooks(preSync, postSync, scripts, hooks, error) || !session.CommitEdit())
+    {
+        session.CancelEdit();
+        if (haveOrig) (void)WriteRawFileBytes(prefabPath, originalBytes);
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool RevertComponentOverrides(
+    EditorSession& session,
+    AssetStore& assets,
+    StableEntityId entityId,
+    std::string_view componentKey,
+    std::string& error)
+{
+    if (session.IsPlaying()) { error = "Editor.EditWhilePlaying"; return false; }
+    const World& readWorld = session.EditWorld();
+    const EntityHandle readEntity = readWorld.FindByStableId(entityId);
+    const PrefabLink* readLink = readWorld.GetPrefabLink(readEntity);
+    if (!readLink) { error = "Prefab.MissingEntity"; return false; }
+
+    const std::filesystem::path prefabPath = assets.Resolve(readLink->prefabId);
+    if (prefabPath.empty()) { error = "Assets.UnknownId"; return false; }
+    PrefabDocument document;
+    if (!ReadPrefabDocument(prefabPath, document, error)) return false;
+    const PrefabNodeRecord* protoNode = FindPrefabNode(document, readLink->localNodeId);
+    if (!protoNode) { error = "Prefab.MissingNode"; return false; }
+
+    const std::string prefix = std::string(componentKey) + ".";
+    const ComponentDescriptor* desc = FindComponentDescriptor(componentKey);
+    if (!desc) { error = "Scene.UnknownComponent"; return false; }
+
+    const StableEntityId instanceRoot = FindEnclosingPrefabRoot(readWorld, entityId);
+    const auto nodeToEntity = BuildInstanceNodeMap(readWorld, instanceRoot, readLink->prefabId);
+
+    const bool ok = session.Apply("Prefab.RevertComponent", [&](World& world) {
+        const EntityHandle entity = world.FindByStableId(entityId);
+        const PrefabLink* link = world.GetPrefabLink(entity);
+        if (!entity || !link) return false;
+
+        bool existsInProto = false;
+        for (const auto& pc : protoNode->components)
+            if (pc.type == desc->type) { existsInProto = true; break; }
+        if (!existsInProto && desc->optional)
+        {
+            if (const ComponentHandle ch = world.FindComponent(entity, desc->type))
+                if (!world.RemoveComponent(ch)) { error = world.LastError(); return false; }
+        }
+        else
+        {
+            for (const PropertyOverride& item : link->overrides)
+            {
+                if (!item.key.starts_with(prefix)) continue;
+                PropertyValue protoVal;
+                bool isLocal = false;
+                if (!ReadPrefabNodePropertyValue(*protoNode, item.key, protoVal, isLocal)) continue;
+                if (isLocal)
+                {
+                    if (const auto* ref = std::get_if<PropertyEntityReference>(&protoVal))
+                        if (const auto it = nodeToEntity.find(ref->stableId); it != nodeToEntity.end())
+                            protoVal = PropertyEntityReference{it->second};
+                }
+                if (!ApplyPropertyOverride(world, entity, {item.key, protoVal}, error)) return false;
+            }
+        }
+
+        PrefabLink updated = *link;
+        updated.overrides.erase(std::remove_if(updated.overrides.begin(), updated.overrides.end(),
+            [&](const PropertyOverride& ov) { return ov.key.starts_with(prefix); }), updated.overrides.end());
+        if (!world.SetPrefabLink(entity, std::move(updated))) { error = world.LastError(); return false; }
+        return true;
+    });
+    if (!ok && error.empty()) error = session.LastError();
+    return ok;
+}
+
+bool ApplyComponentOverridesToPrefab(
+    EditorSession& session,
+    AssetStore& assets,
+    const std::filesystem::path& projectRoot,
+    StableEntityId entityId,
+    std::string_view componentKey,
+    std::string& error,
+    EditorApplicationHooks* hooks)
+{
+    if (session.IsPlaying()) { error = "Editor.EditWhilePlaying"; return false; }
+    const World& readWorld = session.EditWorld();
+    const EntityHandle readEntity = readWorld.FindByStableId(entityId);
+    const PrefabLink* readLink = readWorld.GetPrefabLink(readEntity);
+    if (!readLink) { error = "Prefab.MissingEntity"; return false; }
+
+    const ComponentDescriptor* desc = FindComponentDescriptor(componentKey);
+    if (!desc) { error = "Scene.UnknownComponent"; return false; }
+    const ComponentHandle compHandle = readWorld.FindComponent(readEntity, desc->type);
+    const ComponentBase* compBase = readWorld.GetComponent(compHandle);
+    if (!compBase) { error = "World.InvalidComponent"; return false; }
+
+    const std::string prefabId = readLink->prefabId;
+    const std::filesystem::path prefabPath = assets.Resolve(prefabId);
+    if (prefabPath.empty()) { error = "Assets.UnknownId"; return false; }
+    PrefabDocument document;
+    if (!ReadPrefabDocument(prefabPath, document, error)) return false;
+    PrefabNodeRecord* protoNode = FindMutablePrefabNode(document, readLink->localNodeId);
+    if (!protoNode) { error = "Prefab.MissingNode"; return false; }
+
+    std::vector<ComponentProperty> liveFields;
+    if (!ReadComponentProperties(readWorld, compHandle, liveFields, error)) return false;
+
+    const StableEntityId instanceRoot = FindEnclosingPrefabRoot(readWorld, entityId);
+    const auto nodeToEntity = BuildInstanceNodeMap(readWorld, instanceRoot, prefabId);
+    const bool isRoot = (entityId == instanceRoot);
+
+    PrefabComponentRecord newComp;
+    newComp.type = desc->type;
+    newComp.version = desc->version;
+    newComp.enabled = compBase->Enabled();
+    for (const ComponentProperty& field : liveFields)
+    {
+        const auto propIt = std::find_if(desc->properties.begin(), desc->properties.end(),
+            [&](const PropertyDescriptor& p) { return SerializedPropertyKey(p) == field.key; });
+        if (propIt == desc->properties.end()) continue;
+        PropertyValue stored = field.value;
+        bool localRef = false;
+        if (isRoot && desc->type == ComponentTypes::Transform)
+        {
+            if (field.key == "position") stored = Vec3{};
+            else if (field.key == "rotation") stored = Quat{};
+        }
+        if (const auto* ref = std::get_if<PropertyEntityReference>(&stored); ref && ref->stableId != 0)
+        {
+            for (const auto& [localId, sid] : nodeToEntity)
+            {
+                if (sid == ref->stableId) { stored = PropertyEntityReference{localId}; localRef = true; break; }
+            }
+        }
+        newComp.properties.push_back({field.key, propIt->type, std::move(stored), localRef});
+    }
+
+    bool replaced = false;
+    for (PrefabComponentRecord& existing : protoNode->components)
+    {
+        if (existing.type == desc->type) { existing = std::move(newComp); replaced = true; break; }
+    }
+    if (!replaced) protoNode->components.push_back(std::move(newComp));
+    if (!ValidatePrefabDocument(document, error)) return false;
+
+    std::string originalBytes;
+    const bool haveOrig = ReadRawFileBytes(prefabPath, originalBytes);
+    const std::vector<StableEntityId> preSync = CollectAllPrefabEntityIds(readWorld, prefabId);
+    if (!session.BeginEdit("Prefab.ApplyComponent")) { error = session.LastError(); return false; }
+
+    const std::string prefix = std::string(componentKey) + ".";
+    std::vector<InstantiatedPrefabScript> scripts;
+    const bool ok = session.Apply("Prefab.ApplyComponent", [&](World& world) {
+        const EntityHandle entity = world.FindByStableId(entityId);
+        if (const PrefabLink* link = world.GetPrefabLink(entity))
+        {
+            PrefabLink cleaned = *link;
+            cleaned.overrides.erase(std::remove_if(cleaned.overrides.begin(), cleaned.overrides.end(),
+                [&](const PropertyOverride& ov) { return ov.key.starts_with(prefix); }), cleaned.overrides.end());
+            if (!world.SetPrefabLink(entity, std::move(cleaned))) { error = world.LastError(); return false; }
+        }
+        return SyncPrefabInstancesInWorld(world, prefabId, document, error, &scripts);
+    });
+    if (!ok || !WritePrefabDocument(prefabPath, document, error, true))
+    {
+        if (error.empty()) error = session.LastError();
+        session.CancelEdit();
+        return false;
+    }
+    std::vector<EditorAssetIssue> syncIssues;
+    if (!projectRoot.empty()) (void)EditorAssetActions::SyncProjectAssets(projectRoot, assets, syncIssues);
+    const std::vector<StableEntityId> postSync = CollectAllPrefabEntityIds(session.EditWorld(), prefabId);
+    if (!SyncScriptsViaHooks(preSync, postSync, scripts, hooks, error) || !session.CommitEdit())
+    {
+        session.CancelEdit();
+        if (haveOrig) (void)WriteRawFileBytes(prefabPath, originalBytes);
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
 bool RevertAllOverrides(
     EditorSession& session,
     AssetStore& assets,
@@ -779,7 +1143,9 @@ bool RevertAllOverrides(
             const EntityHandle entity = world.FindByStableId(targetIt->second);
             const bool isRoot = (targetIt->second == rootId);
 
-            if (!world.Rename(entity, node.name) || !world.SetEnabled(entity, node.enabled))
+            if (!world.Rename(entity, node.name) || !world.SetEnabled(entity, node.enabled) ||
+                !world.SetTag(entity, node.tag) || !world.SetLayer(entity, node.layer) ||
+                !world.SetStaticFlags(entity, node.staticFlags))
             {
                 error = world.LastError();
                 return false;
@@ -1054,4 +1420,4 @@ bool SyncOpenScenePrefabInstances(
     error.clear();
     return true;
 }
-} // namespace se
+} // namespace flare

@@ -29,7 +29,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace se
+namespace flare
 {
 struct ToolkitSceneImageProvider final : ui::UiImageProvider
 {
@@ -111,6 +111,8 @@ struct ToolkitAppState
     int autoCancelMs = 0;
     std::uint64_t autoExportStart = 0;
     std::uint64_t editorFrame = 0;
+    StableEntityId hoverMaterialEntity = 0;
+    AssetId hoverMaterialAssetId;
     std::array<float, 4> loggedViewport{-1.0f, -1.0f, -1.0f, -1.0f};
     std::string exportName = "GameExport";
     std::string pendingAsset;
@@ -208,4 +210,4 @@ std::optional<LRESULT> HandleToolkitWindowMessage(ToolkitAppState& state, HWND w
 
 void ExtractToolkitFrameData(ToolkitAppState& state, FrameData& frame);
 
-} // namespace se
+} // namespace flare

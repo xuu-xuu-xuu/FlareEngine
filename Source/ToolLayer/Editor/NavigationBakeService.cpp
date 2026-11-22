@@ -4,7 +4,7 @@
 #include "FunctionLayer/Runtime/World.h"
 #include "ResourceLayer/Assets/AssetIO.h"
 
-namespace se
+namespace flare
 {
 NavigationBakeService::NavigationBakeService()
     : queue_(1u, 16u)
@@ -152,11 +152,11 @@ std::size_t NavigationBakeService::MountBakedNavMeshToWorld(
         const auto* currentId = std::get_if<std::string>(&current);
         if (!overwriteExisting && currentId && !currentId->empty()) continue;
         std::string error;
-        if (se::WriteProperty(world, entity, "navagent.asset", PropertyValue{assetId}, error))
+        if (flare::WriteProperty(world, entity, "navagent.asset", PropertyValue{assetId}, error))
         {
             ++updated;
         }
     }
     return updated;
 }
-} // namespace se
+} // namespace flare

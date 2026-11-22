@@ -10,11 +10,13 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <sstream>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -275,6 +277,8 @@ EditorScriptWorkflow::EditorScriptWorkflow(std::filesystem::path root, EditorApp
                                            const Localization& text)
     : root_(std::move(root)), hooks_(hooks), text_(text)
 {
+    if (!root_.empty())
+        EditorScriptTools::SyncIdeWorkspace(root_);
 }
 
 EditorScriptWorkflow::~EditorScriptWorkflow()
@@ -303,7 +307,7 @@ std::string EditorScriptWorkflow::NextSuggestedClassName()
 bool EditorScriptWorkflow::CanHotReloadInProcess() const noexcept
 {
     if (!hooks_ || !hooks_->scriptApply) return false;
-    return GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SMOKE_WORKFLOW", nullptr, 0) == 0;
+    return GetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_WORKFLOW", nullptr, 0) == 0;
 }
 
 bool EditorScriptWorkflow::StartInProcessCompile(std::uint64_t attachEntity, std::string attachScriptId)
@@ -386,22 +390,20 @@ bool EditorScriptWorkflow::StartInProcessCompile(std::uint64_t attachEntity, std
                     if (std::filesystem::is_regular_file(srcManaged))
                         std::filesystem::copy_file(srcManaged, sdkRoot / "SDK" / "Managed" / "FlareEngine.Managed.dll",
                                                    std::filesystem::copy_options::overwrite_existing, ec);
-                    const auto srcLegacy = hostExeDir / "SelfEngine.Managed.dll";
-                    if (std::filesystem::is_regular_file(srcLegacy))
-                        std::filesystem::copy_file(srcLegacy, sdkRoot / "SDK" / "Managed" / "SelfEngine.Managed.dll",
+                    const auto srcManagedXml = hostExeDir / "FlareEngine.Managed.xml";
+                    if (std::filesystem::is_regular_file(srcManagedXml))
+                        std::filesystem::copy_file(srcManagedXml, sdkRoot / "SDK" / "Managed" / "FlareEngine.Managed.xml",
                                                    std::filesystem::copy_options::overwrite_existing, ec);
                     constexpr std::string_view kValidTargets =
                         "<Project>\n"
                         "  <ItemGroup>\n"
-                        "    <ProjectReference Remove=\"$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(FlareEngineRoot)\\Source\\FunctionLayer\\Scripting\\Managed\\Engine.Managed.csproj;$(SelfEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(SelfEngineRoot)\\Source\\FunctionLayer\\Scripting\\Managed\\Engine.Managed.csproj\"/>\n"
-                        "    <Reference Remove=\"FlareEngine.Managed;SelfEngine.Managed\"/>\n"
+                        "    <ProjectReference Remove=\"$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(FlareEngineRoot)\\Source\\FunctionLayer\\Scripting\\Managed\\Engine.Managed.csproj\"/>\n"
+                        "    <Reference Remove=\"FlareEngine.Managed\"/>\n"
                         "    <Reference Include=\"FlareEngine.Managed\"><HintPath>$(MSBuildThisFileDirectory)Managed/FlareEngine.Managed.dll</HintPath><Private>false</Private></Reference>\n"
                         "    <Using Include=\"FlareEngine\"/>\n"
                         "  </ItemGroup>\n"
                         "</Project>\n";
                     asset_io::WriteAtomic(sdkRoot / "SDK" / "FlareEngine.Scripts.targets",
-                        {reinterpret_cast<const std::uint8_t*>(kValidTargets.data()), kValidTargets.size()}, true);
-                    asset_io::WriteAtomic(sdkRoot / "SDK" / "SelfEngine.Scripts.targets",
                         {reinterpret_cast<const std::uint8_t*>(kValidTargets.data()), kValidTargets.size()}, true);
                 }
 
@@ -441,7 +443,6 @@ bool EditorScriptWorkflow::StartInProcessCompile(std::uint64_t attachEntity, std
                         L"-p:UseSharedCompilation=false",
                         L"-nodeReuse:false",
                         L"-p:FlareEngineRoot=" + sdkRoot.wstring(),
-                        L"-p:SelfEngineRoot=" + sdkRoot.wstring(),
                         L"-p:CustomAfterMicrosoftCommonTargets=" + (sdkRoot / L"SDK" / L"FlareEngine.Scripts.targets").wstring(),
                         L"-p:DirectoryBuildPropsPath=" + hotProps.wstring(),
                         L"-p:RestorePackagesPath=" + (projectRoot / L"out" / L"nuget" / L"packages").wstring(),
@@ -1104,6 +1105,12 @@ void EditorScriptWorkflow::AppendRows(std::uint64_t entity, bool playing, std::v
             const std::string display = !metaCls.empty() ? metaCls : DisplayName(type);
             section = display + " (" + text_.GetText("EditorUi.ScriptComponent") + ")";
             action({{"Action", "Open"}, {"Type", type}}, text_.GetText("EditorUi.ComponentEditScript") + " (" + display + ")", true).readOnly = false;
+            action({{"Type", type}, {"Reset", true}}, text_.GetText("EditorUi.ComponentReset"), true).readOnly = playing;
+            action({{"Type", type}, {"MoveDelta", -1}}, text_.GetText("EditorUi.ComponentMoveUp"), true).readOnly = playing;
+            action({{"Type", type}, {"MoveDelta", 1}}, text_.GetText("EditorUi.ComponentMoveDown"), true).readOnly = playing;
+            action({{"Action", "Copy"}, {"Type", type}}, text_.GetText("EditorUi.ComponentCopy"), true).readOnly = false;
+            if (clipboardScriptType_ == type && !clipboardScriptJson_.empty())
+                action({{"Action", "Paste"}, {"Type", type}}, text_.GetText("EditorUi.ComponentPasteValues"), true).readOnly = false;
             action({{"Type", type}, {"Remove", true}}, text_.GetText("EditorUi.ComponentRemove"), true);
             append({Key({{"Type", type}, {"Enabled", true}}), text_.GetText("Script.Enabled"),
                     EditorPropertyType::Boolean, script.value("Enabled", true) ? "true" : "false", false})
@@ -1112,33 +1119,75 @@ void EditorScriptWorkflow::AppendRows(std::uint64_t entity, bool playing, std::v
                 append({Key({{"Missing", type}}), display, EditorPropertyType::String, text_.GetText("Script.TypeMissing"), true});
             for (const auto& field : script.at("Fields"))
             {
+                const float spaceBefore = (field.contains("Space") && field["Space"].is_number())
+                    ? std::clamp(field["Space"].get<float>(), 0.0f, 96.0f) : 0.0f;
+                bool spaceConsumed = false;
                 if (field.contains("Header") && field["Header"].is_string())
                 {
                     const std::string hdr = field["Header"].get<std::string>();
                     if (!hdr.empty())
-                        append({"script.header." + type + "." + field.at("Name").get<std::string>(),
-                                hdr, EditorPropertyType::Subheader, {}, true});
+                    {
+                        auto& hdrRow = append({"script.header." + type + "." + field.at("Name").get<std::string>(),
+                                               hdr, EditorPropertyType::Subheader, {}, true});
+                        hdrRow.spaceBefore = spaceBefore;
+                        spaceConsumed = true;
+                    }
                 }
                 const auto name = field.at("Name").get<std::string>(), kind = field.at("Kind").get<std::string>();
                 const auto value = field.at("Value");
+                const std::string tip = (field.contains("Tooltip") && field["Tooltip"].is_string())
+                    ? field["Tooltip"].get<std::string>() : std::string{};
+                const bool fieldReadOnly = field.value("ReadOnly", false);
                 const Json command = {{"Type", type}, {"Field", name}, {"Kind", kind}};
-                if (kind == "vec3")
+                if (kind == "vec2" || kind == "vec3")
                 {
-                    for (const auto* axis : {"X", "Y", "Z"})
+                    const char* const axes3[] = {"X", "Y", "Z"};
+                    const int axisCount = (kind == "vec2") ? 2 : 3;
+                    for (int ai = 0; ai < axisCount; ++ai)
                     {
+                        const char* axis = axes3[ai];
                         auto axisCommand = command;
                         axisCommand["Axis"] = axis;
-                        axisCommand["Value"] = value;
-                        auto& row = append({Key(axisCommand), name, EditorPropertyType::Number, value.at(axis).dump(), false});
+                        const std::string axisStr = (value.is_object() && value.contains(axis)) ? value.at(axis).dump() : "0";
+                        auto& row = append({Key(axisCommand), name, EditorPropertyType::Number, axisStr, fieldReadOnly});
                         row.axis = *axis;
                         row.dragStep = 0.05f;
+                        row.tooltip = !tip.empty() ? tip : text_.GetText("EditorUi.TooltipDragScrub");
+                        if (ai == 0 && !spaceConsumed) row.spaceBefore = spaceBefore;
                     }
+                }
+                else if (kind == "color")
+                {
+                    const float cr = (value.is_object() && value.contains("R") && value["R"].is_number()) ? value["R"].get<float>() : 1.0f;
+                    const float cg = (value.is_object() && value.contains("G") && value["G"].is_number()) ? value["G"].get<float>() : 1.0f;
+                    const float cb = (value.is_object() && value.contains("B") && value["B"].is_number()) ? value["B"].get<float>() : 1.0f;
+                    std::ostringstream cs;
+                    cs.imbue(std::locale::classic());
+                    cs << cr << ' ' << cg << ' ' << cb;
+                    auto& row = append({Key(command), name, EditorPropertyType::Color, cs.str(), fieldReadOnly});
+                    row.tooltip = tip;
+                    if (!spaceConsumed) row.spaceBefore = spaceBefore;
+                }
+                else if (kind == "enum")
+                {
+                    const std::string curEnum = value.is_string() ? value.get<std::string>() : std::string{};
+                    auto& row = append({Key(command), name, EditorPropertyType::Combo, curEnum, fieldReadOnly});
+                    if (field.contains("Options") && field["Options"].is_array())
+                    {
+                        for (const auto& opt : field["Options"])
+                            if (opt.is_string()) row.options.push_back(opt.get<std::string>());
+                    }
+                    row.displayValue = curEnum;
+                    row.tooltip = tip;
+                    if (!spaceConsumed) row.spaceBefore = spaceBefore;
                 }
                 else if (kind == "entity")
                 {
                     const std::string rawId = value.is_null() ? "0" : (value.is_string() ? value.get<std::string>() : value.dump());
                     const std::uint64_t refId = static_cast<std::uint64_t>(std::strtoull(rawId.c_str(), nullptr, 10));
-                    auto& row = append({Key(command), name, EditorPropertyType::EntityRef, rawId, false});
+                    auto& row = append({Key(command), name, EditorPropertyType::EntityRef, rawId, fieldReadOnly});
+                    row.tooltip = tip;
+                    if (!spaceConsumed) row.spaceBefore = spaceBefore;
                     if (refId == 0) row.displayValue = text_.GetText("EditorUi.NoEntityRef");
                     else
                     {
@@ -1154,9 +1203,12 @@ void EditorScriptWorkflow::AppendRows(std::uint64_t entity, bool playing, std::v
                     const EditorPropertyType propType = kind == "bool" ? EditorPropertyType::Boolean
                                                       : (isStr ? EditorPropertyType::String : EditorPropertyType::Number);
                     auto& row = append({Key(command), name, propType,
-                                        value.is_null() ? std::string{} : (isStr ? value.get<std::string>() : value.dump()), false});
+                                        value.is_null() ? std::string{} : (isStr ? value.get<std::string>() : value.dump()), fieldReadOnly});
+                    row.tooltip = tip;
+                    if (!spaceConsumed) row.spaceBefore = spaceBefore;
                     if (propType == EditorPropertyType::Number)
                     {
+                        if (row.tooltip.empty()) row.tooltip = text_.GetText("EditorUi.TooltipDragScrub");
                         row.dragStep = (kind == "i32") ? 1.0f : 0.05f;
                         if (field.contains("Min") && field["Min"].is_number() &&
                             field.contains("Max") && field["Max"].is_number())
@@ -1205,6 +1257,87 @@ void EditorScriptWorkflow::AppendRows(std::uint64_t entity, bool playing, std::v
     {
         status_ = text_.GetText("Script.MetadataFailed");
     }
+}
+
+void EditorScriptWorkflow::AppendMultiRows(const std::vector<std::uint64_t>& entities, bool playing,
+                                           std::vector<ui::editor::EditorProperty>& rows,
+                                           const std::function<std::string(std::uint64_t)>& resolveEntityName)
+{
+    if (entities.empty()) return;
+    if (entities.size() == 1)
+    {
+        AppendRows(entities.front(), playing, rows, resolveEntityName);
+        return;
+    }
+    std::vector<EditorProperty> shared;
+    AppendRows(entities.front(), playing, shared, resolveEntityName);
+    const std::string mixedText = text_.GetText("EditorUi.MixedValue");
+    for (std::size_t idx = 1; idx < entities.size(); ++idx)
+    {
+        std::vector<EditorProperty> other;
+        AppendRows(entities[idx], playing, other, resolveEntityName);
+        for (auto it = shared.begin(); it != shared.end();)
+        {
+            const auto found = std::find_if(other.begin(), other.end(), [&](const EditorProperty& o) {
+                return o.key == it->key;
+            });
+            if (found == other.end())
+            {
+                it = shared.erase(it);
+                continue;
+            }
+            if (found->value != it->value)
+            {
+                it->mixedValue = true;
+                if (it->type == EditorPropertyType::Combo || it->type == EditorPropertyType::EntityRef)
+                    it->displayValue = mixedText;
+            }
+            if (found->readOnly) it->readOnly = true;
+            ++it;
+        }
+    }
+    rows.insert(rows.end(), std::make_move_iterator(shared.begin()), std::make_move_iterator(shared.end()));
+}
+
+bool EditorScriptWorkflow::BeginEdit()
+{
+    if (transactionBefore_.has_value()) return false;
+    RecoveryDocument doc;
+    if (!Snapshot(doc)) return false;
+    transactionBefore_ = std::move(doc);
+    return true;
+}
+
+bool EditorScriptWorkflow::CommitEdit()
+{
+    if (!transactionBefore_.has_value()) return false;
+    RecoveryDocument before = std::move(*transactionBefore_);
+    transactionBefore_.reset();
+    RecoveryDocument after;
+    if (Snapshot(after) && before.content != after.content)
+    {
+        undo_.push_back({std::move(before), std::move(after)});
+        redo_.clear();
+        if (undo_.size() > 100) undo_.erase(undo_.begin());
+        return true;
+    }
+    return false;
+}
+
+bool EditorScriptWorkflow::CancelEdit()
+{
+    if (!transactionBefore_.has_value()) return false;
+    RecoveryDocument before = std::move(*transactionBefore_);
+    transactionBefore_.reset();
+    RecoveryDocument current;
+    if (!Snapshot(current)) return false;
+    if (current.content == before.content) return true;
+    before.sourceDigest = current.sourceDigest;
+    std::string error;
+    if (hooks_ && hooks_->externalDocuments.restore && hooks_->externalDocuments.restore(before, true, error))
+        return true;
+    status_ = text_.GetText(error);
+    return false;
 }
 
 bool EditorScriptWorkflow::Open(const std::filesystem::path& source, std::uint32_t line, std::uint32_t column,
@@ -1401,6 +1534,7 @@ bool EditorScriptWorkflow::Apply(std::uint64_t entity, bool playing, const std::
                     return false;
                 }
                 EnsureProjectBindings(root_);
+                EditorScriptTools::SyncIdeWorkspace(root_);
                 RefreshSources();
                 Sources();
                 customClassEdited_ = false;
@@ -1414,50 +1548,194 @@ bool EditorScriptWorkflow::Apply(std::uint64_t entity, bool playing, const std::
                 }
                 return Open(result.source, 1, 1, settings);
             }
+            if (act == "Copy" && entity != 0 && command.contains("Type") && command["Type"].is_string())
+            {
+                if (!hooks_ || !hooks_->scriptQuery) return false;
+                std::string doc, qerr;
+                if (!hooks_->scriptQuery(entity, doc, qerr)) return false;
+                const std::string reqType = command["Type"].get<std::string>();
+                const auto parsedDoc = Json::parse(doc);
+                for (const auto& s : parsedDoc.at("Scripts"))
+                {
+                    if (s.value("Type", std::string{}) == reqType)
+                    {
+                        clipboardScriptType_ = reqType;
+                        clipboardScriptJson_ = s.dump();
+                        status_ = text_.GetText("EditorUi.ComponentCopied");
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (act == "Paste" && entity != 0 && command.contains("Type") && command["Type"].is_string())
+            {
+                const std::string reqType = command["Type"].get<std::string>();
+                if (clipboardScriptType_ != reqType || clipboardScriptJson_.empty() || !hooks_ || !hooks_->scriptApply)
+                    return false;
+                const auto copied = Json::parse(clipboardScriptJson_);
+                RecoveryDocument before;
+                const bool inTx = transactionBefore_.has_value();
+                const bool haveSnap = (!playing && !inTx) ? Snapshot(before) : true;
+                if (!haveSnap) return false;
+
+                std::string err;
+                Json enCmd{{"Type", reqType}, {"Enabled", copied.value("Enabled", true)}};
+                if (playing) enCmd["Live"] = true;
+                (void)hooks_->scriptApply(entity, enCmd.dump(), err);
+                if (copied.contains("Fields") && copied["Fields"].is_array())
+                {
+                    for (const auto& f : copied["Fields"])
+                    {
+                        if (!f.is_object() || !f.contains("Name") || !f.contains("Value")) continue;
+                        Json fCmd{{"Type", reqType}, {"Field", f["Name"].get<std::string>()}, {"Value", f["Value"]}};
+                        if (playing) fCmd["Live"] = true;
+                        (void)hooks_->scriptApply(entity, fCmd.dump(), err);
+                    }
+                }
+                if (!playing && !inTx)
+                {
+                    RecoveryDocument after;
+                    if (Snapshot(after) && before.content != after.content)
+                    {
+                        undo_.push_back({std::move(before), std::move(after)});
+                        redo_.clear();
+                    }
+                }
+                status_ = text_.GetText("EditorUi.ComponentPasted");
+                return true;
+            }
             return false;
         }
+        const auto queryCurrentFieldValue = [&](const std::string& reqType, const std::string& reqField) -> Json {
+            if (!hooks_ || !hooks_->scriptQuery) return Json{};
+            std::string doc, qerr;
+            if (!hooks_->scriptQuery(entity, doc, qerr)) return Json{};
+            try
+            {
+                const auto parsedDoc = Json::parse(doc);
+                for (const auto& s : parsedDoc.at("Scripts"))
+                {
+                    if (s.value("Type", std::string{}) != reqType) continue;
+                    for (const auto& f : s.at("Fields"))
+                    {
+                        if (f.value("Name", std::string{}) == reqField && f.contains("Value")) return f["Value"];
+                    }
+                }
+            }
+            catch (...) {}
+            return Json{};
+        };
+        const auto resolveNumberJson = [&](const std::string& rawVal, double curNum, const std::string& numKind, Json& outJson) -> bool {
+            if (rawVal.starts_with("@rel:") && rawVal.size() >= 8 && rawVal[6] == ':')
+            {
+                const char op = rawVal[5];
+                double rhs = 0.0;
+                const char* beg = rawVal.data() + 7;
+                const char* end = rawVal.data() + rawVal.size();
+                const auto [ptr, ec] = std::from_chars(beg, end, rhs);
+                if (ec != std::errc{} || ptr != end || !std::isfinite(rhs)) return false;
+                double res = curNum;
+                if (op == '+') res = curNum + rhs;
+                else if (op == '-') res = curNum - rhs;
+                else if (op == '*') res = curNum * rhs;
+                else if (op == '/') { if (std::abs(rhs) < 1e-12) return false; res = curNum / rhs; }
+                else return false;
+                if (!std::isfinite(res)) return false;
+                outJson = (numKind == "i32") ? Json(static_cast<int>(std::llround(res))) : Json(res);
+                return true;
+            }
+            outJson = Json::parse(rawVal);
+            return outJson.is_number();
+        };
+        const auto buildFieldPayload = [&]() -> bool {
+            if (command.contains("Enabled")) command["Enabled"] = value == "true";
+            if (!command.contains("Kind")) return true;
+            const auto kind = command.at("Kind").get<std::string>();
+            const auto reqType = command.value("Type", std::string{});
+            const auto reqField = command.value("Field", std::string{});
+            if (kind == "string" || kind == "entity" || kind == "enum")
+            {
+                command["Value"] = value;
+            }
+            else if (kind == "color")
+            {
+                float cr = 1.0f, cg = 1.0f, cb = 1.0f, ca = 1.0f;
+                const Json cur = queryCurrentFieldValue(reqType, reqField);
+                if (cur.is_object() && cur.contains("A") && cur["A"].is_number()) ca = cur["A"].get<float>();
+                std::istringstream cs(value);
+                cs.imbue(std::locale::classic());
+                if (!(cs >> cr >> cg >> cb) || !std::isfinite(cr) || !std::isfinite(cg) || !std::isfinite(cb)) return false;
+                float optA = ca;
+                if (cs >> optA && std::isfinite(optA)) ca = optA;
+                command["Value"] = Json{{"R", cr}, {"G", cg}, {"B", cb}, {"A", ca}};
+            }
+            else if (command.contains("Axis"))
+            {
+                const std::string axis = command.at("Axis").get<std::string>();
+                Json cur = queryCurrentFieldValue(reqType, reqField);
+                if (!cur.is_object())
+                    cur = (kind == "vec2") ? Json{{"X", 0.0f}, {"Y", 0.0f}} : Json{{"X", 0.0f}, {"Y", 0.0f}, {"Z", 0.0f}};
+                const double curAxis = (cur.contains(axis) && cur[axis].is_number()) ? cur[axis].get<double>() : 0.0;
+                Json nextAxis;
+                if (!resolveNumberJson(value, curAxis, "f32", nextAxis)) return false;
+                cur[axis] = nextAxis;
+                command["Value"] = std::move(cur);
+            }
+            else
+            {
+                double curNum = 0.0;
+                if (value.starts_with("@rel:"))
+                {
+                    const Json cur = queryCurrentFieldValue(reqType, reqField);
+                    if (cur.is_number()) curNum = cur.get<double>();
+                }
+                Json nextVal;
+                if (kind == "i32" || kind == "f32" || kind == "f64")
+                {
+                    if (!resolveNumberJson(value, curNum, kind, nextVal)) return false;
+                    command["Value"] = std::move(nextVal);
+                }
+                else
+                {
+                    command["Value"] = Json::parse(value);
+                }
+            }
+            command.erase("Kind");
+            command.erase("Axis");
+            return true;
+        };
         if (playing)
         {
             if (command.contains("Add") || command.contains("Remove") || command.contains("Save")) return false;
             if (!command.contains("Kind") && !command.contains("Enabled")) return false;
-            if (command.contains("Enabled")) command["Enabled"] = value == "true";
-            if (command.contains("Kind"))
-            {
-                const auto kind = command.at("Kind").get<std::string>();
-                if (kind == "string" || kind == "entity") command["Value"] = value;
-                else if (command.contains("Axis")) command["Value"][command.at("Axis").get<std::string>()] = Json::parse(value);
-                else command["Value"] = Json::parse(value);
-                command.erase("Kind");
-                command.erase("Axis");
-            }
+            if (!buildFieldPayload()) { status_ = text_.GetText("Script.FieldValueInvalid"); return false; }
             command["Live"] = true;
             std::string error;
             if (hooks_ && hooks_->scriptApply && hooks_->scriptApply(entity, command.dump(), error)) return true;
             status_ = text_.GetText(error.empty() ? "Script.MetadataFailed" : error);
             return false;
         }
-        if (command.contains("Enabled")) command["Enabled"] = value == "true";
-        if (command.contains("Kind"))
+        if (!buildFieldPayload())
         {
-            const auto kind = command.at("Kind").get<std::string>();
-            if (kind == "string" || kind == "entity") command["Value"] = value;
-            else if (command.contains("Axis")) command["Value"][command.at("Axis").get<std::string>()] = Json::parse(value);
-            else command["Value"] = Json::parse(value);
-            command.erase("Kind");
-            command.erase("Axis");
+            status_ = text_.GetText("Script.FieldValueInvalid");
+            return false;
         }
         std::string error;
         RecoveryDocument before;
         const bool changing = !command.contains("Save");
-        const bool haveSnapshot = changing ? Snapshot(before) : true;
+        const bool inTx = transactionBefore_.has_value();
+        const bool haveSnapshot = (changing && !inTx) ? Snapshot(before) : true;
         if (haveSnapshot && hooks_ && hooks_->scriptApply && hooks_->scriptApply(entity, command.dump(), error))
         {
-            RecoveryDocument after;
-            if (changing && Snapshot(after) && before.content != after.content)
+            if (changing && !inTx)
             {
-                undo_.push_back({std::move(before), std::move(after)});
-                redo_.clear();
-                if (undo_.size() > 100) undo_.erase(undo_.begin());
+                RecoveryDocument after;
+                if (Snapshot(after) && before.content != after.content)
+                {
+                    undo_.push_back({std::move(before), std::move(after)});
+                    redo_.clear();
+                    if (undo_.size() > 100) undo_.erase(undo_.begin());
+                }
             }
             return true;
         }
@@ -1483,5 +1761,100 @@ bool EditorScriptWorkflow::Apply(std::uint64_t entity, bool playing, const std::
         status_ = text_.GetText("Script.FieldValueInvalid");
     }
     return false;
+}
+
+bool EditorScriptWorkflow::ApplyMulti(const std::vector<std::uint64_t>& entities, bool playing, const std::string& key,
+                                      const std::string& value, const CodeEditorSettings& settings)
+{
+    if (entities.empty()) return false;
+    if (entities.size() == 1) return Apply(entities.front(), playing, key, value, settings);
+    const bool startedTx = !playing && BeginEdit();
+    bool anyApplied = false;
+    for (const std::uint64_t id : entities)
+    {
+        if (Apply(id, playing, key, value, settings)) anyApplied = true;
+    }
+    if (startedTx)
+    {
+        if (anyApplied) (void)CommitEdit();
+        else (void)CancelEdit();
+    }
+    return anyApplied;
+}
+
+std::string EditorScriptWorkflow::CaptureLiveEntityScripts(std::uint64_t entity) const
+{
+    if (entity == 0 || !hooks_ || !hooks_->scriptQuery) return {};
+    std::string doc, err;
+    if (!hooks_->scriptQuery(entity, doc, err)) return {};
+    return doc;
+}
+
+bool EditorScriptWorkflow::ApplyCapturedEntityScripts(std::uint64_t entity, const std::string& capturedDocJson)
+{
+    if (entity == 0 || capturedDocJson.empty() || !hooks_ || !hooks_->scriptApply) return false;
+    try
+    {
+        const auto parsed = Json::parse(capturedDocJson);
+        if (!parsed.contains("Scripts") || !parsed["Scripts"].is_array()) return false;
+        const bool startedTx = !transactionBefore_.has_value() && BeginEdit();
+        bool anyApplied = false;
+        std::string err;
+        for (const auto& s : parsed["Scripts"])
+        {
+            const std::string reqType = s.value("Type", std::string{});
+            if (reqType.empty()) continue;
+            Json enCmd{{"Type", reqType}, {"Enabled", s.value("Enabled", true)}};
+            if (hooks_->scriptApply(entity, enCmd.dump(), err)) anyApplied = true;
+            if (s.contains("Fields") && s["Fields"].is_array())
+            {
+                for (const auto& f : s["Fields"])
+                {
+                    if (!f.is_object() || !f.contains("Name") || !f.contains("Value")) continue;
+                    Json fCmd{{"Type", reqType}, {"Field", f["Name"].get<std::string>()}, {"Value", f["Value"]}};
+                    if (hooks_->scriptApply(entity, fCmd.dump(), err)) anyApplied = true;
+                }
+            }
+        }
+        if (startedTx)
+        {
+            if (anyApplied) (void)CommitEdit();
+            else (void)CancelEdit();
+        }
+        return anyApplied;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool EditorScriptWorkflow::CloneEntityBindings(const std::unordered_map<std::uint64_t, std::uint64_t>& idRemap)
+{
+    if (idRemap.empty() || !hooks_ || !hooks_->scriptApply) return false;
+    try
+    {
+        Json mapObj = Json::object();
+        for (const auto& [srcId, dstId] : idRemap)
+        {
+            if (srcId != 0 && dstId != 0)
+                mapObj[std::to_string(srcId)] = std::to_string(dstId);
+        }
+        if (mapObj.empty()) return false;
+        const bool startedTx = !transactionBefore_.has_value() && BeginEdit();
+        std::string err;
+        const Json cmd{{"CloneMap", std::move(mapObj)}};
+        const bool ok = hooks_->scriptApply(0, cmd.dump(), err);
+        if (startedTx)
+        {
+            if (ok) (void)CommitEdit();
+            else (void)CancelEdit();
+        }
+        return ok;
+    }
+    catch (...)
+    {
+        return false;
+    }
 }
 }

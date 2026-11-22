@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -89,9 +89,9 @@ void ConfigureSessionAndWorkspace(ToolkitAppState& state,
         return profile;
     });
     const bool managedDefaultScene = (GetEnvironmentVariableW(L"FLARE_EDITOR_SCENE_FILE", nullptr, 0) > 0 ||
-        GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_FILE", nullptr, 0) > 0) &&
+        GetEnvironmentVariableW(L"FLARE_EDITOR_SCENE_FILE", nullptr, 0) > 0) &&
         GetEnvironmentVariableW(L"FLARE_EDITOR_SCENE_EXPLICIT", nullptr, 0) == 0 &&
-        GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_EXPLICIT", nullptr, 0) == 0;
+        GetEnvironmentVariableW(L"FLARE_EDITOR_SCENE_EXPLICIT", nullptr, 0) == 0;
     if (hasRestoredSession && (state.session.Path().empty() || managedDefaultScene) && !restoredSession.documents.empty())
     {
         for (const auto& document : restoredSession.documents)
@@ -185,7 +185,13 @@ void ConfigureSessionAndWorkspace(ToolkitAppState& state,
             state.editorCamera.state.yaw = restoredSession.cameraYaw;
             state.editorCamera.state.pitch = restoredSession.cameraPitch;
         }
-        if (!restoredSession.selection.empty()) state.session.Select(restoredSession.selection.front());
+        if (!restoredSession.selection.empty())
+        {
+            std::vector<StableEntityId> validIds;
+            for (const StableEntityId sid : restoredSession.selection)
+                if (sid != 0 && state.session.EditWorld().FindByStableId(sid)) validIds.push_back(sid);
+            if (!validIds.empty()) state.session.SetSelection(validIds, validIds.back());
+        }
     }
 
     state.playInput = std::make_unique<EditorPlayInput>(
@@ -275,7 +281,7 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
         if (!crashGuard.active) Log(LogLevel::Warning, markerError);
 
         const bool safeMode = GetEnvironmentVariableW(L"FLARE_EDITOR_SAFE_MODE", nullptr, 0) > 0 ||
-            GetEnvironmentVariableW(L"SELFENGINE_EDITOR_SAFE_MODE", nullptr, 0) > 0;
+            GetEnvironmentVariableW(L"FLARE_EDITOR_SAFE_MODE", nullptr, 0) > 0;
         EditorPreferences preferences;
         std::string preferencesError;
         EditorSessionStore::LoadPreferences(EditorSessionStore::UserDataDirectory(), preferences, preferencesError);
@@ -375,8 +381,19 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
             state.fontPages.clear();
             state.hostWindow = nullptr;
         };
-        services.captureKeyboard = []() { return false; };
-        services.capturePointer = []() { return false; };
+        services.captureKeyboard = [&state]() {
+            return state.session.IsPlaying() &&
+                   ((state.shell && state.shell->TextFieldFocused()) || state.viewportController.Flying());
+        };
+        services.capturePointer = [&state]() {
+            if (!state.session.IsPlaying() || !state.shell) return false;
+            if (state.shell->CloseModalOpen() || state.shell->ConfirmOpen() || state.shell->MenuOpen() ||
+                state.shell->ColorPickerOpen() || state.shell->AddComponentPopupOpen())
+            {
+                return true;
+            }
+            return state.playInput ? state.playInput->PointerConsumed() : false;
+        };
         services.input = [&state](const InputState& input, bool keyboard, bool pointer) {
             if (state.session.IsPlaying() && !state.gameplayLogged)
             {
@@ -394,18 +411,50 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
                     gameplay.gamepads = input.gamepads;
                 }
                 const ui::UiRect& activePlayRect = state.playViewportRect.width > 0.0f ? state.playViewportRect : state.viewportRect;
+                const float vpLeftPx = activePlayRect.x * dpi;
+                const float vpTopPx = activePlayRect.y * dpi;
+                const float vpRightPx = (activePlayRect.x + activePlayRect.width) * dpi;
+                const float vpBottomPx = (activePlayRect.y + activePlayRect.height) * dpi;
+                const auto inPlayViewport = [&](int px, int py) noexcept {
+                    return activePlayRect.width <= 0.0f || activePlayRect.height <= 0.0f ||
+                           (static_cast<float>(px) >= vpLeftPx && static_cast<float>(px) < vpRightPx &&
+                            static_cast<float>(py) >= vpTopPx && static_cast<float>(py) < vpBottomPx);
+                };
+                bool cursorCaptured = false;
                 if (state.hooks->syncPlayCursor && state.hostWindow != nullptr)
                 {
-                    POINT tl{static_cast<LONG>(std::lround(activePlayRect.x * dpi)),
-                             static_cast<LONG>(std::lround(activePlayRect.y * dpi))};
-                    POINT br{static_cast<LONG>(std::lround((activePlayRect.x + activePlayRect.width) * dpi)),
-                             static_cast<LONG>(std::lround((activePlayRect.y + activePlayRect.height) * dpi))};
+                    POINT tl{static_cast<LONG>(std::lround(vpLeftPx)),
+                             static_cast<LONG>(std::lround(vpTopPx))};
+                    POINT br{static_cast<LONG>(std::lround(vpRightPx)),
+                             static_cast<LONG>(std::lround(vpBottomPx))};
                     ClientToScreen(state.hostWindow, &tl);
                     ClientToScreen(state.hostWindow, &br);
                     const int screenRect[4]{tl.x, tl.y, br.x, br.y};
-                    const bool cursorCaptured = state.hooks->syncPlayCursor(state.hostWindow, screenRect);
+                    cursorCaptured = state.hooks->syncPlayCursor(state.hostWindow, screenRect);
                     if (state.playInput) state.playInput->SetCursorCaptured(cursorCaptured);
                 }
+                bool outsideViewportPointer = false;
+                if (!cursorCaptured && !floatingInput)
+                {
+                    for (const auto& ev : gameplay.pointerEvents)
+                    {
+                        if (ev.type == PointerEventType::Down && !inPlayViewport(ev.x, ev.y))
+                        {
+                            outsideViewportPointer = true;
+                            break;
+                        }
+                    }
+                    if (!outsideViewportPointer && !inPlayViewport(gameplay.mouseX, gameplay.mouseY) &&
+                        (state.shell && (state.shell->CloseModalOpen() || state.shell->ConfirmOpen() ||
+                                         state.shell->MenuOpen() || state.shell->ColorPickerOpen() ||
+                                         state.shell->AddComponentPopupOpen())))
+                    {
+                        outsideViewportPointer = true;
+                    }
+                }
+                const bool effectiveKeyboardConsumed = keyboard ||
+                    (state.shell && state.shell->TextFieldFocused()) || state.viewportController.Flying();
+                const bool effectivePointerConsumed = pointer || outsideViewportPointer;
                 const ui::editor::ViewportRectF viewportMath{activePlayRect.x, activePlayRect.y,
                                                              activePlayRect.width, activePlayRect.height};
                 float mouseX = static_cast<float>(gameplay.mouseX), mouseY = static_cast<float>(gameplay.mouseY);
@@ -419,7 +468,7 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
                     event.x = static_cast<int>(std::lround(ex));
                     event.y = static_cast<int>(std::lround(ey));
                 }
-                state.hooks->input(gameplay, keyboard, pointer);
+                state.hooks->input(gameplay, effectiveKeyboardConsumed, effectivePointerConsumed);
             }
             state.playInput->EndFrame();
         };
@@ -533,4 +582,4 @@ int RunEditorApp(Renderer& renderer, const std::string& locale, const std::files
         return 1;
     }
 }
-} // namespace se
+} // namespace flare

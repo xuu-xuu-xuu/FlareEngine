@@ -3,7 +3,7 @@
 #include <atomic>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 namespace
 {

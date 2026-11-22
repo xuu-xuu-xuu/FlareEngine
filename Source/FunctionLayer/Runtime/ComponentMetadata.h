@@ -5,7 +5,7 @@
 #include <string_view>
 #include <variant>
 
-namespace se
+namespace flare
 {
 struct ComponentProperty {std::string key;PropertyValue value;};
 struct ComponentDescriptor

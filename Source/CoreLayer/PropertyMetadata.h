@@ -7,7 +7,7 @@
 #include <variant>
 #include <vector>
 
-namespace se
+namespace flare
 {
 enum class PropertyType { Boolean, Number, Vector3, Quaternion, AssetId, AssetList, Text, Vector4, EntityReference };
 enum class PropertyPresentation { Default, Color, Slider };

@@ -5,7 +5,7 @@
 #include <type_traits>
 #include <charconv>
 
-namespace se
+namespace flare
 {
 inline nlohmann::json WritePropertyJson(const PropertyValue& value)
 {

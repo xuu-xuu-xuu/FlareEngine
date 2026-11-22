@@ -16,7 +16,7 @@
 #include <cstdio>
 #include <set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -1472,9 +1472,9 @@ void EditorWorkspaceHost::OpenInExplorer(const std::filesystem::path& path, bool
 
 void EditorWorkspaceHost::ConfigureBuildControl()
 {
-    restartRequestPath_ = EnvironmentPath(L"SELFENGINE_EDITOR_RESTART_REQUEST");
-    const auto statusPath = EnvironmentPath(L"SELFENGINE_EDITOR_BUILD_STATUS");
-    buildDiagnosticsPath_ = EnvironmentPath(L"SELFENGINE_EDITOR_BUILD_DIAGNOSTICS");
+    restartRequestPath_ = EnvironmentPath(L"FLARE_EDITOR_RESTART_REQUEST");
+    const auto statusPath = EnvironmentPath(L"FLARE_EDITOR_BUILD_STATUS");
+    buildDiagnosticsPath_ = EnvironmentPath(L"FLARE_EDITOR_BUILD_DIAGNOSTICS");
     if (restartRequestPath_.empty())
     {
         return;
@@ -1643,4 +1643,4 @@ void EditorWorkspaceHost::LogConsole(int level, const std::string& key, const st
     }
 }
 
-} // namespace se
+} // namespace flare

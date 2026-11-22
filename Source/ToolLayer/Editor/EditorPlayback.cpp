@@ -1,6 +1,6 @@
 #include "EditorPlayback.h"
 
-namespace se
+namespace flare
 {
 bool EditorPlaybackController::Fail(std::string& errorKey,const char* key)
 {

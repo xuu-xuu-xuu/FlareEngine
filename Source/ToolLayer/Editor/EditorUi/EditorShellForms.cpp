@@ -11,7 +11,7 @@
 #include <string>
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 using namespace detail;
 
@@ -90,7 +90,7 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
                 s.cornerRadius = 5.0f;
                 s.borderWidth = 1.0f;
                 s.borderColor = kBorder;
-                s.color = UiInk(flare::Gold);
+                s.color = UiInk(flare::palette::Gold);
                 s.pointerEvents = UiPointerEvents::None;
                 document_.SetStyle(pill, s);
                 document_.SetText(pill, property.label);
@@ -126,8 +126,8 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
                 auto vs = ButtonStyle(fieldX, 3.0f, 20.0f, 20.0f, checked ? kSurfaceActive : kSurface);
                 vs.cornerRadius = 4.0f;
                 vs.borderWidth = 1.0f;
-                vs.borderColor = checked ? UiInk(flare::workspace::Focus) : kBorder;
-                vs.color = checked ? UiInk(flare::Gold) : kMuted;
+                vs.borderColor = checked ? UiInk(flare::palette::workspace::Focus) : kBorder;
+                vs.color = checked ? UiInk(flare::palette::Gold) : kMuted;
                 vs.padding = {3.0f, 0.0f, 0.0f, 0.0f};
                 vs.pointerEvents = UiPointerEvents::None;
                 document_.SetStyle(val, vs);
@@ -150,7 +150,34 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
             }
         }
     });
-    dispatcher_.AddHandler(form.listContent, UiEventType::PointerWheel, [this, &form](UiInputEvent& event) {
+    const auto commitFormInlineEdit = [this, &form]() {
+        if (form.editingKey.empty() || !form.editElement.IsValid() || !document_.Visible(form.editElement))
+            return;
+        const std::string key = form.editingKey;
+        const std::string textVal = form.edit ? std::string(form.edit->Text()) : std::string{};
+        form.editingKey.clear();
+        document_.SetVisible(form.editElement, false);
+        bool committed = false;
+        if (form.commit)
+            committed = form.commit(key, textVal);
+        if (committed)
+        {
+            for (EditorProperty& property : form.properties)
+            {
+                if (property.key == key) property.value = textVal;
+            }
+            form.status = Text("EditorUi.Applied", "Applied");
+        }
+        else
+        {
+            form.status = Text("EditorUi.InvalidValue", "Invalid value");
+        }
+        RefreshForm(form);
+    };
+
+    dispatcher_.AddHandler(form.listContent, UiEventType::PointerWheel, [this, &form, commitFormInlineEdit](UiInputEvent& event) {
+        commitFormInlineEdit();
+        if (dispatcher_.Focus() == form.editElement) dispatcher_.ClearFocus();
         if (form.list)
         {
             form.list->SetScrollOffset(form.list->Offset() - event.wheel * 52.0f);
@@ -211,7 +238,7 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
             auto editStyle = ButtonStyle(editX, editY, editW, rowH - 2.0f, kSurface);
             editStyle.cornerRadius = 4.0f;
             editStyle.borderWidth = 1.0f;
-            editStyle.borderColor = UiInk(flare::workspace::Focus);
+            editStyle.borderColor = UiInk(flare::palette::workspace::Focus);
             document_.SetStyle(form.editElement, editStyle);
             form.edit->SetText(form.properties[static_cast<std::size_t>(row)].value);
             document_.SetVisible(form.editElement, true);
@@ -226,8 +253,8 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
         auto saveStyle = ButtonStyle(4.0f, 3.0f, 80.0f, 24.0f, kSurfaceActive);
         saveStyle.cornerRadius = 5.0f;
         saveStyle.borderWidth = 1.0f;
-        saveStyle.borderColor = UiInk(flare::workspace::Focus, 0.65f);
-        saveStyle.color = UiInk(flare::Gold);
+        saveStyle.borderColor = UiInk(flare::palette::workspace::Focus, 0.65f);
+        saveStyle.color = UiInk(flare::palette::Gold);
         document_.SetStyle(form.saveButton, saveStyle);
         document_.SetText(form.saveButton, Text("EditorUi.Save", "Save"));
         dispatcher_.AddHandler(form.saveButton, UiEventType::PointerDown, [this, &form](UiInputEvent& event) {
@@ -253,7 +280,9 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
         document_.SetStyle(form.actionButton, actStyle);
         document_.SetText(form.actionButton, "Action");
         document_.SetVisible(form.actionButton, false);
-        dispatcher_.AddHandler(form.actionButton, UiEventType::PointerDown, [this, &form](UiInputEvent& event) {
+        dispatcher_.AddHandler(form.actionButton, UiEventType::PointerDown, [this, &form, commitFormInlineEdit](UiInputEvent& event) {
+            commitFormInlineEdit();
+            if (dispatcher_.Focus() == form.editElement) dispatcher_.ClearFocus();
             if (form.action && form.action())
             {
                 if(!form.managedStatus)form.status = Text("EditorUi.Running", "Running");
@@ -294,37 +323,18 @@ void EditorShell::BuildFormPanel(PanelSlot& slot)
     {
         document_.SetStyle(form.editElement, ButtonStyle(0.0f, 0.0f, 100.0f, 24.0f, kContent));
         document_.SetVisible(form.editElement, false);
-        form.edit = std::make_unique<UiTextEdit>(document_, form.editElement, text_);
+        form.edit = std::make_unique<UiTextEdit>(document_, form.editElement, text_, PlatformServices());
+        dispatcher_.AddHandler(form.editElement, UiEventType::FocusLost, [commitFormInlineEdit](UiInputEvent&) {
+            commitFormInlineEdit();
+        });
         dispatcher_.AddHandler(form.editElement, UiEventType::PointerDown, [this, &form](UiInputEvent&) {
             dispatcher_.SetFocus(form.editElement);
         });
-        dispatcher_.AddHandler(form.editElement, UiEventType::KeyDown, [this, &form](UiInputEvent& event) {
+        dispatcher_.AddHandler(form.editElement, UiEventType::KeyDown, [this, &form, commitFormInlineEdit](UiInputEvent& event) {
             if (event.key == UiKeyEnter)
             {
-                bool committed = false;
-                if (form.commit && form.edit && !form.editingKey.empty())
-                {
-                    committed = form.commit(form.editingKey, std::string(form.edit->Text()));
-                }
-                if (committed)
-                {
-                    for (EditorProperty& property : form.properties)
-                    {
-                        if (property.key == form.editingKey)
-                        {
-                            property.value = form.edit ? std::string(form.edit->Text()) : std::string{};
-                        }
-                    }
-                    form.status = Text("EditorUi.Applied", "Applied");
-                }
-                else
-                {
-                    form.status = Text("EditorUi.InvalidValue", "Invalid value");
-                }
-                form.editingKey.clear();
-                document_.SetVisible(form.editElement, false);
+                commitFormInlineEdit();
                 dispatcher_.ClearFocus();
-                RefreshForm(form);
                 event.handled = true;
                 return;
             }
@@ -630,4 +640,4 @@ UiElementHandle EditorShell::FormComboPopup(EditorPanelId panel) const noexcept
     return Form(panel).comboPopup;
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

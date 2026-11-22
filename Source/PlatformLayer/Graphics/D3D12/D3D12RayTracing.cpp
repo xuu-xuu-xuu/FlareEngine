@@ -24,7 +24,7 @@
 
 using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
-namespace rhi = se::rhi;
+namespace rhi = flare::rhi;
 
 namespace
 {
@@ -275,7 +275,7 @@ struct RtShaderBundle
 
 Json MakeRtShaderIdentity(std::span<const std::uint8_t> sourceBytes)
 {
-    const auto sha = se::Sha256(sourceBytes);
+    const auto sha = flare::Sha256(sourceBytes);
     if (sha.empty()) return {};
     return {
         {"schema", 1},
@@ -343,7 +343,7 @@ bool ReadRtShaderArtifact(const fs::path& artifactPath, const Json& expectedIden
             if (len == 0 || cursor + len > bytes.size()) return false;
             targets[i]->assign(bytes.data() + cursor, bytes.data() + cursor + len);
             cursor += len;
-            if (se::Sha256(*targets[i]) != hashes[i].get<std::string>()) return false;
+            if (flare::Sha256(*targets[i]) != hashes[i].get<std::string>()) return false;
         }
         return cursor == bytes.size();
     }
@@ -605,7 +605,7 @@ bool WriteD3D12RayTracingShaders(const fs::path& sourcePath, const fs::path& out
         &bundle.computeBlobs[3], &bundle.computeBlobs[4], &bundle.computeBlobs[5],
         &bundle.vsComposite, &bundle.psComposite};
     Json hashes = Json::array();
-    for (const auto* b : blobs) hashes.push_back(se::Sha256(*b));
+    for (const auto* b : blobs) hashes.push_back(flare::Sha256(*b));
     const std::string metaText = Json{{"identity", identity}, {"blob_sha256", hashes}}.dump(2);
 
     std::vector<std::uint8_t> payload(RtArtifactMagic, RtArtifactMagic + sizeof(RtArtifactMagic));
@@ -643,9 +643,9 @@ bool ValidD3D12RayTracingSettings(const rhi::RayTracingSettings& s)
     }
     if (s.Active())
     {
-        if (!se::IsFinite(s.view) || !se::IsFinite(s.clipFromView)
-            || !se::Inverse(s.view) || !se::Inverse(s.clipFromView)
-            || (s.historyValid && !se::IsFinite(s.previousClipFromWorld)))
+        if (!flare::IsFinite(s.view) || !flare::IsFinite(s.clipFromView)
+            || !flare::Inverse(s.view) || !flare::Inverse(s.clipFromView)
+            || (s.historyValid && !flare::IsFinite(s.previousClipFromWorld)))
         {
             return false;
         }
@@ -977,7 +977,7 @@ bool PrepareD3D12RayTracing(D3D12Presentation& p,
             return h;
         }
     };
-    const auto makeDedupeKey = [](const D3D12Mesh& mesh, const se::Mat4& world) {
+    const auto makeDedupeKey = [](const D3D12Mesh& mesh, const flare::Mat4& world) {
         InstanceDedupeKey key{};
         key.vb = mesh.vertices.Get();
         key.vbLoc = mesh.vertexView.BufferLocation;
@@ -1021,7 +1021,7 @@ bool PrepareD3D12RayTracing(D3D12Presentation& p,
 
     const auto processDraw = [&](const D3D12MeshDraw& draw, bool fromShadowCasters) -> bool {
         if (!draw.mesh || !draw.mesh->vertices || !draw.mesh->indices
-            || draw.alphaMode == se::MaterialAlphaMode::Blend
+            || draw.alphaMode == flare::MaterialAlphaMode::Blend
             || draw.compressedVertices || !draw.skinPalette.empty())
         {
             if (fromShadowCasters) ++unsupportedCasters;
@@ -1148,24 +1148,24 @@ bool PrepareD3D12RayTracing(D3D12Presentation& p,
 
         const UINT hasAlbedoTex = (meshSlot < MaxUniqueRtMeshes && albedoSrv.ptr != 0) ? 1u : 0u;
 
-        const auto appendInstance = [&](const se::Mat4& world, se::Vec4 tint, float metallic,
+        const auto appendInstance = [&](const flare::Mat4& world, flare::Vec4 tint, float metallic,
                                         float roughness, bool unlit, bool doubleSided) {
             const auto dedupeKey = makeDedupeKey(mesh, world);
             if (fromShadowCasters && emittedInstances.contains(dedupeKey)) return;
-            if (tlasInstances.size() >= MaxRtInstances || !se::IsFinite(world))
+            if (tlasInstances.size() >= MaxRtInstances || !flare::IsFinite(world))
             {
                 if (fromShadowCasters) ++unsupportedCasters;
                 else ++stats.unsupportedDraws;
                 return;
             }
-            const auto invWorld = se::Inverse(world);
-            if (!invWorld || !se::IsFinite(*invWorld))
+            const auto invWorld = flare::Inverse(world);
+            if (!invWorld || !flare::IsFinite(*invWorld))
             {
                 if (fromShadowCasters) ++unsupportedCasters;
                 else ++stats.unsupportedDraws;
                 return;
             }
-            const se::Mat4 normalMat = se::Transpose(*invWorld);
+            const flare::Mat4 normalMat = flare::Transpose(*invWorld);
             emittedInstances.insert(dedupeKey);
 
             const UINT instIndex = static_cast<UINT>(tlasInstances.size());
@@ -1294,15 +1294,15 @@ bool PrepareD3D12RayTracing(D3D12Presentation& p,
     std::memcpy(candidate->tlasInstancesUpload.cpu, tlasInstances.data(), tlasDescBytes);
     std::memcpy(candidate->surfaceInstancesUpload.cpu, surfaceInstances.data(), surfDataBytes);
 
-    const auto invView = se::Inverse(rt.view);
-    const auto invProj = se::Inverse(rt.clipFromView);
+    const auto invView = flare::Inverse(rt.view);
+    const auto invProj = flare::Inverse(rt.clipFromView);
     if (!invView || !invProj)
         return failToRaster(rhi::RayTracingFallback::ResourceFailure);
 
     const UINT halfW = sys.targets->halfWidth;
     const UINT halfH = sys.targets->halfHeight;
 
-    const bool baseHistoryOk = rt.historyValid && se::IsFinite(rt.previousClipFromWorld);
+    const bool baseHistoryOk = rt.historyValid && flare::IsFinite(rt.previousClipFromWorld);
     const bool visHistoryValid = baseHistoryOk && (aoActive || shadowsActive)
         && sys.targets->visFrames > 0
         && sys.targets->visLastSubmission == p.submittedFrames
@@ -1318,10 +1318,10 @@ bool PrepareD3D12RayTracing(D3D12Presentation& p,
     cb.clipFromView = rt.clipFromView;
     cb.viewFromClip = *invProj;
     cb.worldFromView = *invView;
-    cb.previousClipFromWorld = baseHistoryOk ? rt.previousClipFromWorld : se::Mat4::Identity();
+    cb.previousClipFromWorld = baseHistoryOk ? rt.previousClipFromWorld : flare::Mat4::Identity();
     cb.viewport = {float(width), float(height), 1.f / float(width), 1.f / float(height)};
     cb.halfViewport = {float(halfW), float(halfH), 1.f / float(halfW), 1.f / float(halfH)};
-    const se::Vec3 sunDir = se::Normalize(lighting.directionToLight);
+    const flare::Vec3 sunDir = flare::Normalize(lighting.directionToLight);
     cb.sunDirection = {sunDir.x, sunDir.y, sunDir.z, lighting.directionalEnabled ? 1.f : 0.f};
     cb.sunRadiance = {lighting.directionalRadiance.x, lighting.directionalRadiance.y,
                       lighting.directionalRadiance.z, rt.sunAngularRadius};

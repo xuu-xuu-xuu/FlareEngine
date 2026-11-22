@@ -45,26 +45,26 @@ internal static unsafe partial class NativeMethods
 {
     [StructLayout(LayoutKind.Sequential)]
     internal struct TickPrerequisite {internal ulong Task;internal uint Mode,Reserved;}
-    [LibraryImport(Library,EntryPoint="se_environment_set_callback")]
+    [LibraryImport(Library,EntryPoint="flare_environment_set_callback")]
     internal static partial int SetEnvironmentCallback(ulong session,delegate* unmanaged[Cdecl]<ulong,ulong,uint,double,ulong,ulong,nint,int> callback,nint context);
-    [LibraryImport(Library,EntryPoint="se_environment_configure")]
+    [LibraryImport(Library,EntryPoint="flare_environment_configure")]
     internal static partial int EnvironmentConfigure(ulong session,double seconds,uint maximum,int automatic,int physics);
-    [LibraryImport(Library,EntryPoint="se_environment_set_paused")]
+    [LibraryImport(Library,EntryPoint="flare_environment_set_paused")]
     internal static partial int EnvironmentPaused(ulong session,int paused);
-    [LibraryImport(Library,EntryPoint="se_environment_release")]
+    [LibraryImport(Library,EntryPoint="flare_environment_release")]
     internal static partial int EnvironmentRelease(ulong session);
-    [LibraryImport(Library,EntryPoint="se_environment_stats")]
+    [LibraryImport(Library,EntryPoint="flare_environment_stats")]
     internal static partial int EnvironmentStats(ulong session,out ulong steps,out double simulation,out double dropped);
-    [LibraryImport(Library,EntryPoint="se_environment_fixed_step")]
+    [LibraryImport(Library,EntryPoint="flare_environment_fixed_step")]
     internal static partial int EnvironmentFixedStep(ulong session,double seconds);
-    [LibraryImport(Library,EntryPoint="se_component_tick_register")]
+    [LibraryImport(Library,EntryPoint="flare_component_tick_register")]
     internal static partial int ComponentTickRegister(ulong session,ulong component,uint stage,int simulation,int paused,out ulong task);
-    [LibraryImport(Library,EntryPoint="se_component_tick_remove")]
+    [LibraryImport(Library,EntryPoint="flare_component_tick_remove")]
     internal static partial int ComponentTickRemove(ulong session,ulong task);
-    [LibraryImport(Library,EntryPoint="se_component_tick_prerequisites")]
+    [LibraryImport(Library,EntryPoint="flare_component_tick_prerequisites")]
     internal static partial int ComponentTickPrerequisites(ulong session,ulong task,TickPrerequisite* values,uint count);
-    [LibraryImport(Library,EntryPoint="se_entity_is_pending")]
+    [LibraryImport(Library,EntryPoint="flare_entity_is_pending")]
     internal static partial int EntityPending(ulong session,ulong entity,out int pending);
-    [LibraryImport(Library,EntryPoint="se_script_component_pending")]
+    [LibraryImport(Library,EntryPoint="flare_script_component_pending")]
     internal static partial int ScriptComponentPending(ulong session,ulong component,out int pending);
 }

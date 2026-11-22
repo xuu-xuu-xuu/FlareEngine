@@ -3,7 +3,7 @@
 #include "ResourceLayer/Assets/AssetStore.h"
 #include <optional>
 
-namespace se
+namespace flare
 {
 // 预览独占时钟、消息与运行状态，资源发布只保存配置，不接触任何 Play 上下文。
 class TODPreview

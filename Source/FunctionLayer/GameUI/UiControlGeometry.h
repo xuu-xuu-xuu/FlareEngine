@@ -1,6 +1,6 @@
 #pragma once
 #include "UiTree.h"
-namespace se
+namespace flare
 {
 float UiValueRatio(double value,double minimum,double maximum)noexcept;
 struct UiSliderGeometry {UiRect track,thumb;float first=0,last=0;};

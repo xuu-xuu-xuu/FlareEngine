@@ -16,7 +16,7 @@
 #include <cmath>
 #include <unordered_map>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -489,4 +489,4 @@ bool ViewportDropWorkflow::CommitDrop(
     session.CancelEdit();
     return false;
 }
-} // namespace se
+} // namespace flare

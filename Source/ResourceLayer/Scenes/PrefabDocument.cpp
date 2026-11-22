@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -200,18 +200,22 @@ bool SerializePrefabDocument(const PrefabDocument& document, std::string& jsonTe
                 });
             }
 
-            nodesJson.push_back({
+            Json nodeJson{
                 {"localNodeId", std::to_string(node->localNodeId)},
                 {"localParentId", node->localParentId == 0 ? Json(nullptr) : Json(std::to_string(node->localParentId))},
                 {"name", node->name},
                 {"enabled", node->enabled},
                 {"components", std::move(componentsJson)},
                 {"scripts", std::move(scriptsJson)}
-            });
+            };
+            if (!node->tag.empty() && node->tag != "Untagged") nodeJson["tag"] = node->tag;
+            if (node->layer != 0) nodeJson["layer"] = node->layer;
+            if (node->staticFlags != 0) nodeJson["staticFlags"] = node->staticFlags;
+            nodesJson.push_back(std::move(nodeJson));
         }
 
         const Json root{
-            {"format", "SelfEngine.Prefab"},
+            {"format", "FlareEngine.Prefab"},
             {"version", document.version},
             {"rootLocalNodeId", std::to_string(document.rootLocalNodeId)},
             {"nodes", std::move(nodesJson)}
@@ -247,7 +251,7 @@ bool ParsePrefabDocument(std::string_view jsonText, PrefabDocument& document, st
             return true;
         });
         if (duplicate || !detail::OnlyJsonKeys(root, {"format", "version", "rootLocalNodeId", "nodes"}) ||
-            root.value("format", std::string{}) != "SelfEngine.Prefab" ||
+            (root.value("format", std::string{}) != "FlareEngine.Prefab" && root.value("format", std::string{}) != "SelfEngine.Prefab") ||
             !root.contains("version") || !root["version"].is_number_integer())
         {
             return Fail(error, "Prefab.InvalidDocument");
@@ -266,7 +270,7 @@ bool ParsePrefabDocument(std::string_view jsonText, PrefabDocument& document, st
 
         for (const Json& nodeJson : root["nodes"])
         {
-            if (!detail::OnlyJsonKeys(nodeJson, {"localNodeId", "localParentId", "name", "enabled", "components", "scripts"}) ||
+            if (!detail::OnlyJsonKeys(nodeJson, {"localNodeId", "localParentId", "name", "enabled", "components", "scripts", "tag", "layer", "staticFlags"}) ||
                 !nodeJson.contains("localNodeId") || !nodeJson.contains("localParentId") ||
                 !nodeJson.contains("name") || !nodeJson["name"].is_string() ||
                 !nodeJson.contains("enabled") || !nodeJson["enabled"].is_boolean() ||
@@ -282,6 +286,24 @@ bool ParsePrefabDocument(std::string_view jsonText, PrefabDocument& document, st
             }
             node.name = nodeJson["name"].get<std::string>();
             node.enabled = nodeJson["enabled"].get<bool>();
+            if (nodeJson.contains("tag"))
+            {
+                if (!nodeJson["tag"].is_string()) return Fail(error, "Prefab.InvalidDocument");
+                node.tag = nodeJson["tag"].get<std::string>();
+                if (node.tag.empty()) node.tag = "Untagged";
+            }
+            if (nodeJson.contains("layer"))
+            {
+                if (!nodeJson["layer"].is_number_integer() || nodeJson["layer"].get<std::int64_t>() < 0 || nodeJson["layer"].get<std::int64_t>() > 31)
+                    return Fail(error, "Prefab.InvalidDocument");
+                node.layer = static_cast<std::uint32_t>(nodeJson["layer"].get<std::int64_t>());
+            }
+            if (nodeJson.contains("staticFlags"))
+            {
+                if (!nodeJson["staticFlags"].is_number_integer() || nodeJson["staticFlags"].get<std::int64_t>() < 0 || nodeJson["staticFlags"].get<std::int64_t>() > 255)
+                    return Fail(error, "Prefab.InvalidDocument");
+                node.staticFlags = static_cast<std::uint32_t>(nodeJson["staticFlags"].get<std::int64_t>());
+            }
 
             for (const Json& compJson : nodeJson["components"])
             {
@@ -459,4 +481,4 @@ bool ExtractTransformFromPrefabComponent(const PrefabComponentRecord& component,
     }
     return IsValid(outTransform);
 }
-} // namespace se
+} // namespace flare

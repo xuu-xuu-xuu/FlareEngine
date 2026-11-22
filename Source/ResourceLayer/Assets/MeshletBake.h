@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G07（原型）：64 顶点 / 124 三角形的 cluster 烘焙。cluster 保存局部索引与
 // 局部→源顶点映射，几何覆盖与源网格一致；法线锥用于背面剔除。

@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <string>
 
-namespace se
+namespace flare
 {
 enum class EditorPlaybackState { Editing, Preparing, Playing, Paused, Stopping };
 // 编辑/运行状态机：Editing -> Preparing -> Playing <-> Paused -> Stopping -> Editing。

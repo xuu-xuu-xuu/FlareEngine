@@ -11,7 +11,7 @@
 #include <string>
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 using namespace detail;
 
@@ -32,6 +32,7 @@ void EditorShell::RebuildGroupViews()
     document_.SetParent(dropHighlight_,root_);
     document_.SetParent(tabInsertMarker_,root_);
     document_.SetParent(dragGhost_,root_);
+    if(tooltipBubble_.IsValid())document_.SetParent(tooltipBubble_,root_);
     document_.SetParent(viewportTools_,root_);
     std::erase_if(surfaces_,[this](const auto& surface){
         if(dock_.Surface(surface.id))return false;
@@ -75,6 +76,7 @@ void EditorShell::RebuildGroupViews()
     }
     if(tabInsertMarker_.IsValid())document_.SetParent(tabInsertMarker_,root_);
     if(dragGhost_.IsValid())document_.SetParent(dragGhost_,root_);
+    if(tooltipBubble_.IsValid())document_.SetParent(tooltipBubble_,root_);
 }
 
 void EditorShell::RebuildTabBar(GroupView& group)
@@ -130,9 +132,28 @@ void EditorShell::RebuildTabBar(GroupView& group)
     group.focusLine = document_.CreateElement(UiElementKind::Panel);
     document_.SetParent(group.focusLine, group.tabBar);
     auto indicator = AbsoluteStyle(0, 0, 1, 2);
-    indicator.background = UiInk(flare::workspace::Focus);
+    indicator.background = UiInk(flare::palette::workspace::Focus);
     indicator.pointerEvents = UiPointerEvents::None;
     document_.SetStyle(group.focusLine, indicator);
+    if (std::find(group.tabs.begin(), group.tabs.end(), EditorPanelId::Inspector) != group.tabs.end())
+    {
+        group.lockButton = document_.CreateElement(UiElementKind::Button);
+        if (document_.SetParent(group.lockButton, group.tabBar))
+        {
+            auto ls = ButtonStyle(0.0f, 3.0f, 22.0f, kTabHeight - 6.0f, kSurfaceRaised);
+            ls.cornerRadius = 3.5f;
+            ls.fontSize = 11.5f;
+            ls.padding = {4.0f, 0.0f, 0.0f, 0.0f};
+            document_.SetStyle(group.lockButton, ls);
+            document_.SetText(group.lockButton, inspectorLocked_ ? "🔒" : "🔓");
+            dispatcher_.AddHandler(group.lockButton, UiEventType::PointerDown, [this](UiInputEvent& event) {
+                if (event.button != 0) return;
+                SetInspectorLocked(!inspectorLocked_);
+                event.handled = true;
+                event.StopPropagation();
+            });
+        }
+    }
     if (group.tabs.size() < 2) return;
     const auto addArrow = [&](int step) {
         const auto arrow = document_.CreateElement(UiElementKind::Button);
@@ -163,10 +184,40 @@ void EditorShell::LayoutTabBar(GroupView& group)
 {
     const UiRect rect = group.rect;
     UiStyle bar = AbsoluteStyle(rect.x, rect.y, rect.width, kTabHeight);
-    bar.background = UiInk(flare::workspace::Header);
+    bar.background = UiInk(flare::palette::workspace::Header);
     bar.overflow = UiOverflow::Hidden;
     document_.SetStyle(group.tabBar, bar);
-    const auto metrics = MeasureTabStrip(group.widths, rect.width);
+    for (std::size_t i = 0; i < group.tabs.size() && i < group.widths.size(); ++i)
+    {
+        if (group.tabs[i] == EditorPanelId::Viewport && i < group.tabButtons.size())
+        {
+            const std::string vpLabel = PanelLabel(EditorPanelId::Viewport) + (dirty_ ? " *" : "");
+            if (document_.Text(group.tabButtons[i]) != vpLabel)
+                document_.SetText(group.tabButtons[i], vpLabel);
+            group.widths[i] = TabWidth(vpLabel);
+        }
+    }
+    const bool showLock = group.lockButton.IsValid() && group.active == EditorPanelId::Inspector && rect.width > 120.0f;
+    if (group.lockButton.IsValid())
+    {
+        document_.SetVisible(group.lockButton, showLock);
+        if (showLock)
+        {
+            auto ls = ButtonStyle(rect.width - 25.0f, 3.0f, 21.0f, kTabHeight - 6.0f,
+                                  inspectorLocked_ ? UiInk(flare::palette::workspace::Selection)
+                                                   : UiInk(flare::palette::workspace::Field, 0.72f));
+            ls.cornerRadius = 3.5f;
+            ls.borderWidth = 1.0f;
+            ls.borderColor = inspectorLocked_ ? UiInk(flare::palette::workspace::Focus) : UiInk(flare::palette::workspace::Divider);
+            ls.color = inspectorLocked_ ? UiInk(flare::palette::Heading) : kMuted;
+            ls.fontSize = 11.0f;
+            ls.padding = {3.5f, 0.0f, 0.0f, 0.0f};
+            document_.SetStyle(group.lockButton, ls);
+            document_.SetText(group.lockButton, inspectorLocked_ ? "🔒" : "🔓");
+        }
+    }
+    const float availTabW = showLock ? std::max(40.0f, rect.width - 28.0f) : rect.width;
+    const auto metrics = MeasureTabStrip(group.widths, availTabW);
     float x = 0;
     for (std::size_t i = 0; i < group.tabButtons.size(); ++i)
     {
@@ -181,7 +232,7 @@ void EditorShell::LayoutTabBar(GroupView& group)
         tab.width = UiLength::Px(width);
         tab.padding.right = active ? 20.0f : 5.0f;
         const bool hovered = hoveredChrome_ == group.tabButtons[i] || hoveredChrome_ == group.closeButtons[i];
-        tab.background = hovered && !tabDragging_ ? UiInk(flare::workspace::Hover) :
+        tab.background = hovered && !tabDragging_ ? UiInk(flare::palette::workspace::Hover) :
                          active ? kContent : bar.background;
         tab.color = active ? kText : kMuted;
         document_.SetStyle(group.tabButtons[i], tab);
@@ -189,7 +240,7 @@ void EditorShell::LayoutTabBar(GroupView& group)
         {
             auto close = document_.Style(group.closeButtons[i]);
             close.left = UiLength::Px(x + width - 18.0f);
-            close.color = hoveredChrome_ == group.closeButtons[i] ? UiInk(flare::Heading) : kMuted;
+            close.color = hoveredChrome_ == group.closeButtons[i] ? UiInk(flare::palette::Heading) : kMuted;
             document_.SetStyle(group.closeButtons[i], close);
             auto line = document_.Style(group.focusLine);
             line.left = UiLength::Px(x);
@@ -274,7 +325,7 @@ void EditorShell::UpdateDockRects()
             const float stroke = highlighted ? 2.0f : 1.0f;
             auto style = horizontal ? AbsoluteStyle(second.x - stroke * .5f, rect.y, stroke, rect.height)
                                     : AbsoluteStyle(rect.x, second.y - stroke * .5f, rect.width, stroke);
-            style.background = highlighted ? UiInk(flare::workspace::Focus) : kBorder;
+            style.background = highlighted ? UiInk(flare::palette::workspace::Focus) : kBorder;
             style.pointerEvents = UiPointerEvents::None;
             document_.SetStyle(handle.line, style);
             document_.SetVisible(handle.line, highlighted && !(gameMaximized_ && surface == 0));
@@ -390,7 +441,7 @@ void EditorShell::UpdatePanelContentRects()
                 const float lw = std::min(std::max(80.0f, gw - 16.0f), MeasuredWidth(label, 13.0f) + 24.0f);
                 auto ps = ButtonStyle(std::max(8.0f, (gw - lw) * 0.5f),
                                       std::max(8.0f, (gameContentH - 28.0f) * 0.5f),
-                                      lw, 28.0f, UiInk(flare::workspace::Header, 0.75f));
+                                      lw, 28.0f, UiInk(flare::palette::workspace::Header, 0.75f));
                 ps.cornerRadius = 6.0f;
                 ps.borderWidth = 1.0f;
                 ps.borderColor = kBorder;
@@ -437,10 +488,10 @@ void EditorShell::UpdatePanelContentRects()
             style.top = UiLength::Px(1.0f);
             style.width = UiLength::Px(44.0f);
             style.height = UiLength::Px(22.0f);
-            style.background = grid ? UiInk(flare::workspace::Selection) : kSurfaceRaised;
+            style.background = grid ? UiInk(flare::palette::workspace::Selection) : kSurfaceRaised;
             style.borderWidth = 1.0f;
-            style.borderColor = grid ? UiInk(flare::workspace::Focus) : kBorder;
-            style.color = grid ? UiInk(flare::Gold) : kText;
+            style.borderColor = grid ? UiInk(flare::palette::workspace::Focus) : kBorder;
+            style.color = grid ? UiInk(flare::palette::Gold) : kText;
             document_.SetText(assetsViewToggleElement_, viewLabel);
             document_.SetStyle(assetsViewToggleElement_, style);
         }
@@ -467,9 +518,9 @@ void EditorShell::UpdatePanelContentRects()
             style.top = UiLength::Px(1.0f);
             style.width = UiLength::Px(60.0f);
             style.height = UiLength::Px(22.0f);
-            style.background = !tf.empty() ? UiInk(flare::workspace::Selection) : kSurfaceRaised;
+            style.background = !tf.empty() ? UiInk(flare::palette::workspace::Selection) : kSurfaceRaised;
             style.borderWidth = 1.0f;
-            style.borderColor = !tf.empty() ? UiInk(flare::workspace::Focus) : kBorder;
+            style.borderColor = !tf.empty() ? UiInk(flare::palette::workspace::Focus) : kBorder;
             document_.SetText(assetsTypeElement_, typeLabel);
             document_.SetStyle(assetsTypeElement_, style);
         }
@@ -479,7 +530,7 @@ void EditorShell::UpdatePanelContentRects()
         UiStyle style = document_.Style(assetsFilterElement_);
         const bool focused = dispatcher_.Focus() == assetsFilterElement_;
         style.borderWidth = 1;
-        style.borderColor = focused ? UiInk(flare::workspace::Focus) : kBorder;
+        style.borderColor = focused ? UiInk(flare::palette::workspace::Focus) : kBorder;
         const float filterLeft = showCreateBtn ? 28.0f : 3.0f;
         const float reserveRight = showViewToggle ? 164.0f : (showTypeFilter ? 115.0f : 52.0f);
         style.left = UiLength::Px(filterLeft);
@@ -961,4 +1012,4 @@ void EditorShell::EndSplitter(bool commit)
         dispatcher_.ReleasePointerCapture();
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

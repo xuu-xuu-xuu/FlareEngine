@@ -8,7 +8,7 @@
 #include <string>
 #include <thread>
 
-namespace se
+namespace flare
 {
 struct ExportJobRequest
 {

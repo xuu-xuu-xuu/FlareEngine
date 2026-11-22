@@ -6,7 +6,7 @@
 #include <span>
 #include <string_view>
 
-namespace se
+namespace flare
 {
 // G13：轻量 Frame Graph。
 // 每帧 Reset 后按声明顺序登记 Pass 与资源读写；Compile 负责校验、剔除、拓扑排序、

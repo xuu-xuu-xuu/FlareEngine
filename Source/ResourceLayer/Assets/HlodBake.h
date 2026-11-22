@@ -8,7 +8,7 @@
 #include <vector>
 #include <stop_token>
 
-namespace se
+namespace flare
 {
 // G05.09：HLOD 64 m 单元。实例按世界包围盒中心落入 floor(x/cell)、floor(z/cell) 的唯一单元，
 // 单元内再按材质分组，烘焙成世界空间的合并网格（每个实例只进一个单元、一个材质组）。

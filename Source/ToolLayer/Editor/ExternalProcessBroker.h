@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // 监督者在内部任务 Job 外处理用户显式启动；每次运行使用独立目录和令牌。
 class ExternalProcessBroker

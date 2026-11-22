@@ -1,7 +1,7 @@
 #include "PhysicsDebugDraw.h"
 #include <cmath>
 
-namespace se
+namespace flare
 {
 bool BuildDebugSegmentTransform(const DebugLine& line,float width,Mat4& output)
 {

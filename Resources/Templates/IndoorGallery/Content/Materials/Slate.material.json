@@ -1,5 +1,5 @@
 {
-  "type": "SelfEngine.Material",
+  "type": "FlareEngine.Material",
   "version": 1,
   "name": "抛光玄武岩",
   "baseColor": [

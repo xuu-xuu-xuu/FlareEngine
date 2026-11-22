@@ -2,9 +2,9 @@
 #include "DiffuseProbeBake.h"
 #include <optional>
 
-namespace se
+namespace flare
 {
-inline constexpr const char* DiffuseProbeCookerVersion="SelfEngine.DiffuseProbe.1";
+inline constexpr const char* DiffuseProbeCookerVersion="FlareEngine.DiffuseProbe.1";
 struct DiffuseProbeSource
 {
     std::string path,sha256; // 逻辑根下的相对 UTF-8 路径；绝不保存机器绝对路径。

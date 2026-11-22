@@ -9,7 +9,7 @@
 #include <map>
 #include <string>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -82,18 +82,26 @@ void CollectNavigationSceneGeometry(
     for (const EntityHandle entity : world.Entities())
     {
         if (!world.IsEnabled(entity)) continue;
-        // 排除动态角色与导航代理本身，仅将静态环境几何体与静态实心碰撞体计入烘焙源。
-        if (world.FindComponent(entity, NavigationAgentComponent::TypeId)
-            || world.FindComponent(entity, CharacterSettingsComponent::TypeId))
+        const EntityRecord* rec = world.Get(entity);
+        if (rec && (rec->staticFlags & EntityStaticFlags::Explicit) != 0)
         {
-            continue;
+            if ((rec->staticFlags & EntityStaticFlags::Navigation) == 0) continue;
         }
-        if (const auto bodyComp = world.FindComponent(entity, PhysicsBodyComponent::TypeId))
+        else
         {
-            if (world.GetComponent(bodyComp)->Active())
+            // 排除动态角色与导航代理本身，仅将静态环境几何体与静态实心碰撞体计入烘焙源。
+            if (world.FindComponent(entity, NavigationAgentComponent::TypeId)
+                || world.FindComponent(entity, CharacterSettingsComponent::TypeId))
             {
-                const float mass = std::get<float>(FeatureValue(world, entity, "body.mass"));
-                if (mass > 0.0f) continue;
+                continue;
+            }
+            if (const auto bodyComp = world.FindComponent(entity, PhysicsBodyComponent::TypeId))
+            {
+                if (world.GetComponent(bodyComp)->Active())
+                {
+                    const float mass = std::get<float>(FeatureValue(world, entity, "body.mass"));
+                    if (mass > 0.0f) continue;
+                }
             }
         }
 
@@ -534,4 +542,4 @@ NavPathStatus SceneNavigation::AgentStatus(StableEntityId entityId) const noexce
     const auto it = agents_.find(entityId);
     return it != agents_.end() ? it->second.status : NavPathStatus::Unreachable;
 }
-} // namespace se
+} // namespace flare

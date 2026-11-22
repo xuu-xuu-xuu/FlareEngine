@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 namespace
 {
@@ -834,4 +834,4 @@ const std::vector<std::string>& UiTabBar::Tabs() const noexcept
     return tabs_;
 }
 
-} // namespace se::ui
+} // namespace flare::ui

@@ -13,16 +13,16 @@ namespace
 {
 struct alignas(256) Parameters
 {
-    se::VisibilityFrustum frustum;                  // 0..95
+    flare::VisibilityFrustum frustum;                  // 0..95
     UINT count,capacity,indexCount,reserved=0;      // 96..111
-    se::Mat4 clipFromWorld;                         // 112..175
+    flare::Mat4 clipFromWorld;                         // 112..175
     float screenWidth,screenHeight,depthBias,mipCount; // 176..191（mipCount 也以 float 写入 cbuffer）
     UINT occlusionEnabled;UINT occlusionPadding[15]{};      // 192..255
 };
 static_assert(sizeof(Parameters)==256&&offsetof(Parameters,count)==96);
 static_assert(offsetof(Parameters,clipFromWorld)==112&&offsetof(Parameters,screenWidth)==176
     &&offsetof(Parameters,occlusionEnabled)==192);
-static_assert(sizeof(D3D12_DRAW_INDEXED_ARGUMENTS)==20&&se::rhi::InstanceGpuStride==240);
+static_assert(sizeof(D3D12_DRAW_INDEXED_ARGUMENTS)==20&&flare::rhi::InstanceGpuStride==240);
 UINT Blocks(UINT count){return std::max(1u,(count+63)/64);}
 D3D12_RESOURCE_DESC Buffer(UINT64 bytes)
 {
@@ -36,7 +36,7 @@ bool ValidOcclusion(const D3D12IndirectOcclusion& occlusion)
 {
     return occlusion.heap&&occlusion.srv.ptr&&occlusion.width&&occlusion.height
         &&occlusion.width<=8192&&occlusion.height<=8192&&occlusion.mipCount>=1&&occlusion.mipCount<=16
-        &&se::IsFinite(occlusion.clipFromWorld)&&std::isfinite(occlusion.depthBias)
+        &&flare::IsFinite(occlusion.clipFromWorld)&&std::isfinite(occlusion.depthBias)
         &&occlusion.depthBias>=0&&occlusion.depthBias<=0.1f;
 }
 }
@@ -75,34 +75,34 @@ HRESULT D3D12Indirect::Initialize(D3D12Context& context,const std::filesystem::p
 HRESULT D3D12Indirect::CreateOutput(UINT inputCapacity,UINT outputCapacity,D3D12IndirectOutput& output) const
 {
     if(!device_)return E_UNEXPECTED;
-    if(inputCapacity>se::MaximumVisibilityItems||outputCapacity>se::MaximumVisibilityItems)return E_INVALIDARG;
+    if(inputCapacity>flare::MaximumVisibilityItems||outputCapacity>flare::MaximumVisibilityItems)return E_INVALIDARG;
     D3D12IndirectOutput next;next.inputCapacity=inputCapacity;next.outputCapacity=outputCapacity;
     auto result=memory_->Create(Buffer(UINT64{std::max(1u,inputCapacity)}*4),D3D12_RESOURCE_STATE_COMMON,nullptr,next.localOffsets,"Indirect.LocalOffsets");if(FAILED(result))return result;
     result=memory_->Create(Buffer(UINT64{Blocks(inputCapacity)}*4),D3D12_RESOURCE_STATE_COMMON,nullptr,next.blockOffsets,"Indirect.BlockOffsets");if(FAILED(result))return result;
-    result=memory_->Create(Buffer(UINT64{outputCapacity}*se::rhi::InstanceGpuStride+8),D3D12_RESOURCE_STATE_COMMON,nullptr,next.instances,"Indirect.Instances");if(FAILED(result))return result;
+    result=memory_->Create(Buffer(UINT64{outputCapacity}*flare::rhi::InstanceGpuStride+8),D3D12_RESOURCE_STATE_COMMON,nullptr,next.instances,"Indirect.Instances");if(FAILED(result))return result;
     result=memory_->Create(Buffer(argumentBytes),D3D12_RESOURCE_STATE_COMMON,nullptr,next.arguments,"Indirect.Arguments");if(FAILED(result))return result;
     output=std::move(next);return S_OK;
 }
-HRESULT D3D12Indirect::Prepare(D3D12UploadArena& arena,std::span<const se::VisibilityItem> items,const se::VisibilityFrustum& frustum,
+HRESULT D3D12Indirect::Prepare(D3D12UploadArena& arena,std::span<const flare::VisibilityItem> items,const flare::VisibilityFrustum& frustum,
     D3D12UploadSlice instances,UINT indexCount,UINT capacity,D3D12IndirectPrepared& output,
     const D3D12IndirectOcclusion* occlusion) const
 {
     if(!device_)return E_UNEXPECTED;
-    if(items.size()>se::MaximumVisibilityItems||capacity>se::MaximumVisibilityItems||!indexCount||!se::ValidVisibilityFrustum(frustum)
+    if(items.size()>flare::MaximumVisibilityItems||capacity>flare::MaximumVisibilityItems||!indexCount||!flare::ValidVisibilityFrustum(frustum)
         ||(occlusion&&!ValidOcclusion(*occlusion))||(occlusion&&capacity<items.size()))return E_INVALIDARG;
-    const auto bytes=UINT64{items.size()}*se::rhi::InstanceGpuStride;
+    const auto bytes=UINT64{items.size()}*flare::rhi::InstanceGpuStride;
     if(bytes&&(!instances.resource||instances.size<bytes||instances.offset%4||!HasBytes(instances.resource,instances.offset)
         ||instances.resource->GetDesc().Width-instances.offset<bytes))return E_INVALIDARG;
     D3D12IndirectPrepared next;next.count=static_cast<UINT>(items.size());next.capacity=capacity;next.instances=instances;
     next.occlusion=occlusion!=nullptr;
     if(!bytes)
     {
-        const auto result=arena.Allocate(se::rhi::InstanceGpuStride,16,next.instances);if(FAILED(result))return result;
-        std::memset(next.instances.cpu,0,se::rhi::InstanceGpuStride);
+        const auto result=arena.Allocate(flare::rhi::InstanceGpuStride,16,next.instances);if(FAILED(result))return result;
+        std::memset(next.instances.cpu,0,flare::rhi::InstanceGpuStride);
     }
-    auto result=arena.Allocate(std::max<std::size_t>(sizeof(se::VisibilityItem),items.size_bytes()),16,next.bounds);if(FAILED(result))return result;
+    auto result=arena.Allocate(std::max<std::size_t>(sizeof(flare::VisibilityItem),items.size_bytes()),16,next.bounds);if(FAILED(result))return result;
     result=arena.Allocate(sizeof(Parameters),256,next.constants);if(FAILED(result))return result;
-    if(!items.empty())std::memcpy(next.bounds.cpu,items.data(),items.size_bytes());else std::memset(next.bounds.cpu,0,sizeof(se::VisibilityItem));
+    if(!items.empty())std::memcpy(next.bounds.cpu,items.data(),items.size_bytes());else std::memset(next.bounds.cpu,0,sizeof(flare::VisibilityItem));
     Parameters parameters{};parameters.frustum=frustum;parameters.count=next.count;parameters.capacity=capacity;parameters.indexCount=indexCount;
     if(occlusion)
     {
@@ -118,9 +118,9 @@ HRESULT D3D12Indirect::Record(ID3D12GraphicsCommandList& commands,D3D12StateReco
     const D3D12IndirectOcclusion* occlusion) const
 {
     if(!device_)return E_UNEXPECTED;
-    if(!p.bounds.resource||!p.instances.resource||!p.constants.resource||o.inputCapacity>se::MaximumVisibilityItems||o.outputCapacity>se::MaximumVisibilityItems
+    if(!p.bounds.resource||!p.instances.resource||!p.constants.resource||o.inputCapacity>flare::MaximumVisibilityItems||o.outputCapacity>flare::MaximumVisibilityItems
         ||p.count>o.inputCapacity||p.capacity>o.outputCapacity||!HasBytes(o.localOffsets.Get(),UINT64{std::max(1u,o.inputCapacity)}*4)
-        ||!HasBytes(o.blockOffsets.Get(),UINT64{Blocks(o.inputCapacity)}*4)||!HasBytes(o.instances.Get(),UINT64{o.outputCapacity}*se::rhi::InstanceGpuStride+8)
+        ||!HasBytes(o.blockOffsets.Get(),UINT64{Blocks(o.inputCapacity)}*4)||!HasBytes(o.instances.Get(),UINT64{o.outputCapacity}*flare::rhi::InstanceGpuStride+8)
         ||!HasBytes(o.arguments.Get(),argumentBytes)||p.occlusion!=(occlusion!=nullptr)||(occlusion&&!ValidOcclusion(*occlusion)))return E_INVALIDARG;
     if(timestamps.heap)
     {

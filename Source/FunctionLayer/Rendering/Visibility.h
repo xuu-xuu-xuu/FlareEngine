@@ -4,7 +4,7 @@
 #include "StaticModelRender.h"
 #include <unordered_map>
 
-namespace se
+namespace flare
 {
 class WorldBoundsCache
 {

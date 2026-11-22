@@ -2,7 +2,7 @@
 
 #include "PlatformLayer/Graphics/Rhi.h"
 
-namespace se
+namespace flare
 {
 struct FrameData;
 // 场景渲染路径只描述需要的资源与 Pass 组合，不解释编辑器面板/UI。

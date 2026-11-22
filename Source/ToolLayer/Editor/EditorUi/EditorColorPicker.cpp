@@ -8,7 +8,7 @@
 #include <limits>
 #include <sstream>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 namespace
 {
@@ -17,7 +17,7 @@ UiStyle Box(float x,float y,float width,float height,UiColor background={0,0,0,0
 {
     UiStyle style;style.position=UiPosition::Absolute;
     style.left=UiLength::Px(x);style.top=UiLength::Px(y);style.width=UiLength::Px(width);style.height=UiLength::Px(height);
-    style.background=background;style.color=UiInk(flare::Heading);style.fontSize=13;
+    style.background=background;style.color=UiInk(flare::palette::Heading);style.fontSize=13;
     style.textFlow=UiTextFlow::SingleLineEllipsis;style.padding={4,0,4,0};return style;
 }
 float Linear(float v){return v<=.04045f?v/12.92f:std::pow((v+.055f)/1.055f,2.4f);}
@@ -83,7 +83,7 @@ void EditorShell::OpenInspectorColor(std::size_t index)
         picker.channelLabels[i]=make(picker.panel,UiElementKind::Label);document_.SetText(picker.channelLabels[i],std::string(1,"RGB"[i]));
         picker.channels[i]=make(picker.panel,UiElementKind::TextEdit);
         picker.channelSelections[i]=make(picker.channels[i]);
-        picker.editors[i]=std::make_unique<UiTextEdit>(document_,picker.channels[i],text_);
+        picker.editors[i]=std::make_unique<UiTextEdit>(document_,picker.channels[i],text_,PlatformServices());
         dispatcher_.AddHandler(picker.channels[i],UiEventType::PointerDown,[this,i](UiInputEvent& event){
             if(!inspectorColor_||event.button!=0)return;
             inspectorColor_->editors[i]->Select(0,std::numeric_limits<std::uint32_t>::max());event.handled=true;
@@ -122,7 +122,7 @@ void EditorShell::LayoutInspectorColor()
     const float left=std::clamp(p.anchor.x-width-8,bounds.x+8,std::max(bounds.x+8,bounds.x+bounds.width-width-8));
     const float top=std::clamp(p.anchor.y-24,bounds.y+8,std::max(bounds.y+8,bounds.y+bounds.height-height-8));
     document_.SetStyle(p.backdrop,Box(0,0,bounds.width,bounds.height));
-    auto panel=Box(left-bounds.x,top-bounds.y,width,height,UiInk(flare::workspace::Panel));panel.borderWidth=1;panel.borderColor=UiInk(flare::workspace::Divider);
+    auto panel=Box(left-bounds.x,top-bounds.y,width,height,UiInk(flare::palette::workspace::Panel));panel.borderWidth=1;panel.borderColor=UiInk(flare::palette::workspace::Divider);
     document_.SetStyle(p.panel,panel);document_.SetStyle(p.title,Box(10,4,width-20,24));
     const float inner=width-24,svHeight=height-176;
     document_.SetStyle(p.square,Box(12,32,inner,svHeight));document_.SetStyle(p.hueBar,Box(12,svHeight+40,inner,16));
@@ -140,20 +140,20 @@ void EditorShell::LayoutInspectorColor()
     caption(p.previousLabel,p.original);caption(p.previewLabel,p.current);
     for(int i=0;i<3;++i){const float x=12+i*inner/3;auto label=Box(x,svHeight+94,14,22);label.padding={};document_.SetStyle(p.channelLabels[i],label);
         const bool focused=dispatcher_.Focus()==p.channels[i];
-        auto style=Box(x+14,svHeight+94,inner/3-18,22,UiInk(flare::workspace::Field));style.overflow=UiOverflow::Hidden;
-        style.borderWidth=1;style.borderColor=UiInk(focused?flare::workspace::Focus:flare::workspace::Divider);document_.SetStyle(p.channels[i],style);
+        auto style=Box(x+14,svHeight+94,inner/3-18,22,UiInk(flare::palette::workspace::Field));style.overflow=UiOverflow::Hidden;
+        style.borderWidth=1;style.borderColor=UiInk(focused?flare::palette::workspace::Focus:flare::palette::workspace::Divider);document_.SetStyle(p.channels[i],style);
         document_.SetVisible(p.channelSelections[i],focused);
         if(focused)
         {
             const auto raw=p.editors[i]->Text();const auto caret=p.editors[i]->Caret(),anchor=p.editors[i]->Anchor();
             const auto first=std::min(caret,anchor),last=std::max(caret,anchor);
             const float a=text_->CaretRect(raw,13,100000,false,first).x,b=text_->CaretRect(raw,13,100000,false,last).x;
-            auto selection=Box(4+a,3,std::max(1.f,b-a),16,first==last?UiInk(flare::Heading):UiInk(flare::workspace::Selection));
+            auto selection=Box(4+a,3,std::max(1.f,b-a),16,first==last?UiInk(flare::palette::Heading):UiInk(flare::palette::workspace::Selection));
             selection.pointerEvents=UiPointerEvents::None;document_.SetStyle(p.channelSelections[i],selection);
         }
     }
-    document_.SetStyle(p.apply,Box(width-176,height-36,78,24,UiInk(flare::workspace::Selection)));
-    document_.SetStyle(p.cancel,Box(width-90,height-36,78,24,UiInk(flare::workspace::Header)));
+    document_.SetStyle(p.apply,Box(width-176,height-36,78,24,UiInk(flare::palette::workspace::Selection)));
+    document_.SetStyle(p.cancel,Box(width-90,height-36,78,24,UiInk(flare::palette::workspace::Header)));
     auto cursor=Box(p.saturation*inner-4,(1-p.value)*svHeight-4,8,8);cursor.borderWidth=1;cursor.borderColor={0,0,0,1};cursor.pointerEvents=UiPointerEvents::None;document_.SetStyle(p.cursor,cursor);
     auto inside=Box(1,1,6,6);inside.borderWidth=1;inside.borderColor={1,1,1,1};inside.pointerEvents=UiPointerEvents::None;document_.SetStyle(p.cursorInner,inside);
     cursor=Box(p.hue*inner-2,-2,4,20);cursor.borderWidth=1;cursor.borderColor={1,1,1,1};cursor.pointerEvents=UiPointerEvents::None;document_.SetStyle(p.hueCursor,cursor);

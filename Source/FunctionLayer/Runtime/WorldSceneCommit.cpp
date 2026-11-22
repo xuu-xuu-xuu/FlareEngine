@@ -1,7 +1,7 @@
 #include "World.h"
 #include <algorithm>
 
-namespace se
+namespace flare
 {
 // 只在场景主线程边界调用。先准备容量和映射，再停用旧成员；保留成员不重新发放身份。
 bool World::CommitScene(World& candidate,std::span<const EntityHandle> remove,std::span<const StableEntityId> retiredIds,std::vector<EntityHandle>& added,const std::function<void()>& beforeRetire)

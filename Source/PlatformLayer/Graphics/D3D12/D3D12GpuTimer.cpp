@@ -15,8 +15,8 @@ bool ReadD3D12GpuTimings(D3D12Presentation& p,const Localization& text)
     for(auto& frame:p.frames)
     {
         if(!frame.timestampsPending||!frame.fenceValue||frame.fenceValue>completed)continue;
-        se::CpuScope scope(p.cpuProfiler,"CPU.QueryRead");
-        se::rhi::GpuTiming sample;sample.sourceFrame=frame.timestampFrame;sample.submission=frame.timestampSubmission;
+        flare::CpuScope scope(p.cpuProfiler,"CPU.QueryRead");
+        flare::rhi::GpuTiming sample;sample.sourceFrame=frame.timestampFrame;sample.submission=frame.timestampSubmission;
         sample.frequency=p.timestampFrequency;sample.draws=frame.timestampDraws;
         const SIZE_T baseBytes=frame.timestampPost?sizeof(UINT64)*(frame.timestampShadow?21:19):frame.timestampShadow?sizeof(UINT64)*11:frame.timestampForward?sizeof(UINT64)*9:sizeof(sample.ticks);
         const SIZE_T bytes=frame.timestampHeterogeneousHiZ?sizeof(UINT64)*34:frame.timestampHeterogeneous?sizeof(UINT64)*31:
@@ -82,7 +82,7 @@ bool ReadD3D12GpuTimings(D3D12Presentation& p,const Localization& text)
         {Log(LogLevel::Error,text.GetText("D3D12.InvalidTimestamps"));return false;}
         sample.frameMilliseconds=double(sample.ticks[3]-sample.ticks[0])*1000.0/double(sample.frequency);
         sample.geometryMilliseconds=double(sample.ticks[2]-sample.ticks[1])*1000.0/double(sample.frequency);
-        const auto position=std::upper_bound(p.timings.begin(),p.timings.end(),sample.submission,[](auto submission,const se::rhi::GpuTiming& value){return submission<value.submission;});
+        const auto position=std::upper_bound(p.timings.begin(),p.timings.end(),sample.submission,[](auto submission,const flare::rhi::GpuTiming& value){return submission<value.submission;});
         p.timings.insert(position,sample);frame.timestampsPending=false;
         if(p.timings.size()>6000){p.timings.pop_front();++p.droppedTimingSamples;}
     }

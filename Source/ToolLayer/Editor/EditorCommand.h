@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace se
+namespace flare
 {
 enum class EditorCommandResult { Succeeded, Failed, Rejected, Deferred };
 struct EditorCommandOutcome

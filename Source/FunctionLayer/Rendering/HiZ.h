@@ -4,7 +4,7 @@
 #include <span>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G06：CPU 参考 Hi-Z。深度为 D3D 约定（0=近，1=远），2×2 max 归约，
 // 遮挡测试只判“确定被遮挡”，任何跨近平面、屏幕外或数值异常都保留可见。

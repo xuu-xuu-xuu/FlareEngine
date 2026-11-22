@@ -6,7 +6,7 @@
 #include <thread>
 #include <exception>
 
-namespace se
+namespace flare
 {
 using EventTypeId=std::uint64_t;
 using EventSubscriptionId=std::uint64_t;

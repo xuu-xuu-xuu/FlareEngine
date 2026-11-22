@@ -1,6 +1,6 @@
 #include "MaterialEditSession.h"
 
-namespace se
+namespace flare
 {
 namespace
 {

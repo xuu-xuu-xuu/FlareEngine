@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-namespace se::rhi
+namespace flare::rhi
 {
 inline constexpr std::uint32_t MaximumSceneTextureDimension=16384;
 

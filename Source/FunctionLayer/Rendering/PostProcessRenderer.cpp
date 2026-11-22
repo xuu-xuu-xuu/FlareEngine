@@ -2,7 +2,7 @@
 #include "ResourceLayer/Assets/AssetIO.h"
 #include <algorithm>
 
-namespace se
+namespace flare
 {
 bool PostProcessRenderer::Initialize(rhi::Device& device,const std::filesystem::path& shaders,bool acesToneMap)
 {

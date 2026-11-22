@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace se
+namespace flare
 {
 struct BodyHandle
 {
@@ -63,4 +63,4 @@ private:
     std::unordered_map<PairKey, TriggerOverlap, PairHash> active_;
     std::vector<TriggerPairEvent> events_;
 };
-} // namespace se
+} // namespace flare

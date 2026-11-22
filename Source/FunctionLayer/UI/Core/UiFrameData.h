@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace se::ui
+namespace flare::ui
 {
 
 enum class UiLayerRole : std::uint8_t
@@ -20,4 +20,4 @@ struct UiFrameData
     UiLayerRole role = UiLayerRole::Editor;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

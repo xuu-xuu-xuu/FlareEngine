@@ -4,7 +4,7 @@
 
 ## AssetImportService
 
-[`se::AssetImportService`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/AssetImportService.h#L35) 提供静态导入接口。[Plan()](#plan) 生成计划，[ExecuteRegistered()](#executeregistered) 接收该计划和项目的 [AssetStore](models.md#assetstore)。[查看类定义](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/AssetImportService.h#L35)
+[`flare::AssetImportService`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/AssetImportService.h#L35) 提供静态导入接口。[Plan()](#plan) 生成计划，[ExecuteRegistered()](#executeregistered) 接收该计划和项目的 [AssetStore](models.md#assetstore)。[查看类定义](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/AssetImportService.h#L35)
 
 ### Plan
 

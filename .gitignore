@@ -70,7 +70,7 @@ CMakeUserPresets.json
 !/Source/ToolLayer/Tools/Project.cpp
 !/Source/ToolLayer/Tools/Project.h
 !/Source/ToolLayer/Tools/ProjectTool.cpp
-!/Source/ToolLayer/Tools/SelfEngineEditor.cpp
+!/Source/ToolLayer/Tools/FlareEditor.cpp
 !/Source/ToolLayer/Tools/ShaderBuilder.cpp
 !/Source/ToolLayer/Tools/NavigationCooker.cpp
 !/Source/ToolLayer/Tools/RenderingCooker.cpp

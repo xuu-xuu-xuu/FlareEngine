@@ -2,11 +2,11 @@
     [ValidateSet('Debug','Release')][string]$Configuration='Release',
     [string]$Name='',
     [string]$OutputDirectory='',
-    [string]$SelfEngineRoot=''
+    [string]$FlareEngineRoot=''
 )
 $ErrorActionPreference='Stop'
 if([Console]::IsOutputRedirected){[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)}
-$root=$(if($SelfEngineRoot){[IO.Path]::GetFullPath($SelfEngineRoot)}else{(Resolve-Path (Join-Path $PSScriptRoot '..')).Path}).TrimEnd('\','/')
+$root=$(if($FlareEngineRoot){[IO.Path]::GetFullPath($FlareEngineRoot)}else{(Resolve-Path (Join-Path $PSScriptRoot '..')).Path}).TrimEnd('\','/')
 Set-Location -LiteralPath $root
 . (Join-Path $PSScriptRoot 'SourceIdentity.ps1')
 . (Join-Path $PSScriptRoot 'NativeProgram.ps1')
@@ -86,7 +86,7 @@ try {
     CopyTree $runtimeOutput (Join-Path $stage 'Player')
     AddStep 'copy_managed_sdk'
     CopyFile (Join-Path $runtimeOutput 'FlareEngine.Managed.dll') (Join-Path $stage 'SDK/Managed/FlareEngine.Managed.dll')
-    CopyFile (Join-Path $runtimeOutput 'SelfEngine.Managed.dll') (Join-Path $stage 'SDK/Managed/SelfEngine.Managed.dll')
+    CopyFile (Join-Path $runtimeOutput 'FlareEngine.Managed.xml') (Join-Path $stage 'SDK/Managed/FlareEngine.Managed.xml')
     $sdkProps=@'
 <Project>
   <PropertyGroup>
@@ -104,10 +104,10 @@ try {
 '@
     $sdkTargets=@'
 <Project>
-  <!-- 旧源码模板与包内新模板都绑定当前包的同一 API，不重新构建引擎。 -->
+  <!-- 源码模板与包内模板都绑定当前包的同一 API，不重新构建引擎。 -->
   <ItemGroup>
-    <ProjectReference Remove="$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(FlareEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj;$(SelfEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(SelfEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj" />
-    <Reference Remove="FlareEngine.Managed;SelfEngine.Managed" />
+    <ProjectReference Remove="$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(FlareEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj" />
+    <Reference Remove="FlareEngine.Managed" />
     <Reference Include="FlareEngine.Managed">
       <HintPath>$(MSBuildThisFileDirectory)Managed/FlareEngine.Managed.dll</HintPath>
       <Private>false</Private>
@@ -121,8 +121,6 @@ try {
 '@
     [IO.File]::WriteAllText((Join-Path $stage 'SDK/FlareEngine.Scripts.props'),$sdkProps,[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $stage 'SDK/FlareEngine.Scripts.targets'),$sdkTargets,[Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText((Join-Path $stage 'SDK/SelfEngine.Scripts.props'),$sdkProps,[Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText((Join-Path $stage 'SDK/SelfEngine.Scripts.targets'),$sdkTargets,[Text.UTF8Encoding]::new($false))
     AddStep 'prepare_package_template'
     foreach($packageTemplateName in @('RenderingStudio','IndoorGallery')) {
     $template=Join-Path $stage ('Resources/Templates/'+$packageTemplateName)
@@ -215,14 +213,14 @@ exit $LASTEXITCODE
     $absolute=@(Get-ChildItem -LiteralPath $stage -File -Recurse | Where-Object {$_.Extension -in '.txt','.ps1','.json','.md','.cfg'} | Select-String -Pattern ([regex]::Escape($root)) -List)
     if($absolute.Count){throw ('Package text contains an absolute workspace path: '+$absolute[0].Path)}
     AddStep 'startup_check'
-    $savedLogDirectory=$env:SELFENGINE_LOG_DIRECTORY
+    $savedLogDirectory=$env:FLARE_LOG_DIRECTORY
     $savedStartupLocation=Get-Location
     try {
-        $env:SELFENGINE_LOG_DIRECTORY=$evidence
+        $env:FLARE_LOG_DIRECTORY=$evidence
         Set-Location -LiteralPath $env:TEMP
         # 只等待自检进程本身；Start-Process -Wait 可能一并等待继承作业中的驻留编译节点。
         $startupExit=Invoke-EngineProgram (Join-Path $stage 'FlareEditor.exe') @('--smoke-launcher','400','--no-ui-errors') (Join-Path $evidence 'startup_check.log')
-    } finally {Set-Location -LiteralPath $savedStartupLocation.Path;$env:SELFENGINE_LOG_DIRECTORY=$savedLogDirectory}
+    } finally {Set-Location -LiteralPath $savedStartupLocation.Path;$env:FLARE_LOG_DIRECTORY=$savedLogDirectory}
     if($startupExit -ne 0){throw ('Package startup check failed with exit code '+$startupExit)}
     AddStep 'write_manifest'
     $finalSource=Get-EngineSourceIdentity $root

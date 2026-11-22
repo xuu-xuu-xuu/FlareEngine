@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // 逐实体姿态结果。joints 是实体局部空间的蒙皮矩阵（jointWorld * inverseBind），
 // jointWorld 供世界挂点查询；两者都按资产的父序排列，只在本固定步内有效。

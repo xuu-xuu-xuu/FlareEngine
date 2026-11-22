@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 bool HlodStream::Load(const std::filesystem::path& path,std::string& error)
 {

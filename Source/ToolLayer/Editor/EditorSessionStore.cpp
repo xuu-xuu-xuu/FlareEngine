@@ -17,7 +17,7 @@
 #include <stdexcept>
 #include <string_view>
 
-namespace se
+namespace flare
 {
 namespace
 {

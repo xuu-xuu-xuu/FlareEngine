@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace se
+namespace flare
 {
 void HlodProxyCache::Configure(std::uint64_t budgetBytes,std::uint32_t uploadsPerFrame)
 {

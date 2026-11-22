@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::videoencoder
+namespace flare::videoencoder
 {
 namespace
 {
@@ -920,13 +920,13 @@ int RunSelftest(const std::filesystem::path& temporaryDirectory)
     return static_cast<int>(ExitCode::Ok);
 }
 } // namespace
-} // namespace se::videoencoder
+} // namespace flare::videoencoder
 
 int wmain(int argc, wchar_t** argv)
 {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
-    using namespace se::videoencoder;
+    using namespace flare::videoencoder;
 
     try
     {

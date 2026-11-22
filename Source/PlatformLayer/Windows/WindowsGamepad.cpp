@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <atomic>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -109,4 +109,4 @@ void PollWindowsGamepads(std::array<GamepadState, 4>& outStates) noexcept
         }
     }
 }
-} // namespace se
+} // namespace flare

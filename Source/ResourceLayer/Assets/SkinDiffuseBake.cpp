@@ -7,7 +7,7 @@
 #include <bit>
 #include <thread>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -111,7 +111,7 @@ bool EncodeSkinDiffuse(const SkinDiffuseLut& lut,std::vector<std::uint8_t>& outp
 {
     if(!ValidateSkinDiffuseLut(lut))return Invalid(d);std::vector<std::uint8_t> payload;payload.reserve(lut.pixels.size()*12);
     for(const auto p:lut.pixels)for(const auto v:{p.x,p.y,p.z})U32(payload,std::bit_cast<std::uint32_t>(v));
-    const auto header=Json{{"format","SelfEngine.SkinDiffuse"},{"schema",1},{"algorithm",SkinDiffuseCookerVersion},{"settings",SettingsJson(lut.settings)},
+    const auto header=Json{{"format","FlareEngine.SkinDiffuse"},{"schema",1},{"algorithm",SkinDiffuseCookerVersion},{"settings",SettingsJson(lut.settings)},
         {"profile",Profile()},{"mapping",mapping},{"layout",layout},{"maximum_curvature",SkinDiffuseMaximumCurvature},{"bake_key",lut.bakeKey},
         {"count",lut.pixels.size()},{"payload_bytes",payload.size()},{"payload_sha256",Sha256(payload)}}.dump();
     if(header.size()>MaximumHeader||header.size()+12+payload.size()>MaximumBytes)return Invalid(d,"size limit");
@@ -124,7 +124,7 @@ bool DecodeSkinDiffuse(std::span<const std::uint8_t> bytes,SkinDiffuseLut& outpu
     try
     {
         const auto h=Json::parse(bytes.begin()+12,bytes.begin()+12+length);
-        if(h.at("format")!="SelfEngine.SkinDiffuse"||h.at("schema")!=1||h.at("algorithm")!=SkinDiffuseCookerVersion){asset_io::Diagnostic(d,"SkinDiffuse.VersionUnsupported");return false;}
+        if(h.at("format")!="FlareEngine.SkinDiffuse"||h.at("schema")!=1||h.at("algorithm")!=SkinDiffuseCookerVersion){asset_io::Diagnostic(d,"SkinDiffuse.VersionUnsupported");return false;}
         SkinDiffuseLut result;const auto& s=h.at("settings");if(!Uint(s.at("width"),result.settings.width)||!Uint(s.at("height"),result.settings.height)||!Uint(s.at("samples"),result.settings.samples)||!ValidateSkinDiffuseSettings(result.settings))return Invalid(d,"settings");
         const auto count=std::size_t(result.settings.width)*result.settings.height,expected=count*12;
         if(h.at("mapping")!=mapping||h.at("layout")!=layout||h.at("profile")!=Profile()||h.at("maximum_curvature")!=SkinDiffuseMaximumCurvature

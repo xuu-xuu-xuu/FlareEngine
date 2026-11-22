@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G04：BC1/BC5 派生纹理烘焙。完整 mip 链一次压块，缓存键含源内容哈希、格式与编码器版本；
 // 磁盘 .sebc 只作跨进程缓存，读写失败回退到重新编码，不影响画面。

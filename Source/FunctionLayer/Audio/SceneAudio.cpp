@@ -6,7 +6,7 @@
 #include <cmath>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -363,4 +363,4 @@ bool ValidateSceneAudio(const World& world, std::string& error)
     }
     return true;
 }
-} // namespace se
+} // namespace flare

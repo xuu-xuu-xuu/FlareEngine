@@ -8,13 +8,13 @@ struct D3D12PreparedPipeline
     Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> pipeline;
     std::shared_ptr<const D3D12ShaderProgram> program;
-    se::rhi::DepthMode depth=se::rhi::DepthMode::Disabled;
-    se::rhi::BlendMode blend=se::rhi::BlendMode::Opaque;
-    se::rhi::ColorFormat colorFormat=se::rhi::ColorFormat::Rgba8Unorm;
+    flare::rhi::DepthMode depth=flare::rhi::DepthMode::Disabled;
+    flare::rhi::BlendMode blend=flare::rhi::BlendMode::Opaque;
+    flare::rhi::ColorFormat colorFormat=flare::rhi::ColorFormat::Rgba8Unorm;
     UINT materialRootParameter=UINT_MAX;
     UINT shadingFrameParameter=UINT_MAX,shadingMaterialParameter=UINT_MAX,shadingTexturesParameter=UINT_MAX;
     UINT localLightParameter=UINT_MAX;
-    se::MaterialAlphaMode alphaMode=se::MaterialAlphaMode::Opaque;
+    flare::MaterialAlphaMode alphaMode=flare::MaterialAlphaMode::Opaque;
     // 派生预绘/Equal PSO 复用实际 VS、root、光栅及输入布局；拥有 InputLayout 指针的存储。
     std::vector<D3D12_INPUT_ELEMENT_DESC> inputElements;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC description{};
@@ -35,7 +35,7 @@ public:
     ~D3D12PipelineCache();
     D3D12PipelineCache(const D3D12PipelineCache&)=delete;
     D3D12PipelineCache& operator=(const D3D12PipelineCache&)=delete;
-    std::shared_ptr<const D3D12PreparedPipeline> Prepare(const se::rhi::PipelineDescription& description,const Localization& text);
+    std::shared_ptr<const D3D12PreparedPipeline> Prepare(const flare::rhi::PipelineDescription& description,const Localization& text);
     D3D12PipelineCacheStatistics Stats() const;
 private:
     struct Impl;std::unique_ptr<Impl> impl_;

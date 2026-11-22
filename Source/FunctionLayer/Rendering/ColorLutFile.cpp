@@ -2,7 +2,7 @@
 #include <system_error>
 #include <utility>
 
-namespace se
+namespace flare
 {
 namespace
 {

@@ -95,28 +95,28 @@ public sealed unsafe partial class EngineSession
 }
 internal static unsafe partial class NativeMethods
 {
-    [LibraryImport(Library,EntryPoint="se_scene_set_callback")]
+    [LibraryImport(Library,EntryPoint="flare_scene_set_callback")]
     internal static partial int SetSceneCallback(ulong session,delegate* unmanaged[Cdecl]<ulong,ulong,ulong*,uint,ulong*,uint,nint,int> callback,nint context);
-    [LibraryImport(Library,EntryPoint="se_scene_create",StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library,EntryPoint="flare_scene_create",StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SceneCreate(ulong session,string name,uint length,out ulong scene);
-    [LibraryImport(Library,EntryPoint="se_scene_request_file",StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library,EntryPoint="flare_scene_request_file",StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SceneRequestFile(ulong session,ulong scene,string path,uint length,uint mode,ulong replacing,out ulong request);
-    [LibraryImport(Library,EntryPoint="se_scene_request_json",StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library,EntryPoint="flare_scene_request_json",StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SceneRequestJson(ulong session,ulong scene,string text,uint length,uint mode,ulong replacing,out ulong request);
-    [LibraryImport(Library,EntryPoint="se_scene_cancel")]
+    [LibraryImport(Library,EntryPoint="flare_scene_cancel")]
     internal static partial int SceneCancel(ulong session,ulong scene);
-    [LibraryImport(Library,EntryPoint="se_scene_unload")]
+    [LibraryImport(Library,EntryPoint="flare_scene_unload")]
     internal static partial int SceneUnload(ulong session,ulong scene);
-    [LibraryImport(Library,EntryPoint="se_scene_active")]
+    [LibraryImport(Library,EntryPoint="flare_scene_active")]
     internal static partial int SceneActive(ulong session,out ulong scene);
-    [LibraryImport(Library,EntryPoint="se_scene_of_entity")]
+    [LibraryImport(Library,EntryPoint="flare_scene_of_entity")]
     internal static partial int SceneOfEntity(ulong session,ulong entity,out ulong scene);
-    [LibraryImport(Library,EntryPoint="se_scene_get")]
+    [LibraryImport(Library,EntryPoint="flare_scene_get")]
     internal static partial int SceneGet(ulong session,ulong scene,byte* buffer,uint capacity,out uint required);
-    [LibraryImport(Library,EntryPoint="se_scene_stats")]
+    [LibraryImport(Library,EntryPoint="flare_scene_stats")]
     internal static partial int SceneStats(ulong session,byte* buffer,uint capacity,out uint required);
-    [LibraryImport(Library,EntryPoint="se_scene_create_entity",StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library,EntryPoint="flare_scene_create_entity",StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SceneCreateEntity(ulong session,ulong scene,string name,uint length,out ulong entity);
-    [LibraryImport(Library,EntryPoint="se_scene_callback_scope")]
+    [LibraryImport(Library,EntryPoint="flare_scene_callback_scope")]
     internal static partial int SceneCallbackScope(ulong session,ulong scene,out ulong previous);
 }

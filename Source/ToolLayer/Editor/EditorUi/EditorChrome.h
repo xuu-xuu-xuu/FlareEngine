@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 struct EditorMenuItem
@@ -48,4 +48,4 @@ private:
     std::string status_;
 };
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

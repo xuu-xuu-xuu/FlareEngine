@@ -4,7 +4,7 @@
 #include "ResourceLayer/Assets/Primitives.h"
 #include "CoreLayer/Spatial/BoundsIndex.h"
 #include <unordered_map>
-namespace se
+namespace flare
 {
 std::optional<CameraSnapshot> EditorViewportCamera::Snapshot(CameraViewport viewport,std::uint64_t frame) const
 {
@@ -15,7 +15,8 @@ std::optional<CameraSnapshot> EditorViewportCamera::Snapshot(CameraViewport view
 std::optional<Aabb> EditorEntityBounds(const World& world,AssetStore& assets,EntityHandle entity)
 {
     if(!world.IsAlive(entity)||!world.IsEnabled(entity))return {};
-    const auto* mesh=world.GetMesh(entity);
+    const auto meshComp=world.FindComponent(entity,ComponentTypes::Mesh);
+    const auto* mesh=(!meshComp||(world.GetComponent(meshComp)&&world.GetComponent(meshComp)->Enabled()))?world.GetMesh(entity):nullptr;
     Aabb local=mesh?Aabb{{-.5f,-.5f,-.5f},{.5f,.5f,.5f}}:Aabb{{-.2f,-.2f,-.2f},{.2f,.2f,.2f}};
     if(mesh&&!IsBuiltinMesh(mesh->meshAsset))
     {
@@ -120,6 +121,8 @@ std::optional<EditorSurfaceHit> IntersectEditorSceneSurface(
     std::unordered_map<AssetId, PickModel> models;
     for (const auto entity : candidates)
     {
+        const auto meshComp = world.FindComponent(entity, ComponentTypes::Mesh);
+        if (meshComp && (!world.GetComponent(meshComp) || !world.GetComponent(meshComp)->Enabled())) continue;
         const auto* mesh = world.GetMesh(entity);
         if (!mesh || !world.IsEnabled(entity)) continue;
         const Mat4 worldMatrix = world.GetWorldMatrix(entity);

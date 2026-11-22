@@ -4,7 +4,7 @@
 #include <span>
 #include <thread>
 
-namespace se
+namespace flare
 {
 class EventBus;
 inline constexpr std::uint64_t TODTimeChanged=19,TODSunrise=20,TODSunset=21;

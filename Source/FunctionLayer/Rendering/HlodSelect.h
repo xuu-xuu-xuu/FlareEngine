@@ -1,7 +1,7 @@
 #pragma once
 #include "ResourceLayer/Assets/HlodBake.h"
 
-namespace se
+namespace flare
 {
 // G05.09：HLOD 单元选择只依赖“单元误差 → 屏幕像素误差”，不绑定渲染实现。
 struct HlodView

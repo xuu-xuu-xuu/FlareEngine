@@ -2,9 +2,9 @@
 #include "HdrImage.h"
 #include <array>
 
-namespace se
+namespace flare
 {
-inline constexpr const char* EnvironmentCookerVersion="SelfEngine.Environment.1";
+inline constexpr const char* EnvironmentCookerVersion="FlareEngine.Environment.1";
 struct EnvironmentSettings
 {
     std::uint32_t cubeSize=64,irradianceSize=16,lutSize=64,samples=512;

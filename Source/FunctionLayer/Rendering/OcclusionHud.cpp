@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <string>
 
-namespace se
+namespace flare
 {
 namespace
 {

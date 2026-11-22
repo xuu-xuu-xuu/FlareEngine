@@ -1,7 +1,7 @@
 #pragma once
 #include "ComponentMetadata.h"
 
-namespace se
+namespace flare
 {
 // 引擎扩展区固定类型 ID；配置由同一反射表负责编辑、快照和场景持久化。
 template<ComponentTypeId Id> class FeatureComponent final : public ComponentBase

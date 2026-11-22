@@ -5,7 +5,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace se
+namespace flare
 {
 namespace
 {

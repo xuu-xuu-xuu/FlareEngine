@@ -4,7 +4,7 @@
 #include <map>
 #include <memory>
 
-namespace se
+namespace flare
 {
 // G02：材质实例是 CPU 侧“父材质 + 覆盖值”，解析后得到新的只读 PbrRenderMaterial；
 // 父材质不被修改，纹理由实例与父材质共享。

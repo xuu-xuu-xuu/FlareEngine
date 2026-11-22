@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G05：离线 LOD 链。级别 0 为原始索引；更粗级别用顶点聚类简化，
 // 并锁定开放边界（只被一个三角形使用的边）的顶点，避免裂开。

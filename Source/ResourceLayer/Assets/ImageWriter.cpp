@@ -1,6 +1,6 @@
 #include "ImageWriter.h"
 #include "AssetIO.h"
-namespace se
+namespace flare
 {
 bool WritePpmImage(const std::filesystem::path& path,std::uint32_t width,std::uint32_t height,std::span<const std::uint8_t> rgba8,std::vector<AssetDiagnostic>& diagnostics)
 {

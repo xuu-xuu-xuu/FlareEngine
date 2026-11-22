@@ -6,7 +6,7 @@
 #undef DeviceCapabilities
 #endif
 
-namespace se
+namespace flare
 {
 enum class MeshletSubmissionMode : std::uint8_t
 {

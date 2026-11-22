@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <span>
 
-namespace se
+namespace flare
 {
 // G15：自动曝光的 CPU 参考。256 桶 log2 亮度直方图、60%~80% 分位目标、
 // 亮/暗两条适应速度与上下限钳制；全黑/全白/非有限输入保持稳定。

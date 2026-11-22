@@ -2,7 +2,7 @@
 
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 EditorCommandRouter::EditorCommandRouter(EditorCommandBus& bus)
@@ -56,4 +56,4 @@ const std::vector<EditorShortcut>& EditorCommandRouter::Shortcuts() const noexce
     return shortcuts_;
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

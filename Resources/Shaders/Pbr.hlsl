@@ -169,7 +169,7 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
         float3 direction=UnitVector(frameDirection.xyz,float3(0,0,1));
         float visibility=1;
 #ifdef SE_SHADOWS
-        visibility=ShadowVisibility(input.worldPosition,geometricNormal,direction);
+        visibility=ShadowVisibility(input.worldPosition,geometricNormal,direction,input.position.xy);
 #endif
         lookNdl=saturate(dot(n,direction));lookVisibility=visibility;
 #ifdef SE_SHADING_EXTENSIONS
@@ -229,7 +229,7 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     if(clusterModes.x>.5)shaded=ClusterHeatmap(cluster);
 #endif
 #ifdef SE_PCSS
-    if(filterParameters.w>.5&&filterOptions.x>.5)shaded=ShadowFilterDebugColor(input.worldPosition,geometricNormal,UnitVector(frameDirection.xyz,float3(0,0,1)));
+    if(filterParameters.w>.5&&filterOptions.x>.5)shaded=ShadowFilterDebugColor(input.worldPosition,geometricNormal,UnitVector(frameDirection.xyz,float3(0,0,1)),input.position.xy);
 #endif
 #ifdef SE_MATERIAL_SURFACE
     return float4(min(max(shaded,0),65504),MaterialOutputAlpha(coverageAlpha));

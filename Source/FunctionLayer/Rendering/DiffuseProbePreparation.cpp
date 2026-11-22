@@ -11,7 +11,7 @@
 #include <map>
 #include <set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -23,6 +23,12 @@ bool StaticHierarchy(const World& world,EntityHandle entity)
 {
     for(auto cursor=entity;cursor;cursor=world.Get(cursor)->parent)
     {
+        const EntityRecord* rec=world.Get(cursor);
+        if(rec&&(rec->staticFlags&EntityStaticFlags::Explicit)!=0)
+        {
+            if((rec->staticFlags&EntityStaticFlags::GlobalIllumination)==0)return false;
+            continue;
+        }
         if(Active(world,cursor,ActorSettingsComponent::TypeId)||Active(world,cursor,CharacterSettingsComponent::TypeId))return false;
         if(Active(world,cursor,PhysicsBodyComponent::TypeId))
         {const auto mass=FeatureValue(world,cursor,"body.mass");if(!std::holds_alternative<float>(mass)||std::get<float>(mass)>0)return false;}

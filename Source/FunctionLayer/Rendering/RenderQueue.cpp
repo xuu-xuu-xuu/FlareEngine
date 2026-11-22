@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <bit>
 
-namespace se
+namespace flare
 {
 OpaqueSortKey BuildOpaqueSortKey(const rhi::DrawIndexed& draw)
 {

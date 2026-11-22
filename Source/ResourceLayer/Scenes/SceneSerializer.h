@@ -6,7 +6,7 @@
 #include <string_view>
 #include <memory>
 
-namespace se
+namespace flare
 {
 // 文件线程只生成不可变文档；实例化/组件工厂与生命周期留在主线程。
 class SceneDocument

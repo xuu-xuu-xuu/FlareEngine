@@ -12,7 +12,7 @@
 #include <optional>
 #include <unordered_map>
 
-namespace se
+namespace flare
 {
 enum class ModelRenderState { Ready, Fallback };
 struct PbrRenderMaterial

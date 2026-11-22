@@ -32,7 +32,14 @@ float LocalLightVisibility(uint i,float3 world,float3 normal,float3 toLight,floa
     {
         int size=(int)localLightInfo.y;
         float2 uv=ndc.xy*float2(.5,-.5)+.5;
-        int2 center=clamp((int2)(uv*size),int2(0,0),int2(size-1,size-1));
+        float2 uvTex=uv*size;
+        int2 center=clamp((int2)floor(uvTex),int2(0,0),int2(size-1,size-1));
+        float2 s=clamp(uvTex-(float2(center)+0.5),float2(-0.5,-0.5),float2(0.5,0.5));
+        // 二次 B 样条亚纹素权重（3×3 共 9 次 Load，C1 连续消除聚光/点光阶梯锯齿，精确归一权重和恒为 1）。
+        float wx0=0.5*(0.5-s.x)*(0.5-s.x),wx2=0.5*(0.5+s.x)*(0.5+s.x);
+        float wy0=0.5*(0.5-s.y)*(0.5-s.y),wy2=0.5*(0.5+s.y)*(0.5+s.y);
+        float wx[3]={wx0,1.0-wx0-wx2,wx2};
+        float wy[3]={wy0,1.0-wy0-wy2,wy2};
         // 对透视投影 z=A+B/viewDepth。平面与像素射线的交点满足
         // 1/viewDepth=dot(n,ray)/dot(n,receiver-light)。因此 z 对纹理 UV 是仿射函数。
         // 索引采用实际面矩阵，聚光锥角及点灯上下两面同样成立。雾体样点没有切面，梯度为零。
@@ -46,14 +53,38 @@ float LocalLightVisibility(uint i,float3 world,float3 normal,float3 toLight,floa
                 -dot(facingNormal,rowY)/max(dot(rowY,rowY),1e-8));
         }
         float sum=0;
+#ifdef SE_SHADOW_BINDINGS
+        // 直接表面光照：硬件 2×2 双线性 SampleCmpLevelZero + 12-Tap 黄金角 Vogel 旋转圆盘，柔和消除点光/聚光阴影像素阶梯。
+        float halfTexel=0.5/max((float)size,1.0);
+        float2 uvMin=float2(halfTexel,halfTexel),uvMax=float2(1.0-halfTexel,1.0-halfTexel);
+        float diskRadius=1.65/max((float)size,1.0);
+        float hashPhase=frac(52.9829189*frac(dot(world.xz+world.yy*0.37,float2(12.9898,78.233))))*6.2831853;
+        float sRot,cRot;
+        sincos(hashPhase,sRot,cRot);
+        float2 clampGrad=clamp(gradient,float2(-0.08,-0.08),float2(0.08,0.08));
+        [unroll]for(uint k=0;k<12u;++k)
+        {
+            float r=sqrt(((float)k+0.5)/12.0)*diskRadius;
+            float theta=(float)k*2.3999632;
+            float st,ct;
+            sincos(theta,st,ct);
+            float2 dUv=float2(ct*cRot-st*sRot,ct*sRot+st*cRot)*r;
+            float2 sampleUv=clamp(uv+dUv,uvMin,uvMax);
+            float reference=ndc.z+dot(clampGrad,sampleUv-uv)-4e-6;
+            sum+=localShadowMap.SampleCmpLevelZero(shadowSampler,float3(sampleUv,(float)slice),reference);
+        }
+        visibility=sum*(1.0/12.0);
+#else
         [unroll]for(int y=-1;y<=1;++y)[unroll]for(int x=-1;x<=1;++x)
         {
             int2 texel=clamp(center+int2(x,y),int2(0,0),int2(size-1,size-1));
             float2 texelCenter=(float2(texel)+.5)/size;
             float reference=ndc.z+dot(gradient,texelCenter-uv)-2e-6;
-            sum+=(reference<=localShadowMap.Load(int4(texel,(int)slice,0)))?1.0:0.0;
+            float tap=(reference<=localShadowMap.Load(int4(texel,(int)slice,0)))?1.0:0.0;
+            sum+=tap*wx[x+1]*wy[y+1];
         }
-        visibility=sum/9.0;
+        visibility=sum;
+#endif
     }
     return visibility;
 }

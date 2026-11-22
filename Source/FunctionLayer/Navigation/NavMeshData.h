@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 struct NavBakeSettings
 {
@@ -76,4 +76,4 @@ private:
     std::vector<BvhNode> bvhNodes_;
     Aabb worldBounds_{};
 };
-} // namespace se
+} // namespace flare

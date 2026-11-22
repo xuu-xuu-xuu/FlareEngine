@@ -1,7 +1,7 @@
 #include "AppBranding.h"
 #include <shobjidl.h>
 
-namespace se
+namespace flare
 {
 HICON AppIcon(int pixels) noexcept
 {

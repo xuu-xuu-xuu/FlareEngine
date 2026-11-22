@@ -5,7 +5,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 
 struct UiId
@@ -165,4 +165,4 @@ private:
     return "custom";
 }
 
-} // namespace se::ui
+} // namespace flare::ui

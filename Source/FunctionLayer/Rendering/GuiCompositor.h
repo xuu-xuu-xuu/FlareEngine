@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-namespace se
+namespace flare
 {
 struct FrameData;
 // 只负责 GUI 字体、合成目标和最终 GUI 合成；3D 场景目标由 EditorViewportTarget 拥有。

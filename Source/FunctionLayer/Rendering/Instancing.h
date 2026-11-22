@@ -2,7 +2,7 @@
 #include "RenderQueue.h"
 #include "CoreLayer/Math/Bounds.h"
 
-namespace se
+namespace flare
 {
 struct PbrInstanceBatch
 {

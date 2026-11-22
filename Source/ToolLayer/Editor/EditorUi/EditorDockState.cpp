@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 namespace
 {
@@ -403,4 +403,4 @@ bool EditorDockState::Load(const std::filesystem::path& path,EditorDock& workspa
     return read(backup);
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 namespace
 {
@@ -46,6 +46,33 @@ bool ContainsInsensitive(std::string_view text, std::string_view needle)
 }
 } // namespace
 
+bool IsAssetPathCompatible(std::string_view assetPathUtf8, std::string_view acceptedKind)
+{
+    if (acceptedKind.empty()) return !assetPathUtf8.empty();
+    if (assetPathUtf8.empty()) return false;
+    std::string lower;
+    lower.reserve(assetPathUtf8.size());
+    for (char ch : assetPathUtf8) lower.push_back(Lower(ch));
+    const auto endsWith = [&lower](std::string_view suffix) {
+        return lower.size() >= suffix.size() &&
+               std::string_view(lower).substr(lower.size() - suffix.size()) == suffix;
+    };
+    if (acceptedKind == "model") return endsWith(".glb") || endsWith(".gltf") || endsWith(".fbx");
+    if (acceptedKind == "material") return endsWith(".material.json");
+    if (acceptedKind == "texture")
+        return endsWith(".png") || endsWith(".jpg") || endsWith(".jpeg") ||
+               endsWith(".bmp") || endsWith(".tga") || endsWith(".sebc") || endsWith(".ppm");
+    if (acceptedKind == "audio") return endsWith(".wav") || endsWith(".ogg");
+    if (acceptedKind == "tod") return endsWith(".tod");
+    if (acceptedKind == "env") return endsWith(".seenv") || endsWith(".hdr") || endsWith(".exr");
+    if (acceptedKind == "navmesh") return endsWith(".senav");
+    if (acceptedKind == "prefab") return endsWith(".prefab.json");
+    if (acceptedKind == "probe") return endsWith(".seprobe");
+    if (acceptedKind == "script") return endsWith(".cs");
+    if (acceptedKind == "scene") return endsWith(".scene.json");
+    return true;
+}
+
 bool EditorHierarchyModel::SetNodes(std::vector<EditorHierarchyNode> nodes)
 {
     const std::uint64_t previous = selected_;
@@ -56,15 +83,28 @@ bool EditorHierarchyModel::SetNodes(std::vector<EditorHierarchyNode> nodes)
         const auto found = expanded.find(node.id);
         if (found != expanded.end()) node.expanded = found->second;
     }
-    const std::uint64_t nextSelected = std::none_of(nodes.begin(), nodes.end(), [previous](const EditorHierarchyNode& node) {
-        return node.id == previous;
-    }) ? 0 : previous;
-    if (nodes == nodes_ && nextSelected == selected_)
+    const auto hasId = [&nodes](std::uint64_t id) {
+        return id != 0 && std::any_of(nodes.begin(), nodes.end(), [id](const EditorHierarchyNode& node) {
+            return node.id == id;
+        });
+    };
+    std::vector<std::uint64_t> nextIds;
+    nextIds.reserve(selectedIds_.size());
+    for (const std::uint64_t id : selectedIds_)
+    {
+        if (hasId(id) && std::find(nextIds.begin(), nextIds.end(), id) == nextIds.end())
+            nextIds.push_back(id);
+    }
+    const std::uint64_t nextSelected = hasId(previous) ? previous : (nextIds.empty() ? 0 : nextIds.back());
+    if (nextSelected != 0 && std::find(nextIds.begin(), nextIds.end(), nextSelected) == nextIds.end())
+        nextIds.push_back(nextSelected);
+    if (nodes == nodes_ && nextSelected == selected_ && nextIds == selectedIds_)
     {
         return false;
     }
     nodes_ = std::move(nodes);
     selected_ = nextSelected;
+    selectedIds_ = std::move(nextIds);
     return true;
 }
 
@@ -131,12 +171,111 @@ bool EditorHierarchyModel::Select(std::uint64_t id)
         return false;
     }
     selected_ = id;
+    selectedIds_.clear();
+    if (id != 0) selectedIds_.push_back(id);
     return true;
+}
+
+bool EditorHierarchyModel::SetSelection(const std::vector<std::uint64_t>& ids, std::uint64_t primary)
+{
+    std::vector<std::uint64_t> clean;
+    clean.reserve(ids.size());
+    for (const std::uint64_t id : ids)
+    {
+        if (id == 0) continue;
+        const bool exists = std::any_of(nodes_.begin(), nodes_.end(), [id](const EditorHierarchyNode& node) {
+            return node.id == id;
+        });
+        if (!exists) return false;
+        if (std::find(clean.begin(), clean.end(), id) == clean.end()) clean.push_back(id);
+    }
+    selectedIds_ = std::move(clean);
+    if (selectedIds_.empty()) selected_ = 0;
+    else if (primary != 0 && std::find(selectedIds_.begin(), selectedIds_.end(), primary) != selectedIds_.end())
+        selected_ = primary;
+    else
+        selected_ = selectedIds_.back();
+    return true;
+}
+
+bool EditorHierarchyModel::ToggleSelection(std::uint64_t id)
+{
+    if (id == 0 || std::none_of(nodes_.begin(), nodes_.end(), [id](const EditorHierarchyNode& node) {
+            return node.id == id;
+        }))
+    {
+        return false;
+    }
+    const auto it = std::find(selectedIds_.begin(), selectedIds_.end(), id);
+    if (it != selectedIds_.end())
+    {
+        selectedIds_.erase(it);
+        if (selected_ == id) selected_ = selectedIds_.empty() ? 0 : selectedIds_.back();
+    }
+    else
+    {
+        selectedIds_.push_back(id);
+        selected_ = id;
+    }
+    return true;
+}
+
+bool EditorHierarchyModel::SelectRange(std::uint64_t toId)
+{
+    if (toId == 0) return Select(0);
+    if (selected_ == 0) return Select(toId);
+    const std::vector<std::size_t> visible = VisibleRows();
+    std::optional<std::size_t> fromPos, toPos;
+    for (std::size_t i = 0; i < visible.size(); ++i)
+    {
+        const std::uint64_t rowId = nodes_[visible[i]].id;
+        if (rowId == selected_) fromPos = i;
+        if (rowId == toId) toPos = i;
+    }
+    if (!fromPos || !toPos) return Select(toId);
+    const std::size_t lo = std::min(*fromPos, *toPos);
+    const std::size_t hi = std::max(*fromPos, *toPos);
+    std::vector<std::uint64_t> rangeIds;
+    rangeIds.reserve(hi - lo + 1);
+    for (std::size_t i = lo; i <= hi; ++i) rangeIds.push_back(nodes_[visible[i]].id);
+    return SetSelection(rangeIds, toId);
+}
+
+bool EditorHierarchyModel::ExpandAncestors(std::uint64_t id)
+{
+    if (id == 0) return false;
+    auto node = std::find_if(nodes_.begin(), nodes_.end(), [id](const EditorHierarchyNode& item) {
+        return item.id == id;
+    });
+    if (node == nodes_.end()) return false;
+    bool changed = false;
+    std::uint64_t cursor = node->parent;
+    std::size_t guard = 0;
+    while (cursor != 0 && guard++ < nodes_.size())
+    {
+        auto parentIt = std::find_if(nodes_.begin(), nodes_.end(), [cursor](const EditorHierarchyNode& item) {
+            return item.id == cursor;
+        });
+        if (parentIt == nodes_.end()) break;
+        if (!parentIt->expanded)
+        {
+            parentIt->expanded = true;
+            changed = true;
+        }
+        cursor = parentIt->parent;
+    }
+    return changed;
 }
 
 std::uint64_t EditorHierarchyModel::Selected() const noexcept
 {
     return selected_;
+}
+
+bool EditorHierarchyModel::IsSelected(std::uint64_t id) const noexcept
+{
+    if (id == 0) return false;
+    return id == selected_ || std::find(selectedIds_.begin(), selectedIds_.end(), id) != selectedIds_.end();
 }
 
 bool EditorHierarchyModel::Rename(std::uint64_t id, std::string label)
@@ -223,11 +362,12 @@ bool EditorInspectorModel::SetValue(std::string_view key, std::string value)
     {
         if (property.key == key)
         {
-            if (property.readOnly || property.value == value)
+            if (property.readOnly || (property.value == value && !property.mixedValue))
             {
                 return false;
             }
             property.value = std::move(value);
+            property.mixedValue = false;
             changed_ = true;
             lastChangedKey_.assign(key);
             return true;
@@ -301,6 +441,13 @@ bool EditorAssetsModel::ToggleFolder(std::string_view folderPath)
     folderExpansion_.emplace_back(std::string(folderPath), false);
     RebuildFiltered();
     return true;
+}
+
+void EditorAssetsModel::ExpandAllFolders()
+{
+    if (folderExpansion_.empty()) return;
+    folderExpansion_.clear();
+    RebuildFiltered();
 }
 
 void EditorAssetsModel::RebuildFiltered()
@@ -463,4 +610,4 @@ const std::string& EditorAssetsModel::SelectedPath() const noexcept
     return selected_;
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

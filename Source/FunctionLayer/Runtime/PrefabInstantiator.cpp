@@ -5,7 +5,7 @@
 #include <charconv>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -245,6 +245,18 @@ StableEntityId InstantiatePrefab(
         {
             return rollback(world.LastError().c_str());
         }
+        if (node->tag != "Untagged" && !world.SetTag(entity, node->tag))
+        {
+            return rollback(world.LastError().c_str());
+        }
+        if (node->layer != 0 && !world.SetLayer(entity, node->layer))
+        {
+            return rollback(world.LastError().c_str());
+        }
+        if (node->staticFlags != 0 && !world.SetStaticFlags(entity, node->staticFlags))
+        {
+            return rollback(world.LastError().c_str());
+        }
         const EntityHandle resolvedParent = node->localParentId == 0
             ? parentHandle
             : world.FindByStableId(nodeToEntity.at(node->localParentId));
@@ -328,6 +340,38 @@ bool ReadEntityOverrideValue(const World& world, EntityHandle entity, std::strin
         error.clear();
         return true;
     }
+    if (key == "tag")
+    {
+        outValue = record->tag;
+        error.clear();
+        return true;
+    }
+    if (key == "layer")
+    {
+        outValue = static_cast<float>(record->layer);
+        error.clear();
+        return true;
+    }
+    if (key == "staticFlags")
+    {
+        outValue = static_cast<float>(record->staticFlags);
+        error.clear();
+        return true;
+    }
+    if (key.ends_with(".enabled"))
+    {
+        const std::string_view compKey = key.substr(0, key.size() - 8);
+        if (const ComponentDescriptor* desc = FindComponentDescriptor(compKey))
+        {
+            const ComponentHandle ch = world.FindComponent(entity, desc->type);
+            if (const ComponentBase* cb = world.GetComponent(ch))
+            {
+                outValue = cb->Enabled();
+                error.clear();
+                return true;
+            }
+        }
+    }
     return ReadProperty(world, entity, key, outValue, error);
 }
 
@@ -351,6 +395,43 @@ bool ApplyPropertyOverride(World& world, EntityHandle entity,
         error = world.LastError();
         return false;
     }
+    if (overrideValue.key == "tag")
+    {
+        const auto* text = std::get_if<std::string>(&overrideValue.value);
+        if (!text) return FailRef(error, "Metadata.InvalidValue");
+        if (world.SetTag(entity, *text)) { error.clear(); return true; }
+        error = world.LastError();
+        return false;
+    }
+    if (overrideValue.key == "layer")
+    {
+        const auto* num = std::get_if<float>(&overrideValue.value);
+        if (!num || !IsFinite(*num) || *num < 0.0f || *num > 31.0f) return FailRef(error, "Metadata.InvalidValue");
+        if (world.SetLayer(entity, static_cast<std::uint32_t>(std::lround(*num)))) { error.clear(); return true; }
+        error = world.LastError();
+        return false;
+    }
+    if (overrideValue.key == "staticFlags")
+    {
+        const auto* num = std::get_if<float>(&overrideValue.value);
+        if (!num || !IsFinite(*num) || *num < 0.0f || *num > 255.0f) return FailRef(error, "Metadata.InvalidValue");
+        if (world.SetStaticFlags(entity, static_cast<std::uint32_t>(std::lround(*num)))) { error.clear(); return true; }
+        error = world.LastError();
+        return false;
+    }
+    if (overrideValue.key.ends_with(".enabled"))
+    {
+        const auto* flag = std::get_if<bool>(&overrideValue.value);
+        if (!flag) return FailRef(error, "Metadata.InvalidValue");
+        const std::string_view compKey = std::string_view(overrideValue.key).substr(0, overrideValue.key.size() - 8);
+        if (const ComponentDescriptor* desc = FindComponentDescriptor(compKey))
+        {
+            const ComponentHandle ch = world.FindComponent(entity, desc->type);
+            if (ch && world.SetComponentEnabled(ch, *flag)) { error.clear(); return true; }
+            error = world.LastError();
+            return false;
+        }
+    }
     return WriteProperty(world, entity, overrideValue.key, overrideValue.value, error);
 }
 
@@ -360,6 +441,21 @@ bool ReadPrefabNodePropertyValue(const PrefabNodeRecord& node, std::string_view 
     outIsLocalRef = false;
     if (key == "name") { outValue = node.name; return true; }
     if (key == "enabled") { outValue = node.enabled; return true; }
+    if (key == "tag") { outValue = node.tag; return true; }
+    if (key == "layer") { outValue = static_cast<float>(node.layer); return true; }
+    if (key == "staticFlags") { outValue = static_cast<float>(node.staticFlags); return true; }
+    if (key.ends_with(".enabled"))
+    {
+        const std::string_view compKey = key.substr(0, key.size() - 8);
+        if (const ComponentDescriptor* desc = FindComponentDescriptor(compKey))
+        {
+            for (const PrefabComponentRecord& comp : node.components)
+            {
+                if (comp.type == desc->type) { outValue = comp.enabled; return true; }
+            }
+        }
+        return false;
+    }
 
     const auto dot = key.find('.');
     if (dot == std::string_view::npos) return false;
@@ -452,6 +548,9 @@ bool BuildPrefabDocumentFromEntity(
             : outEntityToLocal.at(world.Get(record->parent)->stableId);
         node.name = record->name;
         node.enabled = record->enabled;
+        node.tag = record->tag;
+        node.layer = record->layer;
+        node.staticFlags = record->staticFlags;
 
         for (const ComponentHandle handle : world.Components(entity))
         {
@@ -652,6 +751,21 @@ bool SyncPrefabInstancesInWorld(
                 error = world.LastError();
                 return false;
             }
+            if (!HasOverrideKey(overrides, "tag") && !world.SetTag(entity, node->tag))
+            {
+                error = world.LastError();
+                return false;
+            }
+            if (!HasOverrideKey(overrides, "layer") && !world.SetLayer(entity, node->layer))
+            {
+                error = world.LastError();
+                return false;
+            }
+            if (!HasOverrideKey(overrides, "staticFlags") && !world.SetStaticFlags(entity, node->staticFlags))
+            {
+                error = world.LastError();
+                return false;
+            }
 
             std::unordered_set<ComponentTypeId> protoTypes;
             for (const PrefabComponentRecord& comp : node->components) protoTypes.insert(comp.type);
@@ -715,7 +829,9 @@ bool SyncPrefabInstancesInWorld(
                 }
 
                 const ComponentBase* compBase = world.GetComponent(existing);
-                if (compBase && compBase->Enabled() != comp.enabled && !world.SetComponentEnabled(existing, comp.enabled))
+                const std::string enabledOverrideKey = std::string(descriptor->key) + ".enabled";
+                if (!HasOverrideKey(overrides, enabledOverrideKey) && compBase &&
+                    compBase->Enabled() != comp.enabled && !world.SetComponentEnabled(existing, comp.enabled))
                 {
                     error = world.LastError();
                     return false;
@@ -765,4 +881,4 @@ bool SyncPrefabInstancesInWorld(
     error.clear();
     return true;
 }
-} // namespace se
+} // namespace flare

@@ -4,7 +4,7 @@
 #include <future>
 #include <atomic>
 
-namespace se
+namespace flare
 {
 class EditorSession;
 struct FeatureToolResult

@@ -3,7 +3,7 @@
 #include <map>
 #include <stdexcept>
 
-namespace se
+namespace flare
 {
 namespace
 {

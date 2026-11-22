@@ -12,43 +12,43 @@ struct D3D12Context;
 
 struct alignas(16) D3D12RayTracingInstanceData
 {
-    se::Vec4 worldRow0;
-    se::Vec4 worldRow1;
-    se::Vec4 worldRow2;
-    se::Vec4 normalRow0;
-    se::Vec4 normalRow1;
-    se::Vec4 normalRow2;
-    se::Vec4 baseColor;
-    se::Vec4 materialParams;
+    flare::Vec4 worldRow0;
+    flare::Vec4 worldRow1;
+    flare::Vec4 worldRow2;
+    flare::Vec4 normalRow0;
+    flare::Vec4 normalRow1;
+    flare::Vec4 normalRow2;
+    flare::Vec4 baseColor;
+    flare::Vec4 materialParams;
     std::array<std::uint32_t, 4> meshMeta{};
 };
 static_assert(sizeof(D3D12RayTracingInstanceData) == 144);
 
 struct alignas(16) D3D12RayTracingConstants
 {
-    se::Mat4 viewFromWorld;
-    se::Mat4 clipFromView;
-    se::Mat4 viewFromClip;
-    se::Mat4 worldFromView;
-    se::Mat4 previousClipFromWorld;
-    se::Vec4 viewport;
-    se::Vec4 halfViewport;
-    se::Vec4 sunDirection;
-    se::Vec4 sunRadiance;
-    se::Vec4 skyZenith;
-    se::Vec4 skyHorizon;
-    se::Vec4 skyGround;
-    se::Vec4 strengths;
-    se::Vec4 tracingParams;
-    se::Vec4 temporalParams;
+    flare::Mat4 viewFromWorld;
+    flare::Mat4 clipFromView;
+    flare::Mat4 viewFromClip;
+    flare::Mat4 worldFromView;
+    flare::Mat4 previousClipFromWorld;
+    flare::Vec4 viewport;
+    flare::Vec4 halfViewport;
+    flare::Vec4 sunDirection;
+    flare::Vec4 sunRadiance;
+    flare::Vec4 skyZenith;
+    flare::Vec4 skyHorizon;
+    flare::Vec4 skyGround;
+    flare::Vec4 strengths;
+    flare::Vec4 tracingParams;
+    flare::Vec4 temporalParams;
     std::array<std::uint32_t, 4> flags{};
     std::array<std::uint32_t, 4> indirectFlags{};
-    std::array<se::Vec4, 8> pointPosRange{};
-    std::array<se::Vec4, 8> pointRadiance{};
-    std::array<se::Vec4, 8> localPosRange{};
-    std::array<se::Vec4, 8> localRadiance{};
-    std::array<se::Vec4, 8> localDirection{};
-    std::array<se::Vec4, 8> localCone{};
+    std::array<flare::Vec4, 8> pointPosRange{};
+    std::array<flare::Vec4, 8> pointRadiance{};
+    std::array<flare::Vec4, 8> localPosRange{};
+    std::array<flare::Vec4, 8> localRadiance{};
+    std::array<flare::Vec4, 8> localDirection{};
+    std::array<flare::Vec4, 8> localCone{};
 };
 static_assert(sizeof(D3D12RayTracingConstants) == 1280);
 
@@ -97,13 +97,13 @@ struct D3D12RayTracingFrame
     UINT slotIndex = 0;
     UINT instanceCount = 0;
     UINT uniqueMeshCount = 0;
-    se::rhi::RayTracingStatistics statistics;
+    flare::rhi::RayTracingStatistics statistics;
 };
 
 bool WriteD3D12RayTracingShaders(const std::filesystem::path& sourcePath,
     const std::filesystem::path& outputPath, const Localization& text);
 
-bool ValidD3D12RayTracingSettings(const se::rhi::RayTracingSettings& settings);
+bool ValidD3D12RayTracingSettings(const flare::rhi::RayTracingSettings& settings);
 
 D3D12_CPU_DESCRIPTOR_HANDLE GetD3D12RayTracingVisibilityView(const D3D12FrameContext& frame);
 

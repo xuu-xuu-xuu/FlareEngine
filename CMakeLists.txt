@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.25)
-project(SelfEngine VERSION 0.1.0 LANGUAGES C CXX)
+project(FlareEngine VERSION 0.1.0 LANGUAGES C CXX)
 enable_language(RC)
 configure_file(Resources/Branding/FlareResources.rc.in "${CMAKE_CURRENT_BINARY_DIR}/FlareResources.rc" @ONLY)
 set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/FlareResources.rc" PROPERTIES
     OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Branding/Flare.ico")
 include("${CMAKE_CURRENT_SOURCE_DIR}/BuildConfig/CMake/DetectMsvcIncludes.cmake")
-function(se_target target)
+function(flare_target target)
     target_include_directories(${target} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Source")
     target_include_directories(${target} SYSTEM PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty")
     target_compile_features(${target} PUBLIC cxx_std_20)

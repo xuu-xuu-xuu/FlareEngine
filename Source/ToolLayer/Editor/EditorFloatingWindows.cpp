@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <windowsx.h>
 
-namespace se
+namespace flare
 {
 using namespace ui::editor;
 namespace
@@ -88,13 +88,13 @@ bool EditorFloatingWindows::Synchronize()
         {
             auto next=std::make_unique<Entry>();next->host=this;next->id=saved.id;
             RECT bounds{saved.x,saved.y,saved.x+saved.width,saved.y+saved.height};
-            if(!GetEnvironmentVariableW(L"SELFENGINE_TEST_OFFSCREEN",nullptr,0))bounds=VisibleBounds(bounds);
+            if(!GetEnvironmentVariableW(L"FLARE_TEST_OFFSCREEN",nullptr,0))bounds=VisibleBounds(bounds);
             const auto title=Wide(shell_.WindowLabel(saved.id)+" — "+text_.GetText("Editor.WindowTitle"));
             entry=next.get();
             entry->window=CreateWindowExW(WS_EX_TOOLWINDOW,WindowClass,title.c_str(),WS_OVERLAPPEDWINDOW,
                 bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top,owner_,nullptr,GetModuleHandleW(nullptr),entry);
             if(!entry->window)return false;
-            entry->input.SetWindow(entry->window);ApplyAppIcon(entry->window);flare::StyleTitleBar(entry->window);
+            entry->input.SetWindow(entry->window);ApplyAppIcon(entry->window);flare::palette::StyleTitleBar(entry->window);
             entries_.push_back(std::move(next));
             if(visible_)ShowWindow(entry->window,SW_SHOWNOACTIVATE);
         }
@@ -155,6 +155,7 @@ bool EditorFloatingWindows::Render(const FrameData& base,ui::UiImageProvider& im
             entry->paddedSurfH=std::max(entry->paddedSurfH,std::min(8192u,(surfH+512u)&~511u));
             surfW=entry->paddedSurfW;
             surfH=entry->paddedSurfH;
+            data.editorGui.allowOversizedTarget=true;
         }
         else
         {
@@ -198,7 +199,7 @@ HWND EditorFloatingWindows::RoutePointer(HWND source,UINT message,LPARAM& positi
     };
     HWND target=GetAncestor(WindowFromPoint(screen),GA_ROOT);
     if(!Owns(target)||!contains(target))target=nullptr;
-    if(!target&&GetEnvironmentVariableW(L"SELFENGINE_TEST_OFFSCREEN",nullptr,0))
+    if(!target&&GetEnvironmentVariableW(L"FLARE_TEST_OFFSCREEN",nullptr,0))
     {
         for(auto it=entries_.rbegin();it!=entries_.rend();++it)if(contains((*it)->window)){target=(*it)->window;break;}
         if(!target&&contains(owner_))target=owner_;

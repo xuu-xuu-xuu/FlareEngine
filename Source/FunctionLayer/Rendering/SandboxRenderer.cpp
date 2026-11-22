@@ -35,7 +35,7 @@ bool MaterialScene(SandboxScene scene){return scene==SandboxScene::Materials||sc
 bool HlodSceneMode(SandboxScene scene){return scene==SandboxScene::Hlod;}
 bool PbrScene(SandboxScene scene){return MaterialScene(scene)||scene==SandboxScene::Scene||HlodSceneMode(scene);}
 bool BasicLitScene(SandboxScene scene){return scene==SandboxScene::BasicLit;}
-std::uint64_t ComputeIndoorSceneToken(SandboxScene scene,const se::FrameData* data)
+std::uint64_t ComputeIndoorSceneToken(SandboxScene scene,const flare::FrameData* data)
 {
     std::uint64_t token=0;
     const auto mix=[&](std::uint64_t v){token^=v+0x9e3779b97f4a7c15ull+(token<<6)+(token>>2);};
@@ -48,23 +48,23 @@ std::uint64_t ComputeIndoorSceneToken(SandboxScene scene,const se::FrameData* da
     }
     return token;
 }
-bool RequiresMaterialCoverage(const se::FrameData& frame)
+bool RequiresMaterialCoverage(const flare::FrameData& frame)
 {
     if(!frame.assets)return false;
-    std::unordered_set<se::AssetId> materials,models;
-    std::vector<se::AssetDiagnostic> ignored;
+    std::unordered_set<flare::AssetId> materials,models;
+    std::vector<flare::AssetDiagnostic> ignored;
     for(const auto& instance:frame.meshes)
     {
         for(const auto& id:instance.mesh.materials)if(!id.empty()&&materials.insert(id).second)
         {
             const auto* preview=frame.materialPreview&&frame.materialPreview->id==id?&frame.materialPreview->document:nullptr;
-            const auto material=preview?std::shared_ptr<const se::MaterialDocument>{}:frame.assets->LoadMaterial(id,ignored);
-            if(preview?preview->alphaMode!=se::MaterialAlphaMode::Opaque:material&&material->alphaMode!=se::MaterialAlphaMode::Opaque)return true;
+            const auto material=preview?std::shared_ptr<const flare::MaterialDocument>{}:frame.assets->LoadMaterial(id,ignored);
+            if(preview?preview->alphaMode!=flare::MaterialAlphaMode::Opaque:material&&material->alphaMode!=flare::MaterialAlphaMode::Opaque)return true;
         }
-        if(!se::IsBuiltinMesh(instance.mesh.meshAsset)&&models.insert(instance.mesh.meshAsset).second)
+        if(!flare::IsBuiltinMesh(instance.mesh.meshAsset)&&models.insert(instance.mesh.meshAsset).second)
         {
             const auto model=frame.assets->LoadModel(instance.mesh.meshAsset,ignored);
-            if(model&&std::any_of(model->materials.begin(),model->materials.end(),[](const auto& material){return material.alphaMode!=se::MaterialAlphaMode::Opaque;}))return true;
+            if(model&&std::any_of(model->materials.begin(),model->materials.end(),[](const auto& material){return material.alphaMode!=flare::MaterialAlphaMode::Opaque;}))return true;
         }
     }
     return false;
@@ -76,7 +76,7 @@ std::filesystem::path SandboxRenderer::ResourceDirectory() const
     if(!resourceDirectory_.empty())return resourceDirectory_;
     const auto executable=GetExecutableDirectory();return executable.empty()?std::filesystem::path{}:executable/"Resources";
 }
-std::span<const std::byte> SandboxRenderer::BuildSkinPalette(const std::vector<se::Mat4>& palette,std::size_t jointCount,
+std::span<const std::byte> SandboxRenderer::BuildSkinPalette(const std::vector<flare::Mat4>& palette,std::size_t jointCount,
     std::uint32_t& outJointCount)
 {
     outJointCount=static_cast<std::uint32_t>(palette.empty()?jointCount:palette.size());
@@ -85,7 +85,7 @@ std::span<const std::byte> SandboxRenderer::BuildSkinPalette(const std::vector<s
     auto& bytes=skinPaletteStorage_.back();
     for(std::uint32_t joint=0;joint<outJointCount;++joint)
     {
-        const auto& matrix=palette.empty()?se::Mat4{}:palette[joint];
+        const auto& matrix=palette.empty()?flare::Mat4{}:palette[joint];
         // 行主序 3×4 与 Shaders/Skinning.hlsli 的 LoadSkinMatrix 一一对应。
         const float rows[12]{matrix(0,0),matrix(0,1),matrix(0,2),matrix(0,3),
             matrix(1,0),matrix(1,1),matrix(1,2),matrix(1,3),
@@ -104,49 +104,49 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
     captured_=false;
     // G13：Frame Graph 实验开关。默认关闭；DOT/JSON 只在首帧写出，便于审查 Pass/资源/别名。
     wchar_t frameGraphValue[8]{};
-    const auto frameGraphLength=GetEnvironmentVariableW(L"SELFENGINE_FRAMEGRAPH",frameGraphValue,8);
+    const auto frameGraphLength=GetEnvironmentVariableW(L"FLARE_FRAMEGRAPH",frameGraphValue,8);
     frameGraphEnabled_=frameGraphLength>0&&!(frameGraphLength==1&&frameGraphValue[0]==L'0');
     if(frameGraphEnabled_)
     {
         wchar_t frameGraphPath[1024]{};
-        if(GetEnvironmentVariableW(L"SELFENGINE_FRAMEGRAPH_DOT",frameGraphPath,1024)>0)frameGraphDotPath_=frameGraphPath;
+        if(GetEnvironmentVariableW(L"FLARE_FRAMEGRAPH_DOT",frameGraphPath,1024)>0)frameGraphDotPath_=frameGraphPath;
         frameGraphPath[0]=L'\0';
-        if(GetEnvironmentVariableW(L"SELFENGINE_FRAMEGRAPH_JSON",frameGraphPath,1024)>0)frameGraphJsonPath_=frameGraphPath;
+        if(GetEnvironmentVariableW(L"FLARE_FRAMEGRAPH_JSON",frameGraphPath,1024)>0)frameGraphJsonPath_=frameGraphPath;
     }
-    se::rhi::Result result;
-    device_=se::rhi::Device::CreateD3D12({surface.window,surface.width,surface.height},localization,result);
+    flare::rhi::Result result;
+    device_=flare::rhi::Device::CreateD3D12({surface.window,surface.width,surface.height},localization,result);
     if(!device_)return false;
     if(scene_==SandboxScene::Triangle)
-        return bool(device_->CreatePipeline({se::rhi::PipelineKind::Triangle,resources/"Shaders/Triangle.hlsl",1},pipeline_));
+        return bool(device_->CreatePipeline({flare::rhi::PipelineKind::Triangle,resources/"Shaders/Triangle.hlsl",1},pipeline_));
     if(scene_==SandboxScene::TexturedCube||scene_==SandboxScene::Scene||MaterialScene(scene_)||HlodSceneMode(scene_)||ForwardScene(scene_))
     {
         const bool basic=BasicLitScene(scene_),environment=EnvironmentScene(scene_),shadow=basic||scene_==SandboxScene::Shadows||environment,forward=ForwardScene(scene_),pbr=PbrScene(scene_)||forward;
-        // G04.05：Materials 场景默认 BC1 颜色 + BC5 法线；SELFENGINE_BC1_DATA=1 打开数据 BC1（A/B），
-        // SELFENGINE_LEGACY_BC5=1 只关法线 BC5，SELFENGINE_LEGACY_TEXTURE=1 全部回 RGBA8。
-        const bool bc1Textures=scene_==SandboxScene::Materials&&GetEnvironmentVariableW(L"SELFENGINE_LEGACY_TEXTURE",nullptr,0)==0;
-        const bool bc1DataTextures=bc1Textures&&GetEnvironmentVariableW(L"SELFENGINE_BC1_DATA",nullptr,0)!=0;
-        const bool bc5Normals=bc1Textures&&GetEnvironmentVariableW(L"SELFENGINE_LEGACY_BC5",nullptr,0)==0;
-        se::rhi::PipelineDescription description{basic?se::rhi::PipelineKind::BasicLitMesh:environment?se::rhi::PipelineKind::EnvironmentMesh:shadow?se::rhi::PipelineKind::ShadowedMesh:forward?se::rhi::PipelineKind::ForwardMesh:pbr?se::rhi::PipelineKind::PbrMesh:se::rhi::PipelineKind::TexturedMesh,
+        // G04.05：Materials 场景默认 BC1 颜色 + BC5 法线；FLARE_BC1_DATA=1 打开数据 BC1（A/B），
+        // FLARE_LEGACY_BC5=1 只关法线 BC5，FLARE_LEGACY_TEXTURE=1 全部回 RGBA8。
+        const bool bc1Textures=scene_==SandboxScene::Materials&&GetEnvironmentVariableW(L"FLARE_LEGACY_TEXTURE",nullptr,0)==0;
+        const bool bc1DataTextures=bc1Textures&&GetEnvironmentVariableW(L"FLARE_BC1_DATA",nullptr,0)!=0;
+        const bool bc5Normals=bc1Textures&&GetEnvironmentVariableW(L"FLARE_LEGACY_BC5",nullptr,0)==0;
+        flare::rhi::PipelineDescription description{basic?flare::rhi::PipelineKind::BasicLitMesh:environment?flare::rhi::PipelineKind::EnvironmentMesh:shadow?flare::rhi::PipelineKind::ShadowedMesh:forward?flare::rhi::PipelineKind::ForwardMesh:pbr?flare::rhi::PipelineKind::PbrMesh:flare::rhi::PipelineKind::TexturedMesh,
             resources/(basic?"Shaders/BasicLit.hlsl":environment?"Shaders/EnvironmentForward.hlsl":shadow?"Shaders/ShadowedForward.hlsl":forward?"Shaders/Forward.hlsl":pbr?"Shaders/Pbr.hlsl":"Shaders/TexturedMesh.hlsl"),basic?4u:environment?5u:shadow?4u:forward?3u:pbr?2u:1u};
-        if(forward)description.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+        if(forward)description.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
         if(scene_==SandboxScene::Materials&&bc5Normals&&!forward)description.macros.push_back({"SE_NORMAL_BC5","1"});
         if(!device_->CreatePipeline(description,pipeline_))return false;
-        // G15：SELFENGINE_TONEMAP_ACES=1 使用 ACES fitted ToneMap 变体；默认仍为 R 系列 Reinhard。
+        // G15：FLARE_TONEMAP_ACES=1 使用 ACES fitted ToneMap 变体；默认仍为 R 系列 Reinhard。
         wchar_t acesValue[8]{};
-        const auto acesLength=GetEnvironmentVariableW(L"SELFENGINE_TONEMAP_ACES",acesValue,8);
+        const auto acesLength=GetEnvironmentVariableW(L"FLARE_TONEMAP_ACES",acesValue,8);
         const bool acesToneMap=acesLength>0&&!(acesLength==1&&acesValue[0]==L'0');
         // G15：GPU 自动曝光与 33³ LUT 为显式实验开关；缺省保持既有路径。
         wchar_t exposureValue[8]{};
-        const auto exposureLength=GetEnvironmentVariableW(L"SELFENGINE_AUTO_EXPOSURE",exposureValue,8);
+        const auto exposureLength=GetEnvironmentVariableW(L"FLARE_AUTO_EXPOSURE",exposureValue,8);
         autoExposureEnabled_=exposureLength>0&&!(exposureLength==1&&exposureValue[0]==L'0');
         wchar_t lutValue[8]{};
-        const auto lutLength=GetEnvironmentVariableW(L"SELFENGINE_LUT",lutValue,8);
+        const auto lutLength=GetEnvironmentVariableW(L"FLARE_LUT",lutValue,8);
         lutEnabled_=lutLength>0&&!(lutLength==1&&lutValue[0]==L'0');
         // G15：显式 LUT 文件优先。文件暂时不可读时仍启用 LUT（退回 LGG 生成），
         // 之后文件出现/被修复时由逐帧轮询自动接上。
         wchar_t lutFileValue[1024]{};
         if(GetEnvironmentVariableW(L"FLARE_LUT_FILE",lutFileValue,1024)>0
-            ||GetEnvironmentVariableW(L"SELFENGINE_LUT_FILE",lutFileValue,1024)>0)
+            ||GetEnvironmentVariableW(L"FLARE_LUT_FILE",lutFileValue,1024)>0)
         {
             lutEnabled_=true;
             std::string error;
@@ -159,22 +159,22 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
             // BasicLit 仍只跟随编辑器 `colorLutPath`，避免环境变量覆盖视口选择。
             if(scene_==SandboxScene::Lighting&&lutFile_.Ready())UpdateLutStrip(localization);
         }
-        // G14：SELFENGINE_TAA=1 启用亚像素抖动、速度缓冲与历史解析。
+        // G14：FLARE_TAA=1 启用亚像素抖动、速度缓冲与历史解析。
         wchar_t taaValue[8]{};
-        const auto taaLength=GetEnvironmentVariableW(L"SELFENGINE_TAA",taaValue,8);
+        const auto taaLength=GetEnvironmentVariableW(L"FLARE_TAA",taaValue,8);
         taaEnabled_=taaLength>0&&!(taaLength==1&&taaValue[0]==L'0');
         // G06.08：实例化遮挡批次为显式开关；只在单批次场景生效，其它帧回退普通绘制。
         wchar_t occlusionValue[8]{};
-        const auto occlusionLength=GetEnvironmentVariableW(L"SELFENGINE_OCCLUSION",occlusionValue,8);
+        const auto occlusionLength=GetEnvironmentVariableW(L"FLARE_OCCLUSION",occlusionValue,8);
         occlusionEnabled_=occlusionLength>0&&!(occlusionLength==1&&occlusionValue[0]==L'0');
         // G06.09：HUD 依赖遮挡批次；遮挡关闭时即使设置 HUD 也不启用回读或覆盖层。
         wchar_t occlusionHudValue[8]{};
-        const auto occlusionHudLength=GetEnvironmentVariableW(L"SELFENGINE_OCCLUSION_HUD",occlusionHudValue,8);
+        const auto occlusionHudLength=GetEnvironmentVariableW(L"FLARE_OCCLUSION_HUD",occlusionHudValue,8);
         occlusionHudEnabled_=occlusionEnabled_&&occlusionHudLength>0
             &&!(occlusionHudLength==1&&occlusionHudValue[0]==L'0');
         // G06.11：遮挡 GPU 分段时间；默认关闭，避免为纯绘制路径创建查询堆。
         wchar_t occlusionTimingValue[8]{};
-        const auto occlusionTimingLength=GetEnvironmentVariableW(L"SELFENGINE_OCCLUSION_TIMING",occlusionTimingValue,8);
+        const auto occlusionTimingLength=GetEnvironmentVariableW(L"FLARE_OCCLUSION_TIMING",occlusionTimingValue,8);
         occlusionTimingEnabled_=occlusionEnabled_&&occlusionTimingLength>0
             &&!(occlusionTimingLength==1&&occlusionTimingValue[0]==L'0');
         occlusionCommitted_=false;
@@ -185,105 +185,104 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
         featurePostAces_=initialPostAces;
         if(basic)
         {
-            se::rhi::PipelineDescription fullPbr{se::rhi::PipelineKind::ShadowedMesh,resources/"Shaders/ShadowedForward.hlsl",4};
-            fullPbr.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+            flare::rhi::PipelineDescription fullPbr{flare::rhi::PipelineKind::ShadowedMesh,resources/"Shaders/ShadowedForward.hlsl",4};
+            fullPbr.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
             if(!device_->CreatePipeline(fullPbr,featurePbrPipeline_))return false;
-            se::rhi::PipelineDescription material{se::rhi::PipelineKind::EnvironmentMesh,resources/"Shaders/EnvironmentForward.hlsl",5};
-            material.colorFormat=se::rhi::ColorFormat::Rgba16Float;
-            se::rhi::PipelineDescription sky{se::rhi::PipelineKind::EnvironmentSky,resources/"Shaders/EnvironmentSky.hlsl",5};
-            sky.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+            flare::rhi::PipelineDescription material{flare::rhi::PipelineKind::EnvironmentMesh,resources/"Shaders/EnvironmentForward.hlsl",5};
+            material.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
+            flare::rhi::PipelineDescription sky{flare::rhi::PipelineKind::EnvironmentSky,resources/"Shaders/EnvironmentSky.hlsl",5};
+            sky.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
             if(!device_->CreatePipeline(material,featureEnvironmentPipeline_)||!device_->CreatePipeline(sky,featureEnvironmentSky_))return false;
-            if(!device_->CreatePipeline({se::rhi::PipelineKind::FinalOutput,resources/"Shaders/FinalOutput.hlsl",3},featureForwardOutput_))return false;
+            if(!device_->CreatePipeline({flare::rhi::PipelineKind::FinalOutput,resources/"Shaders/FinalOutput.hlsl",3},featureForwardOutput_))return false;
         }
         if(forward)
         {
-            se::rhi::PipelineDescription output{shadow?se::rhi::PipelineKind::ShadowOutput:se::rhi::PipelineKind::FinalOutput,
+            flare::rhi::PipelineDescription output{shadow?flare::rhi::PipelineKind::ShadowOutput:flare::rhi::PipelineKind::FinalOutput,
                 resources/(shadow?"Shaders/ShadowOutput.hlsl":"Shaders/FinalOutput.hlsl"),shadow?4u:3u};
             // G15：输出 LUT 布局（t2 strip）；禁用时绑定 1×1 占位并由 Shader 跳过。
             // G15.09：Lighting 的非阴影 FinalOutput 也使用同一 29 布局，t1 在 FinalOutput 中不读取。
             if(outputLutScene_)
             {
-                output.bindingLayoutVersion=se::rhi::OutputLutLayoutVersion;
+                output.bindingLayoutVersion=flare::rhi::OutputLutLayoutVersion;
                 output.macros.push_back({"SE_OUTPUT_LUT","1"});
                 const std::vector<std::uint8_t> white{255,255,255,255};
                 if(!device_->CreateTexture({1,1},white,lutDummy_))return false;
             }
             if(!device_->CreatePipeline(output,outputPipeline_))return false;
         }
-        if(shadow&&!device_->CreatePipeline({se::rhi::PipelineKind::ShadowDepth,resources/"Shaders/ShadowDepth.hlsl",4},shadowPipeline_))return false;
+        if(shadow&&!device_->CreatePipeline({flare::rhi::PipelineKind::ShadowDepth,resources/"Shaders/ShadowDepth.hlsl",4},shadowPipeline_))return false;
         // W03：蒙皮变体。前向家族用 ShadowedMesh + 31 号绑定布局 + v3 顶点布局；
         // 阴影深度用 ShadowDepth + 31 号布局（b0 常量 + t8 调色板）。
         // 环境材质的蒙皮受光管线按需加载，投射共享 SkinnedShadowDepth。
         if(shadow)
         {
-            se::rhi::PipelineDescription skinned{se::rhi::PipelineKind::ShadowedMesh,resources/"Shaders/SkinnedForward.hlsl",
-                se::rhi::SkinnedLayoutVersion};
-            skinned.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;
-            skinned.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+            flare::rhi::PipelineDescription skinned{flare::rhi::PipelineKind::ShadowedMesh,resources/"Shaders/SkinnedForward.hlsl",
+                flare::rhi::SkinnedLayoutVersion};
+            skinned.vertexLayoutVersion=flare::rhi::VertexLayoutVersionSkinned;
+            skinned.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
             skinned.macros.push_back({"SE_SKINNED","1"});
-            se::rhi::PipelineDescription skinnedShadow{se::rhi::PipelineKind::ShadowDepth,resources/"Shaders/SkinnedShadowDepth.hlsl",
-                se::rhi::SkinnedLayoutVersion};
-            skinnedShadow.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;
+            flare::rhi::PipelineDescription skinnedShadow{flare::rhi::PipelineKind::ShadowDepth,resources/"Shaders/SkinnedShadowDepth.hlsl",
+                flare::rhi::SkinnedLayoutVersion};
+            skinnedShadow.vertexLayoutVersion=flare::rhi::VertexLayoutVersionSkinned;
             skinnedShadow.macros.push_back({"SE_SKINNED","1"});
             if((!environment&&!device_->CreatePipeline(skinned,skinnedPipeline_))||!device_->CreatePipeline(skinnedShadow,skinnedShadowPipeline_))return false;
         }
         if(forward)
         {
-            se::rhi::PipelineDescription sky{environment?se::rhi::PipelineKind::EnvironmentSky:se::rhi::PipelineKind::Sky,resources/(environment?"Shaders/EnvironmentSky.hlsl":"Shaders/Sky.hlsl"),environment?5u:9u};sky.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+            flare::rhi::PipelineDescription sky{environment?flare::rhi::PipelineKind::EnvironmentSky:flare::rhi::PipelineKind::Sky,resources/(environment?"Shaders/EnvironmentSky.hlsl":"Shaders/Sky.hlsl"),environment?5u:9u};sky.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
             if(!device_->CreatePipeline(sky,skyPipeline_))return false;
         }
         if(scene_==SandboxScene::Materials)
         {
             models_.EnableBc1Textures(bc1Textures,GetExecutableDirectory()/"Cache/Textures",bc1DataTextures);
             models_.SetBc5Normals(bc5Normals);
-            // G04.06：SELFENGINE_TEXTURE_BUDGET_KB 以 KB 覆盖默认 512 MiB，便于做降级 A/B。
+            // G04.06：FLARE_TEXTURE_BUDGET_KB 以 KB 覆盖默认 512 MiB，便于做降级 A/B。
             wchar_t budget[16]{};
-            if(GetEnvironmentVariableW(L"SELFENGINE_TEXTURE_BUDGET_KB",budget,16)>0)
+            if(GetEnvironmentVariableW(L"FLARE_TEXTURE_BUDGET_KB",budget,16)>0)
             {
                 const auto value=std::wcstoull(budget,nullptr,10);
                 if(value)models_.SetTextureBudget(static_cast<std::uint64_t>(value)*1024);
             }
         }
-        // G05.07/G05.08：SELFENGINE_LOD=1 时 Materials 的场景模型带 4 级 LOD（默认单级，画面不变）。
-        // 按变量值判断，SELFENGINE_LOD=0 必须真正关闭，供远景 A/B 使用。
+        // G05.07/G05.08：FLARE_LOD=1 时 Materials 的场景模型带 4 级 LOD（默认单级，画面不变）。
+        // 按变量值判断，FLARE_LOD=0 必须真正关闭，供远景 A/B 使用。
         wchar_t lodValue[8]{};
-        const auto lodLength=GetEnvironmentVariableW(L"SELFENGINE_LOD",lodValue,8);
+        const auto lodLength=GetEnvironmentVariableW(L"FLARE_LOD",lodValue,8);
         const bool lodScene=scene_==SandboxScene::Materials||HlodSceneMode(scene_);
         lodEnabled_=lodScene&&lodLength>0&&!(lodLength==1&&lodValue[0]==L'0');
         forcedLodLevel_=UINT32_MAX;
         if(lodEnabled_)
         {
             wchar_t forcedValue[8]{};
-            const auto forcedLength=GetEnvironmentVariableW(L"SELFENGINE_LOD_LEVEL",forcedValue,8);
+            const auto forcedLength=GetEnvironmentVariableW(L"FLARE_LOD_LEVEL",forcedValue,8);
             if(forcedLength==1&&forcedValue[0]>=L'0'&&forcedValue[0]<=L'3')
                 forcedLodLevel_=static_cast<std::uint32_t>(forcedValue[0]-L'0');
         }
-        // G05.10：SELFENGINE_HLOD=1 时 Hlod 场景按 64 m 单元用代理替换远景实例。
+        // G05.10：FLARE_HLOD=1 时 Hlod 场景按 64 m 单元用代理替换远景实例。
         // G05.11：可选从 `.sehlod` 加载、把烘焙结果写盘，并按相机半径限制驻留。
         hlodEnabled_=false;hlodLevel_=0;
         hlodFilePath_.clear();hlodSavePath_.clear();hlodFileLoaded_=false;hlodSaved_=false;hlodResidentRadius_=0;
         hlodAsync_=false;hlodLazyProxies_=false;hlodUploadBudget_=0;hlodVramBudget_=0;
         if(HlodSceneMode(scene_))
         {
-            const auto getEnv=[](const wchar_t* primary,const wchar_t* legacy,wchar_t* buffer,DWORD count)->DWORD{
-                const DWORD length=GetEnvironmentVariableW(primary,buffer,count);
-                return length>0?length:GetEnvironmentVariableW(legacy,buffer,count);
+            const auto getEnv=[](const wchar_t* primary,wchar_t* buffer,DWORD count)->DWORD{
+                return GetEnvironmentVariableW(primary,buffer,count);
             };
             wchar_t hlodValue[8]{};
-            const auto hlodLength=getEnv(L"FLARE_HLOD",L"SELFENGINE_HLOD",hlodValue,8);
+            const auto hlodLength=getEnv(L"FLARE_HLOD",hlodValue,8);
             hlodEnabled_=hlodLength>0&&!(hlodLength==1&&hlodValue[0]==L'0');
             if(hlodEnabled_)
             {
                 wchar_t levelValue[8]{};
-                const auto levelLength=getEnv(L"FLARE_HLOD_LEVEL",L"SELFENGINE_HLOD_LEVEL",levelValue,8);
+                const auto levelLength=getEnv(L"FLARE_HLOD_LEVEL",levelValue,8);
                 if(levelLength==1&&levelValue[0]>=L'0'&&levelValue[0]<=L'3')
                     hlodLevel_=static_cast<std::uint32_t>(levelValue[0]-L'0');
                 wchar_t fileValue[1024]{};
-                if(getEnv(L"FLARE_HLOD_FILE",L"SELFENGINE_HLOD_FILE",fileValue,1024)>0)hlodFilePath_=fileValue;
+                if(getEnv(L"FLARE_HLOD_FILE",fileValue,1024)>0)hlodFilePath_=fileValue;
                 wchar_t saveValue[1024]{};
-                if(getEnv(L"FLARE_HLOD_SAVE",L"SELFENGINE_HLOD_SAVE",saveValue,1024)>0)hlodSavePath_=saveValue;
+                if(getEnv(L"FLARE_HLOD_SAVE",saveValue,1024)>0)hlodSavePath_=saveValue;
                 wchar_t radiusValue[32]{};
-                if(getEnv(L"FLARE_HLOD_RADIUS",L"SELFENGINE_HLOD_RADIUS",radiusValue,32)>0)
+                if(getEnv(L"FLARE_HLOD_RADIUS",radiusValue,32)>0)
                 {
                     const auto parsed=std::wcstod(radiusValue,nullptr);
                     if(std::isfinite(parsed)&&parsed>0)hlodResidentRadius_=static_cast<float>(parsed);
@@ -292,16 +291,16 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
                 {
                     // G05.13：异步读取；失败回退同步读取。显存预算与每帧上传上限为 0 时保持全量同步行为。
                     wchar_t asyncValue[8]{};
-                    const auto asyncLength=getEnv(L"FLARE_HLOD_ASYNC",L"SELFENGINE_HLOD_ASYNC",asyncValue,8);
+                    const auto asyncLength=getEnv(L"FLARE_HLOD_ASYNC",asyncValue,8);
                     hlodAsync_=asyncLength>0&&!(asyncLength==1&&asyncValue[0]==L'0');
                     wchar_t budgetValue[32]{};
-                    if(getEnv(L"FLARE_HLOD_VRAM_MB",L"SELFENGINE_HLOD_VRAM_MB",budgetValue,32)>0)
+                    if(getEnv(L"FLARE_HLOD_VRAM_MB",budgetValue,32)>0)
                     {
                         const auto parsed=std::wcstoull(budgetValue,nullptr,10);
                         if(parsed>0)hlodVramBudget_=static_cast<std::uint64_t>(parsed)*1024*1024;
                     }
                     wchar_t uploadValue[32]{};
-                    if(getEnv(L"FLARE_HLOD_UPLOAD_BUDGET",L"SELFENGINE_HLOD_UPLOAD_BUDGET",uploadValue,32)>0)
+                    if(getEnv(L"FLARE_HLOD_UPLOAD_BUDGET",uploadValue,32)>0)
                     {
                         const auto parsed=std::wcstoull(uploadValue,nullptr,10);
                         if(parsed>0)hlodUploadBudget_=static_cast<std::uint32_t>(parsed);
@@ -309,7 +308,7 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
                     hlodLazyProxies_=hlodAsync_||hlodVramBudget_>0||hlodUploadBudget_>0;
                     std::uint32_t asyncDelayMs=0;
                     wchar_t delayValue[32]{};
-                    if(getEnv(L"FLARE_HLOD_ASYNC_DELAY_MS",L"SELFENGINE_HLOD_ASYNC_DELAY_MS",delayValue,32)>0)
+                    if(getEnv(L"FLARE_HLOD_ASYNC_DELAY_MS",delayValue,32)>0)
                     {
                         const auto parsed=std::wcstoull(delayValue,nullptr,10);
                         if(parsed>0)asyncDelayMs=static_cast<std::uint32_t>(parsed);
@@ -335,54 +334,54 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
                     }
                 }
             }
-            // G05.12：SELFENGINE_IMPOSTOR=1 时烘焙 16 视角图集并创建朝向相机的四边形管线。
+            // G05.12：FLARE_IMPOSTOR=1 时烘焙 16 视角图集并创建朝向相机的四边形管线。
                 wchar_t impostorValue[8]{};
-                const auto impostorLength=GetEnvironmentVariableW(L"SELFENGINE_IMPOSTOR",impostorValue,8);
+                const auto impostorLength=GetEnvironmentVariableW(L"FLARE_IMPOSTOR",impostorValue,8);
                 impostorEnabled_=impostorLength>0&&!(impostorLength==1&&impostorValue[0]==L'0');
                 if(impostorEnabled_)
                 {
                     wchar_t distanceValue[32]{};
-                    if(GetEnvironmentVariableW(L"SELFENGINE_IMPOSTOR_DISTANCE",distanceValue,32)>0)
+                    if(GetEnvironmentVariableW(L"FLARE_IMPOSTOR_DISTANCE",distanceValue,32)>0)
                     {
                         const auto parsed=std::wcstod(distanceValue,nullptr);
                         if(std::isfinite(parsed)&&parsed>0)impostorDistance_=static_cast<float>(parsed);
                     }
-                    se::ImpostorBakeSettings bakeSettings;bakeSettings.tileSize=64;bakeSettings.color={0.85f,0.35f,0.08f};
-                    se::ImpostorAtlas atlas;std::vector<se::AssetDiagnostic> bakeDiagnostics;
-                    const auto sphereMesh=se::MakeUnitSphere();
-                    if(!se::BakeImpostorAtlas(sphereMesh,se::Mat4{},bakeSettings,atlas,bakeDiagnostics))
+                    flare::ImpostorBakeSettings bakeSettings;bakeSettings.tileSize=64;bakeSettings.color={0.85f,0.35f,0.08f};
+                    flare::ImpostorAtlas atlas;std::vector<flare::AssetDiagnostic> bakeDiagnostics;
+                    const auto sphereMesh=flare::MakeUnitSphere();
+                    if(!flare::BakeImpostorAtlas(sphereMesh,flare::Mat4{},bakeSettings,atlas,bakeDiagnostics))
                     {
                         for(const auto& diagnostic:bakeDiagnostics)Log(LogLevel::Error,localization.GetText(diagnostic.key)+": "+diagnostic.detail);
                         impostorEnabled_=false;
                     }
                     else
                     {
-                        se::rhi::TextureDescription atlasDescription{atlas.Width(),atlas.Height()};
+                        flare::rhi::TextureDescription atlasDescription{atlas.Width(),atlas.Height()};
                         atlasDescription.name="HlodImpostorAtlas";
                         if(!device_->CreateTexture(atlasDescription,atlas.rgba,impostorTexture_)
-                            ||!device_->CreatePipeline({se::rhi::PipelineKind::TexturedMesh,resources/"Shaders/Impostor.hlsl",se::rhi::MaterialLayoutVersion},impostorPipeline_))
+                            ||!device_->CreatePipeline({flare::rhi::PipelineKind::TexturedMesh,resources/"Shaders/Impostor.hlsl",flare::rhi::MaterialLayoutVersion},impostorPipeline_))
                             impostorEnabled_=false;
                     }
                     if(impostorEnabled_)
                     {
-                        auto quadModel=std::make_shared<se::StaticModel>();
-                        se::MeshData quad;quad.name="ImpostorQuad";
+                        auto quadModel=std::make_shared<flare::StaticModel>();
+                        flare::MeshData quad;quad.name="ImpostorQuad";
                         quad.vertices={{{-0.5f,-0.5f,0},{0,0,1},{0,1},{1,0,0,1}},{{0.5f,-0.5f,0},{0,0,1},{1,1},{1,0,0,1}},
                             {{0.5f,0.5f,0},{0,0,1},{1,0},{1,0,0,1}},{{-0.5f,0.5f,0},{0,0,1},{0,0},{1,0,0,1}}};
                         quad.indices={0,1,2,0,2,3};quad.material=0;quadModel->meshes.push_back(std::move(quad));
                         quadModel->materials.emplace_back();
-                        se::ModelNode node;node.name="ImpostorQuad";node.meshes={0};quadModel->nodes.push_back(std::move(node));
-                        std::vector<se::AssetDiagnostic> quadDiagnostics;
+                        flare::ModelNode node;node.name="ImpostorQuad";node.meshes={0};quadModel->nodes.push_back(std::move(node));
+                        std::vector<flare::AssetDiagnostic> quadDiagnostics;
                         if(!models_.Upload(quadModel,{},resources,*device_,impostorQuad_,quadDiagnostics,false,0))impostorEnabled_=false;
                     }
                 }
             }
         const std::uint32_t lodUploads=(lodEnabled_||(hlodEnabled_&&hlodLevel_>0))?4u:0u;
-        const bool compressVertices=scene_==SandboxScene::Materials&&GetEnvironmentVariableW(L"SELFENGINE_LEGACY_VERTEX",nullptr,0)==0;
+        const bool compressVertices=scene_==SandboxScene::Materials&&GetEnvironmentVariableW(L"FLARE_LEGACY_VERTEX",nullptr,0)==0;
         if(scene_==SandboxScene::Materials)
         {
-            se::rhi::PipelineDescription compressed{se::rhi::PipelineKind::PbrMesh,resources/"Shaders/Pbr.hlsl",se::rhi::PbrMaterialLayoutVersion};
-            compressed.vertexLayoutVersion=se::rhi::VertexLayoutVersionCompressed;
+            flare::rhi::PipelineDescription compressed{flare::rhi::PipelineKind::PbrMesh,resources/"Shaders/Pbr.hlsl",flare::rhi::PbrMaterialLayoutVersion};
+            compressed.vertexLayoutVersion=flare::rhi::VertexLayoutVersionCompressed;
             compressed.macros.push_back({"SE_VERTEX_COMPRESSED","1"});
             if(bc5Normals)compressed.macros.push_back({"SE_NORMAL_BC5","1"});
             if(!device_->CreatePipeline(compressed,compressedPipeline_))return false;
@@ -390,19 +389,19 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
         if(pbr||forward)
         {
             // G02：实例化管线在初始化阶段预热，避免首次启用实例化时编译。
-            se::rhi::PipelineDescription instanced{se::rhi::PipelineKind::PbrInstancedMesh,resources/"Shaders/PbrInstanced.hlsl",se::rhi::InstancingLayoutVersion};
-            se::rhi::Pipeline created;
-            const auto warmup=se::WarmupPipelines(*device_,std::span<const se::rhi::PipelineDescription>(&instanced,1),std::span<se::rhi::Pipeline>(&created,1));
+            flare::rhi::PipelineDescription instanced{flare::rhi::PipelineKind::PbrInstancedMesh,resources/"Shaders/PbrInstanced.hlsl",flare::rhi::InstancingLayoutVersion};
+            flare::rhi::Pipeline created;
+            const auto warmup=flare::WarmupPipelines(*device_,std::span<const flare::rhi::PipelineDescription>(&instanced,1),std::span<flare::rhi::Pipeline>(&created,1));
             if(warmup.failed||!created)return false;
             instancedPipeline_=std::move(created);
             Log(LogLevel::Debug,localization.GetText("Rendering.PsoWarmup")+": 1/1, "+std::to_string(warmup.milliseconds)+" ms");
         }
-        auto model=std::make_shared<se::StaticModel>();
-        auto mesh=se::MakeUnitCube();mesh.material=0;model->meshes.push_back(std::move(mesh));
+        auto model=std::make_shared<flare::StaticModel>();
+        auto mesh=flare::MakeUnitCube();mesh.material=0;model->meshes.push_back(std::move(mesh));
         model->materials.emplace_back();
         if(!pbr||scene_==SandboxScene::Scene){model->materials[0].baseColorTexture=0;model->textures.push_back({"checker.png",{}, {},false});}
-        se::ModelNode node;node.name="UnitCube";node.meshes={0};model->nodes.push_back(std::move(node));
-        std::vector<se::AssetDiagnostic> diagnostics;
+        flare::ModelNode node;node.name="UnitCube";node.meshes={0};model->nodes.push_back(std::move(node));
+        std::vector<flare::AssetDiagnostic> diagnostics;
         if(!models_.Upload(model,resources/"Textures/builtin",resources,*device_,cube_,diagnostics,compressVertices,lodUploads))
         {
             for(const auto& diagnostic:diagnostics)Log(LogLevel::Error,localization.GetText(diagnostic.key)+": "+diagnostic.detail);
@@ -410,7 +409,7 @@ bool SandboxRenderer::Initialize(const RenderSurface& surface, const Localizatio
         }
         if(pbr||scene_==SandboxScene::Scene)
         {
-            auto sphere=std::make_shared<se::StaticModel>(*model);sphere->meshes[0]=se::MakeUnitSphere();sphere->meshes[0].material=0;
+            auto sphere=std::make_shared<flare::StaticModel>(*model);sphere->meshes[0]=flare::MakeUnitSphere();sphere->meshes[0].material=0;
             if(!models_.Upload(sphere,pbr&&scene_!=SandboxScene::Scene?std::filesystem::path{}:resources/"Textures/builtin",resources,*device_,sphere_,diagnostics,compressVertices,lodUploads))return false;
         }
     }
@@ -423,13 +422,13 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     frameTriangles_=0;
     const auto telemetryStart=std::chrono::steady_clock::now();
     telemetry_.BeginFrame(frame.updateIndex,Statistics());
-    std::optional<se::CpuScope> preparation;preparation.emplace(frame.profiler,"CPU.CommandPrepare");
+    std::optional<flare::CpuScope> preparation;preparation.emplace(frame.profiler,"CPU.CommandPrepare");
     camera_.reset();
     if (!frame.surface.width || !frame.surface.height) return RenderResult::Occluded;
     const bool coverageFrame=frame.data&&RequiresMaterialCoverage(*frame.data);
-    const bool materialShading=frame.data&&se::RequiresMaterialShading(*frame.data);
+    const bool materialShading=frame.data&&flare::RequiresMaterialShading(*frame.data);
     const bool localLighting=frame.data&&std::any_of(frame.data->lights.begin(),frame.data->lights.end(),[](const auto& instance){
-        return instance.light.type==se::LightType::Spot||(instance.light.type==se::LightType::Point&&instance.light.castsShadow);
+        return instance.light.type==flare::LightType::Spot||(instance.light.type==flare::LightType::Point&&instance.light.castsShadow);
     });
     const bool cascadeRequested=frame.data&&frame.data->shadow.cascades;
     const bool clusterRequested=frame.data&&frame.data->clusteredLighting;
@@ -437,9 +436,9 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if(frame.data&&frame.data->assets&&(cascadeRequested||clusterRequested||BasicLitScene(scene_)))
         for(const auto& object:frame.data->meshes)for(const auto& id:object.mesh.materials)if(!id.empty())
         {
-            std::vector<se::AssetDiagnostic> ignored;
+            std::vector<flare::AssetDiagnostic> ignored;
             const auto* preview=frame.data->materialPreview&&frame.data->materialPreview->id==id?&frame.data->materialPreview->document:nullptr;
-            const auto material=preview?std::shared_ptr<const se::MaterialDocument>{}:frame.data->assets->LoadMaterial(id,ignored);
+            const auto material=preview?std::shared_ptr<const flare::MaterialDocument>{}:frame.data->assets->LoadMaterial(id,ignored);
             customCascadeUnsupported=customCascadeUnsupported||(preview?!preview->shader.empty():material&&!material->shader.empty());
         }
     const bool indoorLighting=frame.data&&frame.data->indoor.Enabled();
@@ -461,13 +460,13 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         hlodProxyCache_.Reset();hlodBaked_=false;featureHlodSignature_.clear();
         instances_.Clear();
         lodTransitions_.clear();
-        std::vector<se::AssetDiagnostic> diagnostics;
-        const auto reloadBuiltin=[&](std::shared_ptr<const se::StaticRenderModel>& value,bool sphere)
+        std::vector<flare::AssetDiagnostic> diagnostics;
+        const auto reloadBuiltin=[&](std::shared_ptr<const flare::StaticRenderModel>& value,bool sphere)
         {
             if(!value)return true;
             auto source=value->source;const bool compressed=value->compressed;
             const auto levels=value->meshes.empty()||!value->meshes[0].lod?0u:static_cast<std::uint32_t>(value->meshes[0].lod->levels.size());
-            std::shared_ptr<const se::StaticRenderModel> candidate;
+            std::shared_ptr<const flare::StaticRenderModel> candidate;
             const auto path=sphere&&scene_!=SandboxScene::Scene?std::filesystem::path{}:ResourceDirectory()/"Textures/builtin";
             if(!models_.Upload(std::move(source),path,ResourceDirectory(),*device_,candidate,diagnostics,compressed,levels))return false;
             value=std::move(candidate);return true;
@@ -483,13 +482,13 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         &&reportedDiagnostics_.insert("Rendering.MaterialCoverageFallback").second)
         Log(LogLevel::Warning,localization.GetText("Rendering.MaterialCoverageFallback"));
     const bool postFrame=scene_==SandboxScene::PostProcess||(BasicLitScene(scene_)&&frame.data&&frame.data->sceneRenderSettings&&frame.data->post.has_value());
-    std::shared_ptr<const se::RenderEnvironment> defaultEnvironment;
+    std::shared_ptr<const flare::RenderEnvironment> defaultEnvironment;
     if(BasicLitScene(scene_))
     {
         if(frame.data&&frame.data->environment.useEngineDefault&&frame.data->environment.asset.empty()
             &&!sceneInstancing&&!customCascadeUnsupported)
         {
-            std::vector<se::AssetDiagnostic> diagnostics;
+            std::vector<flare::AssetDiagnostic> diagnostics;
             defaultEnvironment=environments_.EngineDefault(ResourceDirectory(),*device_,diagnostics);
             for(const auto& diagnostic:diagnostics)if(reportedDiagnostics_.insert(diagnostic.key+":"+diagnostic.detail).second)
                 Log(LogLevel::Warning,localization.GetText(diagnostic.key)+": "+diagnostic.detail);
@@ -527,7 +526,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         const bool aces=frame.data&&frame.data->sceneRenderSettings&&frame.data->acesToneMap;
         if(aces!=featurePostAces_)
         {
-            se::PostProcessRenderer candidate;
+            flare::PostProcessRenderer candidate;
             // PostProcessRenderer 仅持有 RHI Pipeline 句柄，旧管线由 Device::Destroy 按在途 Fence 延迟回收，无需全局 WaitIdle。
             if(!candidate.Initialize(*device_,ResourceDirectory()/"Shaders",aces))return RenderResult::Failed;
             post_=std::move(candidate);
@@ -542,14 +541,14 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     }
     if (frame.data)
     {
-        se::CameraViewport viewport{ 0, 0, static_cast<float>(frame.surface.width), static_cast<float>(frame.surface.height) };
+        flare::CameraViewport viewport{ 0, 0, static_cast<float>(frame.surface.width), static_cast<float>(frame.surface.height) };
         const auto scene = frame.data->sceneViewport;
         if (scene.width != 0 || scene.height != 0) viewport = { scene.x, scene.y, scene.width, scene.height };
-        auto selected = se::SelectCamera(frame.data->cameras, viewport, frame.updateIndex, frame.data->cameraBinding);
+        auto selected = flare::SelectCamera(frame.data->cameras, viewport, frame.updateIndex, frame.data->cameraBinding);
         auto error = selected.error;
-        if (error == se::CameraError::NoPrimary && frame.data->cameras.empty()) error = se::CameraError::None;
-        if (error != se::CameraError::None && error != lastCameraError_)
-            Log(LogLevel::Warning, localization.GetText(se::CameraErrorKey(error)));
+        if (error == flare::CameraError::NoPrimary && frame.data->cameras.empty()) error = flare::CameraError::None;
+        if (error != flare::CameraError::None && error != lastCameraError_)
+            Log(LogLevel::Warning, localization.GetText(flare::CameraErrorKey(error)));
         if (selected.multiplePrimary && !lastMultiplePrimary_)
             Log(LogLevel::Warning, localization.GetText("Camera.MultiplePrimary"));
         if (selected.rejectedPrimaryCount && !lastRejectedPrimary_)
@@ -623,33 +622,33 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if(shadowFilterFrame&&!PrepareShadowFilterPipelines(clusteredFrame))return RenderResult::Failed;
     const auto& filterPipelines=shadowFilterPipelines_[clusteredFrame?1:0];
     const auto& clusterPipelines=clusteredPipelines_[clusterGroup];
-    const auto clusteredKind=clusterGroup==0?se::rhi::PipelineKind::ClusteredForwardMesh:
-        featureEnvironment_||EnvironmentScene(scene_)?(cascadedFrame?se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh:se::rhi::PipelineKind::ClusteredEnvironmentMesh):
-        BasicLitScene(scene_)&&!featureFullPbr_?(cascadedFrame?se::rhi::PipelineKind::ClusteredCascadedBasicLitMesh:se::rhi::PipelineKind::ClusteredBasicLitMesh):
-        cascadedFrame?se::rhi::PipelineKind::ClusteredCascadedShadowedMesh:se::rhi::PipelineKind::ClusteredShadowedMesh;
-    models_.SetMaterialPipelineKind(clusteredFrame?clusteredKind:cascadedFrame?(featureEnvironment_||EnvironmentScene(scene_)?se::rhi::PipelineKind::CascadedEnvironmentMesh:
-        BasicLitScene(scene_)&&!featureFullPbr_?se::rhi::PipelineKind::CascadedBasicLitMesh:se::rhi::PipelineKind::CascadedShadowedMesh):
-        featureEnvironment_||EnvironmentScene(scene_)?se::rhi::PipelineKind::EnvironmentMesh:BasicLitScene(scene_)||scene_==SandboxScene::Shadows?se::rhi::PipelineKind::ShadowedMesh:ForwardScene(scene_)?se::rhi::PipelineKind::ForwardMesh:se::rhi::PipelineKind::PbrMesh);
+    const auto clusteredKind=clusterGroup==0?flare::rhi::PipelineKind::ClusteredForwardMesh:
+        featureEnvironment_||EnvironmentScene(scene_)?(cascadedFrame?flare::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh:flare::rhi::PipelineKind::ClusteredEnvironmentMesh):
+        BasicLitScene(scene_)&&!featureFullPbr_?(cascadedFrame?flare::rhi::PipelineKind::ClusteredCascadedBasicLitMesh:flare::rhi::PipelineKind::ClusteredBasicLitMesh):
+        cascadedFrame?flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh:flare::rhi::PipelineKind::ClusteredShadowedMesh;
+    models_.SetMaterialPipelineKind(clusteredFrame?clusteredKind:cascadedFrame?(featureEnvironment_||EnvironmentScene(scene_)?flare::rhi::PipelineKind::CascadedEnvironmentMesh:
+        BasicLitScene(scene_)&&!featureFullPbr_?flare::rhi::PipelineKind::CascadedBasicLitMesh:flare::rhi::PipelineKind::CascadedShadowedMesh):
+        featureEnvironment_||EnvironmentScene(scene_)?flare::rhi::PipelineKind::EnvironmentMesh:BasicLitScene(scene_)||scene_==SandboxScene::Shadows?flare::rhi::PipelineKind::ShadowedMesh:ForwardScene(scene_)?flare::rhi::PipelineKind::ForwardMesh:flare::rhi::PipelineKind::PbrMesh);
     models_.SetCustomMaterialPipelinesEnabled(!sceneInstancing&&!cascadedFrame&&!clusteredFrame&&!coverageFrame&&!shadingFrame);
     const bool instancing=sceneInstancing;
     // G06.10：Forward 实例化本轮只接 Lighting（无阴影/环境的 FinalOutput HDR 路径）。
     const bool forwardInstancing=instancing&&(scene_==SandboxScene::Lighting||BasicLitScene(scene_));
     if(instancing&&!MaterialScene(scene_)&&!forwardInstancing){Log(LogLevel::Error,localization.GetText("Rhi.Unsupported"));return RenderResult::Failed;}
     if(instancing&&!instancedPipeline_)
-        if(!device_->CreatePipeline({se::rhi::PipelineKind::PbrInstancedMesh,ResourceDirectory()/"Shaders/PbrInstanced.hlsl",se::rhi::InstancingLayoutVersion},instancedPipeline_))return RenderResult::Failed;
+        if(!device_->CreatePipeline({flare::rhi::PipelineKind::PbrInstancedMesh,ResourceDirectory()/"Shaders/PbrInstanced.hlsl",flare::rhi::InstancingLayoutVersion},instancedPipeline_))return RenderResult::Failed;
     if(forwardInstancing&&!forwardInstancedPipeline_)
     {
-        se::rhi::PipelineDescription description{se::rhi::PipelineKind::PbrForwardInstancedMesh,
-            ResourceDirectory()/"Shaders/PbrForwardInstanced.hlsl",se::rhi::ForwardInstancingLayoutVersion};
-        description.colorFormat=se::rhi::ColorFormat::Rgba16Float;
+        flare::rhi::PipelineDescription description{flare::rhi::PipelineKind::PbrForwardInstancedMesh,
+            ResourceDirectory()/"Shaders/PbrForwardInstanced.hlsl",flare::rhi::ForwardInstancingLayoutVersion};
+        description.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
         if(!device_->CreatePipeline(description,forwardInstancedPipeline_))return RenderResult::Failed;
     }
     // G06.08：遮挡主 PSO 只着色、不写深度；prepass 已把候选深度写入同一目标。
     if(instancing&&occlusionEnabled_&&!forwardInstancing&&!occlusionPipeline_)
     {
-        se::rhi::PipelineDescription description{se::rhi::PipelineKind::PbrInstancedMesh,
-            ResourceDirectory()/"Shaders/PbrInstanced.hlsl",se::rhi::InstancingLayoutVersion};
-        description.depth=se::rhi::DepthMode::ReadOnlyLessEqual;
+        flare::rhi::PipelineDescription description{flare::rhi::PipelineKind::PbrInstancedMesh,
+            ResourceDirectory()/"Shaders/PbrInstanced.hlsl",flare::rhi::InstancingLayoutVersion};
+        description.depth=flare::rhi::DepthMode::ReadOnlyLessEqual;
         if(!device_->CreatePipeline(description,occlusionPipeline_))
         {
             Log(LogLevel::Warning,localization.GetText("Rhi.Unsupported"));
@@ -658,10 +657,10 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     }
     if(forwardInstancing&&occlusionEnabled_&&!forwardOcclusionPipeline_)
     {
-        se::rhi::PipelineDescription description{se::rhi::PipelineKind::PbrForwardInstancedMesh,
-            ResourceDirectory()/"Shaders/PbrForwardInstanced.hlsl",se::rhi::ForwardInstancingLayoutVersion};
-        description.colorFormat=se::rhi::ColorFormat::Rgba16Float;
-        description.depth=se::rhi::DepthMode::ReadOnlyLessEqual;
+        flare::rhi::PipelineDescription description{flare::rhi::PipelineKind::PbrForwardInstancedMesh,
+            ResourceDirectory()/"Shaders/PbrForwardInstanced.hlsl",flare::rhi::ForwardInstancingLayoutVersion};
+        description.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
+        description.depth=flare::rhi::DepthMode::ReadOnlyLessEqual;
         if(!device_->CreatePipeline(description,forwardOcclusionPipeline_))
         {
             Log(LogLevel::Warning,localization.GetText("Rhi.Unsupported"));
@@ -671,7 +670,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     device_->SetCpuProfiler(frame.profiler);
     struct ProfilerBinding
     {
-        se::rhi::Device& device;
+        flare::rhi::Device& device;
         ~ProfilerBinding(){device.SetCpuProfiler(nullptr);}
     } binding{*device_};
     if(!device_->EnableGpuTiming(frame.profiler&&frame.profiler->Enabled()))return RenderResult::Failed;
@@ -679,41 +678,41 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if(!commands)return RenderResult::Failed;
     const bool forward=ForwardScene(scene_);
     const bool editor=scene_==SandboxScene::BasicLit&&frame.data&&frame.data->editorGuiEnabled;
-    se::rhi::Result result;
+    flare::rhi::Result result;
     if(editor)
     {
-        se::CpuScope editorGuiScope(frame.profiler,"CPU.EditorGui");
+        flare::CpuScope editorGuiScope(frame.profiler,"CPU.EditorGui");
         const auto scaleX=frame.data->editorGui.framebufferScale.x,scaleY=frame.data->editorGui.framebufferScale.y;
         auto width=static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.width*(scaleX>0?scaleX:1))));
         auto height=static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.height*(scaleY>0?scaleY:1))));
         if(frame.interactiveResize)
         {
-            const auto cur=editorTarget_?editorTarget_->Targets():se::rhi::SceneTargets{};
+            const auto cur=editorTarget_?editorTarget_->Targets():flare::rhi::SceneTargets{};
             width=std::max(cur.width,std::min(8192u,(width+256u)&~255u));
             height=std::max(cur.height,std::min(8192u,(height+256u)&~255u));
         }
-        if(!editorTarget_)editorTarget_=std::make_unique<se::EditorViewportTargetResource>(*device_,width,height);
+        if(!editorTarget_)editorTarget_=std::make_unique<flare::EditorViewportTargetResource>(*device_,width,height);
         std::string targetError;
         if(!editorTarget_->Resize(width,height,targetError)){Log(LogLevel::Error,localization.GetText(targetError));return RenderResult::Failed;}
-        if(!editorGui_)editorGui_=std::make_unique<se::GuiCompositor>();
-        se::rhi::FrameComposition composition;composition.scene=editorTarget_->Targets();
+        if(!editorGui_)editorGui_=std::make_unique<flare::GuiCompositor>();
+        flare::rhi::FrameComposition composition;composition.scene=editorTarget_->Targets();
         result=commands->ConfigureComposition(composition);
         if(result)result=commands->ConfigureSceneOverlay(frame.data->editorSceneLines,ResourceDirectory()/"Shaders/SceneOverlay.hlsl",scaleX>0?scaleX:1,frame.data->editorGridEnabled);
         if(result)result=editorGui_->Configure(*device_,*commands,*frame.data,editorTarget_->LdrColor(),frame.surface.width,frame.surface.height,ResourceDirectory()/"Shaders");
     }
     else if(frame.data&&frame.data->editorGuiEnabled)
     {
-        se::CpuScope editorGuiScope(frame.profiler,"CPU.EditorGui");
+        flare::CpuScope editorGuiScope(frame.profiler,"CPU.EditorGui");
         result=gui_.Configure(*device_,*commands,*frame.data,frame.surface.width,frame.surface.height,ResourceDirectory()/"Shaders");
     }
     if(result&&frame.data&&!frame.data->referenceUiOverlays)
     {
-        std::vector<se::AssetDiagnostic> diagnostics;
+        std::vector<flare::AssetDiagnostic> diagnostics;
         // G06.09：HUD 只读已完成回读；与遮挡批次同条件收集视觉项，再由 GameUI 在场景后绘制。
-        std::vector<se::UiVisual> hudVisuals;
+        std::vector<flare::UiVisual> hudVisuals;
         if(occlusionHudEnabled_&&occlusionCommitted_&&instancing&&camera_&&!lodEnabled_&&!hlodEnabled_&&!impostorEnabled_
             &&!frame.data->editorGuiEnabled&&frame.data->debugLines.empty())
-            hudVisuals=se::BuildOcclusionHud(device_->Stats().occlusion,localization,
+            hudVisuals=flare::BuildOcclusionHud(device_->Stats().occlusion,localization,
                 frame.surface.width,frame.surface.height);
         const auto gameUiW=editor?editorTarget_->Targets().width:(frame.data->editorGuiEnabled?0u:frame.surface.width);
         const auto gameUiH=editor?editorTarget_->Targets().height:(frame.data->editorGuiEnabled?0u:frame.surface.height);
@@ -721,19 +720,19 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         for(const auto& diagnostic:diagnostics)if(reportedDiagnostics_.insert(diagnostic.key+":"+diagnostic.detail).second)
             Log(LogLevel::Warning,localization.GetText(diagnostic.key)+": "+diagnostic.detail);
     }
-    if(result&&!forward){result=commands->BeginPass({se::rhi::PassKind::Clear,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Clear"});if(result)result=commands->EndPass();}
-    const auto viewProjectionBase=camera_?camera_->viewProjection:se::Mat4{};
-    const auto projectionBase=camera_?camera_->projection:se::Mat4{};
-    const auto framebufferScale=editor?frame.data->editorGui.framebufferScale:se::Vec2{1,1};
+    if(result&&!forward){result=commands->BeginPass({flare::rhi::PassKind::Clear,flare::rhi::ResourceUse::ColorWrite,flare::rhi::ResourceUse::DepthWrite,"Clear"});if(result)result=commands->EndPass();}
+    const auto viewProjectionBase=camera_?camera_->viewProjection:flare::Mat4{};
+    const auto projectionBase=camera_?camera_->projection:flare::Mat4{};
+    const auto framebufferScale=editor?frame.data->editorGui.framebufferScale:flare::Vec2{1,1};
     const auto sceneWidth=editor?static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.width*(framebufferScale.x>0?framebufferScale.x:1)))):frame.surface.width;
     const auto sceneHeight=editor?static_cast<std::uint32_t>(std::max(1l,std::lround(frame.data->sceneViewport.height*(framebufferScale.y>0?framebufferScale.y:1)))):frame.surface.height;
-    const auto geometryScale=se::rhi::SceneRasterScale(postFrame&&frame.data&&frame.data->post&&frame.data->post->supersample4x,sceneWidth,sceneHeight);
+    const auto geometryScale=flare::rhi::SceneRasterScale(postFrame&&frame.data&&frame.data->post&&frame.data->post->supersample4x,sceneWidth,sceneHeight);
     const bool taaFrame=taaEnabled_&&postFrame&&frame.surface.width&&frame.surface.height;
-    const auto taaJitter=se::HaltonJitter(static_cast<std::uint32_t>(frame.updateIndex));
-    const auto viewProjection=taaFrame?se::ApplyProjectionJitter(viewProjectionBase,
+    const auto taaJitter=flare::HaltonJitter(static_cast<std::uint32_t>(frame.updateIndex));
+    const auto viewProjection=taaFrame?flare::ApplyProjectionJitter(viewProjectionBase,
         taaJitter,sceneWidth*geometryScale,sceneHeight*geometryScale):viewProjectionBase;
     // 直接基于相机原始投影矩阵施加抖动，避免 (P*V)*V^-1 在大远近比下放大 float32 远裁面舍入误差。
-    const auto clipFromView=taaFrame?se::ApplyProjectionJitter(projectionBase,
+    const auto clipFromView=taaFrame?flare::ApplyProjectionJitter(projectionBase,
         taaJitter,sceneWidth*geometryScale,sceneHeight*geometryScale):projectionBase;
     if(result&&forward)result=commands->ConfigureView(viewProjection);
     if(result&&forward&&frame.data&&!frame.data->particles.batches.empty())
@@ -747,8 +746,8 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         }
         result=commands->ConfigureParticles(particles,ResourceDirectory()/"Shaders/ParticleBillboard.hlsl");
     }
-    const se::rhi::DepthNormalSettings geometrySettings{frame.data&&camera_&&(frame.data->depthNormals||frame.data->gtao||frame.data->contactShadows||frame.data->gpuDrivenHiZ||frame.data->indoor.Enabled()||frame.data->rayTracing.Active())};
-    std::optional<se::rhi::ScreenSpaceOcclusionSettings> screenSettings;
+    const flare::rhi::DepthNormalSettings geometrySettings{frame.data&&camera_&&(frame.data->depthNormals||frame.data->gtao||frame.data->contactShadows||frame.data->gpuDrivenHiZ||frame.data->indoor.Enabled()||frame.data->rayTracing.Active())};
+    std::optional<flare::rhi::ScreenSpaceOcclusionSettings> screenSettings;
     if(frame.data&&camera_&&(frame.data->gtao||frame.data->contactShadows))
     {
         screenSettings.emplace();screenSettings->gtao=frame.data->gtao;screenSettings->contactShadows=frame.data->contactShadows;
@@ -757,14 +756,14 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     }
     if(result&&scene_==SandboxScene::Triangle&&(!frame.data||frame.data->cameras.empty()||camera_))
     {
-        result=commands->BeginPass({se::rhi::PassKind::Triangle,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Triangle"});
+        result=commands->BeginPass({flare::rhi::PassKind::Triangle,flare::rhi::ResourceUse::ColorWrite,flare::rhi::ResourceUse::DepthWrite,"Triangle"});
         if(result)result=commands->Triangle(*pipeline_,viewProjection);
         if(result)result=commands->EndPass();
         if(result)drawStatistics_.draws=1;
     }
     if(result&&(scene_==SandboxScene::TexturedCube||scene_==SandboxScene::Scene||MaterialScene(scene_)||HlodSceneMode(scene_)||forward))
     {
-        std::vector<se::rhi::DrawIndexed> meshes,casters,transparent;
+        std::vector<flare::rhi::DrawIndexed> meshes,casters,transparent;
         const auto opaquePipeline=shadowFilterFrame?(featureEnvironment_||EnvironmentScene(scene_)?*filterPipelines.environment:
             BasicLitScene(scene_)&&!featureFullPbr_?*filterPipelines.basic:*filterPipelines.pbr):
             clusteredFrame?(clusterGroup==0?*clusterPipelines.pbr:
@@ -773,24 +772,24 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             cascadedFrame?(featureEnvironment_||EnvironmentScene(scene_)?*cascadedEnvironment_:
             BasicLitScene(scene_)&&!featureFullPbr_?*cascadedBasic_:*cascadedPbr_):
             instancing?(forwardInstancing?*forwardInstancedPipeline_:*instancedPipeline_):*pipeline_;
-        struct Candidate {const se::MeshInstance* instance;std::shared_ptr<const se::StaticRenderModel> model;bool visible=true,missing=false;};
+        struct Candidate {const flare::MeshInstance* instance;std::shared_ptr<const flare::StaticRenderModel> model;bool visible=true,missing=false;};
         std::vector<Candidate> candidates;
         // G06.08：只有单批次、无 LOD/HLOD/Impostor/调试线的帧才收集遮挡包围盒；
         // 包围盒必须与 meshes/batches 的顺序一一对应。
         const bool occlusionWanted=occlusionEnabled_&&instancing&&!lodEnabled_&&!hlodEnabled_&&!impostorEnabled_
             &&frame.data&&frame.data->debugLines.empty();
-        std::vector<se::Aabb> meshBounds;bool occlusionBoundsValid=true;
+        std::vector<flare::Aabb> meshBounds;bool occlusionBoundsValid=true;
         bounds_.BeginFrame();
-        std::vector<se::AssetId> needed,neededMaterials;
+        std::vector<flare::AssetId> needed,neededMaterials;
         if(frame.data)for(const auto& mesh:frame.data->meshes)
         {
-            if(!se::IsBuiltinMesh(mesh.mesh.meshAsset))needed.push_back(mesh.mesh.meshAsset);
+            if(!flare::IsBuiltinMesh(mesh.mesh.meshAsset))needed.push_back(mesh.mesh.meshAsset);
             for(const auto& id:mesh.mesh.materials)if(!id.empty())neededMaterials.push_back(id);
         }
-        se::Vec3 lightDirection{0.3f,0.5f,0.8f},radiance=scene_==SandboxScene::Scene?se::Vec3{3,3,3}:se::Vec3{};
+        flare::Vec3 lightDirection{0.3f,0.5f,0.8f},radiance=scene_==SandboxScene::Scene?flare::Vec3{3,3,3}:flare::Vec3{};
         if(scene_!=SandboxScene::Scene&&frame.data&&!frame.data->lights.empty())
         {
-            const auto& light=frame.data->lights.front();lightDirection=se::Normalize(se::TransformVector(light.world,{0,0,1}));
+            const auto& light=frame.data->lights.front();lightDirection=flare::Normalize(flare::TransformVector(light.world,{0,0,1}));
             radiance=light.light.color*light.light.intensity;
         }
         const auto report=[&](const auto& diagnostics){for(const auto& diagnostic:diagnostics)
@@ -798,22 +797,22 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 Log(diagnostic.warning?LogLevel::Warning:LogLevel::Error,localization.GetText(diagnostic.key)+": "+diagnostic.detail);};
         if(scene_==SandboxScene::Scene&&frame.data)
         {
-            std::vector<se::AssetDiagnostic> diagnostics;const auto lighting=se::PrepareForwardLighting(frame.data->lights,1,{},diagnostics);report(diagnostics);
+            std::vector<flare::AssetDiagnostic> diagnostics;const auto lighting=flare::PrepareForwardLighting(frame.data->lights,1,{},diagnostics);report(diagnostics);
             if(lighting.directionalEnabled){lightDirection=lighting.directionToLight;radiance=lighting.directionalRadiance;}
         }
-        std::unordered_map<se::AssetId,std::shared_ptr<const se::StaticRenderModel>> frameModels;
-        std::unordered_map<se::AssetId,std::shared_ptr<const se::PbrRenderMaterial>> frameMaterials;
+        std::unordered_map<flare::AssetId,std::shared_ptr<const flare::StaticRenderModel>> frameModels;
+        std::unordered_map<flare::AssetId,std::shared_ptr<const flare::PbrRenderMaterial>> frameMaterials;
         if(camera_&&frame.data)for(const auto& mesh:frame.data->meshes)
         {
-            std::shared_ptr<const se::StaticRenderModel> model;
-            if(mesh.mesh.meshAsset==se::BuiltinCubeAssetId)model=cube_;
-            else if(mesh.mesh.meshAsset==se::BuiltinSphereAssetId)model=sphere_;
+            std::shared_ptr<const flare::StaticRenderModel> model;
+            if(mesh.mesh.meshAsset==flare::BuiltinCubeAssetId)model=cube_;
+            else if(mesh.mesh.meshAsset==flare::BuiltinSphereAssetId)model=sphere_;
             else if((scene_==SandboxScene::Scene||MaterialScene(scene_)||forward)&&frame.data->assets)
             {
                 auto found=frameModels.find(mesh.mesh.meshAsset);
                 if(found==frameModels.end())
                 {
-                    std::vector<se::AssetDiagnostic> diagnostics;
+                    std::vector<flare::AssetDiagnostic> diagnostics;
                     auto loaded=models_.Load(*frame.data->assets,mesh.mesh.meshAsset,*device_,diagnostics);
                     found=frameModels.emplace(mesh.mesh.meshAsset,std::move(loaded)).first;
                     report(diagnostics);
@@ -827,11 +826,11 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         }
         if(camera_&&frame.data&&frame.data->frustumCulling)
         {
-            se::CpuScope visibility(frame.profiler,"CPU.Visibility");const auto frustum=se::BuildFrustum(viewProjection);
+            flare::CpuScope visibility(frame.profiler,"CPU.Visibility");const auto frustum=flare::BuildFrustum(viewProjection);
             for(auto& candidate:candidates)
             {
                 const auto box=bounds_.Resolve(candidate.instance->entity,candidate.instance->world,candidate.model);
-                candidate.visible=!frustum||!box||se::Intersects(*frustum,*box);
+                candidate.visible=!frustum||!box||flare::Intersects(*frustum,*box);
                 drawStatistics_.culled+=!candidate.visible;
             }
         }
@@ -845,15 +844,15 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         {
             if(hlodAsync_&&hlodStreamer_.Running())
             {
-                se::HlodScene streamed;std::string streamError;
+                flare::HlodScene streamed;std::string streamError;
                 const auto streamState=hlodStreamer_.Poll(streamed,streamError);
-                if(streamState==se::HlodStreamer::State::Ready)
+                if(streamState==flare::HlodStreamer::State::Ready)
                 {
                     hlodStream_.Adopt(std::move(streamed));hlodFileLoaded_=true;hlodBaked_=false;
                     Log(LogLevel::Info,localization.GetText("Rendering.HlodStreamReady")+": "
                         +std::to_string(hlodStream_.Scene().cells.size()));
                 }
-                else if(streamState==se::HlodStreamer::State::Failed)
+                else if(streamState==flare::HlodStreamer::State::Failed)
                 {
                     hlodAsync_=false;hlodLazyProxies_=hlodVramBudget_>0||hlodUploadBudget_>0;
                     Log(LogLevel::Warning,localization.GetText(streamError.empty()?"Assets.ReadFailed":streamError));
@@ -868,18 +867,18 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             if(!hlodFailed_&&!(hlodAsync_&&hlodStreamer_.Running())&&(!hlodBaked_||hlodInstanceCount_!=candidates.size()))
             {
                 hlodBaked_=false;
-                se::HlodScene baked;bool haveScene=false,haveAssignments=false;
-                std::vector<se::HlodCellCoordinate> assignments;
+                flare::HlodScene baked;bool haveScene=false,haveAssignments=false;
+                std::vector<flare::HlodCellCoordinate> assignments;
                 std::vector<std::size_t> instanceCandidates;
-                std::vector<se::AssetDiagnostic> diagnostics;
-                std::unordered_map<std::string,std::shared_ptr<const se::PbrRenderMaterial>> embeddedMaterials;
+                std::vector<flare::AssetDiagnostic> diagnostics;
+                std::unordered_map<std::string,std::shared_ptr<const flare::PbrRenderMaterial>> embeddedMaterials;
                 if(hlodFileLoaded_&&hlodStream_.Loaded())
                 {
                     baked=hlodStream_.Scene();haveScene=true;
                 }
                 else
                 {
-                    std::vector<se::HlodInstance> instances;
+                    std::vector<flare::HlodInstance> instances;
                     for(std::size_t index=0;index<candidates.size();++index)
                     {
                         const auto& candidate=candidates[index];const auto& model=*candidate.model;
@@ -903,12 +902,12 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                             instanceCandidates.push_back(index);
                         }
                     }
-                    haveScene=se::BakeHlod(instances,se::HlodCellSize,baked,diagnostics,&assignments);
+                    haveScene=flare::BakeHlod(instances,flare::HlodCellSize,baked,diagnostics,&assignments);
                     haveAssignments=haveScene;
                     if(haveScene&&!hlodSavePath_.empty()&&!hlodSaved_)
                     {
                         std::string saveError;
-                        if(se::WriteHlodScene(hlodSavePath_,baked,saveError))
+                        if(flare::WriteHlodScene(hlodSavePath_,baked,saveError))
                         {
                             hlodSaved_=true;
                             Log(LogLevel::Info,localization.GetText("Rendering.HlodSaved")+": "
@@ -927,28 +926,28 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     for(std::size_t cellIndex=0;cellIndex<hlodCells_.size();++cellIndex)
                     {
                         const auto& cell=hlodCells_[cellIndex];
-                        auto proxy=std::make_shared<se::StaticModel>();
-                        std::vector<std::shared_ptr<const se::PbrRenderMaterial>> overrides;
+                        auto proxy=std::make_shared<flare::StaticModel>();
+                        std::vector<std::shared_ptr<const flare::PbrRenderMaterial>> overrides;
                         for(const auto& part:cell.parts)
                         {
-                            se::MeshData partMesh=part.mesh;partMesh.material=static_cast<std::int32_t>(proxy->materials.size());
+                            flare::MeshData partMesh=part.mesh;partMesh.material=static_cast<std::int32_t>(proxy->materials.size());
                             proxy->meshes.push_back(std::move(partMesh));proxy->materials.emplace_back();
-                            std::shared_ptr<const se::PbrRenderMaterial> material;
+                            std::shared_ptr<const flare::PbrRenderMaterial> material;
                             if(const auto found=embeddedMaterials.find(part.material);found!=embeddedMaterials.end())material=found->second;
                             else if(!part.material.empty()&&frame.data->assets)
                                 material=models_.LoadMaterial(*frame.data->assets,part.material,*device_,diagnostics);
                             overrides.push_back(std::move(material));
                         }
-                        se::ModelNode node;node.name="HlodProxy";
+                        flare::ModelNode node;node.name="HlodProxy";
                         for(std::uint32_t index=0;index<proxy->meshes.size();++index)node.meshes.push_back(index);
                         proxy->nodes.push_back(std::move(node));
                         hlodOverrides_.push_back(std::move(overrides));
                         std::uint64_t bytes=0;
                         for(const auto& part:cell.parts)
-                            bytes+=UINT64{part.mesh.vertices.size()}*sizeof(se::MeshVertex)+UINT64{part.mesh.indices.size()}*4;
+                            bytes+=UINT64{part.mesh.vertices.size()}*sizeof(flare::MeshVertex)+UINT64{part.mesh.indices.size()}*4;
                         hlodProxyBytes_[cellIndex]=bytes;
                         if(hlodLazyProxies_)continue;
-                        std::shared_ptr<const se::StaticRenderModel> render;
+                        std::shared_ptr<const flare::StaticRenderModel> render;
                         if(!models_.Upload(proxy,{},ResourceDirectory(),*device_,render,diagnostics,false,0)){uploaded=false;break;}
                         hlodProxies_[cellIndex]=std::move(render);
                         hlodProxyCache_.Insert(static_cast<std::uint32_t>(cellIndex),bytes);
@@ -964,7 +963,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                         hlodCandidateCell_.assign(candidates.size(),-1);
                         if(haveAssignments)
                         {
-                            std::vector<se::HlodCellCoordinate> candidateCoordinates(candidates.size());
+                            std::vector<flare::HlodCellCoordinate> candidateCoordinates(candidates.size());
                             std::vector<char> assigned(candidates.size(),0);
                             for(std::size_t instance=0;instance<assignments.size()&&instance<instanceCandidates.size();++instance)
                             {
@@ -990,9 +989,9 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                                 const auto& model=*candidates[candidate].model;
                                 if(model.layout.parts.empty())continue;
                                 const auto& minimum=model.layout.minimum;const auto& maximum=model.layout.maximum;
-                                const se::Vec3 localCenter{(minimum.x+maximum.x)*0.5f,(minimum.y+maximum.y)*0.5f,(minimum.z+maximum.z)*0.5f};
+                                const flare::Vec3 localCenter{(minimum.x+maximum.x)*0.5f,(minimum.y+maximum.y)*0.5f,(minimum.z+maximum.z)*0.5f};
                                 const auto world=model.layout.parts.front().modelFromMesh*candidates[candidate].instance->world;
-                                const auto coordinate=se::HlodCellFor(se::TransformPoint(world,localCenter),se::HlodCellSize);
+                                const auto coordinate=flare::HlodCellFor(flare::TransformPoint(world,localCenter),flare::HlodCellSize);
                                 for(std::size_t cell=0;cell<hlodCells_.size();++cell)
                                     if(hlodCells_[cell].coordinate==coordinate)
                                     {
@@ -1008,7 +1007,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             }
             if(!hlodFailed_&&!hlodCells_.empty()&&hlodCandidateCell_.size()==candidates.size())
             {
-                se::HlodView view;view.position=camera_->position;view.viewportHeight=static_cast<float>(frame.surface.height);
+                flare::HlodView view;view.position=camera_->position;view.viewportHeight=static_cast<float>(frame.surface.height);
                 // 驻留：radius<=0 全部驻留；否则平面距离（含单元半径）内才允许使用代理，其余回退实例。
                 residentCount=hlodCells_.size();
                 std::vector<char> resident(hlodCells_.size(),1);
@@ -1028,7 +1027,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 {
                     if(!resident[cell])continue;
                     const bool current=cell<hlodProxyActive_.size()&&hlodProxyActive_[cell];
-                    proxySelected[cell]=se::SelectHlodProxy(hlodCells_[cell],view,1.5f,current);
+                    proxySelected[cell]=flare::SelectHlodProxy(hlodCells_[cell],view,1.5f,current);
                 }
                 if(hlodLazyProxies_)
                 {
@@ -1042,17 +1041,17 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                         const auto bytes=hlodProxyBytes_[cell];
                         if(!hlodProxyCache_.CanUpload()||!hlodProxyCache_.Fits(bytes))
                         {proxySelected[cell]=false;continue;}
-                        auto proxy=std::make_shared<se::StaticModel>();
+                        auto proxy=std::make_shared<flare::StaticModel>();
                         for(const auto& part:hlodCells_[cell].parts)
                         {
-                            se::MeshData partMesh=part.mesh;partMesh.material=static_cast<std::int32_t>(proxy->materials.size());
+                            flare::MeshData partMesh=part.mesh;partMesh.material=static_cast<std::int32_t>(proxy->materials.size());
                             proxy->meshes.push_back(std::move(partMesh));proxy->materials.emplace_back();
                         }
-                        se::ModelNode node;node.name="HlodProxy";
+                        flare::ModelNode node;node.name="HlodProxy";
                         for(std::uint32_t index=0;index<proxy->meshes.size();++index)node.meshes.push_back(index);
                         proxy->nodes.push_back(std::move(node));
-                        std::vector<se::AssetDiagnostic> uploadDiagnostics;
-                        std::shared_ptr<const se::StaticRenderModel> render;
+                        std::vector<flare::AssetDiagnostic> uploadDiagnostics;
+                        std::shared_ptr<const flare::StaticRenderModel> render;
                         if(!models_.Upload(proxy,{},ResourceDirectory(),*device_,render,uploadDiagnostics,false,0))
                         {proxySelected[cell]=false;++uploadFailures;continue;}
                         hlodProxies_[cell]=std::move(render);
@@ -1103,27 +1102,27 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 (featureEnvironment_||EnvironmentScene(scene_)?*filterPipelines.skinnedEnvironment:*filterPipelines.skinned):clusteredFrame?
                 (featureEnvironment_||EnvironmentScene(scene_)?*clusterPipelines.skinnedEnvironment:*clusterPipelines.skinned):cascadedFrame?
                 (featureEnvironment_||EnvironmentScene(scene_)?*cascadedSkinnedEnvironment_:*cascadedSkinned_):
-                !featureEnvironment_&&skinnedPipeline_?*skinnedPipeline_:se::rhi::PipelineHandle{}):se::rhi::PipelineHandle{};
+                !featureEnvironment_&&skinnedPipeline_?*skinnedPipeline_:flare::rhi::PipelineHandle{}):flare::rhi::PipelineHandle{};
             if(skinnedModel&&!instancing&&!clusteredFrame&&!cascadedFrame&&(featureEnvironment_||EnvironmentScene(scene_)))
             {
-                const auto environmentSkin=surfacePipelines_.Load(*device_,ResourceDirectory()/"Shaders",se::rhi::PipelineKind::EnvironmentMesh,
-                    se::MaterialAlphaMode::Opaque,true,false,false,false,shadingFrame);
+                const auto environmentSkin=surfacePipelines_.Load(*device_,ResourceDirectory()/"Shaders",flare::rhi::PipelineKind::EnvironmentMesh,
+                    flare::MaterialAlphaMode::Opaque,true,false,false,false,shadingFrame);
                 if(!environmentSkin){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
                 skinDrawPipeline=*environmentSkin;
             }
-            const auto skinShadowPipeline=skinnedShadowPipeline_?*skinnedShadowPipeline_:se::rhi::PipelineHandle{};
+            const auto skinShadowPipeline=skinnedShadowPipeline_?*skinnedShadowPipeline_:flare::rhi::PipelineHandle{};
             // 阴影投射者包含主相机外物体，必须在可见性分支前解析同一份材质覆盖。
-            std::vector<std::shared_ptr<const se::PbrRenderMaterial>> overrides;
+            std::vector<std::shared_ptr<const flare::PbrRenderMaterial>> overrides;
             for(const auto& id:mesh.mesh.materials)
             {
                 auto found=frameMaterials.find(id);
                 if(found==frameMaterials.end())
                 {
-                    std::vector<se::AssetDiagnostic> diagnostics;
+                    std::vector<flare::AssetDiagnostic> diagnostics;
                     const auto* preview=frame.data->materialPreview&&frame.data->materialPreview->id==id?&frame.data->materialPreview->document:nullptr;
                     auto material=frame.data->assets&&!id.empty()?models_.LoadMaterial(*frame.data->assets,id,*device_,diagnostics,preview):nullptr;
                     if(material&&variants_.Add(material->featureMask))
-                        Log(LogLevel::Debug,localization.GetText("Rendering.MaterialVariant")+": "+se::VariantId(material->featureMask));
+                        Log(LogLevel::Debug,localization.GetText("Rendering.MaterialVariant")+": "+flare::VariantId(material->featureMask));
                     found=frameMaterials.emplace(id,std::move(material)).first;report(diagnostics);
                 }
                 overrides.push_back(found->second);
@@ -1131,7 +1130,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             if((scene_==SandboxScene::Shadows||BasicLitScene(scene_)||EnvironmentScene(scene_))&&mesh.mesh.castsShadow)
             {
                 const auto firstCaster=casters.size();
-                se::AppendShadowModelDraws(*model,mesh.world,casters,0,skinPalette,skinJointCount,skinShadowPipeline,overrides);
+                flare::AppendShadowModelDraws(*model,mesh.world,casters,0,skinPalette,skinJointCount,skinShadowPipeline,overrides);
                 const bool isStaticCaster=mesh.staticGeometry&&!skinnedModel;
                 for(auto cIdx=firstCaster;cIdx<casters.size();++cIdx)
                 {
@@ -1146,28 +1145,28 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             if(impostorEnabled_&&!coverageFrame&&!shadingFrame&&camera_&&impostorQuad_&&impostorPipeline_)
             {
                 const auto& minimum=model->layout.minimum;const auto& maximum=model->layout.maximum;
-                const se::Vec3 localCenter{(minimum.x+maximum.x)*0.5f,(minimum.y+maximum.y)*0.5f,(minimum.z+maximum.z)*0.5f};
-                const auto center=se::TransformPoint(mesh.world,localCenter);
-                if(se::Length(camera_->position-center)>impostorDistance_)
+                const flare::Vec3 localCenter{(minimum.x+maximum.x)*0.5f,(minimum.y+maximum.y)*0.5f,(minimum.z+maximum.z)*0.5f};
+                const auto center=flare::TransformPoint(mesh.world,localCenter);
+                if(flare::Length(camera_->position-center)>impostorDistance_)
                 {
                     const auto azimuth=std::atan2(camera_->position.x-center.x,camera_->position.z-center.z);
                     std::uint32_t first=0,second=0;float blend=0;
-                    se::ImpostorViewPair(azimuth,first,second,blend);
+                    flare::ImpostorViewPair(azimuth,first,second,blend);
                     const auto extent=(std::max)({maximum.x-minimum.x,maximum.y-minimum.y,maximum.z-minimum.z});
-                    const auto scaleX=se::Length(se::Vec3{mesh.world(0,0),mesh.world(1,0),mesh.world(2,0)});
-                    const auto scaleY=se::Length(se::Vec3{mesh.world(0,1),mesh.world(1,1),mesh.world(2,1)});
-                    const auto scaleZ=se::Length(se::Vec3{mesh.world(0,2),mesh.world(1,2),mesh.world(2,2)});
+                    const auto scaleX=flare::Length(flare::Vec3{mesh.world(0,0),mesh.world(1,0),mesh.world(2,0)});
+                    const auto scaleY=flare::Length(flare::Vec3{mesh.world(0,1),mesh.world(1,1),mesh.world(2,1)});
+                    const auto scaleZ=flare::Length(flare::Vec3{mesh.world(0,2),mesh.world(1,2),mesh.world(2,2)});
                     const float worldSize=extent*(std::max)({scaleX,scaleY,scaleZ})*1.05f;
-                    const auto quadWorld=se::Translation(center)*se::Rotation(se::AxisAngle({0,1,0},azimuth))*se::Scaling({worldSize,worldSize,1});
+                    const auto quadWorld=flare::Translation(center)*flare::Rotation(flare::AxisAngle({0,1,0},azimuth))*flare::Scaling({worldSize,worldSize,1});
                     const auto& quadMesh=impostorQuad_->meshes[0];
-                    se::rhi::DrawIndexed impostor;
+                    flare::rhi::DrawIndexed impostor;
                     impostor.vertices=*quadMesh.vertices;impostor.indices=*quadMesh.indices;impostor.texture=*impostorTexture_;
                     impostor.pipeline=*impostorPipeline_;impostor.world=quadWorld;impostor.viewProjection=viewProjection;
                     impostor.indexCount=6;impostor.impostorView=float(first);impostor.impostorNext=float(second);impostor.impostorBlend=blend;
                     meshes.push_back(impostor);++impostorDrawCount;continue;
                 }
             }
-            if(!PbrScene(scene_)&&!forward){const auto first=meshes.size();se::AppendStaticModelDraws(*model,mesh.world,meshes,*pipeline_,viewProjection);drawStatistics_.visible+=meshes.size()>first;continue;}
+            if(!PbrScene(scene_)&&!forward){const auto first=meshes.size();flare::AppendStaticModelDraws(*model,mesh.world,meshes,*pipeline_,viewProjection);drawStatistics_.visible+=meshes.size()>first;continue;}
             const auto first=meshes.size();
             auto drawPipeline=opaquePipeline;
             if(model->compressed&&compressedPipeline_)drawPipeline=*compressedPipeline_;
@@ -1175,10 +1174,10 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             bool lodTransitionActive=false;float lodBlend=1.0f;std::uint32_t lodPrevious=0;
             if(lodEnabled_&&camera_&&!model->meshes.empty()&&model->meshes[0].lod)
             {
-                se::LodView lodView;lodView.position=camera_->position;
+                flare::LodView lodView;lodView.position=camera_->position;
                 lodView.viewportHeight=static_cast<float>(frame.surface.height);
                 const auto& minimum=model->layout.minimum;const auto& maximum=model->layout.maximum;
-                const se::Vec3 localCenter{(minimum.x+maximum.x)*0.5f,(minimum.y+maximum.y)*0.5f,(minimum.z+maximum.z)*0.5f};
+                const flare::Vec3 localCenter{(minimum.x+maximum.x)*0.5f,(minimum.y+maximum.y)*0.5f,(minimum.z+maximum.z)*0.5f};
                 auto& transition=lodTransitions_[{model.get(),mesh.entity}];
                 const auto delta=std::clamp(static_cast<float>(frame.updateDeltaSeconds),0.0f,0.1f);
                 if(forcedLodLevel_!=UINT32_MAX)
@@ -1187,10 +1186,10 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     lodLevel=(std::min)(forcedLodLevel_,maximumLevel);
                     transition={};
                 }
-                else lodLevel=se::UpdateModelLod(*model->meshes[0].lod,localCenter,mesh.world,lodView,1.5f,delta,transition);
-                if(lodDistance<0.0f)lodDistance=se::Length(camera_->position-se::TransformPoint(mesh.world,localCenter));
+                else lodLevel=flare::UpdateModelLod(*model->meshes[0].lod,localCenter,mesh.world,lodView,1.5f,delta,transition);
+                if(lodDistance<0.0f)lodDistance=flare::Length(camera_->position-flare::TransformPoint(mesh.world,localCenter));
                 lodTransitionActive=transition.active;
-                lodBlend=se::LodBlendWeight(transition);
+                lodBlend=flare::LodBlendWeight(transition);
                 lodPrevious=transition.previous;
                 if(lodLevel<lodLevelCounts.size())++lodLevelCounts[lodLevel];
                 lodMaximumBlend=(std::max)(lodMaximumBlend,lodTransitionActive?lodBlend:0.0f);
@@ -1198,12 +1197,12 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             // G05.08：过渡期间旧级与新级各画一次，Bayer 阈值把两组像素分开（互不重叠），
             // 避免两套 LOD 深度互相遮挡；blend 为 0 时只画旧级，为 1 时只画新级。
             const auto previous=previousWorlds_.find(mesh.entity);
-            const se::Mat4* previousWorld=previous!=previousWorlds_.end()?&previous->second:nullptr;
-            const auto look=se::Vec4{frame.data?frame.data->lookMode:0.0f,frame.data?frame.data->lookBlend:0.0f,3.0f,1.0f};
+            const flare::Mat4* previousWorld=previous!=previousWorlds_.end()?&previous->second:nullptr;
+            const auto look=flare::Vec4{frame.data?frame.data->lookMode:0.0f,frame.data?frame.data->lookBlend:0.0f,3.0f,1.0f};
             const auto appendLod=[&](std::uint32_t level,float dither)
             {
-                se::AppendPbrModelDraws(*model,mesh.world,overrides,meshes,drawPipeline,viewProjection,camera_->position,
-                    forward?se::Vec3{0,0,1}:lightDirection,forward?se::Vec3{}:radiance,level,dither,previousWorld,look,
+                flare::AppendPbrModelDraws(*model,mesh.world,overrides,meshes,drawPipeline,viewProjection,camera_->position,
+                    forward?flare::Vec3{0,0,1}:lightDirection,forward?flare::Vec3{}:radiance,level,dither,previousWorld,look,
                     skinPalette,skinJointCount,skinDrawPipeline);
             };
             if(lodTransitionActive&&lodBlend<1.0f)
@@ -1212,7 +1211,8 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 if(lodBlend>0.0f)appendLod(lodLevel,lodBlend);
             }
             else appendLod(lodLevel,0.0f);
-            if(editor&&mesh.entity==frame.data->editorSelected)
+            if(editor&&(mesh.entity==frame.data->editorSelected||
+               std::find(frame.data->editorSelectedEntities.begin(),frame.data->editorSelectedEntities.end(),mesh.entity)!=frame.data->editorSelectedEntities.end()))
                 for(auto i=first;i<meshes.size();++i)meshes[i].outline=true;
             drawStatistics_.visible+=meshes.size()>first;
             if(occlusionWanted&&meshes.size()>first)
@@ -1227,7 +1227,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         bounds_.EndFrame();drawStatistics_.boundsUpdates=bounds_.Updates();
         // G14：本帧结束后把当前世界矩阵留作下一帧速度的“上一帧”。
         {
-            std::unordered_map<se::StableEntityId,se::Mat4> currentWorlds;
+            std::unordered_map<flare::StableEntityId,flare::Mat4> currentWorlds;
             for(const auto& candidate:candidates)if(candidate.instance)currentWorlds[candidate.instance->entity]=candidate.instance->world;
             previousWorlds_=std::move(currentWorlds);
         }
@@ -1236,14 +1236,14 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             for(std::size_t cell=0;cell<hlodProxies_.size()&&cell<proxySelected.size();++cell)
                 if(proxySelected[cell]&&hlodProxies_[cell])
                 {
-                    se::AppendPbrModelDraws(*hlodProxies_[cell],se::Mat4{},hlodOverrides_[cell],meshes,opaquePipeline,viewProjection,
+                    flare::AppendPbrModelDraws(*hlodProxies_[cell],flare::Mat4{},hlodOverrides_[cell],meshes,opaquePipeline,viewProjection,
                         camera_->position,lightDirection,radiance,0,0);
                     ++proxyDrawCount;
                 }
         }
         if(camera_&&frame.data&&!frame.data->debugLines.empty()&&(PbrScene(scene_)||forward))
         {
-            result=se::AppendPhysicsDebugDraws(*cube_,frame.data->debugLines,opaquePipeline,viewProjection,meshes);
+            result=flare::AppendPhysicsDebugDraws(*cube_,frame.data->debugLines,opaquePipeline,viewProjection,meshes);
             if(!result){Log(LogLevel::Error,localization.GetText(result.Key()));return RenderResult::Failed;}
             drawStatistics_.debugLines=frame.data->debugLines.size();
         }
@@ -1261,62 +1261,62 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         if(coverageFrame||shadingFrame)
         {
             auto kind=clusteredFrame?clusteredKind:cascadedFrame?
-                (featureEnvironment_||EnvironmentScene(scene_)?se::rhi::PipelineKind::CascadedEnvironmentMesh:
-                 BasicLitScene(scene_)&&!featureFullPbr_?se::rhi::PipelineKind::CascadedBasicLitMesh:se::rhi::PipelineKind::CascadedShadowedMesh):
-                featureEnvironment_||EnvironmentScene(scene_)?se::rhi::PipelineKind::EnvironmentMesh:
-                BasicLitScene(scene_)&&!featureFullPbr_?se::rhi::PipelineKind::BasicLitMesh:
-                BasicLitScene(scene_)||scene_==SandboxScene::Shadows?se::rhi::PipelineKind::ShadowedMesh:
-                ForwardScene(scene_)?se::rhi::PipelineKind::ForwardMesh:se::rhi::PipelineKind::PbrMesh;
+                (featureEnvironment_||EnvironmentScene(scene_)?flare::rhi::PipelineKind::CascadedEnvironmentMesh:
+                 BasicLitScene(scene_)&&!featureFullPbr_?flare::rhi::PipelineKind::CascadedBasicLitMesh:flare::rhi::PipelineKind::CascadedShadowedMesh):
+                featureEnvironment_||EnvironmentScene(scene_)?flare::rhi::PipelineKind::EnvironmentMesh:
+                BasicLitScene(scene_)&&!featureFullPbr_?flare::rhi::PipelineKind::BasicLitMesh:
+                BasicLitScene(scene_)||scene_==SandboxScene::Shadows?flare::rhi::PipelineKind::ShadowedMesh:
+                ForwardScene(scene_)?flare::rhi::PipelineKind::ForwardMesh:flare::rhi::PipelineKind::PbrMesh;
             const auto shaders=ResourceDirectory()/"Shaders";
-            for(auto& draw:casters)if(draw.alphaMode==se::MaterialAlphaMode::Mask)
+            for(auto& draw:casters)if(draw.alphaMode==flare::MaterialAlphaMode::Mask)
             {
-                const auto pipeline=surfacePipelines_.Load(*device_,shaders,se::rhi::PipelineKind::ShadowDepth,
+                const auto pipeline=surfacePipelines_.Load(*device_,shaders,flare::rhi::PipelineKind::ShadowDepth,
                     draw.alphaMode,!draw.skinPalette.empty());
                 if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
                 draw.pipeline=*pipeline;
             }
-            std::vector<se::rhi::DrawIndexed> opaque;opaque.reserve(meshes.size());
+            std::vector<flare::rhi::DrawIndexed> opaque;opaque.reserve(meshes.size());
             for(auto draw:meshes)
             {
-                if(draw.alphaMode!=se::MaterialAlphaMode::Opaque||shadingFrame)
+                if(draw.alphaMode!=flare::MaterialAlphaMode::Opaque||shadingFrame)
                 {
                     const bool skin=!draw.skinPalette.empty();auto materialKind=kind;
                     // 与已有BasicLit蒙皮路径相同：蒙皮受光使用Full PBR技术。
-                    if(skin&&se::rhi::IsBasicLit(materialKind))
-                        materialKind=se::rhi::IsClustered(materialKind)?(se::rhi::IsCascaded(materialKind)?se::rhi::PipelineKind::ClusteredCascadedShadowedMesh:se::rhi::PipelineKind::ClusteredShadowedMesh):
-                            se::rhi::IsCascaded(materialKind)?se::rhi::PipelineKind::CascadedShadowedMesh:se::rhi::PipelineKind::ShadowedMesh;
+                    if(skin&&flare::rhi::IsBasicLit(materialKind))
+                        materialKind=flare::rhi::IsClustered(materialKind)?(flare::rhi::IsCascaded(materialKind)?flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh:flare::rhi::PipelineKind::ClusteredShadowedMesh):
+                            flare::rhi::IsCascaded(materialKind)?flare::rhi::PipelineKind::CascadedShadowedMesh:flare::rhi::PipelineKind::ShadowedMesh;
                     const auto pipeline=surfacePipelines_.Load(*device_,shaders,materialKind,draw.alphaMode,skin,shadowFilterFrame,
                         draw.compressedVertices,models_.Bc5NormalsEnabled()&&!forward,shadingFrame);
                     if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
                     draw.pipeline=*pipeline;
                 }
-                if(draw.alphaMode==se::MaterialAlphaMode::Blend){draw.castsShadow=false;transparent.push_back(draw);}
+                if(draw.alphaMode==flare::MaterialAlphaMode::Blend){draw.castsShadow=false;transparent.push_back(draw);}
                 else opaque.push_back(draw);
             }
             meshes=std::move(opaque);
-            if(!transparent.empty()&&(!camera_||!se::SortTransparentDraws(transparent,camera_->view)))return RenderResult::Failed;
+            if(!transparent.empty()&&(!camera_||!flare::SortTransparentDraws(transparent,camera_->view)))return RenderResult::Failed;
         }
         drawStatistics_.draws=meshes.size()+transparent.size();
         drawStatistics_.instances=meshes.size()+transparent.size();
-        if(frame.data&&frame.data->sortOpaque&&!occlusionWanted){se::CpuScope sort(frame.profiler,"CPU.OpaqueSort");se::SortOpaqueDraws(meshes);}
-        std::span<const se::PbrInstanceBatch> batches;
+        if(frame.data&&frame.data->sortOpaque&&!occlusionWanted){flare::CpuScope sort(frame.profiler,"CPU.OpaqueSort");flare::SortOpaqueDraws(meshes);}
+        std::span<const flare::PbrInstanceBatch> batches;
         if(instancing)
         {
-            se::CpuScope batching(frame.profiler,"CPU.Instancing");
+            flare::CpuScope batching(frame.profiler,"CPU.Instancing");
             // G06.10：包围盒随绘制进入批次；多批次遮挡按批次取局部 instance 下标。
-            const std::span<const se::Aabb> batchBounds=occlusionWanted?std::span<const se::Aabb>(meshBounds):std::span<const se::Aabb>{};
+            const std::span<const flare::Aabb> batchBounds=occlusionWanted?std::span<const flare::Aabb>(meshBounds):std::span<const flare::Aabb>{};
             batches=instances_.Build(meshes,batchBounds);
             drawStatistics_.draws=drawStatistics_.instanceBatches=batches.size();drawStatistics_.instanceCapacity=instances_.InstanceCapacity();
         }
         // G06.08/G06.10：多批次实例化遮挡；每个批次有独立的局部包围盒与 ExecuteIndirect。
         bool occlusionFrame=false;
-        std::vector<std::vector<se::VisibilityItem>> occlusionItems;
-        std::vector<se::rhi::OcclusionBatch> occlusionBatches;
-        se::VisibilityFrustum occlusionFrustum{};
+        std::vector<std::vector<flare::VisibilityItem>> occlusionItems;
+        std::vector<flare::rhi::OcclusionBatch> occlusionBatches;
+        flare::VisibilityFrustum occlusionFrustum{};
         if(occlusionWanted&&occlusionBoundsValid&&!batches.empty())
         {
-            const auto frustum=se::BuildFrustum(viewProjection);
-            if(frustum&&se::QuantizeVisibilityFrustum(*frustum,occlusionFrustum))
+            const auto frustum=flare::BuildFrustum(viewProjection);
+            if(frustum&&flare::QuantizeVisibilityFrustum(*frustum,occlusionFrustum))
             {
                 bool valid=true;
                 occlusionItems.resize(batches.size());
@@ -1364,25 +1364,25 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         const bool cacheBindings=frame.data&&frame.data->cacheOpaqueBindings;
         if(forward)
         {
-            std::vector<se::AssetDiagnostic> diagnostics;
-            auto lighting=se::PrepareForwardLighting(frame.data?std::span<const se::LightInstance>(frame.data->lights):std::span<const se::LightInstance>{},
-                frame.data?frame.data->exposure:1,frame.data?frame.data->skyColor:se::Vec3{},diagnostics,clusteredFrame);
+            std::vector<flare::AssetDiagnostic> diagnostics;
+            auto lighting=flare::PrepareForwardLighting(frame.data?std::span<const flare::LightInstance>(frame.data->lights):std::span<const flare::LightInstance>{},
+                frame.data?frame.data->exposure:1,frame.data?frame.data->skyColor:flare::Vec3{},diagnostics,clusteredFrame);
             if(!camera_){lighting.localLights.clear();lighting.shading.enabled=false;}
             // 无深度阴影 pass 的旧 Lighting 调试模式仍可显示聚光；正式编辑器与 Player 均有阴影 pass。
             if(scene_==SandboxScene::Lighting)
             {
                 bool disabled=false;
                 for(auto& light:lighting.localLights)if(light.castsShadow){light.castsShadow=false;disabled=true;}
-                if(disabled)se::asset_io::Diagnostic(diagnostics,"Rendering.LocalShadowsUnavailable",{},true);
+                if(disabled)flare::asset_io::Diagnostic(diagnostics,"Rendering.LocalShadowsUnavailable",{},true);
             }
             report(diagnostics);
             if(frame.data)
             {
-                const auto meshletMode=se::SelectMeshletSubmissionMode(device_->Capabilities(),
+                const auto meshletMode=flare::SelectMeshletSubmissionMode(device_->Capabilities(),
                     {frame.data->meshletCulling,frame.data->preferMeshShader});
                 lighting.gpuDriven=frame.data->gpuDriven||frame.data->meshletCulling||frame.data->gpuDrivenHiZ;
-                lighting.meshletCulling=meshletMode!=se::MeshletSubmissionMode::Disabled;
-                lighting.preferMeshShader=meshletMode==se::MeshletSubmissionMode::MeshShader;
+                lighting.meshletCulling=meshletMode!=flare::MeshletSubmissionMode::Disabled;
+                lighting.preferMeshShader=meshletMode==flare::MeshletSubmissionMode::MeshShader;
                 lighting.gpuDrivenHiZ=frame.data->gpuDrivenHiZ;
                 if(camera_&&frame.data->indoor.Enabled())
                 {
@@ -1417,7 +1417,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 if(frame.data->assets&&!frame.data->environment.asset.empty())
                     environment=environments_.Load(*frame.data->assets,frame.data->environment.asset,*device_,diagnostics);
                 shadingResources_.Prepare(*frame.data,*camera_,environment.get(),*device_,ResourceDirectory(),lighting.shading,diagnostics);
-                const auto available=[&](se::rhi::DrawIndexed& draw)
+                const auto available=[&](flare::rhi::DrawIndexed& draw)
                 {
                     if(lighting.shading.constants.probeOrigin.w<.5f)draw.layers.constants.sheen={};
                     if(lighting.shading.constants.probeDimensions.w<.5f)draw.layers.constants.subsurface.x=0;
@@ -1449,7 +1449,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 lighting.skySettings.sunIntensity=0;
             }
             // G15：输出 LUT 布局需要 t2；无 LUT 时绑定 1×1 占位，Shader 通过尺寸跳过采样。
-            // G15.09：Lighting 使用 SELFENGINE_LUT_FILE 烘出的 strip；BasicLit 只在编辑器有选择时使用 strip。
+            // G15.09：Lighting 使用 FLARE_LUT_FILE 烘出的 strip；BasicLit 只在编辑器有选择时使用 strip。
             if(outputLutScene_)
             {
                 const bool useStrip=lutStripReady_&&lutStrip_
@@ -1463,16 +1463,16 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 // 主 PSO 用 LESS_EQUAL 只着色；关闭时仍走同一实例管线写深度。
                 bool occluded=false;
                 result=commands->ConfigureForward(lighting,*outputPipeline_,*skyPipeline_);
-                if(result)result=commands->BeginPass({se::rhi::PassKind::Clear,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Clear"});
+                if(result)result=commands->BeginPass({flare::rhi::PassKind::Clear,flare::rhi::ResourceUse::ColorWrite,flare::rhi::ResourceUse::DepthWrite,"Clear"});
                 if(result)result=commands->EndPass();
                 if(result&&occlusionFrame&&forwardOcclusionPipeline_)
                 {
                     if(commands->ConfigureOcclusion(occlusionBatches,occlusionFrustum,{true,1e-6f,occlusionHudEnabled_,occlusionTimingEnabled_}))occluded=true;
                 }
-                if(result)result=commands->BeginPass({se::rhi::PassKind::Sky,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::None,"Sky"});
+                if(result)result=commands->BeginPass({flare::rhi::PassKind::Sky,flare::rhi::ResourceUse::ColorWrite,flare::rhi::ResourceUse::None,"Sky"});
                 if(result)result=commands->EndPass();
-                if(result)result=commands->BeginPass({se::rhi::PassKind::Opaque,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Opaque",
-                    occluded?se::rhi::ResourceUse::DepthRead:se::rhi::ResourceUse::None,cacheBindings});
+                if(result)result=commands->BeginPass({flare::rhi::PassKind::Opaque,flare::rhi::ResourceUse::ColorWrite,flare::rhi::ResourceUse::DepthWrite,"Opaque",
+                    occluded?flare::rhi::ResourceUse::DepthRead:flare::rhi::ResourceUse::None,cacheBindings});
                 for(std::size_t batch=0;result&&batch<batches.size();++batch)
                 {
                     auto draw=batches[batch].draw;
@@ -1481,32 +1481,32 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     if(result&&occluded)drawStatistics_.occludedInstances+=batches[batch].instances.size();
                 }
                 if(result)result=commands->EndPass();
-                if(result)result=commands->BeginPass({se::rhi::PassKind::Output,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::None,"Output",se::rhi::ResourceUse::ColorRead});
+                if(result)result=commands->BeginPass({flare::rhi::PassKind::Output,flare::rhi::ResourceUse::ColorWrite,flare::rhi::ResourceUse::None,"Output",flare::rhi::ResourceUse::ColorRead});
                 if(result)result=commands->EndPass();
                 if(result)result=commands->Close();
                 occlusionCommitted_=occluded;
             }
             else if(scene_==SandboxScene::Shadows||BasicLitScene(scene_)||EnvironmentScene(scene_))
             {
-                se::rhi::ShadowSettings shadows;
+                flare::rhi::ShadowSettings shadows;
                 auto environment=defaultEnvironment;
-                std::optional<se::rhi::EnvironmentBindings> environmentBindings;
+                std::optional<flare::rhi::EnvironmentBindings> environmentBindings;
                 if(EnvironmentScene(scene_)||featureEnvironment_)
                 {
                     if(frame.data&&frame.data->assets&&!frame.data->environment.asset.empty())environment=environments_.Load(*frame.data->assets,frame.data->environment.asset,*device_,diagnostics);
                     if(!environment)environment=environments_.Fallback(*device_,diagnostics);
-                    if(!environment)result={se::rhi::Error::BackendFailure};
-                    else environmentBindings=se::PrepareEnvironmentBindings(*environment,camera_.value_or(se::CameraSnapshot{}),frame.data?frame.data->environment.intensity:0,frame.data?frame.data->environment.yaw:0,diagnostics);
+                    if(!environment)result={flare::rhi::Error::BackendFailure};
+                    else environmentBindings=flare::PrepareEnvironmentBindings(*environment,camera_.value_or(flare::CameraSnapshot{}),frame.data?frame.data->environment.intensity:0,frame.data?frame.data->environment.yaw:0,diagnostics);
                 }
-                auto view=frame.data?frame.data->shadow:se::DirectionalShadowView{};
+                auto view=frame.data?frame.data->shadow:flare::DirectionalShadowView{};
                 view.filter.pcss=shadowFilterFrame;
-                if(!(cascadedFrame?se::PrepareDirectionalCascadeShadow(view,lighting,*camera_,shadows,diagnostics):
-                    se::PrepareDirectionalShadow(view,lighting,shadows,diagnostics)))result={se::rhi::Error::InvalidArgument};
+                if(!(cascadedFrame?flare::PrepareDirectionalCascadeShadow(view,lighting,*camera_,shadows,diagnostics):
+                    flare::PrepareDirectionalShadow(view,lighting,shadows,diagnostics)))result={flare::rhi::Error::InvalidArgument};
                 else if(result)
                 {
                     if(cascadedFrame&&frame.data&&frame.data->staticShadowCache&&shadows.enabled)
                     {
-                        std::vector<se::StaticShadowCasterInput> staticInputs;
+                        std::vector<flare::StaticShadowCasterInput> staticInputs;
                         staticInputs.reserve(casters.size());
                         for(const auto& c:casters)
                         {
@@ -1516,18 +1516,18 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                             const std::uint64_t geomKey=vbKey^(ibKey+0x9E3779B97F4A7C15ull+(vbKey<<6)+(vbKey>>2));
                             const std::uint64_t texKey=(static_cast<std::uint64_t>(c.texture.generation)<<32)
                                 |static_cast<std::uint64_t>(c.texture.index);
-                            const std::uint64_t maskHash=c.alphaMode==se::MaterialAlphaMode::Mask
-                                ?se::HashShadowMaskMaterial(texKey,c.alphaCutoff,c.tint.w,c.pbr.doubleSided):0ull;
+                            const std::uint64_t maskHash=c.alphaMode==flare::MaterialAlphaMode::Mask
+                                ?flare::HashShadowMaskMaterial(texKey,c.alphaCutoff,c.tint.w,c.pbr.doubleSided):0ull;
                             staticInputs.push_back({c.stableId,geomKey,c.world,c.worldBounds,c.hasWorldBounds,maskHash});
                         }
                         shadows.staticShadowCache=true;
-                        shadows.staticCascadeHashes=se::ComputeCascadeStaticShadowHashes(
-                            std::span<const se::Mat4>(shadows.cascadeClipFromWorld).first(shadows.cascadeCount),
+                        shadows.staticCascadeHashes=flare::ComputeCascadeStaticShadowHashes(
+                            std::span<const flare::Mat4>(shadows.cascadeClipFromWorld).first(shadows.cascadeCount),
                             lighting.directionToLight,shadows.resolution,staticInputs);
                     }
-                    std::optional<se::rhi::PostProcessSettings> settings;std::vector<se::rhi::OverlayQuad> overlays;
+                    std::optional<flare::rhi::PostProcessSettings> settings;std::vector<flare::rhi::OverlayQuad> overlays;
                     const auto pipelines=post_.Bindings();
-                    if(postFrame){settings=se::PreparePostProcessSettings(frame.data&&frame.data->post?*frame.data->post:se::rhi::PostProcessSettings{},diagnostics);
+                    if(postFrame){settings=flare::PreparePostProcessSettings(frame.data&&frame.data->post?*frame.data->post:flare::rhi::PostProcessSettings{},diagnostics);
                         settings->autoExposure=autoExposureEnabled_;settings->lutEnabled=lutEnabled_||(!editorLutPath_.empty()&&lutFile_.Ready());
                         // 文件 LUT 与 LGG 生成互斥；revision 变化时由 D3D12 后处理上传一次。
                         if(settings->lutEnabled&&lutFile_.Ready())
@@ -1545,26 +1545,26 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                             settings->taaHistoryValid=previousViewProjectionValid_
                                 &&lastSurfaceWidth_==frame.surface.width&&lastSurfaceHeight_==frame.surface.height;
                         }
-                        if(frame.data&&frame.data->referenceUiOverlays)overlays=se::PreparePostProcessOverlays(frame.data->ui,diagnostics);}
+                        if(frame.data&&frame.data->referenceUiOverlays)overlays=flare::PreparePostProcessOverlays(frame.data->ui,diagnostics);}
                     // 反射、漫反射继续采样 IBL，自定义天空和编辑器的天空开关只决定背景。
                     const bool useProceduralSky=featureEnvironment_&&frame.data&&(frame.data->sky.enabled||(frame.data->todLighting&&frame.data->timeOfDay)
                         ||(frame.data->editorGuiEnabled&&!frame.data->editorSkyEnabled));
                     const auto sky=useProceduralSky?*featureEnvironmentSky_:*skyPipeline_;
                     if(frameGraphEnabled_)
-                        result=se::RecordShadowedFrameGraph(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,sky,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
+                        result=flare::RecordShadowedFrameGraph(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,sky,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
                             settings?&*settings:nullptr,settings?&pipelines:nullptr,overlays,cacheBindings,frameGraph_,sceneWidth,sceneHeight,transparent,
                             geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
                     else
-                        result=se::RecordShadowedFrame(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,sky,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
+                        result=flare::RecordShadowedFrame(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,sky,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
                             settings?&*settings:nullptr,settings?&pipelines:nullptr,overlays,cacheBindings,transparent,
                             geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
                 }
                 report(diagnostics);
             }
             else if(frameGraphEnabled_)
-                result=se::RecordForwardFrameGraph(*commands,lighting,*outputPipeline_,*skyPipeline_,meshes,cacheBindings,
+                result=flare::RecordForwardFrameGraph(*commands,lighting,*outputPipeline_,*skyPipeline_,meshes,cacheBindings,
                     frameGraph_,sceneWidth,sceneHeight,transparent,geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
-            else result=se::RecordForwardFrame(*commands,lighting,*outputPipeline_,*skyPipeline_,meshes,cacheBindings,transparent,
+            else result=flare::RecordForwardFrame(*commands,lighting,*outputPipeline_,*skyPipeline_,meshes,cacheBindings,transparent,
                 geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
         }
         else
@@ -1575,7 +1575,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             {
                 if(commands->ConfigureOcclusion(occlusionBatches,occlusionFrustum,{true,1e-6f,occlusionHudEnabled_,occlusionTimingEnabled_}))
                 {
-                    result=commands->BeginPass({se::rhi::PassKind::Opaque,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Opaque",se::rhi::ResourceUse::None,cacheBindings});
+                    result=commands->BeginPass({flare::rhi::PassKind::Opaque,flare::rhi::ResourceUse::ColorWrite,flare::rhi::ResourceUse::DepthWrite,"Opaque",flare::rhi::ResourceUse::None,cacheBindings});
                     for(std::size_t batch=0;result&&batch<batches.size();++batch)
                     {
                         auto occlusionDraw=batches[batch].draw;occlusionDraw.pipeline=*occlusionPipeline_;
@@ -1588,7 +1588,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             }
             if(result&&!occluded)
             {
-                result=commands->BeginPass({se::rhi::PassKind::Opaque,se::rhi::ResourceUse::ColorWrite,se::rhi::ResourceUse::DepthWrite,"Opaque",se::rhi::ResourceUse::None,cacheBindings});
+                result=commands->BeginPass({flare::rhi::PassKind::Opaque,flare::rhi::ResourceUse::ColorWrite,flare::rhi::ResourceUse::DepthWrite,"Opaque",flare::rhi::ResourceUse::None,cacheBindings});
                 if(result&&instancing)for(const auto& batch:batches){result=commands->DrawInstanced(batch.draw,batch.instances);if(!result)break;}
                 if(result&&!instancing)for(const auto& mesh:meshes){result=commands->Draw(mesh);if(!result)break;}
                 if(result)result=commands->EndPass();
@@ -1643,8 +1643,8 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     if(rtActive&&result){rayTracingHistoryValid_=true;lastRayTracingSceneToken_=activeSceneToken;}
     else rayTracingHistoryValid_=false;
     preparation.reset();
-    se::rhi::CompletionToken token;
-    se::rhi::Image capture;const bool requested=!captureOutput_.empty()&&!captured_&&frame.updateIndex==captureFrame_;
+    flare::rhi::CompletionToken token;
+    flare::rhi::Image capture;const bool requested=!captureOutput_.empty()&&!captured_&&frame.updateIndex==captureFrame_;
     const bool wantCapture=requested||memoryCaptureRequested_;
     if(result)result=device_->Submit(*commands,token,wantCapture?&capture:nullptr);
     if(result)
@@ -1701,9 +1701,9 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     }
     if(result&&requested)
     {
-        std::vector<se::AssetDiagnostic> diagnostics;
-        if(!se::WritePpmImage(captureOutput_,capture.width,capture.height,capture.rgba8,diagnostics))
-        {for(const auto& diagnostic:diagnostics)Log(LogLevel::Error,localization.GetText(diagnostic.key)+": "+diagnostic.detail);result={se::rhi::Error::BackendFailure};}
+        std::vector<flare::AssetDiagnostic> diagnostics;
+        if(!flare::WritePpmImage(captureOutput_,capture.width,capture.height,capture.rgba8,diagnostics))
+        {for(const auto& diagnostic:diagnostics)Log(LogLevel::Error,localization.GetText(diagnostic.key)+": "+diagnostic.detail);result={flare::rhi::Error::BackendFailure};}
         else captured_=true;
     }
     if(!result)
@@ -1716,31 +1716,31 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
 EditorRenderView SandboxRenderer::QueryEditorView() const
 {
     if(editorTarget_&&editorTarget_->Ready())
-        return {camera_.has_value(),camera_?camera_->viewProjection.values:std::array<float,16>{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1},se::GuiCompositor::SceneToken,{}};
-    if (!camera_) return {false,{},se::GuiRenderer::SceneToken,{}};
-    return { true, camera_->viewProjection.values, se::GuiRenderer::SceneToken, {} };
+        return {camera_.has_value(),camera_?camera_->viewProjection.values:std::array<float,16>{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1},flare::GuiCompositor::SceneToken,{}};
+    if (!camera_) return {false,{},flare::GuiRenderer::SceneToken,{}};
+    return { true, camera_->viewProjection.values, flare::GuiRenderer::SceneToken, {} };
 }
 
 bool SandboxRenderer::UpdateLutStrip(const Localization& localization)
 {
     if(!device_||!lutFile_.Ready())return false;
     // G15.09：默认 Rgba16F strip，保留 >1 的显示线性值并消除暗部 8 位台阶；
-    // SELFENGINE_LUT_8BIT=1 只用于与 G15.08 的 8 位路径做 A/B 对照。
+    // FLARE_LUT_8BIT=1 只用于与 G15.08 的 8 位路径做 A/B 对照。
     wchar_t legacyValue[8]{};
-    const auto legacyLength=GetEnvironmentVariableW(L"SELFENGINE_LUT_8BIT",legacyValue,8);
+    const auto legacyLength=GetEnvironmentVariableW(L"FLARE_LUT_8BIT",legacyValue,8);
     const bool highPrecision=!(legacyLength>0&&!(legacyLength==1&&legacyValue[0]==L'0'));
-    const auto format=highPrecision?se::ColorLutStripFormat::Rgba16Float:se::ColorLutStripFormat::Rgba8;
-    se::ColorLutStrip strip;
-    if(!se::BakeColorLutStrip(lutFile_.Lut(),format,strip)||!strip.Valid())
+    const auto format=highPrecision?flare::ColorLutStripFormat::Rgba16Float:flare::ColorLutStripFormat::Rgba8;
+    flare::ColorLutStrip strip;
+    if(!flare::BakeColorLutStrip(lutFile_.Lut(),format,strip)||!strip.Valid())
     {
         Log(LogLevel::Error,localization.GetText("Rendering.LutAssetInvalid"));
         return false;
     }
-    se::rhi::TextureDescription description{strip.width,strip.height};
-    description.format=highPrecision?se::rhi::TextureFormat::Rgba16Float:se::rhi::TextureFormat::Rgba8;
+    flare::rhi::TextureDescription description{strip.width,strip.height};
+    description.format=highPrecision?flare::rhi::TextureFormat::Rgba16Float:flare::rhi::TextureFormat::Rgba8;
     description.name="ColorLutStrip";
-    const se::rhi::TextureSubresource subresource{strip.bytes,0};
-    se::rhi::Texture next;
+    const flare::rhi::TextureSubresource subresource{strip.bytes,0};
+    flare::rhi::Texture next;
     if(!device_->CreateTextureSubresources(description,std::span(&subresource,1),next))
     {
         Log(LogLevel::Error,localization.GetText("Rendering.LutAssetInvalid"));
@@ -1757,28 +1757,28 @@ bool SandboxRenderer::PrepareShadowFilterPipelines(bool clustered)
 {
     auto& stored=shadowFilterPipelines_[clustered?1:0];if(stored.pbr&&stored.skinned)return true;
     ClusterPipelines next;const auto shaders=ResourceDirectory()/"Shaders";
-    const auto create=[&](se::rhi::PipelineKind kind,const char* file,se::rhi::Pipeline& target,bool skin=false)
+    const auto create=[&](flare::rhi::PipelineKind kind,const char* file,flare::rhi::Pipeline& target,bool skin=false)
     {
-        se::rhi::PipelineDescription description{kind,shaders/file,se::rhi::ShadowFilterBindingLayout(kind,skin)};
-        description.colorFormat=se::rhi::ColorFormat::Rgba16Float;
-        if(skin){description.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;description.macros.push_back({"SE_SKINNED","1"});}
+        flare::rhi::PipelineDescription description{kind,shaders/file,flare::rhi::ShadowFilterBindingLayout(kind,skin)};
+        description.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
+        if(skin){description.vertexLayoutVersion=flare::rhi::VertexLayoutVersionSkinned;description.macros.push_back({"SE_SKINNED","1"});}
         return bool(device_->CreatePipeline(description,target));
     };
     if(clustered)
     {
-        if(!create(se::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"PcssClusteredCascadedShadowedForward.hlsl",next.pbr)
-            ||!create(se::rhi::PipelineKind::ClusteredCascadedBasicLitMesh,"PcssClusteredCascadedBasicLit.hlsl",next.basic)
-            ||!create(se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"PcssClusteredCascadedEnvironmentForward.hlsl",next.environment)
-            ||!create(se::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"PcssClusteredCascadedSkinnedForward.hlsl",next.skinned,true)
-            ||!create(se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"PcssClusteredCascadedSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
+        if(!create(flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"PcssClusteredCascadedShadowedForward.hlsl",next.pbr)
+            ||!create(flare::rhi::PipelineKind::ClusteredCascadedBasicLitMesh,"PcssClusteredCascadedBasicLit.hlsl",next.basic)
+            ||!create(flare::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"PcssClusteredCascadedEnvironmentForward.hlsl",next.environment)
+            ||!create(flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"PcssClusteredCascadedSkinnedForward.hlsl",next.skinned,true)
+            ||!create(flare::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"PcssClusteredCascadedSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
     }
     else
     {
-        if(!create(se::rhi::PipelineKind::CascadedShadowedMesh,"PcssCascadedShadowedForward.hlsl",next.pbr)
-            ||!create(se::rhi::PipelineKind::CascadedBasicLitMesh,"PcssCascadedBasicLit.hlsl",next.basic)
-            ||!create(se::rhi::PipelineKind::CascadedEnvironmentMesh,"PcssCascadedEnvironmentForward.hlsl",next.environment)
-            ||!create(se::rhi::PipelineKind::CascadedShadowedMesh,"PcssCascadedSkinnedForward.hlsl",next.skinned,true)
-            ||!create(se::rhi::PipelineKind::CascadedEnvironmentMesh,"PcssCascadedSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
+        if(!create(flare::rhi::PipelineKind::CascadedShadowedMesh,"PcssCascadedShadowedForward.hlsl",next.pbr)
+            ||!create(flare::rhi::PipelineKind::CascadedBasicLitMesh,"PcssCascadedBasicLit.hlsl",next.basic)
+            ||!create(flare::rhi::PipelineKind::CascadedEnvironmentMesh,"PcssCascadedEnvironmentForward.hlsl",next.environment)
+            ||!create(flare::rhi::PipelineKind::CascadedShadowedMesh,"PcssCascadedSkinnedForward.hlsl",next.skinned,true)
+            ||!create(flare::rhi::PipelineKind::CascadedEnvironmentMesh,"PcssCascadedSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
     }
     stored=std::move(next);return true;
 }
@@ -1788,34 +1788,34 @@ bool SandboxRenderer::PrepareClusteredPipelines(std::size_t group)
     if(group>=clusteredPipelines_.size())return false;
     auto& stored=clusteredPipelines_[group];if(stored.pbr&&stored.skinned)return true;
     ClusterPipelines next;const auto shaders=ResourceDirectory()/"Shaders";
-    const auto create=[&](se::rhi::PipelineKind kind,const char* file,se::rhi::Pipeline& target,bool skin=false)
+    const auto create=[&](flare::rhi::PipelineKind kind,const char* file,flare::rhi::Pipeline& target,bool skin=false)
     {
-        se::rhi::PipelineDescription description{kind,shaders/file,
-            skin?se::rhi::SkinnedClusteredLayoutVersion:se::rhi::ClusteredForwardLayoutVersion};
-        description.colorFormat=se::rhi::ColorFormat::Rgba16Float;
-        if(skin){description.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;description.macros.push_back({"SE_SKINNED","1"});}
+        flare::rhi::PipelineDescription description{kind,shaders/file,
+            skin?flare::rhi::SkinnedClusteredLayoutVersion:flare::rhi::ClusteredForwardLayoutVersion};
+        description.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
+        if(skin){description.vertexLayoutVersion=flare::rhi::VertexLayoutVersionSkinned;description.macros.push_back({"SE_SKINNED","1"});}
         return bool(device_->CreatePipeline(description,target));
     };
     if(group==0)
     {
-        if(!create(se::rhi::PipelineKind::ClusteredForwardMesh,"ClusteredForward.hlsl",next.pbr)
-            ||!create(se::rhi::PipelineKind::ClusteredForwardMesh,"ClusteredSkinnedForward.hlsl",next.skinned,true))return false;
+        if(!create(flare::rhi::PipelineKind::ClusteredForwardMesh,"ClusteredForward.hlsl",next.pbr)
+            ||!create(flare::rhi::PipelineKind::ClusteredForwardMesh,"ClusteredSkinnedForward.hlsl",next.skinned,true))return false;
     }
     else if(group==1)
     {
-        if(!create(se::rhi::PipelineKind::ClusteredShadowedMesh,"ClusteredShadowedForward.hlsl",next.pbr)
-            ||!create(se::rhi::PipelineKind::ClusteredBasicLitMesh,"ClusteredBasicLit.hlsl",next.basic)
-            ||!create(se::rhi::PipelineKind::ClusteredEnvironmentMesh,"ClusteredEnvironmentForward.hlsl",next.environment)
-            ||!create(se::rhi::PipelineKind::ClusteredShadowedMesh,"ClusteredSkinnedShadowedForward.hlsl",next.skinned,true)
-            ||!create(se::rhi::PipelineKind::ClusteredEnvironmentMesh,"ClusteredSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
+        if(!create(flare::rhi::PipelineKind::ClusteredShadowedMesh,"ClusteredShadowedForward.hlsl",next.pbr)
+            ||!create(flare::rhi::PipelineKind::ClusteredBasicLitMesh,"ClusteredBasicLit.hlsl",next.basic)
+            ||!create(flare::rhi::PipelineKind::ClusteredEnvironmentMesh,"ClusteredEnvironmentForward.hlsl",next.environment)
+            ||!create(flare::rhi::PipelineKind::ClusteredShadowedMesh,"ClusteredSkinnedShadowedForward.hlsl",next.skinned,true)
+            ||!create(flare::rhi::PipelineKind::ClusteredEnvironmentMesh,"ClusteredSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
     }
     else
     {
-        if(!create(se::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"ClusteredCascadedShadowedForward.hlsl",next.pbr)
-            ||!create(se::rhi::PipelineKind::ClusteredCascadedBasicLitMesh,"ClusteredCascadedBasicLit.hlsl",next.basic)
-            ||!create(se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"ClusteredCascadedEnvironmentForward.hlsl",next.environment)
-            ||!create(se::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"ClusteredCascadedSkinnedForward.hlsl",next.skinned,true)
-            ||!create(se::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"ClusteredCascadedSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
+        if(!create(flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"ClusteredCascadedShadowedForward.hlsl",next.pbr)
+            ||!create(flare::rhi::PipelineKind::ClusteredCascadedBasicLitMesh,"ClusteredCascadedBasicLit.hlsl",next.basic)
+            ||!create(flare::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"ClusteredCascadedEnvironmentForward.hlsl",next.environment)
+            ||!create(flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh,"ClusteredCascadedSkinnedForward.hlsl",next.skinned,true)
+            ||!create(flare::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh,"ClusteredCascadedSkinnedEnvironmentForward.hlsl",next.skinnedEnvironment,true))return false;
     }
     stored=std::move(next);return true;
 }
@@ -1824,22 +1824,22 @@ bool SandboxRenderer::PrepareCascadedPipelines()
 {
     if(cascadedPbr_&&cascadedBasic_&&cascadedEnvironment_&&cascadedSkinned_&&cascadedSkinnedEnvironment_&&cascadedOutput_)return true;
     const auto shaders=ResourceDirectory()/"Shaders";
-    se::rhi::Pipeline pbr,basic,environment,skinned,skinnedEnvironment,output;
-    const auto create=[&](se::rhi::PipelineKind kind,const char* file,se::rhi::Pipeline& target,bool skin=false)
+    flare::rhi::Pipeline pbr,basic,environment,skinned,skinnedEnvironment,output;
+    const auto create=[&](flare::rhi::PipelineKind kind,const char* file,flare::rhi::Pipeline& target,bool skin=false)
     {
-        se::rhi::PipelineDescription description{kind,shaders/file,
-            skin?se::rhi::SkinnedCascadedLayoutVersion:se::rhi::CascadedShadowLayoutVersion};
-        description.colorFormat=se::rhi::ColorFormat::Rgba16Float;
-        if(skin){description.vertexLayoutVersion=se::rhi::VertexLayoutVersionSkinned;description.macros.push_back({"SE_SKINNED","1"});}
+        flare::rhi::PipelineDescription description{kind,shaders/file,
+            skin?flare::rhi::SkinnedCascadedLayoutVersion:flare::rhi::CascadedShadowLayoutVersion};
+        description.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
+        if(skin){description.vertexLayoutVersion=flare::rhi::VertexLayoutVersionSkinned;description.macros.push_back({"SE_SKINNED","1"});}
         return bool(device_->CreatePipeline(description,target));
     };
-    if(!create(se::rhi::PipelineKind::CascadedShadowedMesh,"CascadedShadowedForward.hlsl",pbr)
-        ||!create(se::rhi::PipelineKind::CascadedBasicLitMesh,"CascadedBasicLit.hlsl",basic)
-        ||!create(se::rhi::PipelineKind::CascadedEnvironmentMesh,"CascadedEnvironmentForward.hlsl",environment)
-        ||!create(se::rhi::PipelineKind::CascadedShadowedMesh,"CascadedSkinnedForward.hlsl",skinned,true)
-        ||!create(se::rhi::PipelineKind::CascadedEnvironmentMesh,"CascadedSkinnedEnvironmentForward.hlsl",skinnedEnvironment,true))return false;
-    se::rhi::PipelineDescription final{se::rhi::PipelineKind::CascadedShadowOutput,shaders/"CascadedShadowOutput.hlsl",
-        outputLutScene_?se::rhi::OutputLutLayoutVersion:se::rhi::CascadedShadowLayoutVersion};
+    if(!create(flare::rhi::PipelineKind::CascadedShadowedMesh,"CascadedShadowedForward.hlsl",pbr)
+        ||!create(flare::rhi::PipelineKind::CascadedBasicLitMesh,"CascadedBasicLit.hlsl",basic)
+        ||!create(flare::rhi::PipelineKind::CascadedEnvironmentMesh,"CascadedEnvironmentForward.hlsl",environment)
+        ||!create(flare::rhi::PipelineKind::CascadedShadowedMesh,"CascadedSkinnedForward.hlsl",skinned,true)
+        ||!create(flare::rhi::PipelineKind::CascadedEnvironmentMesh,"CascadedSkinnedEnvironmentForward.hlsl",skinnedEnvironment,true))return false;
+    flare::rhi::PipelineDescription final{flare::rhi::PipelineKind::CascadedShadowOutput,shaders/"CascadedShadowOutput.hlsl",
+        outputLutScene_?flare::rhi::OutputLutLayoutVersion:flare::rhi::CascadedShadowLayoutVersion};
     if(outputLutScene_)final.macros.push_back({"SE_OUTPUT_LUT","1"});
     if(!device_->CreatePipeline(final,output))return false;
     cascadedPbr_=std::move(pbr);cascadedBasic_=std::move(basic);cascadedEnvironment_=std::move(environment);
@@ -1880,7 +1880,7 @@ void SandboxRenderer::Shutdown() noexcept
     lutStrip_.reset();lutDummy_.reset();lutStripReady_=false;lutStripRevision_=0;editorLutPath_.clear();
     outputLutScene_=false;lutStrip16F_=true;
     occlusionEnabled_=false;occlusionPipeline_.reset();forwardOcclusionPipeline_.reset();
-    lastCameraError_ = se::CameraError::None;
+    lastCameraError_ = flare::CameraError::None;
     lastMultiplePrimary_ = lastRejectedPrimary_ = controlsReported_ = false;
     indoorHistoryValid_ = rayTracingHistoryValid_ = false;
     lastIndoorSceneToken_ = lastRayTracingSceneToken_ = 0;

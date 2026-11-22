@@ -4,7 +4,7 @@
 
 ## EditorDock
 
-[`se::ui::editor::EditorDock`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorDock.h#L65) 保存主布局树和浮动窗口布局。树中的 [DockNode](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorDock.h#L35) 可以表示分屏或一组页签，每个 [FloatingDockWindow](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorDock.h#L57) 各有自己的布局树和窗口边界。[查看类定义](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorDock.h#L65)
+[`flare::ui::editor::EditorDock`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorDock.h#L65) 保存主布局树和浮动窗口布局。树中的 [DockNode](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorDock.h#L35) 可以表示分屏或一组页签，每个 [FloatingDockWindow](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorDock.h#L57) 各有自己的布局树和窗口边界。[查看类定义](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorUi/EditorDock.h#L65)
 
 | 拖放位置 | 对应接口 |
 | --- | --- |
@@ -14,4 +14,4 @@
 
 ## EditorFloatingWindows
 
-[`se::EditorFloatingWindows`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorFloatingWindows.h#L15) 连接布局和 Win32 窗口。[Synchronize()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorFloatingWindows.cpp#L71) 按布局同步原生窗口。[RoutePointer()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorFloatingWindows.cpp#L163) 在拖动时寻找指针下的目标窗口，把屏幕位置换算成目标客户区坐标，使页签能拖回主窗口或其他浮动窗口。[查看类定义](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorFloatingWindows.h#L15)
+[`flare::EditorFloatingWindows`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorFloatingWindows.h#L15) 连接布局和 Win32 窗口。[Synchronize()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorFloatingWindows.cpp#L71) 按布局同步原生窗口。[RoutePointer()](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorFloatingWindows.cpp#L163) 在拖动时寻找指针下的目标窗口，把屏幕位置换算成目标客户区坐标，使页签能拖回主窗口或其他浮动窗口。[查看类定义](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/ToolLayer/Editor/EditorFloatingWindows.h#L15)

@@ -2,7 +2,7 @@
 #include <Windows.h>
 #include <string>
 
-namespace se
+namespace flare
 {
 enum class StartupStage : LONG
 {

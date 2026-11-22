@@ -20,10 +20,10 @@ void InitializeProcessDiagnostics(const char* role) noexcept
             SetConsoleOutputCP(CP_UTF8);
             SetConsoleCP(CP_UTF8);
             std::filesystem::path directory;
-            const auto length=GetEnvironmentVariableW(L"SELFENGINE_LOG_DIRECTORY",nullptr,0);
+            const auto length=GetEnvironmentVariableW(L"FLARE_LOG_DIRECTORY",nullptr,0);
             if(length&&length<32768)
             {
-                std::wstring value(length,L'\0');const auto read=GetEnvironmentVariableW(L"SELFENGINE_LOG_DIRECTORY",value.data(),length);
+                std::wstring value(length,L'\0');const auto read=GetEnvironmentVariableW(L"FLARE_LOG_DIRECTORY",value.data(),length);
                 if(read&&read<length){value.resize(read);directory=value;}
             }
             if(directory.empty())directory=GetExecutableDirectory()/"Logs";

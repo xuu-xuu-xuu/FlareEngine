@@ -3,7 +3,7 @@
 #include <map>
 #include <tuple>
 
-namespace se
+namespace flare
 {
 // 与基底灯光/阴影布局正交的材质覆盖PSO缓存。只创建场景真正用到的组合。
 class MaterialSurfacePipelineCache

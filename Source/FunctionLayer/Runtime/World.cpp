@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -49,6 +49,9 @@ World::World(const World& other)
         const auto target=Create(record->name,record->stableId);
         if(!target) throw std::runtime_error(LastError());
         SetEnabled(target,record->enabled);
+        if(record->tag!="Untagged") SetTag(target,record->tag);
+        if(record->layer!=0) SetLayer(target,record->layer);
+        if(record->staticFlags!=0) SetStaticFlags(target,record->staticFlags);
         if(record->prefabLink) SetPrefabLink(target,record->prefabLink);
     }
     for(const auto source:other.Entities())
@@ -288,6 +291,58 @@ bool World::SetEnabled(EntityHandle entity,bool enabled)
     if(!enabled||slots_[entity.index].state==SlotState::Reserved){slots_[entity.index].record.enabled=enabled;TouchSpatial(entity);}
     return DeferEntity(entity,[entity,enabled](World& world)
     {if(!world.IsAlive(entity))return world.Fail("World.InvalidEntity");world.slots_[entity.index].record.enabled=enabled;world.TouchSpatial(entity);return world.RefreshComponents();});
+}
+bool World::SetTag(EntityHandle entity,std::string tag)
+{
+    if(!IsKnown(entity))return Fail("World.InvalidEntity");
+    if(tag.size()>256)return Fail("World.InvalidName");
+    if(tag.empty())tag="Untagged";
+    if(slots_[entity.index].state==SlotState::Reserved)slots_[entity.index].record.tag=tag;
+    return DeferEntity(entity,[entity,tag=std::move(tag)](World& world)
+    {if(!world.IsAlive(entity))return world.Fail("World.InvalidEntity");world.slots_[entity.index].record.tag=tag;return true;});
+}
+bool World::SetLayer(EntityHandle entity,std::uint32_t layer)
+{
+    if(!IsKnown(entity))return Fail("World.InvalidEntity");
+    if(layer>31u)return Fail("Metadata.InvalidValue");
+    if(slots_[entity.index].state==SlotState::Reserved)slots_[entity.index].record.layer=layer;
+    return DeferEntity(entity,[entity,layer](World& world)
+    {if(!world.IsAlive(entity))return world.Fail("World.InvalidEntity");world.slots_[entity.index].record.layer=layer;world.TouchSpatial(entity);return true;});
+}
+bool World::SetStaticFlags(EntityHandle entity,std::uint32_t staticFlags)
+{
+    if(!IsKnown(entity))return Fail("World.InvalidEntity");
+    staticFlags &= (EntityStaticFlags::All | EntityStaticFlags::Explicit);
+    if(slots_[entity.index].state==SlotState::Reserved)slots_[entity.index].record.staticFlags=staticFlags;
+    return DeferEntity(entity,[entity,staticFlags](World& world)
+    {if(!world.IsAlive(entity))return world.Fail("World.InvalidEntity");world.slots_[entity.index].record.staticFlags=staticFlags;world.TouchSpatial(entity);return true;});
+}
+bool World::MoveComponent(EntityHandle owner,ComponentTypeId type,int delta)
+{
+    if(!IsKnown(owner))return Fail("World.InvalidEntity");
+    if(type==ComponentTypes::Transform||type==ComponentTypes::Script)return Fail("World.RequiredComponent");
+    if(delta==0)return true;
+    return DeferEntity(owner,[owner,type,delta](World& world)
+    {
+        if(!world.IsAlive(owner))return world.Fail("World.InvalidEntity");
+        auto& comps=world.slots_[owner.index].components;
+        std::vector<std::size_t> movable;
+        std::optional<std::size_t> posInMovable;
+        for(std::size_t i=0;i<comps.size();++i)
+        {
+            const auto& cSlot=world.componentSlots_[comps[i].index];
+            if(cSlot.state==ComponentSlotState::Removing||cSlot.type==ComponentTypes::Transform||cSlot.type==ComponentTypes::Script)continue;
+            if(cSlot.type==type)posInMovable=movable.size();
+            movable.push_back(i);
+        }
+        if(!posInMovable)return world.Fail("World.InvalidComponent");
+        const int nextPos=std::clamp(static_cast<int>(*posInMovable)+delta,0,static_cast<int>(movable.size())-1);
+        if(nextPos==static_cast<int>(*posInMovable))return true;
+        const std::size_t srcIdx=movable[*posInMovable];
+        const std::size_t dstIdx=movable[static_cast<std::size_t>(nextPos)];
+        std::swap(comps[srcIdx],comps[dstIdx]);
+        return true;
+    });
 }
 const PrefabLink* World::GetPrefabLink(EntityHandle entity) const
 {

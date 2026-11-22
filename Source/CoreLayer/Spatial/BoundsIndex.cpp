@@ -4,7 +4,7 @@
 #include <chrono>
 #include <unordered_set>
 
-namespace se::spatial
+namespace flare::spatial
 {
 namespace
 {

@@ -1,5 +1,5 @@
-#ifndef SELF_ENGINE_MESHLET_BINDINGS
-#define SELF_ENGINE_MESHLET_BINDINGS
+#ifndef FLARE_ENGINE_MESHLET_BINDINGS
+#define FLARE_ENGINE_MESHLET_BINDINGS
 
 static const uint MeshletAsGroupSize = 32;
 static const uint MeshletMsGroupSize = 64;

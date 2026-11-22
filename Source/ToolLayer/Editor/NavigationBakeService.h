@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 class World;
 
@@ -54,4 +54,4 @@ private:
     TaskQueue queue_;
     CancellationToken active_;
 };
-} // namespace se
+} // namespace flare

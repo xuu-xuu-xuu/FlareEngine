@@ -5,5 +5,7 @@
     <RootNamespace>FlareEngine</RootNamespace>
     <AssemblyTitle>Flare Engine Managed SDK</AssemblyTitle>
     <Product>Flare Engine</Product>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 </Project>

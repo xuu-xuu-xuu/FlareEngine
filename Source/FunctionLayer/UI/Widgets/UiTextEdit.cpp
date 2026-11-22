@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 namespace
 {
@@ -543,4 +543,4 @@ void UiTextEdit::EnsureCaretVisible()
     impl_->EnsureVisible();
 }
 
-} // namespace se::ui
+} // namespace flare::ui

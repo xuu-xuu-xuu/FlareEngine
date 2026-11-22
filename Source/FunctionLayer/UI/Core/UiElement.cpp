@@ -1,6 +1,6 @@
 #include "FunctionLayer/UI/Core/UiElement.h"
 
-namespace se::ui
+namespace flare::ui
 {
 
 static_assert(sizeof(UiElementHandle) == sizeof(std::uint32_t) * 2,
@@ -8,4 +8,4 @@ static_assert(sizeof(UiElementHandle) == sizeof(std::uint32_t) * 2,
 static_assert(alignof(UiElementHandle) == alignof(std::uint32_t),
               "UiElementHandle must remain tightly aligned");
 
-} // namespace se::ui
+} // namespace flare::ui

@@ -10,7 +10,7 @@
 #include <string>
 #include <string_view>
 
-namespace se
+namespace flare
 {
 
 // 拥有材质文档的打开/保存、外部变更时间戳校验与热预览状态。
@@ -52,4 +52,4 @@ private:
     std::string errorKey_;
 };
 
-} // namespace se
+} // namespace flare

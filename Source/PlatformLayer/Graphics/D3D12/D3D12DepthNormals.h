@@ -21,7 +21,7 @@ struct D3D12DepthNormalFrame
 {
     std::shared_ptr<D3D12DepthNormalTarget> target;
     std::vector<std::shared_ptr<const D3D12DepthNormalPipeline>> pipelines;
-    se::rhi::DepthNormalStatistics statistics;
+    flare::rhi::DepthNormalStatistics statistics;
 };
 class D3D12DepthNormals
 {

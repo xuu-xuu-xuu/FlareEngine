@@ -38,11 +38,12 @@ public sealed record UiVisual(ulong Id, UiKind Kind, float X, float Y, float Wid
     public ulong CompositionCaret { get; init; }
 }
 
-public sealed class UiElement
+/// <summary>游戏 UI 节点元素代理（支持文本、图片、可见性、数值与过渡动画设置）。</summary>
+public class F_UiElement
 {
     private readonly GameUi owner;
     private readonly uint epoch;
-    internal UiElement(GameUi owner, ulong id) { this.owner = owner; Id = id; epoch = owner.Epoch; }
+    internal F_UiElement(GameUi owner, ulong id) { this.owner = owner; Id = id; epoch = owner.Epoch; }
     public ulong Id { get; }
     internal GameUi Owner => owner;
     internal void Check() { if (epoch != owner.Epoch) throw new EngineException("Bridge.InvalidUi", 2); }
@@ -84,17 +85,24 @@ public sealed class UiElement
     }
 }
 
-public sealed unsafe class GameUi
+/// <summary>游戏 UI 节点元素代理（兼容无前缀写法，继承自 <see cref="F_UiElement"/>）。</summary>
+public sealed class UiElement : F_UiElement
+{
+    internal UiElement(GameUi owner, ulong id) : base(owner, id) { }
+}
+
+/// <summary>游戏界面（GameUI）文档树服务。</summary>
+public unsafe class F_GameUi
 {
     internal EngineSession Session { get; }
     internal uint Epoch { get; private set; }
     internal void InvalidateProxies() => ++Epoch;
-    internal GameUi(EngineSession session) => Session = session;
-    public UiElement? Find(ulong id) => Session.Invoke<UiElement?>(session => { EngineSession.Check(NativeMethods.UiExists(session,id,out var exists)); return exists != 0 ? new UiElement(this,id) : null; });
-    public UiElement Create(UiKind kind, UiElement? parent = null)
+    internal F_GameUi(EngineSession session) => Session = session;
+    public UiElement? Find(ulong id) => Session.Invoke<UiElement?>(session => { EngineSession.Check(NativeMethods.UiExists(session,id,out var exists)); return exists != 0 ? new UiElement((GameUi)this,id) : null; });
+    public UiElement Create(UiKind kind, F_UiElement? parent = null)
     {
-        if (parent is not null) { parent.Check(); if (parent.Owner != this) throw new ArgumentException("Bridge.InvalidUi"); }
-        return Session.Invoke(session => { EngineSession.Check(NativeMethods.UiCreate(session, (int)kind, parent?.Id ?? 0, out var id)); return new UiElement(this,id); });
+        if (parent is not null) { parent.Check(); if (!ReferenceEquals(parent.Owner, this)) throw new ArgumentException("Bridge.InvalidUi"); }
+        return Session.Invoke(session => { EngineSession.Check(NativeMethods.UiCreate(session, (int)kind, parent?.Id ?? 0, out var id)); return new UiElement((GameUi)this,id); });
     }
     public void Layout(float width, float height) => Session.Invoke(session => { EngineSession.Check(NativeMethods.UiLayout(session, width, height)); return 0; });
     public bool Pointer(UiPointerOperation operation, Vector2 position, float wheel = 0) => Session.Invoke(session => { EngineSession.Check(NativeMethods.UiPointer(session, (int)operation, position.X, position.Y, wheel, out var consumed)); return consumed != 0; });
@@ -113,46 +121,52 @@ public sealed unsafe class GameUi
         ++Epoch;
     }
 }
+
+/// <summary>游戏界面文档树服务（兼容无前缀写法，继承自 <see cref="F_GameUi"/>）。</summary>
+public sealed unsafe class GameUi : F_GameUi
+{
+    internal GameUi(EngineSession session) : base(session) { }
+}
 internal static unsafe partial class NativeMethods
 {
-    [LibraryImport(Library, EntryPoint="se_ui_create")]
+    [LibraryImport(Library, EntryPoint="flare_ui_create")]
     internal static partial int UiCreate(ulong session,int kind,ulong parent,out ulong id);
-    [LibraryImport(Library, EntryPoint="se_ui_remove")]
+    [LibraryImport(Library, EntryPoint="flare_ui_remove")]
     internal static partial int UiRemove(ulong session,ulong id);
-    [LibraryImport(Library, EntryPoint="se_ui_set_style")]
+    [LibraryImport(Library, EntryPoint="flare_ui_set_style")]
     internal static partial int UiStyle(ulong session,ulong id,in FlareEngine.UiStyle style);
-    [LibraryImport(Library, EntryPoint="se_ui_set_text", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_ui_set_text", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int UiText(ulong session,ulong id,string text,uint length);
-    [LibraryImport(Library, EntryPoint="se_ui_set_image", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_ui_set_image", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int UiImage(ulong session,ulong id,string asset,uint length);
-    [LibraryImport(Library, EntryPoint="se_ui_exists")]
+    [LibraryImport(Library, EntryPoint="flare_ui_exists")]
     internal static partial int UiExists(ulong session,ulong id,out int exists);
-    [LibraryImport(Library, EntryPoint="se_ui_bind_action", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_ui_bind_action", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int UiBind(ulong session,ulong id,int kind,ulong entity,string? script,uint scriptLength,string? action,uint actionLength);
-    [LibraryImport(Library, EntryPoint="se_ui_read_bindings")]
+    [LibraryImport(Library, EntryPoint="flare_ui_read_bindings")]
     internal static partial int UiBindings(ulong session,ulong id,byte* buffer,uint capacity,out uint required);
-    [LibraryImport(Library, EntryPoint="se_ui_fade")]
+    [LibraryImport(Library, EntryPoint="flare_ui_fade")]
     internal static partial int UiFade(ulong session,ulong id,float opacity,double seconds);
-    [LibraryImport(Library, EntryPoint="se_ui_move")]
+    [LibraryImport(Library, EntryPoint="flare_ui_move")]
     internal static partial int UiMove(ulong session,ulong id,float x,float y,double seconds);
-    [LibraryImport(Library, EntryPoint="se_ui_color")]
+    [LibraryImport(Library, EntryPoint="flare_ui_color")]
     internal static partial int UiColor(ulong session,ulong id,float r,float g,float b,float a,double seconds);
-    [LibraryImport(Library, EntryPoint="se_ui_set_property")]
+    [LibraryImport(Library, EntryPoint="flare_ui_set_property")]
     internal static partial int UiProperty(ulong session,ulong id,int property,double value);
-    [LibraryImport(Library, EntryPoint="se_ui_set_range")]
+    [LibraryImport(Library, EntryPoint="flare_ui_set_range")]
     internal static partial int UiRange(ulong session,ulong id,double minimum,double maximum);
-    [LibraryImport(Library, EntryPoint="se_ui_layout")]
+    [LibraryImport(Library, EntryPoint="flare_ui_layout")]
     internal static partial int UiLayout(ulong session,float width,float height);
-    [LibraryImport(Library, EntryPoint="se_ui_pointer")]
+    [LibraryImport(Library, EntryPoint="flare_ui_pointer")]
     internal static partial int UiPointer(ulong session,int operation,float x,float y,float wheel,out int consumed);
-    [LibraryImport(Library, EntryPoint="se_ui_key")]
+    [LibraryImport(Library, EntryPoint="flare_ui_key")]
     internal static partial int UiKey(ulong session,uint key,int shift,int control,out int consumed);
-    [LibraryImport(Library, EntryPoint="se_ui_input_text", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_ui_input_text", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int UiInputText(ulong session,string text,uint length,int composition,out int consumed);
-    [LibraryImport(Library, EntryPoint="se_ui_consumes_keyboard")]
+    [LibraryImport(Library, EntryPoint="flare_ui_consumes_keyboard")]
     internal static partial int UiKeyboard(ulong session,out int consumed);
-    [LibraryImport(Library, EntryPoint="se_ui_read_json")]
+    [LibraryImport(Library, EntryPoint="flare_ui_read_json")]
     internal static partial int UiJson(ulong session,int kind,byte* buffer,uint capacity,out uint required);
-    [LibraryImport(Library, EntryPoint="se_ui_load_json", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_ui_load_json", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int UiLoad(ulong session,string text,uint length);
 }

@@ -5,7 +5,7 @@
 #include <numbers>
 #include <stdexcept>
 
-namespace se
+namespace flare
 {
 namespace
 {

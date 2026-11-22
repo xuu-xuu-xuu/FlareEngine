@@ -5,7 +5,7 @@
 
 #include <vector>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 struct EditorShortcut
@@ -36,4 +36,4 @@ private:
     std::vector<EditorShortcut> shortcuts_;
 };
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

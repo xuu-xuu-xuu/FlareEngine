@@ -12,7 +12,7 @@
 #include <string>
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 using namespace detail;
 
@@ -88,9 +88,9 @@ void EditorShell::ShowCloseModal()
         return;
     }
     UiStyle dialog = AbsoluteStyle(left, top, dialogWidth, dialogHeight);
-    dialog.background = UiInk(flare::workspace::Panel);
+    dialog.background = UiInk(flare::palette::workspace::Panel);
     dialog.borderWidth = 1.0f;
-    dialog.borderColor = UiInk(flare::workspace::Focus, 0.45f);
+    dialog.borderColor = UiInk(flare::palette::workspace::Focus, 0.45f);
     dialog.cornerRadius = 10.0f;
     document_.SetStyle(modalDialog_, dialog);
 
@@ -124,10 +124,10 @@ void EditorShell::ShowCloseModal()
         document_.SetText(button, label);
         return button;
     };
-    modalSave_ = makeButton(20.0f, Text("EditorUi.Save", "Save").c_str(), UiInk(flare::Accent));
+    modalSave_ = makeButton(20.0f, Text("EditorUi.Save", "Save").c_str(), UiInk(flare::palette::Accent));
     if (modalSave_.IsValid()) { auto style = document_.Style(modalSave_); style.color = kBackground; document_.SetStyle(modalSave_, style); }
     modalDiscard_ = makeButton(154.0f, Text("EditorUi.DiscardChanges", "Discard").c_str(),
-                               UiInk(flare::Danger));
+                               UiInk(flare::palette::Danger));
     modalCancel_ = makeButton(288.0f, Text("EditorUi.Cancel", "Cancel").c_str(), kSurfaceRaised);
     (void)dialogWidth;
 
@@ -203,9 +203,9 @@ void EditorShell::ShowConfirm(std::string title, std::string message, std::strin
         return;
     }
     UiStyle dialog = AbsoluteStyle(left, top, dialogWidth, dialogHeight);
-    dialog.background = UiInk(flare::workspace::Panel);
+    dialog.background = UiInk(flare::palette::workspace::Panel);
     dialog.borderWidth = 1.0f;
-    dialog.borderColor = UiInk(flare::workspace::Focus, 0.45f);
+    dialog.borderColor = UiInk(flare::palette::workspace::Focus, 0.45f);
     dialog.cornerRadius = 10.0f;
     document_.SetStyle(confirmDialog_, dialog);
 
@@ -238,7 +238,7 @@ void EditorShell::ShowConfirm(std::string title, std::string message, std::strin
         document_.SetText(button, label);
         return button;
     };
-    confirmPrimary_ = makeButton(20.0f, primaryLabel, primaryEnabled ? UiInk(flare::Accent) : kSurfaceRaised);
+    confirmPrimary_ = makeButton(20.0f, primaryLabel, primaryEnabled ? UiInk(flare::palette::Accent) : kSurfaceRaised);
     if (primaryEnabled && confirmPrimary_.IsValid()) { auto style = document_.Style(confirmPrimary_); style.color = kBackground; document_.SetStyle(confirmPrimary_, style); }
     if (!primaryEnabled && confirmPrimary_.IsValid())
     {
@@ -246,7 +246,7 @@ void EditorShell::ShowConfirm(std::string title, std::string message, std::strin
         disabledStyle.color = kMuted;
         document_.SetStyle(confirmPrimary_, disabledStyle);
     }
-    confirmSecondary_ = makeButton(154.0f, secondaryLabel, UiInk(flare::Danger));
+    confirmSecondary_ = makeButton(154.0f, secondaryLabel, UiInk(flare::palette::Danger));
     confirmCancel_ = makeButton(288.0f, cancelLabel, kSurfaceRaised);
     (void)dialogWidth;
     if (secondaryLabel.empty())
@@ -431,4 +431,4 @@ bool EditorShell::TextFieldFocused() const noexcept
     return element != nullptr && element->Kind() == UiElementKind::TextEdit;
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

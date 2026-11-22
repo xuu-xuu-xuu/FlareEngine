@@ -1,6 +1,6 @@
 #include "Utf.h"
 
-namespace se
+namespace flare
 {
 namespace { bool Scalar(char32_t c) { return c <= 0x10ffff && !(c >= 0xd800 && c <= 0xdfff); } }
 bool DecodeUtf8(std::string_view text, std::u32string& output)

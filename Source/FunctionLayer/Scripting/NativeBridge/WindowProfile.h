@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // 仅诊断模式启用；借用真实 Player 渲染器，不推进逻辑或输入。
 class WindowProfileRenderer final : public Renderer

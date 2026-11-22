@@ -8,7 +8,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace se
+namespace flare
 {
 enum class MailboxResult {Accepted,Closed,Full,TooLarge};
 struct MailboxStatistics

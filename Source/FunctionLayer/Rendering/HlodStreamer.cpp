@@ -3,7 +3,7 @@
 #include <chrono>
 #include <utility>
 
-namespace se
+namespace flare
 {
 HlodStreamer::~HlodStreamer()
 {

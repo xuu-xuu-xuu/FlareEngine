@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-namespace se::ui
+namespace flare::ui
 {
 
 // 剪贴板/IME/DPI/候选位置。平台适配器在 Platform 侧，核心只依赖此接口。
@@ -22,4 +22,4 @@ public:
     virtual void CancelIme() = 0;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

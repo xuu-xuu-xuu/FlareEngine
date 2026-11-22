@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 struct EditorApplicationHooks;
 class SceneSpatialIndex;
@@ -86,4 +86,4 @@ private:
     DropPlacement placement_;
     std::string error_;
 };
-} // namespace se
+} // namespace flare

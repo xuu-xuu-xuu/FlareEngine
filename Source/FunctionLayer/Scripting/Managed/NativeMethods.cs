@@ -14,179 +14,189 @@ internal static unsafe partial class NativeMethods
     [StructLayout(LayoutKind.Sequential)]
     internal struct PointerState { internal int X,Y; internal uint Down,Pressed,Released; internal float Wheel; internal int Consumed; }
 
-    [LibraryImport(Library, EntryPoint = "se_get_abi_info")]
+    [LibraryImport(Library, EntryPoint = "flare_get_abi_info")]
     internal static partial int Abi(out AbiInfo info);
-    [LibraryImport(Library, EntryPoint = "se_get_last_error")]
+    [LibraryImport(Library, EntryPoint = "flare_get_last_error")]
     internal static partial int LastError(byte* buffer, uint capacity, out uint required);
-    [LibraryImport(Library, EntryPoint = "se_session_create")]
+    [LibraryImport(Library, EntryPoint = "flare_session_create")]
     internal static partial int Create(out ulong handle);
-    [LibraryImport(Library, EntryPoint = "se_session_close")]
+    [LibraryImport(Library, EntryPoint = "flare_session_close")]
     internal static partial int Close(ulong handle);
-    [LibraryImport(Library, EntryPoint = "se_session_set_update")]
+    [LibraryImport(Library, EntryPoint = "flare_session_set_update")]
     internal static partial int SetUpdate(ulong handle, delegate* unmanaged[Cdecl]<ulong,double,nint,int> callback, nint context);
-    [LibraryImport(Library, EntryPoint = "se_session_set_post_step")]
+    [LibraryImport(Library, EntryPoint = "flare_session_set_post_step")]
     internal static partial int SetPostStep(ulong handle, delegate* unmanaged[Cdecl]<ulong,double,nint,int> callback, nint context);
-    [LibraryImport(Library, EntryPoint = "se_session_step")]
+    [LibraryImport(Library, EntryPoint = "flare_session_step")]
     internal static partial int Step(ulong handle, double deltaSeconds);
-    [LibraryImport(Library, EntryPoint = "se_session_get_value")]
+    [LibraryImport(Library, EntryPoint = "flare_session_get_value")]
     internal static partial int GetValue(ulong handle, out double value);
-    [LibraryImport(Library, EntryPoint = "se_session_set_value")]
+    [LibraryImport(Library, EntryPoint = "flare_session_set_value")]
     internal static partial int SetValue(ulong handle, double value);
-    [LibraryImport(Library, EntryPoint = "se_session_get_step_count")]
+    [LibraryImport(Library, EntryPoint = "flare_session_get_step_count")]
     internal static partial int GetStepCount(ulong handle, out ulong count);
-    [LibraryImport(Library, EntryPoint = "se_session_get_input")]
+    [LibraryImport(Library, EntryPoint = "flare_session_get_input")]
     internal static partial int GetInput(ulong handle, out InputState input);
-    [LibraryImport(Library, EntryPoint = "se_session_get_pointer")]
+    [LibraryImport(Library, EntryPoint = "flare_session_get_pointer")]
     internal static partial int GetPointer(ulong handle, out PointerState input);
-    [LibraryImport(Library, EntryPoint = "se_input_load_actions", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint = "flare_input_load_actions", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int InputLoadActions(ulong handle, string json, uint length);
-    [LibraryImport(Library, EntryPoint = "se_input_action_button", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint = "flare_input_action_button", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int InputActionButton(ulong handle, string action, uint length, out int down, out int pressed);
-    [LibraryImport(Library, EntryPoint = "se_input_action_axis1d", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint = "flare_input_action_axis1d", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int InputActionAxis1D(ulong handle, string action, uint length, out float value);
-    [LibraryImport(Library, EntryPoint = "se_input_action_axis2d", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint = "flare_input_action_axis2d", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int InputActionAxis2D(ulong handle, string action, uint length, out Vector2 value);
-    [LibraryImport(Library, EntryPoint = "se_input_get_mouse_delta")]
+    [LibraryImport(Library, EntryPoint = "flare_input_get_mouse_delta")]
     internal static partial int GetMouseDelta(ulong handle, out Vector2 delta);
-    [LibraryImport(Library, EntryPoint = "se_input_set_cursor_mode")]
+    [LibraryImport(Library, EntryPoint = "flare_input_set_cursor_mode")]
     internal static partial int SetCursorMode(ulong handle, int locked, int visible);
-    [LibraryImport(Library, EntryPoint = "se_input_get_cursor_mode")]
+    [LibraryImport(Library, EntryPoint = "flare_input_get_cursor_mode")]
     internal static partial int GetCursorMode(ulong handle, out int locked, out int visible);
-    [LibraryImport(Library, EntryPoint = "se_session_run_window", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint = "flare_session_run_window", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int RunWindow(ulong handle, string locale, uint length, int visible, ulong maximumFrames);
-    [LibraryImport(Library, EntryPoint="se_session_set_window_capture", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_session_set_window_capture", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SetWindowCapture(ulong handle,string? path,uint length,ulong frame);
-    [LibraryImport(Library, EntryPoint="se_session_set_capture_sequence", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_session_set_capture_sequence", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SetCaptureSequence(ulong handle,string? path,uint length,ulong count);
-    [LibraryImport(Library, EntryPoint="se_session_set_window_resolution")]
+    [LibraryImport(Library, EntryPoint="flare_session_set_window_resolution")]
     internal static partial int SetWindowResolution(ulong handle,uint width,uint height);
-    [LibraryImport(Library, EntryPoint="se_session_configure_quality", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_session_configure_quality", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int ConfigureQuality(ulong handle,string file,uint length,int showMenu);
-    [LibraryImport(Library, EntryPoint="se_session_set_quality_profiles", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_session_set_quality_profiles", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int ConfigureQualityProfiles(ulong handle,string json,uint length);
-    [LibraryImport(Library, EntryPoint="se_session_player_quality")]
+    [LibraryImport(Library, EntryPoint="flare_session_player_quality")]
     internal static partial int PlayerQuality(ulong handle,int requested,out int current);
-    [LibraryImport(Library, EntryPoint="se_session_set_window_fixed_step")]
+    [LibraryImport(Library, EntryPoint="flare_session_set_window_fixed_step")]
     internal static partial int SetWindowFixedStep(ulong handle,double seconds);
-    [LibraryImport(Library, EntryPoint="se_entity_actor_play", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_entity_actor_play", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int ActorPlay(ulong handle,ulong stableId,string clip,uint length,float speed,int loop);
-    [LibraryImport(Library, EntryPoint="se_entity_joint_position", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_entity_joint_position", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int JointPosition(ulong handle,ulong stableId,string joint,uint length,out Vector3 position,out int found);
-    [LibraryImport(Library, EntryPoint="se_entity_set_camera_fov")]
+    [LibraryImport(Library, EntryPoint="flare_entity_set_camera_fov")]
     internal static partial int SetCameraFov(ulong handle,ulong stableId,float fov);
-    [LibraryImport(Library, EntryPoint="se_session_set_look")]
+    [LibraryImport(Library, EntryPoint="flare_session_set_look")]
     internal static partial int SetLook(ulong handle,float mode,float blend);
-    [LibraryImport(Library, EntryPoint="se_entity_set_mesh", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_entity_set_mesh", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SetMesh(ulong handle,ulong entity,string asset,uint length,int castsShadow,int receivesShadow);
-    [LibraryImport(Library, EntryPoint="se_camera_project_direction")]
+    [LibraryImport(Library, EntryPoint="flare_camera_project_direction")]
     internal static partial int ProjectDirection(ulong handle,ulong cameraStableId,Vector3 direction,out Vector2 screenUv,out int inFront);
-    [LibraryImport(Library, EntryPoint="se_camera_screen_point_to_ray")]
+    [LibraryImport(Library, EntryPoint="flare_camera_screen_point_to_ray")]
     internal static partial int ScreenPointToRay(ulong handle,ulong cameraStableId,Vector2 screenPixel,out Vector3 origin,out Vector3 direction);
-    [LibraryImport(Library, EntryPoint="se_session_set_sky", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_session_set_sky", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SetSky(ulong handle,string? json,uint length);
-    [LibraryImport(Library, EntryPoint = "se_session_request_stop")]
+    [LibraryImport(Library, EntryPoint = "flare_session_request_stop")]
     internal static partial int RequestStop(ulong handle);
-    [LibraryImport(Library, EntryPoint="se_session_set_locale", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_session_set_locale", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SetLocale(ulong session,string locale,uint length);
-    [LibraryImport(Library, EntryPoint="se_session_text", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_session_text", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int Text(ulong session,string key,uint length,byte* buffer,uint capacity,out uint required);
-    [LibraryImport(Library, EntryPoint="se_session_set_asset_root", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_session_set_asset_root", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SetAssetRoot(ulong session,string root,uint rootLength,string cache,uint cacheLength);
-    [LibraryImport(Library, EntryPoint="se_assets_list")]
+    [LibraryImport(Library, EntryPoint="flare_assets_list")]
     internal static partial int AssetList(ulong session,byte* output,uint capacity,out uint required);
-    [LibraryImport(Library, EntryPoint="se_assets_load_model_info", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_assets_load_model_info", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int LoadModelInfo(ulong session,string id,uint length,out ModelInfo info);
-    [LibraryImport(Library, EntryPoint="se_session_set_editor_callback")]
+    [LibraryImport(Library, EntryPoint="flare_session_set_editor_callback")]
     internal static partial int SetEditorCallback(ulong session,delegate* unmanaged[Cdecl]<ulong,int,nint,int> callback,nint context);
-    [LibraryImport(Library, EntryPoint="se_session_run_editor", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_session_run_editor", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int RunEditor(ulong session,string root,uint rootLength,string locale,uint localeLength,int visible,ulong maximumFrames,int startPlaying);
-    [LibraryImport(Library, EntryPoint="se_editor_set_playing")]
+    [LibraryImport(Library, EntryPoint="flare_editor_set_playing")]
     internal static partial int EditorSetPlaying(ulong session,int playing);
-    [LibraryImport(Library, EntryPoint="se_session_set_editor_data")]
+    [LibraryImport(Library, EntryPoint="flare_session_set_editor_data")]
     internal static partial int SetEditorData(ulong session,delegate* unmanaged[Cdecl]<ulong,ulong,byte*,uint,byte*,uint,uint*,nint,int> callback,nint context);
-    [LibraryImport(Library, EntryPoint="se_editor_inspector_query")]
+    [LibraryImport(Library, EntryPoint="flare_editor_inspector_query")]
     internal static partial int InspectorQuery(ulong session,ulong entity,byte* output,uint capacity,out uint required);
-    [LibraryImport(Library, EntryPoint="se_editor_inspector_apply", StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint="flare_editor_inspector_apply", StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int InspectorApply(ulong session,ulong entity,string request,uint length);
-    [LibraryImport(Library, EntryPoint = "se_entity_create", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint = "flare_entity_create", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int CreateEntity(ulong handle, string name, uint length, out ulong entity);
-    [LibraryImport(Library, EntryPoint = "se_entity_destroy")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_destroy")]
     internal static partial int DestroyEntity(ulong handle, ulong entity);
-    [LibraryImport(Library, EntryPoint = "se_entity_is_alive")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_is_alive")]
     internal static partial int IsAlive(ulong handle, ulong entity, out int alive);
-    [LibraryImport(Library,EntryPoint="se_entity_get_enabled")]
+    [LibraryImport(Library,EntryPoint="flare_entity_get_enabled")]
     internal static partial int GetEntityEnabled(ulong session,ulong entity,out int enabled);
-    [LibraryImport(Library,EntryPoint="se_entity_set_enabled")]
+    [LibraryImport(Library,EntryPoint="flare_entity_set_enabled")]
     internal static partial int SetEntityEnabled(ulong session,ulong entity,int enabled);
-    [LibraryImport(Library,EntryPoint="se_script_component_attach")]
+    [LibraryImport(Library,EntryPoint="flare_script_component_attach")]
     internal static partial int ScriptComponentAttach(ulong session,ulong owner,ulong controlled,int enabled,out ulong component);
-    [LibraryImport(Library,EntryPoint="se_script_component_remove")]
+    [LibraryImport(Library,EntryPoint="flare_script_component_remove")]
     internal static partial int ScriptComponentRemove(ulong session,ulong component);
-    [LibraryImport(Library,EntryPoint="se_script_component_set_enabled")]
+    [LibraryImport(Library,EntryPoint="flare_script_component_set_enabled")]
     internal static partial int ScriptComponentEnabled(ulong session,ulong component,int enabled);
-    [LibraryImport(Library,EntryPoint="se_script_component_state")]
+    [LibraryImport(Library,EntryPoint="flare_script_component_state")]
     internal static partial int ScriptComponentState(ulong session,ulong component,out int alive,out int active);
-    [LibraryImport(Library,EntryPoint="se_script_component_count")]
+    [LibraryImport(Library,EntryPoint="flare_script_component_count")]
     internal static partial int ScriptComponentCount(ulong session,out uint count);
-    [LibraryImport(Library, EntryPoint = "se_entity_get_transform")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_get_transform")]
     internal static partial int GetTransform(ulong handle, ulong entity, out Transform transform);
-    [LibraryImport(Library, EntryPoint = "se_entity_set_transform")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_set_transform")]
     internal static partial int SetTransform(ulong handle, ulong entity, in Transform transform);
-    [LibraryImport(Library, EntryPoint = "se_entity_get_world_transform")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_get_world_transform")]
     internal static partial int GetWorldTransform(ulong handle, ulong entity, out Transform transform);
-    [LibraryImport(Library, EntryPoint = "se_entity_get_parent")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_get_parent")]
     internal static partial int GetParent(ulong handle, ulong entity, out ulong parent);
-    [LibraryImport(Library, EntryPoint = "se_entity_set_parent")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_set_parent")]
     internal static partial int SetParent(ulong handle, ulong entity, ulong parent, int keepWorld);
-    [LibraryImport(Library, EntryPoint = "se_entity_duplicate")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_duplicate")]
     internal static partial int DuplicateEntity(ulong handle, ulong source, Vector3* overridePos, float* overrideRotXyzw, ulong* outSourceStableIds, ulong* outClonedEntities, uint capacity, out uint outCount);
-    [LibraryImport(Library, EntryPoint = "se_entity_get_stable_id")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_get_stable_id")]
     internal static partial int GetStableId(ulong handle, ulong entity, out ulong id);
-    [LibraryImport(Library, EntryPoint = "se_entity_find")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_find")]
     internal static partial int FindEntity(ulong handle, ulong id, out ulong entity);
-    [LibraryImport(Library, EntryPoint = "se_entity_find_by_name", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint = "flare_entity_find_by_name", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int FindEntityByName(ulong handle, string name, uint length, out ulong entity, out int found);
-    [LibraryImport(Library, EntryPoint = "se_entity_get_name")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_find_by_tag", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int FindEntityByTag(ulong handle, string tag, uint length, out ulong entity, out int found);
+    [LibraryImport(Library, EntryPoint = "flare_entity_get_name")]
     internal static partial int GetName(ulong handle, ulong entity, byte* buffer, uint capacity, out uint required);
-    [LibraryImport(Library, EntryPoint = "se_scene_export")]
+    [LibraryImport(Library, EntryPoint = "flare_entity_get_tag")]
+    internal static partial int GetTag(ulong handle, ulong entity, byte* buffer, uint capacity, out uint required);
+    [LibraryImport(Library, EntryPoint = "flare_entity_set_tag", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int SetTag(ulong handle, ulong entity, string tag, uint length);
+    [LibraryImport(Library, EntryPoint = "flare_entity_get_layer")]
+    internal static partial int GetLayer(ulong handle, ulong entity, out uint layer);
+    [LibraryImport(Library, EntryPoint = "flare_entity_set_layer")]
+    internal static partial int SetLayer(ulong handle, ulong entity, uint layer);
+    [LibraryImport(Library, EntryPoint = "flare_scene_export")]
     internal static partial int ExportScene(ulong handle, byte* buffer, uint capacity, out uint required);
-    [LibraryImport(Library, EntryPoint = "se_scene_import", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint = "flare_scene_import", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int ImportScene(ulong handle, string json, uint length);
-    [LibraryImport(Library, EntryPoint = "se_audio_play", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint = "flare_audio_play", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int AudioPlay(ulong session, string assetId, uint length, in AudioPlayDescription description, out ulong voice);
-    [LibraryImport(Library, EntryPoint = "se_audio_stop_voice")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_stop_voice")]
     internal static partial int AudioStopVoice(ulong session, ulong voice);
-    [LibraryImport(Library, EntryPoint = "se_audio_is_voice_playing")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_is_voice_playing")]
     internal static partial int AudioIsVoicePlaying(ulong session, ulong voice, out int playing);
-    [LibraryImport(Library, EntryPoint = "se_audio_set_voice_parameters")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_set_voice_parameters")]
     internal static partial int AudioSetVoiceParameters(ulong session, ulong voice, in AudioPlayDescription description);
-    [LibraryImport(Library, EntryPoint = "se_audio_play_source")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_play_source")]
     internal static partial int AudioPlaySource(ulong session, ulong entity);
-    [LibraryImport(Library, EntryPoint = "se_audio_stop_source")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_stop_source")]
     internal static partial int AudioStopSource(ulong session, ulong entity);
-    [LibraryImport(Library, EntryPoint = "se_audio_is_source_playing")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_is_source_playing")]
     internal static partial int AudioIsSourcePlaying(ulong session, ulong entity, out int playing);
-    [LibraryImport(Library, EntryPoint = "se_audio_set_master_volume")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_set_master_volume")]
     internal static partial int AudioSetMasterVolume(ulong session, float volume);
-    [LibraryImport(Library, EntryPoint = "se_audio_get_master_volume")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_get_master_volume")]
     internal static partial int AudioGetMasterVolume(ulong session, out float volume);
-    [LibraryImport(Library, EntryPoint = "se_audio_set_paused")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_set_paused")]
     internal static partial int AudioSetPaused(ulong session, int paused);
-    [LibraryImport(Library, EntryPoint = "se_audio_stop_all")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_stop_all")]
     internal static partial int AudioStopAll(ulong session);
-    [LibraryImport(Library, EntryPoint = "se_audio_active_voice_count")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_active_voice_count")]
     internal static partial int AudioActiveVoiceCount(ulong session, out uint count);
-    [LibraryImport(Library, EntryPoint = "se_audio_use_null_backend")]
+    [LibraryImport(Library, EntryPoint = "flare_audio_use_null_backend")]
     internal static partial int AudioUseNullBackend(ulong session, int forceNull);
-    [LibraryImport(Library, EntryPoint = "se_particles_emit_burst")]
+    [LibraryImport(Library, EntryPoint = "flare_particles_emit_burst")]
     internal static partial int ParticlesEmitBurst(ulong session, ulong entity, uint count, out uint spawned);
-    [LibraryImport(Library, EntryPoint = "se_particles_set_playing")]
+    [LibraryImport(Library, EntryPoint = "flare_particles_set_playing")]
     internal static partial int ParticlesSetPlaying(ulong session, ulong entity, int playing);
-    [LibraryImport(Library, EntryPoint = "se_particles_clear")]
+    [LibraryImport(Library, EntryPoint = "flare_particles_clear")]
     internal static partial int ParticlesClear(ulong session, ulong entity);
-    [LibraryImport(Library, EntryPoint = "se_particles_active_count")]
+    [LibraryImport(Library, EntryPoint = "flare_particles_active_count")]
     internal static partial int ParticlesActiveCount(ulong session, ulong entity, out uint count);
-    [LibraryImport(Library, EntryPoint = "se_particles_emitter_count")]
+    [LibraryImport(Library, EntryPoint = "flare_particles_emitter_count")]
     internal static partial int ParticlesEmitterCount(ulong session, out uint count);
 
     [StructLayout(LayoutKind.Sequential)]
@@ -197,7 +207,7 @@ internal static unsafe partial class NativeMethods
         internal float TotalLengthMeters;
     }
 
-    [LibraryImport(Library, EntryPoint = "se_nav_find_path", StringMarshalling = StringMarshalling.Utf8)]
+    [LibraryImport(Library, EntryPoint = "flare_nav_find_path", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial int NavFindPath(
         ulong session,
         string navAssetId,
@@ -208,16 +218,16 @@ internal static unsafe partial class NativeMethods
         uint maxWaypoints,
         out NavPathInfo info);
 
-    [LibraryImport(Library, EntryPoint = "se_nav_set_destination")]
+    [LibraryImport(Library, EntryPoint = "flare_nav_set_destination")]
     internal static partial int NavSetDestination(ulong session, ulong entity, Vector3 target);
 
-    [LibraryImport(Library, EntryPoint = "se_nav_stop_agent")]
+    [LibraryImport(Library, EntryPoint = "flare_nav_stop_agent")]
     internal static partial int NavStopAgent(ulong session, ulong entity);
 
-    [LibraryImport(Library, EntryPoint = "se_nav_remaining_distance")]
+    [LibraryImport(Library, EntryPoint = "flare_nav_remaining_distance")]
     internal static partial int NavRemainingDistance(ulong session, ulong entity, out float meters);
 
-    [LibraryImport(Library, EntryPoint = "se_nav_agent_status")]
+    [LibraryImport(Library, EntryPoint = "flare_nav_agent_status")]
     internal static partial int NavAgentStatus(ulong session, ulong entity, out int status);
 }
 

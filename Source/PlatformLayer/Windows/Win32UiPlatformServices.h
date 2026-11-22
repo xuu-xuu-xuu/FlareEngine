@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 
-namespace se
+namespace flare
 {
 
 // Win32 适配器：剪贴板、DPI、IME 候选位置；核心只依赖 UiPlatformServices 接口。
@@ -26,4 +26,4 @@ private:
     HWND window_ = nullptr;
 };
 
-} // namespace se
+} // namespace flare

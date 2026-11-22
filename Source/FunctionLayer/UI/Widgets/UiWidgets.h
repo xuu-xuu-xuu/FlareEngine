@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 
 // 按钮只保存自己的悬停/按下/点击状态；不直接读全局状态。
@@ -332,4 +332,4 @@ private:
     int selected_ = -1;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

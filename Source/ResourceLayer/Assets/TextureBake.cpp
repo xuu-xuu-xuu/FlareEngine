@@ -7,7 +7,7 @@
 #include <bit>
 #include <cstring>
 
-namespace se
+namespace flare
 {
 namespace
 {

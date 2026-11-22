@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 
 struct UiColor
@@ -406,4 +406,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

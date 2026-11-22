@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se
+namespace flare
 {
 struct AudioClip
 {
@@ -57,4 +57,4 @@ struct AudioClip
     std::string_view expectedSourceSha256,
     AudioClip& output,
     std::vector<AssetDiagnostic>& diagnostics);
-} // namespace se
+} // namespace flare

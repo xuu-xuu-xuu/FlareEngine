@@ -3,7 +3,7 @@
 // 只实现引擎 WritePpmImage 实际写出的二进制 P6 / 8 位格式，避免依赖引擎库。
 #include "VideoEncoderSupport.h"
 
-namespace se::videoencoder
+namespace flare::videoencoder
 {
 // 帧名模式只允许一个零填充的整数转换，例如 frame_%04d.ppm。
 struct FramePattern
@@ -53,4 +53,4 @@ bool LoadPpmFrame(const std::filesystem::path& path, std::uint32_t expectedWidth
 // BT.709 有限范围（Y: 16..235，Cb/Cr: 16..240）的整数近似转换。
 void ConvertRgbToNv12(std::span<const std::uint8_t> rgb, std::uint32_t width,
     std::uint32_t height, std::span<std::uint8_t> nv12);
-} // namespace se::videoencoder
+} // namespace flare::videoencoder

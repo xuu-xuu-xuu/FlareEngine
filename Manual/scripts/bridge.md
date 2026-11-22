@@ -2,7 +2,7 @@
 
 ## 从入口到会话
 
-`FlareEngine.Bootstrap` 的 `Program.cs` 解析 `--editor`、项目清单与预览参数：编辑器工作进程无论当前工程是否已存在 `.cs` 脚本，统一以该托管宿主启动，使后续首次新建脚本与多次改码热重载都在同一进程内完成。宿主创建 `EngineSession`，通过 `NativeMethods` 的 `[LibraryImport]` 声明与原生 `se_get_abi_info()` 核对 ABI 版本，再经 `se_session_create()` 建立会话并注册每帧、物理事件、场景同步、脚本绑定 query/apply 以及原位热重载（`se_editor_set_script_reload_callback`）函数指针。
+`FlareEngine.Bootstrap` 的 `Program.cs` 解析 `--editor`、项目清单与预览参数：编辑器工作进程无论当前工程是否已存在 `.cs` 脚本，统一以该托管宿主启动，使后续首次新建脚本与多次改码热重载都在同一进程内完成。宿主创建 `EngineSession`，通过 `NativeMethods` 的 `[LibraryImport]` 声明与原生 `flare_get_abi_info()` 核对 ABI 版本，再经 `flare_session_create()` 建立会话并注册每帧、物理事件、场景同步、脚本绑定 query/apply 以及原位热重载回调。
 
 ## 托管 API 的转发位置
 

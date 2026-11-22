@@ -2,7 +2,7 @@
 #include "StaticModelRender.h"
 #include "FunctionLayer/Physics/PhysicsWorld.h"
 
-namespace se
+namespace flare
 {
 inline constexpr std::size_t MaximumDebugSegments=4096;
 bool BuildDebugSegmentTransform(const DebugLine& line,float width,Mat4& output);

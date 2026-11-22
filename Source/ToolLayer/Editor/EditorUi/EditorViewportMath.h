@@ -1,6 +1,6 @@
 #pragma once
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 struct ViewportRectF
@@ -32,4 +32,4 @@ inline void ViewportOffsetPlayInput(const ViewportRectF& rect, float dpi, float&
     y -= rect.y * scale;
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

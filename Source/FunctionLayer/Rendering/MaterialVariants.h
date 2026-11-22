@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G02：材质变体位。位一旦发布不得复用；新增位只能追加，并同步登记到名称表。
 enum class MaterialFeature : std::uint32_t

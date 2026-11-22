@@ -6,12 +6,14 @@
 #include <filesystem>
 #include <functional>
 #include <future>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 class Localization;
-namespace se
+namespace flare
 {
 struct EditorApplicationHooks;
 struct CodeEditorSettings;
@@ -42,11 +44,19 @@ public:
     ~EditorScriptWorkflow();
     void AppendRows(std::uint64_t entity, bool playing, std::vector<ui::editor::EditorProperty>& rows,
                     const std::function<std::string(std::uint64_t)>& resolveEntityName = {});
+    void AppendMultiRows(const std::vector<std::uint64_t>& entities, bool playing,
+                         std::vector<ui::editor::EditorProperty>& rows,
+                         const std::function<std::string(std::uint64_t)>& resolveEntityName = {});
     bool Apply(std::uint64_t entity, bool playing, const std::string& key, const std::string& value,
                const CodeEditorSettings& settings);
+    bool ApplyMulti(const std::vector<std::uint64_t>& entities, bool playing, const std::string& key,
+                    const std::string& value, const CodeEditorSettings& settings);
     const std::string& Status() const noexcept { return status_; }
     bool Dirty() const;
     bool Save();
+    bool BeginEdit();
+    bool CommitEdit();
+    bool CancelEdit();
     bool HasUndo() const noexcept { return !undo_.empty(); }
     bool HasRedo() const noexcept { return !redo_.empty(); }
     bool Undo() { return Restore(false); }
@@ -79,6 +89,9 @@ public:
                                    std::string_view scriptId);
     bool ConsumePendingAttachOnStartup(const std::filesystem::path& crashDir, std::uint64_t& outEntity,
                                        std::string& outDisplayName);
+    [[nodiscard]] std::string CaptureLiveEntityScripts(std::uint64_t entity) const;
+    bool ApplyCapturedEntityScripts(std::uint64_t entity, const std::string& capturedDocJson);
+    bool CloneEntityBindings(const std::unordered_map<std::uint64_t, std::uint64_t>& idRemap);
 
     bool OpenSelected(const CodeEditorSettings& settings) { return Open(selectedSource_, 1, 1, settings); }
     bool OpenSourceAtLine(const std::filesystem::path& sourceOrRelative, std::uint32_t line, std::uint32_t column,
@@ -111,6 +124,7 @@ private:
         RecoveryDocument before, after;
     };
     std::vector<Change> undo_, redo_;
+    std::optional<RecoveryDocument> transactionBefore_;
     std::filesystem::path root_;
     EditorApplicationHooks* hooks_;
     const Localization& text_;
@@ -129,5 +143,7 @@ private:
     std::filesystem::path pendingCreatedSource_;
     std::uint64_t hotReloadSeq_ = 0;
     std::future<AsyncBuildOutput> compileTask_;
+    std::string clipboardScriptType_;
+    std::string clipboardScriptJson_;
 };
 }

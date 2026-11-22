@@ -47,7 +47,7 @@ bool AcquireTarget(D3D12Presentation& p,UINT resolution,UINT layers,bool array,b
     output=std::move(target);return true;
 }
 bool ValidateShadowDraws(D3D12FrameContext& frame,const D3D12FrameContent& content,const D3D12MeshPipeline& defaultPipeline,
-    std::span<const se::Mat4> matrices,std::vector<size_t>& staticIndices,std::vector<size_t>& dynamicIndices,const Localization& text)
+    std::span<const flare::Mat4> matrices,std::vector<size_t>& staticIndices,std::vector<size_t>& dynamicIndices,const Localization& text)
 {
     staticIndices.clear();
     dynamicIndices.clear();
@@ -55,13 +55,13 @@ bool ValidateShadowDraws(D3D12FrameContext& frame,const D3D12FrameContent& conte
     for(size_t index=0;index<content.shadowMeshes.size();++index)
     {
         const auto& draw=content.shadowMeshes[index];
-        if(!draw.mesh||!draw.mesh->vertices||!draw.mesh->indices||!draw.mesh->indexCount||!se::IsFinite(draw.world))
+        if(!draw.mesh||!draw.mesh->vertices||!draw.mesh->indices||!draw.mesh->indexCount||!flare::IsFinite(draw.world))
             return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.MeshDrawsInvalid");
         for(const auto& shadowMatrix:matrices)
-            if(!se::IsFinite(shadowMatrix*draw.world))return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.MeshDrawsInvalid");
+            if(!flare::IsFinite(shadowMatrix*draw.world))return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.MeshDrawsInvalid");
         const auto& program=draw.pipeline?*draw.pipeline:defaultPipeline;
         const bool skinned=program.prepared->program->source.skinnedVertex;
-        if(skinned!=(draw.mesh->vertexView.StrideInBytes==sizeof(se::rhi::SkinnedVertex)))
+        if(skinned!=(draw.mesh->vertexView.StrideInBytes==sizeof(flare::rhi::SkinnedVertex)))
         {
             Log(LogLevel::Error,"阴影蒙皮校验: pipelineSkinned="+std::to_string(skinned)+" stride="+std::to_string(draw.mesh->vertexView.StrideInBytes)
                 +" palette="+std::to_string(draw.skinPalette.size())+" joints="+std::to_string(draw.skinJointCount));
@@ -81,7 +81,7 @@ bool ValidateShadowDraws(D3D12FrameContext& frame,const D3D12FrameContent& conte
         }
         if(program.prepared->materialRootParameter!=UINT_MAX)
         {
-            if(draw.alphaMode!=se::MaterialAlphaMode::Mask||!draw.mesh->texture||!frame.shadowMaterialConstants[index].resource)return false;
+            if(draw.alphaMode!=flare::MaterialAlphaMode::Mask||!draw.mesh->texture||!frame.shadowMaterialConstants[index].resource)return false;
         }
         if(draw.staticShadowCaster&&!skinned)staticIndices.push_back(index);
         else dynamicIndices.push_back(index);
@@ -89,7 +89,7 @@ bool ValidateShadowDraws(D3D12FrameContext& frame,const D3D12FrameContent& conte
     return true;
 }
 bool RecordLayers(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,
-    D3D12ShadowTarget& target,std::span<const se::Mat4> matrices,bool enabled,
+    D3D12ShadowTarget& target,std::span<const flare::Mat4> matrices,bool enabled,
     const std::array<std::uint64_t,3>* staticCacheHashes,D3D12StateRecording& states,const Localization& text)
 {
     auto& commands=*p.commandList.Get();const auto& pipeline=*content.shadowPipeline;
@@ -106,7 +106,7 @@ bool RecordLayers(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12Frame
         commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         activePipeline=&program;
     };
-    const auto drawOne=[&](size_t index,const se::Mat4& shadowMatrix)->bool
+    const auto drawOne=[&](size_t index,const flare::Mat4& shadowMatrix)->bool
     {
         const auto& draw=content.shadowMeshes[index];
         const auto& program=draw.pipeline?*draw.pipeline:pipeline;
@@ -130,12 +130,12 @@ bool RecordLayers(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12Frame
         commands.IASetVertexBuffers(0,1,&draw.mesh->vertexView);commands.IASetIndexBuffer(&draw.mesh->indexView);commands.DrawIndexedInstanced(draw.mesh->indexCount,1,0,0,0);
         return true;
     };
-    const auto drawAll=[&](const se::Mat4& shadowMatrix)->bool
+    const auto drawAll=[&](const flare::Mat4& shadowMatrix)->bool
     {
         for(size_t index=0;index<content.shadowMeshes.size();++index)if(!drawOne(index,shadowMatrix))return false;
         return true;
     };
-    const auto drawIndexedSubset=[&](const se::Mat4& shadowMatrix,std::span<const size_t> subset)->bool
+    const auto drawIndexedSubset=[&](const flare::Mat4& shadowMatrix,std::span<const size_t> subset)->bool
     {
         for(const size_t index:subset)if(!drawOne(index,shadowMatrix))return false;
         return true;
@@ -214,7 +214,7 @@ bool PrepareD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D1
     frame.pendingShadowCacheMisses=0;
     if(!content.shadow||!content.shadowPipeline||!p.memory||!p.srvPool||!p.dsvPool)return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.ShadowTargetsFailed");
     const auto resolution=content.shadow->resolution;const bool cascaded=content.shadow->cascadeCount>0;
-    if(resolution<256||resolution>4096||((resolution&(resolution-1))&&!(cascaded&&resolution==1536))||!se::IsFinite(content.shadow->clipFromWorld))
+    if(resolution<256||resolution>4096||((resolution&(resolution-1))&&!(cascaded&&resolution==1536))||!flare::IsFinite(content.shadow->clipFromWorld))
         return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.ShadowTargetsFailed");
     if(!AcquireTarget(p,resolution,cascaded?content.shadow->cascadeCount:1,cascaded,false,frame.shadow,text))return false;
     if(content.shadow->staticShadowCache&&content.shadow->enabled&&!frame.shadow->staticCacheDepth&&frame.shadow->layers<=3)
@@ -245,15 +245,15 @@ bool PrepareD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D1
 
 bool AcquireD3D12LocalShadow(D3D12Presentation& p,UINT layers,std::shared_ptr<D3D12ShadowTarget>& output,const Localization& text)
 {
-    if(!layers||layers>se::rhi::MaximumLocalLights*6)return false;
+    if(!layers||layers>flare::rhi::MaximumLocalLights*6)return false;
     return AcquireTarget(p,D3D12LocalShadowResolution,layers,true,true,output,text);
 }
 
 bool RecordD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,D3D12StateRecording& states,const Localization& text)
 {
     const auto& settings=*content.shadow;
-    const auto matrices=settings.cascadeCount?std::span<const se::Mat4>(settings.cascadeClipFromWorld).first(settings.cascadeCount):
-        std::span<const se::Mat4>(&settings.clipFromWorld,1);
+    const auto matrices=settings.cascadeCount?std::span<const flare::Mat4>(settings.cascadeClipFromWorld).first(settings.cascadeCount):
+        std::span<const flare::Mat4>(&settings.clipFromWorld,1);
     const auto* staticHashes=(settings.staticShadowCache&&settings.enabled&&frame.shadow->staticCacheDepth&&frame.shadow->layers<=3)
         ?&settings.staticCascadeHashes:nullptr;
     if(!RecordLayers(p,frame,content,*frame.shadow,matrices,settings.enabled,staticHashes,states,text))return false;
@@ -262,28 +262,28 @@ bool RecordD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12
     return true;
 }
 
-bool PrepareD3D12ShadowFilterConstants(const se::rhi::ShadowSettings& settings,se::rhi::ShadowFilterConstants& output)
+bool PrepareD3D12ShadowFilterConstants(const flare::rhi::ShadowSettings& settings,flare::rhi::ShadowFilterConstants& output)
 {
     const auto& filter=settings.filter;
     if(settings.cascadeCount<1||settings.cascadeCount>3||!settings.resolution
-        ||!se::IsFinite(filter.angularRadius)||filter.angularRadius<0||filter.angularRadius>.2f
-        ||!se::IsFinite(filter.blockerSearchDistance)||filter.blockerSearchDistance<.01f||filter.blockerSearchDistance>100
-        ||!se::IsFinite(filter.maximumRadiusTexels)||filter.maximumRadiusTexels<1||filter.maximumRadiusTexels>32
+        ||!flare::IsFinite(filter.angularRadius)||filter.angularRadius<0||filter.angularRadius>.2f
+        ||!flare::IsFinite(filter.blockerSearchDistance)||filter.blockerSearchDistance<.01f||filter.blockerSearchDistance>100
+        ||!flare::IsFinite(filter.maximumRadiusTexels)||filter.maximumRadiusTexels<1||filter.maximumRadiusTexels>32
         ||static_cast<UINT>(filter.debug)>2)return false;
-    se::rhi::ShadowFilterConstants candidate{};
+    flare::rhi::ShadowFilterConstants candidate{};
     candidate.parameters={std::tan(filter.angularRadius),filter.blockerSearchDistance,filter.maximumRadiusTexels,filter.pcss?1.f:0.f};
     candidate.options={float(filter.debug),0,0,0};
     for(UINT slice=0;slice<settings.cascadeCount;++slice)
     {
         const auto& matrix=settings.cascadeClipFromWorld[slice];
-        if(!se::IsFinite(matrix)||std::abs(matrix(3,0))>1e-6f||std::abs(matrix(3,1))>1e-6f
+        if(!flare::IsFinite(matrix)||std::abs(matrix(3,0))>1e-6f||std::abs(matrix(3,1))>1e-6f
             ||std::abs(matrix(3,2))>1e-6f||std::abs(matrix(3,3)-1)>1e-6f)return false;
-        const se::Vec3 x{matrix(0,0),matrix(0,1),matrix(0,2)},y{matrix(1,0),matrix(1,1),matrix(1,2)},z{matrix(2,0),matrix(2,1),matrix(2,2)};
-        const float a=se::Length(x),b=se::Length(y),c=se::Length(z);
-        if(!se::IsFinite(a)||!se::IsFinite(b)||!se::IsFinite(c)||a<1e-8f||b<1e-8f||c<1e-8f
-            ||std::abs(se::Dot(x,y))>a*b*.001f||std::abs(se::Dot(x,z))>a*c*.001f||std::abs(se::Dot(y,z))>b*c*.001f)return false;
+        const flare::Vec3 x{matrix(0,0),matrix(0,1),matrix(0,2)},y{matrix(1,0),matrix(1,1),matrix(1,2)},z{matrix(2,0),matrix(2,1),matrix(2,2)};
+        const float a=flare::Length(x),b=flare::Length(y),c=flare::Length(z);
+        if(!flare::IsFinite(a)||!flare::IsFinite(b)||!flare::IsFinite(c)||a<1e-8f||b<1e-8f||c<1e-8f
+            ||std::abs(flare::Dot(x,y))>a*b*.001f||std::abs(flare::Dot(x,z))>a*c*.001f||std::abs(flare::Dot(y,z))>b*c*.001f)return false;
         candidate.cascadeMetrics[slice]={1.f/c,2.f/(float(settings.resolution)*a),2.f/(float(settings.resolution)*b),0};
-        if(!se::IsFinite(candidate.cascadeMetrics[slice]))return false;
+        if(!flare::IsFinite(candidate.cascadeMetrics[slice]))return false;
     }
     output=candidate;return true;
 }

@@ -5,7 +5,7 @@
 #include <span>
 #include <string_view>
 
-namespace se
+namespace flare
 {
 struct CameraInstance
 {

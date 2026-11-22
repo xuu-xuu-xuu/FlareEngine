@@ -5,7 +5,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 
 struct UiTextMeasure
@@ -127,4 +127,4 @@ private:
     float lineHeight_ = 16.0f;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

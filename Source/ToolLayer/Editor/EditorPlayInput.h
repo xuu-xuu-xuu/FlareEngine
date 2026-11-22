@@ -8,7 +8,7 @@
 #include <memory>
 #include <optional>
 
-namespace se
+namespace flare
 {
 struct EditorInputRoute
 {
@@ -64,4 +64,4 @@ private:
     HWND window_ = nullptr;
 };
 
-} // namespace se
+} // namespace flare

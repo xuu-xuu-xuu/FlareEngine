@@ -103,12 +103,13 @@ float AoUpsample(int2 pixel,float3 center,float3 normal)
     }
     if(total>1e-6)result=saturate(1-weighted/total);return result;
 }
-float AoContact(float3 center,float3 normal)
+float AoContact(int2 screenPixel,float3 center,float3 normal)
 {
+    float ign=frac(52.9829189*frac(dot(float2(screenPixel),float2(0.06711056,0.00583715))));
     float result=1;float3 origin=center+normal*contactParameters.y;
     [loop]for(uint contactStep=1;contactStep<=12;++contactStep)
     {
-        float fraction=contactStep/12.0;float3 ray=origin+aoLightDirection.xyz*(contactParameters.x*fraction);int2 pixel=0;
+        float fraction=max(contactStep-1.0+ign,0.05)/12.0;float3 ray=origin+aoLightDirection.xyz*(contactParameters.x*fraction);int2 pixel=0;
         if(!AoProject(ray,pixel))break;
         float3 surface=0;
         if(AoReadPosition(pixel,surface))
@@ -132,7 +133,7 @@ void ResolveOcclusion(uint3 threadId:SV_DispatchThreadID)
     if(AoReadSurface(int2(threadId.xy),center,normal))
     {
         if(aoModes.x>.5&&aoParameters.y>0)visibility.x=AoUpsample(int2(threadId.xy),center,normal);
-        if(aoModes.y>.5&&aoLightDirection.w>.5)visibility.y=AoContact(center,normal);
+        if(aoModes.y>.5&&aoLightDirection.w>.5)visibility.y=AoContact(int2(threadId.xy),center,normal);
     }
     visibilityOutput[threadId.xy]=saturate(visibility);
 }

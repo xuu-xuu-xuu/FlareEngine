@@ -4,7 +4,7 @@
 #include "ResourceLayer/Scenes/SceneSerializer.h"
 #include <map>
 
-namespace se
+namespace flare
 {
 class EventBus;
 struct SceneHandle

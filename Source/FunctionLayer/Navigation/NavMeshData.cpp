@@ -6,7 +6,7 @@
 #include <limits>
 #include <numeric>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -412,4 +412,4 @@ bool NavMeshData::Deserialize(std::span<const std::uint8_t> bytes, NavMeshData& 
     }
     return true;
 }
-} // namespace se
+} // namespace flare

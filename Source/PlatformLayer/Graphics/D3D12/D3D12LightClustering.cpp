@@ -92,7 +92,7 @@ HRESULT D3D12LightClustering::CreateOutput(std::shared_ptr<D3D12ClusterOutput>& 
     }
     output=std::move(next);return S_OK;
 }
-HRESULT D3D12LightClustering::Prepare(D3D12ClusterOutput& output,const se::rhi::ClusteredLighting& configuration) const
+HRESULT D3D12LightClustering::Prepare(D3D12ClusterOutput& output,const flare::rhi::ClusteredLighting& configuration) const
 {
     if(configuration.lights.size()>256)return E_INVALIDARG;
     std::array<ClusterGpuLight,256> data{};
@@ -164,15 +164,15 @@ void PollD3D12ClusterCounters(D3D12Presentation& presentation)
     }
 }
 
-bool ValidD3D12ClusterProjection(const se::Mat4& projection,float nearPlane,float farPlane)
+bool ValidD3D12ClusterProjection(const flare::Mat4& projection,float nearPlane,float farPlane)
 {
-    if(!se::IsFinite(projection)||!se::IsFinite(nearPlane)||!se::IsFinite(farPlane)||nearPlane<=0||farPlane<=nearPlane)return false;
-    const auto inverse=se::Inverse(projection);if(!inverse)return false;
+    if(!flare::IsFinite(projection)||!flare::IsFinite(nearPlane)||!flare::IsFinite(farPlane)||nearPlane<=0||farPlane<=nearPlane)return false;
+    const auto inverse=flare::Inverse(projection);if(!inverse)return false;
     // D3D 的 Z=0/1 逆投影端点必须对应真实相机裁面，不能用接近 1 的远端 NDC 容差混入阴影距离。
-    const auto nearPoint=*inverse*se::Vec4{0,0,0,1},farPoint=*inverse*se::Vec4{0,0,1,1};
-    if(!se::IsFinite(nearPoint)||!se::IsFinite(farPoint)||std::abs(nearPoint.w)<1e-12f||std::abs(farPoint.w)<1e-12f)return false;
+    const auto nearPoint=*inverse*flare::Vec4{0,0,0,1},farPoint=*inverse*flare::Vec4{0,0,1,1};
+    if(!flare::IsFinite(nearPoint)||!flare::IsFinite(farPoint)||std::abs(nearPoint.w)<1e-12f||std::abs(farPoint.w)<1e-12f)return false;
     const float actualNear=-nearPoint.z/nearPoint.w,actualFar=-farPoint.z/farPoint.w;
     const float farTolerance=std::clamp((farPlane/nearPlane)*2e-6f,.002f,.05f);
-    return se::IsFinite(actualNear)&&se::IsFinite(actualFar)&&std::abs(actualNear-nearPlane)<=nearPlane*.002f
+    return flare::IsFinite(actualNear)&&flare::IsFinite(actualFar)&&std::abs(actualNear-nearPlane)<=nearPlane*.002f
         &&std::abs(actualFar-farPlane)<=farPlane*farTolerance;
 }

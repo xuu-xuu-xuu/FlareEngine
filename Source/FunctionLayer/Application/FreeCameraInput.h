@@ -3,7 +3,7 @@
 #include "FunctionLayer/Runtime/Camera.h"
 #include "PlatformLayer/InputState.h"
 
-namespace se
+namespace flare
 {
 // 只产生本帧意图，不拥有/修改平台输入，也不推进模拟时钟。
 class FreeCameraInputRouter

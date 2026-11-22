@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <string>
 
-namespace se
+namespace flare
 {
 enum class ExportOperationState { Queued, Running, Cancelling, Succeeded, Failed, Cancelled };
 struct ExportOperationReport

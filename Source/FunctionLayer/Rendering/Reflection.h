@@ -4,7 +4,7 @@
 #include <span>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G12 原型：反射探针（OBB box projection、最近 2 探针混合、GGX 预滤波）与屏幕空间反射 CPU 参考。
 struct ReflectionProbe

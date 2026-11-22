@@ -26,8 +26,8 @@ inline constexpr std::uint32_t Y             = 0x8000u;
 struct GamepadState
 {
     std::uint32_t buttons = 0;
-    se::Vec2 leftStick{};
-    se::Vec2 rightStick{};
+    flare::Vec2 leftStick{};
+    flare::Vec2 rightStick{};
     float leftTrigger = 0.0f;
     float rightTrigger = 0.0f;
     bool connected = false;

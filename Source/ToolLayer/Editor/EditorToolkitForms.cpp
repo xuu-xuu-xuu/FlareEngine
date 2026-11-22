@@ -15,15 +15,17 @@
 #include "ResourceLayer/Assets/AssetIO.h"
 #include "ResourceLayer/Assets/AudioClip.h"
 #include "ResourceLayer/Assets/MaterialMetadata.h"
+#include "ResourceLayer/Assets/Primitives.h"
 #include "ResourceLayer/Scenes/PrefabDocument.h"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
 #include <functional>
 #include <sstream>
 
-namespace se
+namespace flare
 {
 using ui::editor::EditorPanelId;
 using ui::editor::EditorProperty;
@@ -204,6 +206,25 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
 {
     auto& state = ctx.assetState;
     Log(LogLevel::Info, "EditorUi.ToolkitAsset: " + path);
+    if (ctx.shell.InspectorLocked())
+    {
+        if (state.lockedToEntity)
+        {
+            const std::filesystem::path browsed = asset_io::FromUtf8(path);
+            ctx.scriptWorkflow.SelectSource(browsed);
+            if (ctx.featureTools) ctx.featureTools->SelectSource(path);
+            ctx.shell.SetAssetsPreviewText(asset_io::Utf8(browsed.filename()));
+            return;
+        }
+        if (state.lockedToAsset && !state.lockedAssetPath.empty() && path != state.lockedAssetPath)
+        {
+            const std::filesystem::path browsed = asset_io::FromUtf8(path);
+            ctx.scriptWorkflow.SelectSource(browsed);
+            if (ctx.featureTools) ctx.featureTools->SelectSource(path);
+            ctx.shell.SetAssetsPreviewText(asset_io::Utf8(browsed.filename()));
+            return;
+        }
+    }
     if (ctx.audio && state.previewAudioVoice)
     {
         ctx.audio->Stop(state.previewAudioVoice);
@@ -211,6 +232,8 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
     }
     if (state.inspectUi) ctx.shell.CancelPropertyInteraction();
     state.inspectUi = false;
+    state.isTodAsset = false;
+    state.preferMaterialUndo = false;
     if (ctx.featureTools) ctx.featureTools->SelectSource(path);
 
     const std::filesystem::path selected = asset_io::FromUtf8(path);
@@ -251,12 +274,14 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
                          extension == ".bmp" || extension == ".tga";
     const bool model = extension == ".fbx" || extension == ".glb" || extension == ".gltf";
     const bool audio = extension == ".wav" || extension == ".ogg";
+    const bool todAsset = extension == ".tod";
     const bool prefab = IsPrefabDocumentPath(selected);
     std::string type = extension;
     if (model) type = ctx.text.GetText("EditorUi.AssetModel");
     else if (prefab) type = ctx.text.GetText("EditorUi.AssetPrefab");
     else if (texture) type = ctx.text.GetText("EditorUi.AssetTexture");
     else if (audio) type = ctx.text.GetText("EditorUi.AssetAudio");
+    else if (todAsset) type = ctx.text.GetText("EditorUi.AssetEnvironment");
     else if (extension == ".cs") type = ctx.text.GetText("EditorUi.AssetScript");
     else if (IsMaterialDocumentPath(selected)) type = ctx.text.GetText("EditorUi.DocumentMaterial");
 
@@ -274,8 +299,37 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
         }
         if (!state.modelId.empty())
         {
+            std::vector<AssetDiagnostic> modelDiag;
+            if (const auto loadedModel = ctx.assets.LoadModel(state.modelId, modelDiag))
+            {
+                std::size_t totalVerts = 0, totalTris = 0;
+                for (const auto& m : loadedModel->meshes)
+                {
+                    totalVerts += m.vertices.size();
+                    totalTris += m.indices.size() / 3;
+                }
+                addDetail("asset.modelSubmeshes", "EditorUi.ModelSubmeshes", std::to_string(loadedModel->meshes.size()));
+                addDetail("asset.modelVertices", "EditorUi.ModelVertices", std::to_string(totalVerts));
+                addDetail("asset.modelTriangles", "EditorUi.ModelTriangles", std::to_string(totalTris));
+                if (!loadedModel->animations.empty())
+                    addDetail("asset.modelAnims", "EditorUi.ModelAnimations", std::to_string(loadedModel->animations.size()));
+            }
             state.rows.push_back({"asset.addModel", ctx.text.GetText("EditorUi.AddModelToScene"),
                                   EditorPropertyType::Action, {}, ctx.session.IsPlaying()});
+        }
+    }
+    if (todAsset)
+    {
+        for (const auto& id : ctx.assets.ListIds())
+        {
+            if (ctx.assets.Resolve(id) == selected) { state.modelId = id; break; }
+        }
+        if (!state.modelId.empty())
+        {
+            state.isTodAsset = true;
+            state.editTod = true;
+            if (!ctx.host.TimeOfDayPreview().Dirty() && ctx.host.TimeOfDayPreview().Id() != state.modelId)
+                (void)ctx.host.TimeOfDayPreview().Open(ctx.assets, state.modelId);
         }
     }
     if (prefab)
@@ -359,6 +413,17 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
 
     if (!IsMaterialDocumentPath(selected))
     {
+        if (state.isTodAsset && ctx.host.TimeOfDayPreview().Ready())
+        {
+            std::vector<EditorProperty> todRows;
+            AppendTodInspector(ctx.host.TimeOfDayPreview(), ctx.text, ctx.session.IsPlaying(), todRows);
+            for (auto& tr : todRows)
+            {
+                if (tr.key == "tod.open") continue;
+                tr.sectionInitiallyClosed = false;
+                state.rows.push_back(std::move(tr));
+            }
+        }
         if (texture)
         {
             for (const AssetId& id : ctx.assets.ListIds())
@@ -391,6 +456,31 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
         auto matRows = BuildMaterialFormRows(ctx.host.Material(), ctx.text);
         ctx.shell.SetFormProperties(EditorPanelId::Material, matRows);
         const std::string matSection = ctx.text.GetText("EditorUi.DocumentMaterial");
+        std::size_t matUserCount = 0;
+        const AssetId activeMatId = ctx.host.Material().ActiveAssetId();
+        if (!activeMatId.empty())
+        {
+            const World& ew = ctx.session.EditWorld();
+            for (const EntityHandle eh : ew.Entities())
+            {
+                const auto* mesh = ew.GetMesh(eh);
+                if (!mesh) continue;
+                if (std::find(mesh->materials.begin(), mesh->materials.end(), activeMatId) != mesh->materials.end())
+                    ++matUserCount;
+            }
+        }
+        {
+            EditorProperty sharedBanner{"asset.mat.sharedBanner",
+                ctx.text.GetText("EditorUi.SharedMaterialBanner") + " (" + std::to_string(matUserCount) + ")",
+                EditorPropertyType::String, {}, true, {}, matSection};
+            sharedBanner.diagnosticLevel = 1;
+            if (!ctx.session.IsPlaying())
+            {
+                sharedBanner.fixActionKey = "asset.mat.duplicateAssign";
+                sharedBanner.fixActionLabel = ctx.text.GetText("EditorUi.DuplicateAndAssignMaterial");
+            }
+            state.rows.push_back(std::move(sharedBanner));
+        }
         for (auto& mr : matRows)
         {
             if (mr.key == "name") continue;
@@ -404,9 +494,11 @@ void HandleAssetSelection(ToolkitWorkspaceContext& ctx, const std::string& path)
                 inlineRow.dragMinimum = 0.0f;
                 inlineRow.dragMaximum = (mr.key == "normalScale") ? 2.0f : 1.0f;
                 inlineRow.slider = true;
+                inlineRow.tooltip = ctx.text.GetText("EditorUi.TooltipDragScrub");
             }
             else if (inlineRow.type == EditorPropertyType::Asset)
             {
+                inlineRow.acceptedAssetKind = "texture";
                 if (inlineRow.value.empty()) inlineRow.displayValue = ctx.text.GetText("EditorUi.None");
                 else
                 {
@@ -669,6 +761,73 @@ bool HandleAssetPropertyAction(ToolkitWorkspaceContext& ctx, const std::string& 
     {
         return ctx.shell.Commands().Execute({ui::editor::EditorCommandId::Delete, {}});
     }
+    if (key == "asset.mat.duplicateAssign")
+    {
+        if (!ctx.host.Material().Ready() || state.assetPath.empty() || ctx.session.IsPlaying()) return false;
+        if (ctx.host.Material().Dirty()) (void)ctx.host.SaveMaterial(ctx.assets);
+        const AssetId oldMatId = ctx.host.Material().ActiveAssetId();
+        std::string stem = asset_io::Utf8(state.assetPath.filename());
+        if (stem.ends_with(".material.json")) stem.erase(stem.size() - 14);
+        else stem = asset_io::Utf8(state.assetPath.stem());
+        const std::filesystem::path parentDir = state.assetPath.parent_path();
+        std::filesystem::path dupPath;
+        for (int idx = 1; idx < 1000; ++idx)
+        {
+            const std::filesystem::path candidate = parentDir / asset_io::FromUtf8(stem + "_Instance" + std::to_string(idx) + ".material.json");
+            std::error_code ec;
+            if (!std::filesystem::exists(candidate, ec)) { dupPath = candidate; break; }
+        }
+        if (dupPath.empty()) return false;
+        MaterialDocument dupDoc = ctx.host.Material().Document();
+        dupDoc.name = asset_io::Utf8(dupPath.filename());
+        if (dupDoc.name.ends_with(".material.json")) dupDoc.name.erase(dupDoc.name.size() - 14);
+        std::vector<AssetDiagnostic> matSaveDiag;
+        if (!SaveMaterialDocument(dupPath, dupDoc, matSaveDiag))
+        {
+            std::error_code copyEc;
+            if (!std::filesystem::copy_file(state.assetPath, dupPath, std::filesystem::copy_options::overwrite_existing, copyEc) || copyEc)
+                return false;
+        }
+        std::vector<AssetDiagnostic> scanDiag;
+        ctx.assets.Scan(scanDiag);
+        std::vector<EditorAssetIssue> syncIssues;
+        EditorAssetActions::SyncProjectAssets(ctx.root, ctx.assets, syncIssues);
+        AssetId newMatId;
+        for (const AssetId& aid : ctx.assets.ListIds())
+        {
+            std::error_code eqEc;
+            if (std::filesystem::equivalent(ctx.assets.Resolve(aid), dupPath, eqEc) && !eqEc) { newMatId = aid; break; }
+        }
+        const StableEntityId selectedEntity = ctx.session.Selected();
+        if (!newMatId.empty() && selectedEntity != 0)
+        {
+            const EntityHandle entity = ctx.session.EditWorld().FindByStableId(selectedEntity);
+            if (const auto* mesh = ctx.session.EditWorld().GetMesh(entity))
+            {
+                MeshComponent updated = *mesh;
+                bool replaced = false;
+                if (!oldMatId.empty())
+                {
+                    for (auto& m : updated.materials)
+                    {
+                        if (m == oldMatId) { m = newMatId; replaced = true; }
+                    }
+                }
+                if (!replaced)
+                {
+                    if (updated.materials.empty()) updated.materials.push_back(newMatId);
+                    else updated.materials[0] = newMatId;
+                }
+                (void)ctx.session.SetMesh(selectedEntity, updated);
+            }
+        }
+        const std::string dupUtf8 = asset_io::Utf8(dupPath);
+        if (ctx.shell.InspectorLocked() && state.lockedToAsset) state.lockedAssetPath = dupUtf8;
+        HandleAssetSelection(ctx, dupUtf8);
+        ctx.shell.PingAsset(dupUtf8);
+        ctx.shell.SetStatus(ctx.text.GetText("EditorUi.MaterialDuplicated") + ": " + asset_io::Utf8(dupPath.filename()));
+        return true;
+    }
     if (key == "asset.mat.assign")
     {
         const StableEntityId selected = ctx.session.Selected();
@@ -794,7 +953,9 @@ std::vector<EditorProperty> BuildMaterialFormRows(const EditorMaterialWorkflow& 
             type = EditorPropertyType::Color;
         const std::string label = descriptor.labelKey.empty()
             ? std::string(descriptor.key) : text.GetText(descriptor.labelKey);
-        rows.push_back({std::string(descriptor.key), label, type, PropertyText(value), !descriptor.editable});
+        EditorProperty row{std::string(descriptor.key), label, type, PropertyText(value), !descriptor.editable};
+        if (type == EditorPropertyType::Asset) row.acceptedAssetKind = "texture";
+        rows.push_back(std::move(row));
     }
     return rows;
 }
@@ -1014,12 +1175,113 @@ bool SaveAllToolkitDocuments(ToolkitWorkspaceContext& ctx)
 
 void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function<bool()>& exportAction)
 {
+    ctx.shell.SetInspectorLockHandler([&ctx](bool locked) {
+        auto& st = ctx.assetState;
+        if (locked)
+        {
+            if (!st.assetName.empty() && !st.assetPath.empty())
+            {
+                st.lockedToAsset = true;
+                st.lockedAssetPath = asset_io::Utf8(st.assetPath);
+                st.lockedToEntity = false;
+                st.lockedEntityId = 0;
+                st.lockedSelection.clear();
+            }
+            else
+            {
+                st.lockedToEntity = true;
+                st.lockedEntityId = ctx.session.Selected();
+                st.lockedSelection = ctx.session.Selection();
+                st.lockedToAsset = false;
+                st.lockedAssetPath.clear();
+            }
+            ctx.shell.SetStatus(ctx.text.GetText("EditorUi.InspectorLock"));
+        }
+        else
+        {
+            st.lockedToEntity = false;
+            st.lockedEntityId = 0;
+            st.lockedSelection.clear();
+            st.lockedToAsset = false;
+            st.lockedAssetPath.clear();
+            ctx.shell.SetStatus(ctx.text.GetText("EditorUi.InspectorUnlock"));
+        }
+    });
+
+    ctx.shell.SetScopedAssetChoicesHandler([&ctx](std::string_view acceptedKind,
+                                                  std::vector<ui::editor::EditorShell::ScopedPickerItem>& outItems) {
+        outItems.clear();
+        if (acceptedKind == "model")
+        {
+            outItems.push_back({ctx.text.GetText("EditorUi.Cube") + " (Builtin)", std::string(BuiltinCubeAssetId)});
+            outItems.push_back({ctx.text.GetText("EditorUi.Sphere") + " (Builtin)", std::string(BuiltinSphereAssetId)});
+        }
+        std::vector<ui::editor::EditorShell::ScopedPickerItem> diskItems;
+        for (const AssetId& aid : ctx.assets.ListIds())
+        {
+            const std::filesystem::path resolved = ctx.assets.Resolve(aid);
+            if (resolved.empty()) continue;
+            const std::string utf8Path = asset_io::Utf8(resolved);
+            if (!ui::editor::IsAssetPathCompatible(utf8Path, acceptedKind)) continue;
+            std::string label = asset_io::Utf8(resolved.filename());
+            std::string relParent = asset_io::Utf8(resolved.parent_path().lexically_relative(ctx.assets.SourceRoot()));
+            for (char& ch : relParent) if (ch == '\\') ch = '/';
+            if (!relParent.empty() && relParent != "." && !relParent.starts_with(".."))
+                label += "  (" + relParent + ")";
+            diskItems.push_back({std::move(label), aid});
+        }
+        std::sort(diskItems.begin(), diskItems.end(),
+                  [](const auto& a, const auto& b) { return a.label < b.label; });
+        for (auto& item : diskItems) outItems.push_back(std::move(item));
+    });
+
+    ctx.shell.SetReferencePingHandler([&ctx](std::string_view kind, std::string_view value) {
+        if (kind == "entity")
+        {
+            ctx.shell.SetStatus(ctx.text.GetText("EditorUi.PingLocated"));
+            return;
+        }
+        if (kind == "asset" && !value.empty())
+        {
+            if (value == BuiltinCubeAssetId || value == BuiltinSphereAssetId)
+            {
+                ctx.shell.SetStatus(ctx.text.GetText("EditorUi.PingLocated") + ": " + std::string(value));
+                return;
+            }
+            const std::filesystem::path resolved = ctx.assets.Resolve(std::string(value));
+            if (!resolved.empty())
+            {
+                const std::string utf8Path = asset_io::Utf8(resolved);
+                ctx.shell.PingAsset(utf8Path);
+                ctx.shell.SetStatus(ctx.text.GetText("EditorUi.PingLocated") + ": " + asset_io::Utf8(resolved.filename()));
+            }
+        }
+    });
+
     ctx.shell.SetSelectionHandler([&ctx](std::uint64_t id) {
         if (ctx.assetState.inspectUi) ctx.shell.CancelPropertyInteraction();
         ctx.assetState.inspectUi = false;
-        ctx.assetState.assetName.clear();
+        if (!(ctx.shell.InspectorLocked() && ctx.assetState.lockedToAsset))
+        {
+            ctx.assetState.isTodAsset = false;
+            ctx.assetState.preferMaterialUndo = false;
+            ctx.assetState.assetName.clear();
+        }
         ctx.session.Select(id);
         Log(LogLevel::Info, "EditorUi.ToolkitSelection: " + std::to_string(id));
+    });
+
+    ctx.shell.SetMultiSelectionHandler([&ctx](const std::vector<std::uint64_t>& ids, std::uint64_t primary) {
+        if (ctx.assetState.inspectUi) ctx.shell.CancelPropertyInteraction();
+        ctx.assetState.inspectUi = false;
+        if (!(ctx.shell.InspectorLocked() && ctx.assetState.lockedToAsset))
+        {
+            ctx.assetState.isTodAsset = false;
+            ctx.assetState.preferMaterialUndo = false;
+            ctx.assetState.assetName.clear();
+        }
+        ctx.session.SetSelection(ids, primary);
+        Log(LogLevel::Info, "EditorUi.ToolkitMultiSelection: " + std::to_string(ids.size()));
     });
 
     ctx.shell.SetAssetSelectionHandler([&ctx](std::string path) {
@@ -1062,14 +1324,22 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
         if (!ctx.assetState.assetName.empty() && IsMaterialDocumentPath(ctx.assetState.assetPath))
         {
             if (ctx.session.IsPlaying()) return false;
-            if (phase == Begin) return ctx.host.Material().Ready();
+            if (phase == Begin)
+            {
+                ctx.assetState.preferMaterialUndo = true;
+                return ctx.host.Material().BeginEdit();
+            }
             if (phase == Commit)
             {
+                (void)ctx.host.Material().CommitEdit();
+                ctx.assetState.preferMaterialUndo = true;
                 if (ctx.host.Material().Dirty() && !ctx.host.SaveMaterial(ctx.assets)) return false;
                 HandleAssetSelection(ctx, asset_io::Utf8(ctx.assetState.assetPath));
+                ctx.assetState.preferMaterialUndo = true;
                 return true;
             }
-            ctx.host.OpenMaterial(ctx.assets, ctx.assetState.assetPath, false);
+            (void)ctx.host.Material().CancelEdit();
+            if (ctx.host.Material().Dirty()) (void)ctx.host.SaveMaterial(ctx.assets);
             HandleAssetSelection(ctx, asset_io::Utf8(ctx.assetState.assetPath));
             return true;
         }
@@ -1078,12 +1348,27 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
         {
             const bool result = ctx.session.BeginEdit("EditorUi.PropertyDrag");
             if (result) ctx.host.TimeOfDayPreview().BeginEdit();
+            (void)ctx.scriptWorkflow.BeginEdit();
             return result;
         }
+        const std::size_t prevSceneUndo = ctx.session.UndoCount();
+        const bool scriptCommitted = phase == Commit ? ctx.scriptWorkflow.CommitEdit() : ctx.scriptWorkflow.CancelEdit();
         const auto tod = ctx.host.TimeOfDayPreview().EndEdit(phase == Commit);
         const auto scene = phase == Commit ? ctx.session.CommitEdit() : ctx.session.CancelEdit();
-        if (phase == Commit && scene) ctx.assetState.preferScriptUndo = false;
-        return tod || scene;
+        if (phase == Commit)
+        {
+            if (scriptCommitted)
+            {
+                ctx.assetState.preferScriptUndo = true;
+                ctx.assetState.preferMaterialUndo = false;
+            }
+            else if (ctx.session.UndoCount() > prevSceneUndo)
+            {
+                ctx.assetState.preferScriptUndo = false;
+                ctx.assetState.preferMaterialUndo = false;
+            }
+        }
+        return scriptCommitted || tod || scene;
     });
 
     ctx.shell.SetPropertyChoices([&ctx](std::uint64_t id, EditorProperty& field) {
@@ -1099,6 +1384,36 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
             key == "asset.newSubfolder" || key == "asset.showExplorer")
         {
             return HandleAssetPropertyAction(ctx, key, value);
+        }
+        if (key == "play.keepEntity")
+        {
+            if (!ctx.session.IsPlaying() || id == 0) return false;
+            if (ctx.assetState.playKeepEntities.contains(id))
+            {
+                ctx.assetState.playKeepEntities.erase(id);
+                ctx.shell.SetPlayKeepArmed(false);
+                ctx.shell.SetStatus(ctx.text.GetText("EditorUi.PlayBanner"));
+            }
+            else
+            {
+                ctx.assetState.playKeepEntities.insert(id);
+                ctx.shell.SetPlayKeepArmed(true);
+                ctx.shell.SetStatus(ctx.text.GetText("EditorUi.PlayKeepEntityArmed"));
+            }
+            return true;
+        }
+        if (key == "prefab.select")
+        {
+            const World& activeWorld = (ctx.session.IsPlaying() && ctx.session.PlayWorld())
+                ? *ctx.session.PlayWorld() : ctx.session.EditWorld();
+            const EntityHandle entity = activeWorld.FindByStableId(id);
+            const PrefabLink* link = entity ? activeWorld.GetPrefabLink(entity) : nullptr;
+            if (!link || link->prefabId.empty()) return false;
+            const std::filesystem::path resolved = ctx.assets.Resolve(link->prefabId);
+            if (resolved.empty()) return false;
+            ctx.shell.PingAsset(asset_io::Utf8(resolved));
+            ctx.shell.SetStatus(ctx.text.GetText("EditorUi.PingLocated") + ": " + asset_io::Utf8(resolved.filename()));
+            return true;
         }
         if (key == "prefab.apply")
         {
@@ -1135,6 +1450,57 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
             ctx.shell.SetStatus(ctx.text.GetText("EditorUi.PrefabReverted"));
             return true;
         }
+        if (key.starts_with("prefab.applyProperty:"))
+        {
+            std::string error;
+            if (!ApplyPropertyOverrideToPrefab(ctx.session, ctx.assets, ctx.root, id,
+                                               std::string_view(key).substr(21), error, ctx.hooks))
+            {
+                ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, error, "EditorUi.SaveFailed"));
+                return false;
+            }
+            const auto msg = ctx.text.GetText("EditorUi.PrefabApplied");
+            ctx.shell.SetStatus(msg);
+            ctx.shell.AppendConsoleLine(msg);
+            return true;
+        }
+        if (key.starts_with("prefab.revertComponent:"))
+        {
+            std::string error;
+            if (!RevertComponentOverrides(ctx.session, ctx.assets, id, std::string_view(key).substr(23), error))
+            {
+                ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, error, "EditorUi.SaveFailed"));
+                return false;
+            }
+            ctx.shell.SetStatus(ctx.text.GetText("EditorUi.PrefabReverted"));
+            return true;
+        }
+        if (key.starts_with("prefab.applyComponent:"))
+        {
+            std::string error;
+            if (!ApplyComponentOverridesToPrefab(ctx.session, ctx.assets, ctx.root, id,
+                                                 std::string_view(key).substr(22), error, ctx.hooks))
+            {
+                ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, error, "EditorUi.SaveFailed"));
+                return false;
+            }
+            const auto msg = ctx.text.GetText("EditorUi.PrefabApplied");
+            ctx.shell.SetStatus(msg);
+            ctx.shell.AppendConsoleLine(msg);
+            return true;
+        }
+        if (key.starts_with("gizmo."))
+        {
+            if (id != 0 && ctx.session.Selected() != id) ctx.session.Select(id);
+            if (!ctx.viewportController.Gizmos())
+                (void)ctx.viewportController.Action("Gizmos", ctx.session, ctx.assets);
+            if (!ctx.session.IsPlaying() && ctx.viewportController.Tool() == 0)
+                (void)ctx.viewportController.Action("W", ctx.session, ctx.assets);
+            (void)ctx.viewportController.FrameSelection(ctx.session, ctx.assets, false);
+            ctx.shell.FocusPanel(EditorPanelId::Viewport);
+            ctx.shell.SetStatus(ctx.text.GetText("EditorUi.GizmoFocused"));
+            return true;
+        }
         if (key == "preview.play" || key == "preview.time")
         {
             std::string error;
@@ -1167,6 +1533,16 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
             {
                 ctx.shell.SetStatus(LocalizedToolkitStatus(ctx.text, ctx.host.TimeOfDayPreview().LastError(), "EditorUi.SaveFailed"));
             }
+            else if (ctx.assetState.isTodAsset && !ctx.assetState.assetPath.empty())
+            {
+                if (key == "tod.add" || key == "tod.save" || key.ends_with(".remove"))
+                    HandleAssetSelection(ctx, asset_io::Utf8(ctx.assetState.assetPath));
+                else
+                {
+                    for (auto& r : ctx.assetState.rows)
+                        if (r.key == key) r.value = value;
+                }
+            }
             return result;
         }
         if (key.starts_with("ui."))
@@ -1179,12 +1555,21 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
             if (result) ctx.host.Ui().Select(selected);
             return result;
         }
+        const auto& effectiveSel = (ctx.shell.InspectorLocked() && ctx.assetState.lockedToEntity)
+            ? ctx.assetState.lockedSelection
+            : ctx.session.Selection();
         if (key.starts_with("script."))
         {
             CodeEditorSettings settings;
             settings.executable = asset_io::FromUtf8(ctx.host.Preferences().externalEditor);
-            const bool result = ctx.scriptWorkflow.Apply(id, ctx.session.IsPlaying(), key, value, settings);
-            if (result && !ctx.session.IsPlaying()) ctx.assetState.preferScriptUndo = true;
+            const bool result = (effectiveSel.size() > 1 && id != 0)
+                ? ctx.scriptWorkflow.ApplyMulti(effectiveSel, ctx.session.IsPlaying(), key, value, settings)
+                : ctx.scriptWorkflow.Apply(id, ctx.session.IsPlaying(), key, value, settings);
+            if (result && !ctx.session.IsPlaying())
+            {
+                ctx.assetState.preferScriptUndo = true;
+                ctx.assetState.preferMaterialUndo = false;
+            }
             if (!ctx.scriptWorkflow.Status().empty()) ctx.shell.SetStatus(ctx.scriptWorkflow.Status());
             std::uint64_t pendingEntity = 0;
             std::string pendingScriptId;
@@ -1196,8 +1581,53 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
             }
             return result;
         }
-        const bool applied = ApplySceneInspector(ctx.session, id, key, value, &ctx.assets);
-        if (applied && !ctx.session.IsPlaying()) ctx.assetState.preferScriptUndo = false;
+        bool hadMeshBefore = true;
+        if (key == "add.actor" && id != 0 && !ctx.session.IsPlaying())
+        {
+            const EntityHandle eh = ctx.session.EditWorld().FindByStableId(id);
+            hadMeshBefore = eh && (ctx.session.EditWorld().GetMesh(eh) != nullptr);
+        }
+        const bool applied = (effectiveSel.size() > 1 && id != 0)
+            ? ApplyMultiSceneInspector(ctx.session, effectiveSel, key, value, &ctx.assets)
+            : ApplySceneInspector(ctx.session, id, key, value, &ctx.assets);
+        if (applied && !ctx.session.IsPlaying())
+        {
+            ctx.assetState.preferScriptUndo = false;
+            ctx.assetState.preferMaterialUndo = false;
+            if (!hadMeshBefore && key == "add.actor")
+            {
+                const EntityHandle eh = ctx.session.EditWorld().FindByStableId(id);
+                if (eh && ctx.session.EditWorld().GetMesh(eh) != nullptr)
+                {
+                    const std::string depMsg = ctx.text.GetText("Editor.DependencyAutoAdded");
+                    ctx.shell.SetStatus(depMsg);
+                    ctx.shell.AppendConsoleLine("[Info] " + depMsg);
+                }
+            }
+            else if (key.starts_with("copy."))
+            {
+                ctx.shell.SetStatus(ctx.text.GetText("EditorUi.ComponentCopied"));
+            }
+            else if (key.starts_with("paste.") || key == "pasteNew.component")
+            {
+                ctx.shell.SetStatus(ctx.text.GetText("EditorUi.ComponentPasted"));
+            }
+            else if (key.starts_with("reset."))
+            {
+                ctx.shell.SetStatus(ctx.text.GetText("EditorUi.ComponentResetDone"));
+            }
+        }
+        else if (!applied && !ctx.session.LastError().empty())
+        {
+            const std::string errMsg = LocalizedToolkitStatus(ctx.text, ctx.session.LastError(), "EditorUi.InvalidValue");
+            ctx.shell.SetStatus(errMsg);
+            if (ctx.session.LastError() == "Editor.DependencyRequired" ||
+                ctx.session.LastError() == "Feature.Physics.Exclusive" ||
+                ctx.session.LastError() == "World.RequiredComponent")
+            {
+                ctx.shell.AppendConsoleLine("[Warning] " + errMsg);
+            }
+        }
         return applied;
     });
 
@@ -1319,6 +1749,21 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
             Log(LogLevel::Info, "EditorUi.ToolkitPreferences: saved");
             return true;
         });
+    ctx.shell.SetFormAction(
+        EditorPanelId::Preferences,
+        ctx.text.GetText("EditorUi.SyncScriptProject"),
+        [&ctx]() {
+            EditorIdeWorkspaceResult synced;
+            if (!EditorScriptTools::SyncIdeWorkspace(ctx.root, {}, {}, true, &synced))
+            {
+                ctx.shell.SetFormStatus(EditorPanelId::Preferences, ctx.text.GetText("EditorUi.ScriptProjectNone"));
+                return false;
+            }
+            ctx.shell.SetFormStatus(EditorPanelId::Preferences,
+                ctx.text.GetText("EditorUi.ScriptProjectSynced") + ": " +
+                asset_io::Utf8(synced.solutionPath.filename()));
+            return true;
+        });
 }
 
-} // namespace se
+} // namespace flare

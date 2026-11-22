@@ -12,7 +12,7 @@
 #include <string>
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 using namespace detail;
 
@@ -85,9 +85,84 @@ std::string EditorShell::PanelLabel(EditorPanelId panel) const
     }
 }
 
-EditorShell::EditorShell(UiTextService* textService)
+namespace
+{
+class EditorClipboardPlatformServices final : public UiPlatformServices
+{
+public:
+    bool ReadClipboard(std::string& utf8) override
+    {
+        if (OpenClipboard(nullptr))
+        {
+            struct Guard { ~Guard() { CloseClipboard(); } } guard;
+            if (HANDLE handle = GetClipboardData(CF_UNICODETEXT))
+            {
+                if (const auto* wide = static_cast<const wchar_t*>(GlobalLock(handle)))
+                {
+                    const int wideLen = static_cast<int>(wcsnlen_s(wide, 1024 * 1024));
+                    std::string converted;
+                    if (wideLen > 0)
+                    {
+                        const int needed = WideCharToMultiByte(CP_UTF8, 0, wide, wideLen, nullptr, 0, nullptr, nullptr);
+                        if (needed > 0)
+                        {
+                            converted.resize(static_cast<std::size_t>(needed));
+                            WideCharToMultiByte(CP_UTF8, 0, wide, wideLen, converted.data(), needed, nullptr, nullptr);
+                        }
+                    }
+                    GlobalUnlock(handle);
+                    utf8.clear();
+                    utf8.reserve(converted.size());
+                    for (char c : converted)
+                    {
+                        if (c != '\r') utf8.push_back(c);
+                    }
+                    fallback_ = utf8;
+                    return true;
+                }
+            }
+        }
+        utf8 = fallback_;
+        return true;
+    }
+
+    bool WriteClipboard(std::string_view utf8) override
+    {
+        fallback_.assign(utf8);
+        if (!OpenClipboard(nullptr)) return true;
+        struct Guard { ~Guard() { CloseClipboard(); } } guard;
+        if (!EmptyClipboard()) return true;
+        const int wideLen = utf8.empty()
+            ? 0
+            : MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
+        if (wideLen < 0) return true;
+        HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, static_cast<SIZE_T>(wideLen + 1) * sizeof(wchar_t));
+        if (!mem) return true;
+        auto* dst = static_cast<wchar_t*>(GlobalLock(mem));
+        if (!dst) { GlobalFree(mem); return true; }
+        if (wideLen > 0)
+            MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), dst, wideLen);
+        dst[wideLen] = L'\0';
+        GlobalUnlock(mem);
+        if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
+        return true;
+    }
+
+    float DpiScale() const override { return 1.0f; }
+    void SetImeComposition(std::string_view) override {}
+    void SetImeCandidateAnchor(const UiImeCandidateAnchor&) override {}
+    void CancelIme() override {}
+
+private:
+    std::string fallback_;
+};
+} // namespace
+
+EditorShell::EditorShell(UiTextService* textService, UiPlatformServices* platformServices)
     : stub_(),
       text_(textService ? textService : &stub_),
+      platform_(platformServices),
+      defaultPlatform_(std::make_unique<EditorClipboardPlatformServices>()),
       layout_(document_, text_),
       style_(document_),
       dispatcher_(document_, layout_, &style_),
@@ -361,15 +436,19 @@ void EditorShell::Frame()
     if (pendingHierarchyRenameId_ != 0)
     {
         if (draggingHierarchy_ || activePanel_ != EditorPanelId::Hierarchy ||
-            hierarchyModel_.Selected() != pendingHierarchyRenameId_)
+            hierarchyModel_.Selected() != pendingHierarchyRenameId_ ||
+            hierarchyModel_.SelectedIds().size() > 1)
         {
             pendingHierarchyRenameId_ = 0;
         }
-        else if (nowTick >= pendingHierarchyRenameTick_ && nowTick - pendingHierarchyRenameTick_ >= 400)
+        else if (nowTick >= pendingHierarchyRenameDownTick_ &&
+                 nowTick - pendingHierarchyRenameDownTick_ >= 340 &&
+                 nowTick >= pendingHierarchyRenameTick_ &&
+                 nowTick - pendingHierarchyRenameTick_ >= 80)
         {
             const std::uint64_t targetId = pendingHierarchyRenameId_;
             pendingHierarchyRenameId_ = 0;
-            BeginHierarchyRename(targetId);
+            (void)BeginHierarchyRename(targetId);
         }
     }
     if (!pendingAssetRenamePath_.empty())
@@ -379,11 +458,14 @@ void EditorShell::Frame()
         {
             pendingAssetRenamePath_.clear();
         }
-        else if (nowTick >= pendingAssetRenameTick_ && nowTick - pendingAssetRenameTick_ >= 420)
+        else if (nowTick >= pendingAssetRenameDownTick_ &&
+                 nowTick - pendingAssetRenameDownTick_ >= 340 &&
+                 nowTick >= pendingAssetRenameTick_ &&
+                 nowTick - pendingAssetRenameTick_ >= 80)
         {
             const std::string targetPath = pendingAssetRenamePath_;
             pendingAssetRenamePath_.clear();
-            BeginAssetRename(targetPath);
+            (void)BeginAssetRename(targetPath);
         }
     }
     // 结构变化可能发生在事件处理期间；销毁元素统一延迟到帧边界，避免销毁正在分发的目标。
@@ -445,6 +527,7 @@ void EditorShell::Frame()
     UpdatePanelContentRects();
     LayoutInspectorColor();
     RefreshStatus();
+    UpdateTooltipOverlay(nowTick);
     layout_.Layout(layoutWidth, layoutHeight);
     UpdateScrollThumbs();
     UpdateGameTools();
@@ -573,4 +656,4 @@ EditorCommandRouter& EditorShell::Router() noexcept
     return router_;
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

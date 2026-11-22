@@ -1,3 +1,7 @@
 <Project>
   <!-- 模板独立配置；位于引擎仓库内或复制到其他目录时均不继承外层配置。 -->
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
+  </PropertyGroup>
+  <Import Project="../out/Editor/FlareEngine.Ide.props" Condition="'$(FlareEngineRoot)' == '' And Exists('../out/Editor/FlareEngine.Ide.props')" />
 </Project>

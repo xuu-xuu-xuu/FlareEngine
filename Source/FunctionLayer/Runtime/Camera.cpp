@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace se
+namespace flare
 {
 namespace
 {

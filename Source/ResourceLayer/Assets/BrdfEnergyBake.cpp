@@ -7,7 +7,7 @@
 #include <bit>
 #include <thread>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -147,7 +147,7 @@ bool EncodeBrdfEnergy(const BrdfEnergyLut& lut,std::vector<std::uint8_t>& output
     std::vector<std::uint8_t> payload;payload.reserve((lut.directional.size()+lut.average.size())*8);
     for(const auto& table:{std::span(lut.directional),std::span(lut.average)})for(const auto value:table)
     {U32(payload,std::bit_cast<std::uint32_t>(value.x));U32(payload,std::bit_cast<std::uint32_t>(value.y));}
-    const auto header=Json{{"format","SelfEngine.BrdfEnergy"},{"schema",1},{"algorithm",BrdfEnergyCookerVersion},{"bake_key",lut.bakeKey},
+    const auto header=Json{{"format","FlareEngine.BrdfEnergy"},{"schema",1},{"algorithm",BrdfEnergyCookerVersion},{"bake_key",lut.bakeKey},
         {"settings",SettingsJson(lut.settings)},{"mapping",mapping},{"minimum_nv",BrdfEnergyMinimumNv},{"minimum_roughness",BrdfEnergyMinimumRoughness},
         {"layout","directional AB float32-le row-major then average AB float32-le"},{"directional_count",lut.directional.size()},{"average_count",lut.average.size()},
         {"payload_bytes",payload.size()},{"payload_sha256",Sha256(payload)}}.dump();
@@ -161,7 +161,7 @@ bool DecodeBrdfEnergy(std::span<const std::uint8_t> bytes,BrdfEnergyLut& output,
     try
     {
         const auto header=Json::parse(bytes.begin()+12,bytes.begin()+12+length);
-        if(header.at("format")!="SelfEngine.BrdfEnergy"||header.at("schema")!=1||header.at("algorithm")!=BrdfEnergyCookerVersion)
+        if(header.at("format")!="FlareEngine.BrdfEnergy"||header.at("schema")!=1||header.at("algorithm")!=BrdfEnergyCookerVersion)
         {asset_io::Diagnostic(diagnostics,"BrdfEnergy.VersionUnsupported");return false;}
         BrdfEnergyLut result;const auto& settings=header.at("settings");
         if(!Uint(settings.at("width"),result.settings.width)||!Uint(settings.at("height"),result.settings.height)||!Uint(settings.at("samples"),result.settings.samples)

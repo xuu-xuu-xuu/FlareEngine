@@ -2,7 +2,7 @@
 #include "CoreLayer/Math/Projection.h"
 #include "ResourceLayer/Assets/LodBake.h"
 
-namespace se
+namespace flare
 {
 // G05：LOD 选择只依赖“世界误差 → 屏幕像素误差”，不绑定相机/渲染实现。
 struct LodView

@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se
+namespace flare
 {
 bool WriteProfileCsv(const std::filesystem::path& path,std::string_view text,std::string& error);
 struct CpuSample {std::uint64_t calls=0;double milliseconds=0;};

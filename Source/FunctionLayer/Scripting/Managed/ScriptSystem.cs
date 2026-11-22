@@ -8,42 +8,28 @@ public sealed class ScriptSystem : IDisposable
     private static bool Overrides(Type type, string name, Type[] parameters)
     {
         var method = type.GetMethod(name, BindingFlags.Instance | BindingFlags.Public, null, parameters, null);
-        return method is not null && method.DeclaringType != typeof(F_Behaviour) && method.DeclaringType != typeof(global::SelfEngine.Behaviour);
+        return method is not null && method.DeclaringType != typeof(F_Behaviour);
     }
 
     private static bool OverridesByRef(Type type, string name, Type valueType)
         => Overrides(type, name, [valueType.MakeByRefType()]);
-
-    private static bool OverridesLegacy(Type type, string name, Type[] parameters)
-    {
-        var method = type.GetMethod(name, BindingFlags.Instance | BindingFlags.Public, null, parameters, null);
-        return method is not null && method.DeclaringType != typeof(global::SelfEngine.Behaviour);
-    }
 
     private sealed class Entry(F_Behaviour value, ScriptComponentBinding native, SceneHandle scene)
     {
         internal readonly F_Behaviour Value = value;
         internal readonly ScriptComponentBinding Native = native;
         internal readonly SceneHandle Scene = scene;
-        internal readonly bool IsLegacy = value is global::SelfEngine.Behaviour;
         internal readonly bool HasStart = Overrides(value.GetType(), nameof(F_Behaviour.F_Start), []);
         internal readonly bool HasFPreUpdate = Overrides(value.GetType(), nameof(F_Behaviour.F_PreUpdate), [typeof(float)]) || Overrides(value.GetType(), nameof(F_Behaviour.F_PreUpdate), []);
         internal readonly bool HasFFixedUpdate = Overrides(value.GetType(), nameof(F_Behaviour.F_FixedUpdate), [typeof(float)]) || Overrides(value.GetType(), nameof(F_Behaviour.F_FixedUpdate), []);
         internal readonly bool HasFUpdate = Overrides(value.GetType(), nameof(F_Behaviour.F_Update), [typeof(float)]) || Overrides(value.GetType(), nameof(F_Behaviour.F_Update), []);
         internal readonly bool HasFLateUpdate = Overrides(value.GetType(), nameof(F_Behaviour.F_LateUpdate), [typeof(float)]) || Overrides(value.GetType(), nameof(F_Behaviour.F_LateUpdate), []);
-        internal readonly bool HasLegacyPreTick = value is global::SelfEngine.Behaviour && OverridesLegacy(value.GetType(), nameof(global::SelfEngine.Behaviour.OnPreTick), [typeof(double)]);
-        internal readonly bool HasLegacyFixedUpdate = value is global::SelfEngine.Behaviour && OverridesLegacy(value.GetType(), nameof(global::SelfEngine.Behaviour.OnFixedUpdate), [typeof(double)]);
-        internal readonly bool HasLegacyFixedPostUpdate = value is global::SelfEngine.Behaviour && OverridesLegacy(value.GetType(), nameof(global::SelfEngine.Behaviour.OnFixedPostUpdate), [typeof(double)]);
-        internal readonly bool HasLegacyUpdate = value is global::SelfEngine.Behaviour && OverridesLegacy(value.GetType(), nameof(global::SelfEngine.Behaviour.OnUpdate), [typeof(double)]);
-        internal readonly bool HasLegacyPostTick = value is global::SelfEngine.Behaviour && OverridesLegacy(value.GetType(), nameof(global::SelfEngine.Behaviour.OnPostTick), [typeof(double)]);
         internal readonly bool HasCollisionEnter = OverridesByRef(value.GetType(), nameof(F_Behaviour.F_CollisionEnter), typeof(F_Contact));
         internal readonly bool HasCollisionStay = OverridesByRef(value.GetType(), nameof(F_Behaviour.F_CollisionStay), typeof(F_Contact));
         internal readonly bool HasCollisionExit = OverridesByRef(value.GetType(), nameof(F_Behaviour.F_CollisionExit), typeof(F_Contact));
         internal readonly bool HasFTriggerEnter = Overrides(value.GetType(), nameof(F_Behaviour.F_TriggerEnter), [typeof(F_Entity)]);
         internal readonly bool HasFTriggerStay = Overrides(value.GetType(), nameof(F_Behaviour.F_TriggerStay), [typeof(F_Entity)]);
         internal readonly bool HasFTriggerExit = Overrides(value.GetType(), nameof(F_Behaviour.F_TriggerExit), [typeof(F_Entity)]);
-        internal readonly bool HasLegacyTriggerEnter = value is global::SelfEngine.Behaviour && OverridesLegacy(value.GetType(), nameof(global::SelfEngine.Behaviour.OnTriggerEnter), [typeof(ulong)]);
-        internal readonly bool HasLegacyTriggerExit = value is global::SelfEngine.Behaviour && OverridesLegacy(value.GetType(), nameof(global::SelfEngine.Behaviour.OnTriggerExit), [typeof(ulong)]);
         internal bool Created;
         internal bool Started;
         internal bool Active;
@@ -52,21 +38,24 @@ public sealed class ScriptSystem : IDisposable
     }
 
     private readonly List<Entry> entries = [];
+    private readonly List<F_Behaviour> pendingAttachments = [];
     private readonly Queue<Action> mutations = [];
     private readonly HashSet<ulong> destroying = [];
-    private readonly HashSet<(ulong A, ulong B)> activeContacts = [];
+    private readonly Dictionary<(ulong A, ulong B), (ulong FirstId, Vector3 Point, Vector3 Normal, float Impulse)> activeContacts = [];
     private readonly HashSet<(ulong Trigger, ulong Other)> activeTriggers = [];
+    private F_Behaviour? activeCallbackBehaviour;
     private int dispatchDepth;
     private bool draining;
     private bool running;
     private bool stopping;
     private bool disposed;
     private bool disposeRequested;
-    private sealed class PendingAwait(int mode, float remaining, Action continuation)
+    private sealed class PendingAwait(int mode, float remaining, Action continuation, F_Behaviour? owner)
     {
         internal readonly int Mode = mode;
         internal float Remaining = remaining;
         internal readonly Action Continuation = continuation;
+        internal readonly F_Behaviour? Owner = owner;
         internal bool SkipCurrentFrame = mode == 1;
     }
     private sealed class ScriptSynchronizationContext(ScriptSystem owner) : SynchronizationContext
@@ -143,8 +132,10 @@ public sealed class ScriptSystem : IDisposable
             throw new ArgumentException("Script.InvalidAttachment");
         value.Entity = entity;
         value.Owner = this;
+        pendingAttachments.Add(value);
         Mutate(() =>
         {
+            pendingAttachments.Remove(value);
             if ((!entity.IsAlive && !entity.IsPending) || destroying.Contains(entity.Handle)) { value.Owner = null; return; }
             ScriptComponentBinding binding;
             try { binding = new(entity, value.EnabledValue); } catch { value.Owner = null; throw; }
@@ -184,9 +175,9 @@ public sealed class ScriptSystem : IDisposable
     {
         if (entity.Session != Session) throw new ArgumentException("Script.InvalidAttachment");
         destroying.Add(entity.Handle);
-        if (entity.IsAlive || entity.IsPending) entity.Destroy();
         Mutate(() =>
         {
+            pendingAttachments.RemoveAll(b => b.Entity.Handle == entity.Handle);
             foreach (var entry in entries.Where(e => e.Value.Entity.Handle == entity.Handle).ToArray()) Remove(entry);
             if (entity.IsAlive || entity.IsPending) entity.Destroy();
             destroying.Remove(entity.Handle);
@@ -202,7 +193,7 @@ public sealed class ScriptSystem : IDisposable
     {
         var entry = entries.Find(e => e.Value == value);
         if (entry is null) return;
-        if (entry.Faulted) { if (enabled) Report(value, "Script.FaultedCannotEnable", "", entry.IsLegacy ? "OnEnable" : nameof(F_Behaviour.F_Enable)); return; }
+        if (entry.Faulted) { if (enabled) Report(value, "Script.FaultedCannotEnable", "", nameof(F_Behaviour.F_Enable)); return; }
         value.EnabledValue = enabled;
         entry.Native.SetEnabled(enabled);
         RefreshActivation(entry);
@@ -278,28 +269,15 @@ public sealed class ScriptSystem : IDisposable
         SweepDead(); FlushMutations();
     }
 
-    private F_Contact BuildContact(Entity self, Entity other)
+    private static F_Contact BuildContact(Entity self, Entity other, ulong firstId, Vector3 manifoldPoint, Vector3 manifoldNormal, float manifoldImpulse)
     {
-        var pSelf = self.Transform.Position;
-        var pOther = other.Transform.Position;
-        var delta = pSelf - pOther;
-        var lenSq = delta.LengthSquared();
-        var normal = lenSq > 1e-8f ? delta / MathF.Sqrt(lenSq) : Vector3.UnitY;
-        var point = (pSelf + pOther) * 0.5f;
-        float impulse = 0f;
-        try
-        {
-            var bSelf = Session.Physics.GetBody(self);
-            var bOther = Session.Physics.GetBody(other);
-            var vSelf = bSelf?.State.LinearVelocity ?? Vector3.Zero;
-            var vOther = bOther?.State.LinearVelocity ?? Vector3.Zero;
-            impulse = (vSelf - vOther).Length();
-        }
-        catch { }
-        return new F_Contact(other, point, normal, impulse);
+        var normal = manifoldNormal.LengthSquared() > 1e-8f
+            ? Vector3.Normalize(self.StableId == firstId ? -manifoldNormal : manifoldNormal)
+            : Vector3.UnitY;
+        return new F_Contact(other, manifoldPoint, normal, manifoldImpulse);
     }
 
-    private void DispatchContactPair(Entry[] snapshot, ulong idA, ulong idB, int mode)
+    private void DispatchContactPair(Entry[] snapshot, ulong idA, ulong idB, int mode, ulong firstId, Vector3 point, Vector3 normal, float impulse)
     {
         var entityA = Session.FindEntity(idA);
         var entityB = Session.FindEntity(idB);
@@ -313,7 +291,7 @@ public sealed class ScriptSystem : IDisposable
             Entity? selfEntity = selfId == idA ? entityA : selfId == idB ? entityB : null;
             Entity? otherEntity = selfId == idA ? entityB : selfId == idB ? entityA : null;
             if (selfEntity is null || otherEntity is null) continue;
-            var contact = BuildContact(selfEntity, otherEntity);
+            var contact = BuildContact(selfEntity, otherEntity, firstId, point, normal, impulse);
             string phaseName = mode == 0 ? nameof(F_Behaviour.F_CollisionEnter)
                 : mode == 1 ? nameof(F_Behaviour.F_CollisionStay) : nameof(F_Behaviour.F_CollisionExit);
             Action callback = mode == 0
@@ -340,28 +318,30 @@ public sealed class ScriptSystem : IDisposable
             var pair = a <= b ? (a, b) : (b, a);
             if (contact.Began)
             {
-                activeContacts.Add(pair);
+                activeContacts[pair] = (a, contact.Point, contact.Normal, contact.Impulse);
                 touched.Add(pair);
-                DispatchContactPair(snapshot, pair.Item1, pair.Item2, 0);
+                DispatchContactPair(snapshot, pair.Item1, pair.Item2, 0, a, contact.Point, contact.Normal, contact.Impulse);
             }
             if (contact.Ended)
             {
                 activeContacts.Remove(pair);
                 touched.Add(pair);
-                DispatchContactPair(snapshot, pair.Item1, pair.Item2, 2);
+                DispatchContactPair(snapshot, pair.Item1, pair.Item2, 2, a, contact.Point, contact.Normal, contact.Impulse);
             }
         }
         if (activeContacts.Count == 0 || !snapshot.Any(e => e.HasCollisionStay)) return;
-        foreach (var pair in activeContacts.ToArray())
+        foreach (var kv in activeContacts.ToArray())
         {
             if (!running || disposed) break;
+            var pair = kv.Key;
             if (touched.Contains(pair)) continue;
             if (Session.FindEntity(pair.A) is null || Session.FindEntity(pair.B) is null)
             {
                 activeContacts.Remove(pair);
                 continue;
             }
-            DispatchContactPair(snapshot, pair.A, pair.B, 1);
+            var (firstId, pt, nrm, imp) = kv.Value;
+            DispatchContactPair(snapshot, pair.A, pair.B, 1, firstId, pt, nrm, imp);
         }
     }
 
@@ -386,8 +366,7 @@ public sealed class ScriptSystem : IDisposable
             {
                 if (!running || disposed) break;
                 bool hasModern = trigger.Entered ? entry.HasFTriggerEnter : entry.HasFTriggerExit;
-                bool hasLegacy = trigger.Entered ? entry.HasLegacyTriggerEnter : entry.HasLegacyTriggerExit;
-                if (!hasModern && !hasLegacy) continue;
+                if (!hasModern) continue;
                 if (!CanRun(entry.Value)) continue;
                 var entityId = entry.Value.Entity.StableId;
                 ulong argument;
@@ -395,20 +374,12 @@ public sealed class ScriptSystem : IDisposable
                 else if (entityId == otherId) argument = triggerId;
                 else continue;
 
-                if (hasModern && Session.FindEntity(argument) is { } otherEntity)
+                if (Session.FindEntity(argument) is { } otherEntity)
                 {
                     Action modernCallback = trigger.Entered
                         ? () => entry.Value.F_TriggerEnter(otherEntity)
                         : () => entry.Value.F_TriggerExit(otherEntity);
                     InvokeEvent(entry.Value, modernCallback, trigger.Entered ? nameof(F_Behaviour.F_TriggerEnter) : nameof(F_Behaviour.F_TriggerExit));
-                    FlushMutations();
-                }
-                if (hasLegacy && entry.Value is global::SelfEngine.Behaviour legacy && CanRun(entry.Value))
-                {
-                    Action legacyCallback = trigger.Entered
-                        ? () => legacy.OnTriggerEnter(argument)
-                        : () => legacy.OnTriggerExit(argument);
-                    InvokeEvent(entry.Value, legacyCallback, trigger.Entered ? "OnTriggerEnter" : "OnTriggerExit");
                     FlushMutations();
                 }
             }
@@ -456,11 +427,10 @@ public sealed class ScriptSystem : IDisposable
             var token = Session.Invoke(handle => { EngineSession.Check(NativeMethods.ComponentTickRegister(handle, entry.Native.Handle, (uint)phase, phase is TickPhase.FixedPreTick or TickPhase.FixedPostTick ? 1 : 0, paused ? 1 : 0, out var task)); return task; });
             entry.Ticks.Add(phase, token);
         }
-        Register(entry.HasFPreUpdate || entry.HasLegacyPreTick, TickPhase.PreTick, entry.Value.UpdateWhenPaused);
-        Register(entry.HasFFixedUpdate || entry.HasLegacyFixedUpdate, TickPhase.FixedPreTick);
-        Register(entry.HasLegacyFixedPostUpdate, TickPhase.FixedPostTick);
-        Register(entry.HasFUpdate || entry.HasLegacyUpdate, entry.Value.UpdateWhenPaused ? TickPhase.FrameBegin : TickPhase.Tick, entry.Value.UpdateWhenPaused);
-        Register(entry.HasFLateUpdate || entry.HasLegacyPostTick, TickPhase.PostTick, entry.Value.UpdateWhenPaused);
+        Register(entry.HasFPreUpdate, TickPhase.PreTick, entry.Value.UpdateWhenPaused);
+        Register(entry.HasFFixedUpdate, TickPhase.FixedPreTick);
+        Register(entry.HasFUpdate, entry.Value.UpdateWhenPaused ? TickPhase.FrameBegin : TickPhase.Tick, entry.Value.UpdateWhenPaused);
+        Register(entry.HasFLateUpdate, TickPhase.PostTick, entry.Value.UpdateWhenPaused);
     }
 
     private void UnregisterTicks(Entry entry)
@@ -508,32 +478,35 @@ public sealed class ScriptSystem : IDisposable
         {
             case TickPhase.PreTick:
                 if (entry.HasFPreUpdate) Invoke(entry, () => entry.Value.F_PreUpdate(delta), phase: nameof(F_Behaviour.F_PreUpdate));
-                if (entry.HasLegacyPreTick && !entry.Faulted && entry.Value is global::SelfEngine.Behaviour lp) Invoke(entry, () => lp.OnPreTick(seconds), phase: "OnPreTick");
                 break;
             case TickPhase.FixedPreTick:
                 if (entry.HasFFixedUpdate) Invoke(entry, () => entry.Value.F_FixedUpdate(delta), phase: nameof(F_Behaviour.F_FixedUpdate));
-                if (entry.HasLegacyFixedUpdate && !entry.Faulted && entry.Value is global::SelfEngine.Behaviour lf) Invoke(entry, () => lf.OnFixedUpdate(seconds), phase: "OnFixedUpdate");
                 break;
             case TickPhase.FixedPostTick:
-                if (entry.HasLegacyFixedPostUpdate && entry.Value is global::SelfEngine.Behaviour lfp) Invoke(entry, () => lfp.OnFixedPostUpdate(seconds), phase: "OnFixedPostUpdate");
                 break;
             case TickPhase.PostTick:
                 if (entry.HasFLateUpdate) Invoke(entry, () => entry.Value.F_LateUpdate(delta), phase: nameof(F_Behaviour.F_LateUpdate));
-                if (entry.HasLegacyPostTick && !entry.Faulted && entry.Value is global::SelfEngine.Behaviour lpt) Invoke(entry, () => lpt.OnPostTick(seconds), phase: "OnPostTick");
                 break;
             default:
                 if (entry.HasFUpdate) Invoke(entry, () => entry.Value.F_Update(delta), phase: nameof(F_Behaviour.F_Update));
-                if (entry.HasLegacyUpdate && !entry.Faulted && entry.Value is global::SelfEngine.Behaviour lu) Invoke(entry, () => lu.OnUpdate(seconds), phase: "OnUpdate");
                 break;
         }
         SweepDead(); FlushMutations();
     }
 
+    private static bool IsHierarchyEnabled(F_Entity entity)
+    {
+        for (F_Entity? c = entity; c is not null; c = c.Parent)
+            if (!c.Enabled) return false;
+        return true;
+    }
+
     private void Create(Entry entry)
     {
-        if (entry.Created || !entry.Value.Entity.IsAlive || !entry.Native.IsAlive || destroying.Contains(entry.Value.Entity.Handle)) return;
+        if (entry.Created || !entry.Value.Entity.IsAlive || !entry.Native.IsAlive ||
+            destroying.Contains(entry.Value.Entity.Handle) || !IsHierarchyEnabled(entry.Value.Entity)) return;
         entry.Created = true;
-        Invoke(entry, entry.Value.F_Awake, phase: entry.IsLegacy ? "OnCreate" : nameof(F_Behaviour.F_Awake));
+        Invoke(entry, entry.Value.F_Awake, phase: nameof(F_Behaviour.F_Awake));
         RefreshActivation(entry);
         RegisterTicks(entry);
     }
@@ -556,11 +529,12 @@ public sealed class ScriptSystem : IDisposable
         if (!entries.Remove(entry)) return;
         UnregisterTicks(entry);
         entry.Native.SetEnabled(false);
-        if (entry.Active) { entry.Active = false; Invoke(entry, entry.Value.F_Disable, false, entry.IsLegacy ? "OnDisable" : nameof(F_Behaviour.F_Disable)); }
-        if (entry.Created) { entry.Created = false; Invoke(entry, entry.Value.F_Destroy, false, entry.IsLegacy ? "OnDestroy" : nameof(F_Behaviour.F_Destroy)); }
+        if (entry.Active) { entry.Active = false; Invoke(entry, entry.Value.F_Disable, false, nameof(F_Behaviour.F_Disable)); }
+        if (entry.Created) { entry.Created = false; Invoke(entry, entry.Value.F_Destroy, false, nameof(F_Behaviour.F_Destroy)); }
         Events.Remove(entry.Value);
         UiActions.Remove(entry.Value);
         Commands.Remove(entry.Value);
+        pendingAwaits.RemoveAll(a => ReferenceEquals(a.Owner, entry.Value));
         entry.Native.Remove();
         entry.Value.Owner = null;
         if (!entries.Any(other => other.Value.Entity.Handle == entry.Value.Entity.Handle)) destroying.Remove(entry.Value.Entity.Handle);
@@ -584,7 +558,14 @@ public sealed class ScriptSystem : IDisposable
     }
 
     private void RefreshActivation()
-    { if (!running || disposed) return; foreach (var entry in entries.ToArray()) RefreshActivation(entry); }
+    {
+        if (!running || disposed) return;
+        foreach (var entry in entries.ToArray())
+        {
+            if (!entry.Created) Create(entry);
+            else RefreshActivation(entry);
+        }
+    }
 
     private void RefreshActivation(Entry entry)
     {
@@ -592,9 +573,7 @@ public sealed class ScriptSystem : IDisposable
         bool active = running && !entry.Faulted && entry.Value.EnabledValue && !destroying.Contains(entry.Value.Entity.Handle) && entry.Value.Entity.IsAlive && entry.Native.Active;
         if (active == entry.Active) return;
         entry.Active = active;
-        string phaseName = active
-            ? (entry.IsLegacy ? "OnEnable" : nameof(F_Behaviour.F_Enable))
-            : (entry.IsLegacy ? "OnDisable" : nameof(F_Behaviour.F_Disable));
+        string phaseName = active ? nameof(F_Behaviour.F_Enable) : nameof(F_Behaviour.F_Disable);
         Invoke(entry, active ? entry.Value.F_Enable : entry.Value.F_Disable, phase: phaseName);
     }
 
@@ -617,7 +596,9 @@ public sealed class ScriptSystem : IDisposable
     {
         var prevCurrent = Current;
         var prevSync = SynchronizationContext.Current;
+        var prevBehaviour = activeCallbackBehaviour;
         Current = this;
+        activeCallbackBehaviour = entry.Value;
         SynchronizationContext.SetSynchronizationContext(syncContext);
         ++dispatchDepth;
         try { using var scope = Session.EnterSceneCallbackScope(entry.Scene, entry.Native.Handle); action(); }
@@ -632,13 +613,14 @@ public sealed class ScriptSystem : IDisposable
                 if (entry.Active)
                 {
                     entry.Active = false;
-                    try { entry.Value.F_Disable(); } catch (Exception disabled) { Report(entry.Value, "Script.CallbackFailed", disabled.GetType().Name + ": " + disabled.Message, entry.IsLegacy ? "OnDisable" : nameof(F_Behaviour.F_Disable)); }
+                    try { entry.Value.F_Disable(); } catch (Exception disabled) { Report(entry.Value, "Script.CallbackFailed", disabled.GetType().Name + ": " + disabled.Message, nameof(F_Behaviour.F_Disable)); }
                 }
             }
         }
         finally
         {
             --dispatchDepth;
+            activeCallbackBehaviour = prevBehaviour;
             SynchronizationContext.SetSynchronizationContext(prevSync);
             Current = prevCurrent ?? (running ? this : null);
         }
@@ -653,7 +635,7 @@ public sealed class ScriptSystem : IDisposable
     internal void EnqueueAwait(int mode, float seconds, Action continuation)
     {
         if (!running || stopping || disposed) return;
-        pendingAwaits.Add(new PendingAwait(mode, MathF.Max(0f, seconds), continuation));
+        pendingAwaits.Add(new PendingAwait(mode, MathF.Max(0f, seconds), continuation, activeCallbackBehaviour));
     }
 
     private void TickTimersAndAwaits(bool isFixed, float dt)
@@ -673,20 +655,25 @@ public sealed class ScriptSystem : IDisposable
             }
         }
         if (pendingAwaits.Count == 0) return;
-        var ready = new List<Action>();
+        var ready = new List<(Action Continuation, F_Behaviour? Owner)>();
         for (int i = 0; i < pendingAwaits.Count; ++i)
         {
             var item = pendingAwaits[i];
+            if (item.Owner is { } ow && (ow.Owner != this || !ow.Entity.IsAlive))
+            {
+                pendingAwaits.RemoveAt(i--);
+                continue;
+            }
             if (isFixed)
             {
                 if (item.Mode != 2) continue;
-                ready.Add(item.Continuation);
+                ready.Add((item.Continuation, item.Owner));
                 pendingAwaits.RemoveAt(i--);
             }
             else if (item.Mode == 1)
             {
                 if (item.SkipCurrentFrame) { item.SkipCurrentFrame = false; continue; }
-                ready.Add(item.Continuation);
+                ready.Add((item.Continuation, item.Owner));
                 pendingAwaits.RemoveAt(i--);
             }
             else if (item.Mode == 0)
@@ -694,7 +681,7 @@ public sealed class ScriptSystem : IDisposable
                 item.Remaining -= dt;
                 if (item.Remaining <= 0f)
                 {
-                    ready.Add(item.Continuation);
+                    ready.Add((item.Continuation, item.Owner));
                     pendingAwaits.RemoveAt(i--);
                 }
             }
@@ -703,13 +690,16 @@ public sealed class ScriptSystem : IDisposable
         SynchronizationContext.SetSynchronizationContext(syncContext);
         try
         {
-            foreach (var cont in ready)
+            foreach (var (cont, owner) in ready)
             {
                 if (!running || stopping || disposed) break;
+                if (owner is not null && (owner.Owner != this || !owner.Entity.IsAlive)) continue;
+                var prevBeh = activeCallbackBehaviour;
+                activeCallbackBehaviour = owner;
                 ++dispatchDepth;
                 try { cont(); }
-                catch (Exception ex) { Report(null, "Script.CallbackFailed", ex.ToString(), "F_Await"); }
-                finally { --dispatchDepth; }
+                catch (Exception ex) { Report(owner, "Script.CallbackFailed", ex.ToString(), "F_Await"); }
+                finally { --dispatchDepth; activeCallbackBehaviour = prevBeh; }
                 FlushMutations();
             }
         }
@@ -757,7 +747,7 @@ public sealed class ScriptSystem : IDisposable
         UpdateClockDiagnostics();
         running = false;
         foreach (var entry in entries.ToArray()) Remove(entry);
-        mutations.Clear(); destroying.Clear(); activeContacts.Clear(); activeTriggers.Clear();
+        mutations.Clear(); pendingAttachments.Clear(); destroying.Clear(); activeContacts.Clear(); activeTriggers.Clear();
         Events.Clear(); UiActions.Clear(); Commands.Clear();
         delayedDestroys.Clear(); pendingAwaits.Clear();
         if (Current == this) Current = null;
@@ -788,4 +778,7 @@ public sealed class ScriptSystem : IDisposable
     }
 
     internal IReadOnlyList<F_Behaviour> Attachments => entries.Select(e => e.Value).ToArray();
+    internal IReadOnlyList<F_Behaviour> AllAttachedBehaviours => pendingAttachments.Count == 0
+        ? Attachments
+        : entries.Select(e => e.Value).Concat(pendingAttachments).ToArray();
 }

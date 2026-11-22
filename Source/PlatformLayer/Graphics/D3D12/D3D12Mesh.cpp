@@ -18,7 +18,7 @@ using Microsoft::WRL::ComPtr;
 namespace
 {
 constexpr UINT64 maxBytes=256ull*1024*1024;
-using MeshConstants=se::rhi::MeshDrawConstants;
+using MeshConstants=flare::rhi::MeshDrawConstants;
 
 bool ValidGeometry(std::span<const D3D12MeshVertex> vertices,std::span<const std::uint32_t> indices)
 {
@@ -26,12 +26,12 @@ bool ValidGeometry(std::span<const D3D12MeshVertex> vertices,std::span<const std
     for(const auto index:indices)if(index>=vertices.size())return false;
     for(const auto& vertex:vertices)
     {
-        for(const auto value:vertex.position)if(!se::IsFinite(value))return false;
-        for(const auto value:vertex.normal)if(!se::IsFinite(value))return false;
-        for(const auto value:vertex.uv)if(!se::IsFinite(value))return false;
-        for(const auto value:vertex.tangent)if(!se::IsFinite(value))return false;
-        const float length=se::LengthSquared(se::Vec3{vertex.normal[0],vertex.normal[1],vertex.normal[2]});
-        if(!se::IsFinite(length)||length<1e-12f)return false;
+        for(const auto value:vertex.position)if(!flare::IsFinite(value))return false;
+        for(const auto value:vertex.normal)if(!flare::IsFinite(value))return false;
+        for(const auto value:vertex.uv)if(!flare::IsFinite(value))return false;
+        for(const auto value:vertex.tangent)if(!flare::IsFinite(value))return false;
+        const float length=flare::LengthSquared(flare::Vec3{vertex.normal[0],vertex.normal[1],vertex.normal[2]});
+        if(!flare::IsFinite(length)||length<1e-12f)return false;
     }
     return true;
 }
@@ -40,14 +40,14 @@ bool ValidGeometry(std::span<const D3D12MeshVertex> vertices,std::span<const std
 bool InitializeD3D12MeshPipeline(D3D12MeshPipeline& output,const D3D12Context& context,
     const std::filesystem::path& shader,const Localization& text)
 {
-    se::rhi::PipelineDescription description;description.shader=shader;
+    flare::rhi::PipelineDescription description;description.shader=shader;
     return InitializeD3D12MeshPipeline(output,context,description,text);
 }
 bool InitializeD3D12MeshPipeline(D3D12MeshPipeline& output,const D3D12Context& context,
-    const se::rhi::PipelineDescription& description,const Localization& text)
+    const flare::rhi::PipelineDescription& description,const Localization& text)
 {
     if(output.rootSignature||output.pipeline||output.prepared||!context.device||!context.pipelines||description.shader.empty()
-        ||(description.kind!=se::rhi::PipelineKind::TexturedMesh&&!se::rhi::UsesLitLayout(description.kind)))
+        ||(description.kind!=flare::rhi::PipelineKind::TexturedMesh&&!flare::rhi::UsesLitLayout(description.kind)))
     {Log(LogLevel::Error,text.GetText("D3D12.MeshInputsInvalid"));return false;}
     const auto prepared=context.pipelines->Prepare(description,text);if(!prepared)return false;
     output.prepared=prepared;output.rootSignature=prepared->rootSignature;output.pipeline=prepared->pipeline;return true;
@@ -71,7 +71,7 @@ bool InitializeD3D12Mesh(D3D12Mesh& output,const D3D12Context& context,D3D12Pres
 {
     if(output.vertices||output.indices||output.texture||output.textureViews||!CanUploadD3D12(context,p)
         ||!ValidGeometry(vertices,indices)||!texture.resource||!texture.views||!texture.width||!texture.height
-        ||texture.cube||texture.arrayLayers!=1||texture.format!=se::rhi::TextureFormat::Rgba8
+        ||texture.cube||texture.arrayLayers!=1||texture.format!=flare::rhi::TextureFormat::Rgba8
         ||texture.views->Count()!=2||texture.views->Device()!=context.device.Get())
     {Log(LogLevel::Error,text.GetText("D3D12.MeshInputsInvalid"));return false;}
     ComPtr<ID3D12Device> textureDevice;
@@ -92,41 +92,41 @@ bool InitializeD3D12Mesh(D3D12Mesh& output,const D3D12Context& context,D3D12Pres
 }
 
 bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
-    const se::Mat4& viewProjection,const Localization& text,bool allowEmptyInstanced)
+    const flare::Mat4& viewProjection,const Localization& text,bool allowEmptyInstanced)
 {
-    const bool defaultForward=se::rhi::IsForward(pipeline.prepared?pipeline.prepared->program->source.kind:se::rhi::PipelineKind::TexturedMesh);
-    if(!pipeline.rootSignature||!pipeline.pipeline||!pipeline.prepared||pipeline.prepared->colorFormat!=(defaultForward?se::rhi::ColorFormat::Rgba16Float:se::rhi::ColorFormat::Rgba8Unorm)
-        ||draws.size()>D3D12MeshMaxDraws||!se::IsFinite(viewProjection))
+    const bool defaultForward=flare::rhi::IsForward(pipeline.prepared?pipeline.prepared->program->source.kind:flare::rhi::PipelineKind::TexturedMesh);
+    if(!pipeline.rootSignature||!pipeline.pipeline||!pipeline.prepared||pipeline.prepared->colorFormat!=(defaultForward?flare::rhi::ColorFormat::Rgba16Float:flare::rhi::ColorFormat::Rgba8Unorm)
+        ||draws.size()>D3D12MeshMaxDraws||!flare::IsFinite(viewProjection))
     {Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;}
     // 同批绘制必须同 pass 类别；Pipeline 可以按材质不同，但类别、颜色格式与实例化模式必须一致。
     const auto defaultKind=pipeline.prepared->program->source.kind;
-    const bool defaultShadowed=se::rhi::IsShadowed(defaultKind);
-    const bool defaultEnvironment=se::rhi::IsEnvironment(defaultKind);
+    const bool defaultShadowed=flare::rhi::IsShadowed(defaultKind);
+    const bool defaultEnvironment=flare::rhi::IsEnvironment(defaultKind);
     size_t instanceCount=0;
     for(const auto& draw:draws)
     {
         const auto& active=draw.pipeline?*draw.pipeline:pipeline;
         if(!active.rootSignature||!active.pipeline||!active.prepared
-            ||se::rhi::IsForward(active.prepared->program->source.kind)!=defaultForward
-            ||se::rhi::IsShadowed(active.prepared->program->source.kind)!=defaultShadowed
-            ||se::rhi::IsCascaded(active.prepared->program->source.kind)!=se::rhi::IsCascaded(defaultKind)
-            ||se::rhi::IsClustered(active.prepared->program->source.kind)!=se::rhi::IsClustered(defaultKind)
-            ||se::rhi::IsShadowFilterLayout(active.prepared->program->source.layoutVersion)!=se::rhi::IsShadowFilterLayout(pipeline.prepared->program->source.layoutVersion)
-            ||se::rhi::IsEnvironment(active.prepared->program->source.kind)!=defaultEnvironment
-            ||active.prepared->colorFormat!=(defaultForward?se::rhi::ColorFormat::Rgba16Float:se::rhi::ColorFormat::Rgba8Unorm))
+            ||flare::rhi::IsForward(active.prepared->program->source.kind)!=defaultForward
+            ||flare::rhi::IsShadowed(active.prepared->program->source.kind)!=defaultShadowed
+            ||flare::rhi::IsCascaded(active.prepared->program->source.kind)!=flare::rhi::IsCascaded(defaultKind)
+            ||flare::rhi::IsClustered(active.prepared->program->source.kind)!=flare::rhi::IsClustered(defaultKind)
+            ||flare::rhi::IsShadowFilterLayout(active.prepared->program->source.layoutVersion)!=flare::rhi::IsShadowFilterLayout(pipeline.prepared->program->source.layoutVersion)
+            ||flare::rhi::IsEnvironment(active.prepared->program->source.kind)!=defaultEnvironment
+            ||active.prepared->colorFormat!=(defaultForward?flare::rhi::ColorFormat::Rgba16Float:flare::rhi::ColorFormat::Rgba8Unorm))
         {Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;}
-        if(active.prepared->alphaMode!=draw.alphaMode||!se::IsValidMaterialAlphaMode(draw.alphaMode)||!se::IsFinite(draw.alphaCutoff)||draw.alphaCutoff<0
-            ||(draw.alphaMode!=se::MaterialAlphaMode::Opaque&&active.prepared->program->source.materialLayoutVersion!=se::rhi::MaterialSurfaceLayoutVersion))
+        if(active.prepared->alphaMode!=draw.alphaMode||!flare::IsValidMaterialAlphaMode(draw.alphaMode)||!flare::IsFinite(draw.alphaCutoff)||draw.alphaCutoff<0
+            ||(draw.alphaMode!=flare::MaterialAlphaMode::Opaque&&active.prepared->program->source.materialLayoutVersion!=flare::rhi::MaterialSurfaceLayoutVersion))
         {Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;}
-        const bool instanced=se::rhi::IsInstanced(active.prepared->program->source.kind);
+        const bool instanced=flare::rhi::IsInstanced(active.prepared->program->source.kind);
         const bool instanceDraw=!draw.instances.empty()||(allowEmptyInstanced&&draws.size()==1&&instanced);
-        if(instanced!=instanceDraw||draw.instances.size()>se::rhi::MaximumFrameInstances||instanceCount>se::rhi::MaximumFrameInstances-draw.instances.size())
+        if(instanced!=instanceDraw||draw.instances.size()>flare::rhi::MaximumFrameInstances||instanceCount>flare::rhi::MaximumFrameInstances-draw.instances.size())
         {Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;}
         instanceCount+=draw.instances.size();
         for(const auto& instance:draw.instances)
         {
             const auto& world=instance.world;const auto color=instance.tint;
-            if(!se::IsFinite(world)||!se::Inverse(world)||!se::IsFinite(viewProjection*world)||!se::IsFinite(color)
+            if(!flare::IsFinite(world)||!flare::Inverse(world)||!flare::IsFinite(viewProjection*world)||!flare::IsFinite(color)
                 ||std::abs(world(3,0))>1e-5f||std::abs(world(3,1))>1e-5f||std::abs(world(3,2))>1e-5f||std::abs(world(3,3)-1)>1e-5f
                 ||color.x<0||color.y<0||color.z<0||color.w<0||color.x>1||color.y>1||color.z>1||color.w>1
                 ||!std::isfinite(instance.metallic)||instance.metallic<0||instance.metallic>1||!std::isfinite(instance.roughness)||instance.roughness<0||instance.roughness>1
@@ -134,10 +134,10 @@ bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3
             {Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;}
         }
         const auto* mesh=draw.mesh;
-        const auto inverse=se::IsFinite(draw.world)?se::Inverse(draw.world):std::nullopt;
+        const auto inverse=flare::IsFinite(draw.world)?flare::Inverse(draw.world):std::nullopt;
         const auto color=draw.tint;
         if(!mesh||!mesh->vertices||!mesh->indices||!mesh->texture||!mesh->textureViews||mesh->textureViews->Count()!=2||!mesh->indexCount
-            ||!inverse||!se::IsFinite(viewProjection*draw.world)||!se::IsFinite(color)
+            ||!inverse||!flare::IsFinite(viewProjection*draw.world)||!flare::IsFinite(color)
             ||std::abs(draw.world(3,0))>1e-5f||std::abs(draw.world(3,1))>1e-5f
             ||std::abs(draw.world(3,2))>1e-5f||std::abs(draw.world(3,3)-1)>1e-5f
             ||color.x<0||color.y<0||color.z<0||color.w<0||color.x>1||color.y>1||color.z>1||color.w>1)
@@ -145,11 +145,11 @@ bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3
         // W03：蒙皮管线的顶点缓冲必须是 80 字节 v3 布局，且调色板字节数 = 关节数 × 48；
         // 静态管线收到调色板同样视为调用方错误，避免静默丢弃数据。
         const bool skinned=active.prepared->program->source.skinnedVertex;
-        const bool skinnedStride=mesh->vertexView.StrideInBytes==sizeof(se::rhi::SkinnedVertex);
+        const bool skinnedStride=mesh->vertexView.StrideInBytes==sizeof(flare::rhi::SkinnedVertex);
         if(skinned!=skinnedStride)
         {
             Log(LogLevel::Error,"蒙皮校验: pipelineSkinned="+std::to_string(skinned)+" stride="+std::to_string(mesh->vertexView.StrideInBytes)
-                +" expected="+std::to_string(sizeof(se::rhi::SkinnedVertex))+" palette="+std::to_string(draw.skinPalette.size())+" joints="+std::to_string(draw.skinJointCount));
+                +" expected="+std::to_string(sizeof(flare::rhi::SkinnedVertex))+" palette="+std::to_string(draw.skinPalette.size())+" joints="+std::to_string(draw.skinJointCount));
             Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;
         }
         if(skinned)
@@ -167,15 +167,15 @@ bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3
             Log(LogLevel::Error,"静态绘制带调色板: size="+std::to_string(draw.skinPalette.size())+" joints="+std::to_string(draw.skinJointCount));
             Log(LogLevel::Error,text.GetText("D3D12.MeshDrawsInvalid"));return false;
         }
-        if(se::rhi::UsesLitLayout(active.prepared->program->source.kind))
+        if(flare::rhi::UsesLitLayout(active.prepared->program->source.kind))
         {
-            const auto& p=draw.pbr;const auto length=se::LengthSquared(p.directionToLight);
+            const auto& p=draw.pbr;const auto length=flare::LengthSquared(p.directionToLight);
             const auto validTexture=[](const D3D12Texture& t){return t.resource&&t.views&&t.views->Count()==2&&!t.cube&&t.arrayLayers==1
-                &&(t.format==se::rhi::TextureFormat::Rgba8||t.format==se::rhi::TextureFormat::Bc1Unorm
-                    ||t.format==se::rhi::TextureFormat::Bc1UnormSrgb||t.format==se::rhi::TextureFormat::Bc5Unorm
-                    ||t.format==se::rhi::TextureFormat::Bc4Unorm||t.format==se::rhi::TextureFormat::Bc7Unorm||t.format==se::rhi::TextureFormat::Bc7UnormSrgb);};
+                &&(t.format==flare::rhi::TextureFormat::Rgba8||t.format==flare::rhi::TextureFormat::Bc1Unorm
+                    ||t.format==flare::rhi::TextureFormat::Bc1UnormSrgb||t.format==flare::rhi::TextureFormat::Bc5Unorm
+                    ||t.format==flare::rhi::TextureFormat::Bc4Unorm||t.format==flare::rhi::TextureFormat::Bc7Unorm||t.format==flare::rhi::TextureFormat::Bc7UnormSrgb);};
             if(draw.textureIsData||!validTexture(mesh->pbrTextures[0])||!validTexture(mesh->pbrTextures[1])
-                ||!se::IsFinite(p.cameraPosition)||!se::IsFinite(p.directionToLight)||!se::IsFinite(length)||length<1e-12f||!se::IsFinite(p.radiance)
+                ||!flare::IsFinite(p.cameraPosition)||!flare::IsFinite(p.directionToLight)||!flare::IsFinite(length)||length<1e-12f||!flare::IsFinite(p.radiance)
                 ||p.radiance.x<0||p.radiance.y<0||p.radiance.z<0||p.radiance.x>10000||p.radiance.y>10000||p.radiance.z>10000
                 ||!std::isfinite(p.metallic)||p.metallic<0||p.metallic>1||!std::isfinite(p.roughness)||p.roughness<0||p.roughness>1
                 ||!std::isfinite(p.normalScale)||p.normalScale<-8||p.normalScale>8)
@@ -186,18 +186,18 @@ bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3
 }
 
 void PrepareD3D12MeshConstants(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
-    const se::Mat4& viewProjection,D3D12FrameContext& frame)
+    const flare::Mat4& viewProjection,D3D12FrameContext& frame)
 {
     for(size_t index=0;index<draws.size();++index)
     {
         const auto& draw=draws[index];const auto& program=draw.pipeline?*draw.pipeline:pipeline;const auto& slice=frame.drawConstants[index];
         std::memset(slice.cpu,0,static_cast<size_t>(slice.size));
-        if(se::rhi::UsesLitLayout(program.prepared->program->source.kind))
+        if(flare::rhi::UsesLitLayout(program.prepared->program->source.kind))
         {
             const auto& p=draw.pbr;
-            const se::Vec3 x{draw.world(0,0),draw.world(1,0),draw.world(2,0)},y{draw.world(0,1),draw.world(1,1),draw.world(2,1)},z{draw.world(0,2),draw.world(1,2),draw.world(2,2)};
-            const float sign=se::Dot(se::Cross(x,y),z)<0?-1.0f:1.0f;
-            const se::rhi::PbrDrawConstants constants{viewProjection*draw.world,draw.world,se::Transpose(*se::Inverse(draw.world)),draw.tint,
+            const flare::Vec3 x{draw.world(0,0),draw.world(1,0),draw.world(2,0)},y{draw.world(0,1),draw.world(1,1),draw.world(2,1)},z{draw.world(0,2),draw.world(1,2),draw.world(2,2)};
+            const float sign=flare::Dot(flare::Cross(x,y),z)<0?-1.0f:1.0f;
+            const flare::rhi::PbrDrawConstants constants{viewProjection*draw.world,draw.world,flare::Transpose(*flare::Inverse(draw.world)),draw.tint,
                 {p.cameraPosition.x,p.cameraPosition.y,p.cameraPosition.z,1},{p.directionToLight.x,p.directionToLight.y,p.directionToLight.z,0},
                 {p.radiance.x,p.radiance.y,p.radiance.z,0},{p.metallic,p.roughness,p.normalScale,sign},
                 {p.normalMapping?1.0f:0.0f,draw.unlit?1.0f:0.0f,p.doubleSided?1.0f:0.0f,p.lodDither!=0.0f?p.lodDither:(p.receivesShadow?1.0f:0.0f)},
@@ -206,18 +206,18 @@ void PrepareD3D12MeshConstants(const D3D12MeshPipeline& pipeline,std::span<const
         }
         else
         {
-            const MeshConstants constants{viewProjection*draw.world,se::Transpose(*se::Inverse(draw.world)),draw.tint,
+            const MeshConstants constants{viewProjection*draw.world,flare::Transpose(*flare::Inverse(draw.world)),draw.tint,
                 {draw.unlit?1.0f:0.0f,draw.impostorView,draw.impostorNext,draw.impostorBlend}};
             std::memcpy(slice.cpu,&constants,sizeof(constants));
         }
     }
 }
 void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
-    const se::Mat4& viewProjection,D3D12FrameContext& frame,ID3D12GraphicsCommandList& commands,UINT width,UINT height,
-    bool cacheBindings,se::rhi::DrawBindingStatistics* statistics,std::span<const D3D12IndirectCommand> indirect,UINT firstDraw)
+    const flare::Mat4& viewProjection,D3D12FrameContext& frame,ID3D12GraphicsCommandList& commands,UINT width,UINT height,
+    bool cacheBindings,flare::rhi::DrawBindingStatistics* statistics,std::span<const D3D12IndirectCommand> indirect,UINT firstDraw)
 {
     (void)viewProjection; // 已在 Prepare 中打包，所有 Pass 只读同一切片。
-    se::rhi::DrawBindingStatistics binds;
+    flare::rhi::DrawBindingStatistics binds;
     const D3D12_VIEWPORT viewport{0,0,float(width),float(height),0,1};
     const D3D12_RECT scissor{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};
     const D3D12MeshPipeline* activePipeline=nullptr;
@@ -226,11 +226,11 @@ void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12Me
         activePipeline=&program;
         commands.SetPipelineState(program.pipeline.Get());++binds.pipelines;
         commands.SetGraphicsRootSignature(program.rootSignature.Get());++binds.rootSignatures;
-        if(se::rhi::IsForward(program.prepared->program->source.kind))
+        if(flare::rhi::IsForward(program.prepared->program->source.kind))
         {commands.SetGraphicsRootConstantBufferView(2,frame.forwardConstants.Gpu());++binds.constants;}
-        if(se::rhi::IsShadowFilterLayout(program.prepared->program->source.layoutVersion))
+        if(flare::rhi::IsShadowFilterLayout(program.prepared->program->source.layoutVersion))
         {
-            const bool cluster=se::rhi::IsClustered(program.prepared->program->source.kind),skin=program.prepared->program->source.skinnedVertex;
+            const bool cluster=flare::rhi::IsClustered(program.prepared->program->source.kind),skin=program.prepared->program->source.skinnedVertex;
             commands.SetGraphicsRootConstantBufferView(skin?(cluster?6u:5u):(cluster?4u:3u),frame.shadowFilterConstants.Gpu());++binds.constants;
         }
         commands.RSSetViewports(1,&viewport);commands.RSSetScissorRects(1,&scissor);
@@ -253,15 +253,15 @@ void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12Me
             commands.SetGraphicsRootConstantBufferView(program.prepared->shadingMaterialParameter,frame.shadingMaterials[firstDraw+index-1].Gpu());binds.constants+=2;
             commands.SetGraphicsRootConstantBufferView(program.prepared->localLightParameter,frame.shading->localLightConstants.Gpu());++binds.constants;
             auto table=frame.descriptors.Draw(firstDraw+static_cast<UINT>(index-1));const auto kind=program.prepared->program->source.kind;
-            const UINT materialCount=se::rhi::IsEnvironment(kind)?7:se::rhi::IsShadowed(kind)?4:3;
-            table.ptr+=UINT64(materialCount+(se::rhi::IsClustered(kind)?4:0))*frame.shadingDescriptorIncrement;
+            const UINT materialCount=flare::rhi::IsEnvironment(kind)?7:flare::rhi::IsShadowed(kind)?4:3;
+            table.ptr+=UINT64(materialCount+(flare::rhi::IsClustered(kind)?4:0))*frame.shadingDescriptorIncrement;
             commands.SetGraphicsRootDescriptorTable(program.prepared->shadingTexturesParameter,table);++binds.descriptorTables;
         }
-        if(se::rhi::IsClustered(program.prepared->program->source.kind))
+        if(flare::rhi::IsClustered(program.prepared->program->source.kind))
         {
             auto table=frame.descriptors.Draw(firstDraw+static_cast<UINT>(index-1));
             const auto kind=program.prepared->program->source.kind;
-            const UINT materialCount=se::rhi::IsEnvironment(kind)?7:se::rhi::IsShadowed(kind)?4:3;
+            const UINT materialCount=flare::rhi::IsEnvironment(kind)?7:flare::rhi::IsShadowed(kind)?4:3;
             table.ptr+=UINT64(materialCount)*frame.clusterDescriptorIncrement;
             commands.SetGraphicsRootDescriptorTable(program.prepared->program->source.skinnedVertex?5:3,table);
         }
@@ -277,8 +277,8 @@ void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12Me
         if(!draw.instances.empty()||!indirect.empty())
         {
             // G06.10：Forward 实例化的实例 SRV 在 b1 之后的参数 3；非 Forward 仍在参数 2。
-            const UINT instanceParameter=se::rhi::IsInstanced(program.prepared->program->source.kind)
-                &&se::rhi::IsForward(program.prepared->program->source.kind)?3u:2u;
+            const UINT instanceParameter=flare::rhi::IsInstanced(program.prepared->program->source.kind)
+                &&flare::rhi::IsForward(program.prepared->program->source.kind)?3u:2u;
             commands.SetGraphicsRootShaderResourceView(instanceParameter,frame.instanceSlices[firstDraw+index-1].Gpu());++binds.instanceBuffers;
         }
         // W03：蒙皮管线的调色板在参数 4（Visibility ALL）；字节偏移由 b0 的 skin.x 给出。

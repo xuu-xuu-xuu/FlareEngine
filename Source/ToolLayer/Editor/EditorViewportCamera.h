@@ -4,7 +4,7 @@
 #include "CoreLayer/Math/Bounds.h"
 #include <optional>
 
-namespace se
+namespace flare
 {
 class SceneSpatialIndex;
 

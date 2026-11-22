@@ -8,10 +8,10 @@
 #include <string>
 #include <string_view>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
-// Win32 消息 -> se::ui 事件；DPI 只缩放指针坐标，不把 ImGui 类型带进新路径。
+// Win32 消息 -> flare::ui 事件；DPI 只缩放指针坐标，不把 ImGui 类型带进新路径。
 class EditorInputAdapter
 {
 public:
@@ -41,4 +41,4 @@ private:
     UiImeCandidateAnchor candidateAnchor_{};
 };
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

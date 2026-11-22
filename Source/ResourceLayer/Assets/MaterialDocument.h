@@ -2,7 +2,7 @@
 #include "StaticModel.h"
 #include <string_view>
 
-namespace se
+namespace flare
 {
 // 独立 CPU 材质资产；贴图只引用 AssetId，实际 Shader/PSO/描述符由渲染器决定。
 struct MaterialDocument

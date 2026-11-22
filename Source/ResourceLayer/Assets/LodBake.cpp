@@ -6,7 +6,7 @@
 #include <map>
 #include <tuple>
 
-namespace se
+namespace flare
 {
 namespace
 {

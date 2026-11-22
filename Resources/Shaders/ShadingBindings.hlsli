@@ -1,5 +1,5 @@
-#ifndef SELF_ENGINE_SHADING_BINDINGS
-#define SELF_ENGINE_SHADING_BINDINGS
+#ifndef FLARE_ENGINE_SHADING_BINDINGS
+#define FLARE_ENGINE_SHADING_BINDINGS
 // schema 40：与 MaterialLayout.h 唯一常量定义一致；旧程序不包含此文件。
 cbuffer ShadingFrameConstants : register(b5)
 {

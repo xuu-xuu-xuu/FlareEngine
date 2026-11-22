@@ -3,11 +3,11 @@
 #include <algorithm>
 #include <atomic>
 
-namespace se
+namespace flare
 {
 namespace
 {
-constexpr wchar_t Environment[]=L"SELFENGINE_EDITOR_STARTUP_CHANNEL";
+constexpr wchar_t Environment[]=L"FLARE_EDITOR_STARTUP_CHANNEL";
 struct SharedProgress {volatile LONG percent,stage,cancelled;};
 constexpr int percentages[]={5,10,15,25,32,38,45,55,60,65,72,80,90,97,100};
 constexpr const char* keys[]={"Editor.Loading.Project","Editor.Loading.Scripts","Editor.Loading.RestoreHost",

@@ -7,7 +7,7 @@
 #include "CoreLayer/Hash.h"
 #include <algorithm>
 #include <filesystem>
-namespace rhi=se::rhi;
+namespace rhi=flare::rhi;
 namespace
 {
 // 只认随产品发布的已知内建源文件；用户 Source/Artifact 不推测覆盖语义。
@@ -106,7 +106,7 @@ bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,co
     for(size_t index=0;index<count;++index)
     {
         const auto& draw=content.meshes[index];const auto* main=draw.pipeline?draw.pipeline:content.meshPipeline;
-        if(!main||!main->prepared||!main->prepared->program||!draw.instances.empty()||draw.alphaMode==se::MaterialAlphaMode::Blend)
+        if(!main||!main->prepared||!main->prepared->program||!draw.instances.empty()||draw.alphaMode==flare::MaterialAlphaMode::Blend)
         {statistics.complete=false;++statistics.unsupportedDraws;continue;}
         const auto& prepared=*main->prepared;
         auto& cached=framePreparedCache[&prepared];
@@ -131,7 +131,7 @@ bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,co
                     const auto path=prepared.program->source.path.parent_path()/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl");
                     if(!CompileD3D12Shader(path,"PSIndoor","ps_5_1",indoorPixels_[slot],text,0,surface?defines:nullptr))return false;
                 }
-                const auto key=se::Sha256(prepared.key+":"+pixels_[slot]->bytecodeKey+(material?":indoor-material:v1":":geometry39:independent-d32-rg16-less:v1"));
+                const auto key=flare::Sha256(prepared.key+":"+pixels_[slot]->bytecodeKey+(material?":indoor-material:v1":":geometry39:independent-d32-rg16-less:v1"));
                 auto found=pipelines_.find(key);std::shared_ptr<const D3D12DepthNormalPipeline> pair=found==pipelines_.end()?nullptr:found->second.lock();
                 if(!pair)
                 {

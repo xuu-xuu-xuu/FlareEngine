@@ -1,7 +1,7 @@
 #pragma once
 #include "RuntimeHandles.h"
 
-namespace se
+namespace flare
 {
 class World;
 enum class ComponentLifecycle {Detached,Attached,Active,Removing};

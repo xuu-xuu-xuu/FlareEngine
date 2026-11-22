@@ -22,7 +22,7 @@ struct D3D12MeshletInput
 {
     const D3D12MeshDraw* draw = nullptr;
     D3D12UploadSlice b0;
-    se::Aabb worldBounds;
+    flare::Aabb worldBounds;
     std::array<D3D12_CPU_DESCRIPTOR_HANDLE, 7> materialViews{};
     UINT materialViewCount = 0;
     UINT firstIndex = 0, indexCount = 0;
@@ -50,10 +50,10 @@ struct D3D12MeshletSegment
     UINT sourceFirst = 0, sourceCount = 0;
     bool cpuFallback = true;
     bool isForward = false;
-    se::rhi::PipelineKind kind = se::rhi::PipelineKind::PbrMesh;
+    flare::rhi::PipelineKind kind = flare::rhi::PipelineKind::PbrMesh;
     bool bc5Normals = false;
-    se::rhi::ColorFormat colorFormat = se::rhi::ColorFormat::Rgba8Unorm;
-    se::rhi::DepthMode depthMode = se::rhi::DepthMode::ReadWriteLess;
+    flare::rhi::ColorFormat colorFormat = flare::rhi::ColorFormat::Rgba8Unorm;
+    flare::rhi::DepthMode depthMode = flare::rhi::DepthMode::ReadWriteLess;
     D3D12_GPU_DESCRIPTOR_HANDLE materialTable{};
     std::vector<D3D12MeshletDispatchRun> runs;
 };
@@ -97,7 +97,7 @@ public:
     bool Initialized() const noexcept { return initialized_; }
 
     HRESULT Prepare(D3D12UploadArena& arena, D3D12MeshletOutput& output, const D3D12MeshPipeline& defaultPipeline,
-        std::span<const D3D12MeshletInput> input, const se::VisibilityFrustum& frustum,
+        std::span<const D3D12MeshletInput> input, const flare::VisibilityFrustum& frustum,
         D3D12MeshletPrepared& prepared, const D3D12HeterogeneousOcclusion* occlusion, const Localization& text);
 
     HRESULT RecordBucket(ID3D12GraphicsCommandList& commands, D3D12StateRecording& states,
@@ -111,8 +111,8 @@ private:
         Microsoft::WRL::ComPtr<ID3D12PipelineState> pipeline;
     };
 
-    const PipelineEntry* GetOrCreatePipeline(se::rhi::PipelineKind kind, bool bc5Normals,
-        se::rhi::ColorFormat colorFormat, se::rhi::DepthMode depthMode, const Localization& text);
+    const PipelineEntry* GetOrCreatePipeline(flare::rhi::PipelineKind kind, bool bc5Normals,
+        flare::rhi::ColorFormat colorFormat, flare::rhi::DepthMode depthMode, const Localization& text);
 
     bool initialized_ = false;
     Microsoft::WRL::ComPtr<ID3D12Device2> device2_;

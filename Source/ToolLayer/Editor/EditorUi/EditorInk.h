@@ -4,10 +4,10 @@
 #include "ToolLayer/Editor/FlarePalette.h"
 #include <cmath>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 // 工具包画笔使用线性 RGB。色表及交互设计使用 sRGB。
-inline UiColor UiInk(flare::Color color, float alpha = 1.0f)
+inline UiColor UiInk(flare::palette::Color color, float alpha = 1.0f)
 {
     const auto linear = [](std::uint8_t channel) {
         const float value = channel / 255.0f;

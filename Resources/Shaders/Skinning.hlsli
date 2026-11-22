@@ -1,5 +1,5 @@
-#ifndef SELF_ENGINE_SKINNING
-#define SELF_ENGINE_SKINNING
+#ifndef FLARE_ENGINE_SKINNING
+#define FLARE_ENGINE_SKINNING
 // W03：蒙皮调色板。约定与 MaterialLayout.h / rhi::SkinnedVertex 一致：
 // 每关节 3 行 float4（行主序 3×4 的实体局部蒙皮矩阵），共 48 字节；
 // 关节序号来自 JOINTS0，权重来自 WEIGHTS0，都是逐顶点属性。

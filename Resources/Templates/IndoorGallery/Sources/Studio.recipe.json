@@ -1,5 +1,5 @@
 {
-  "format": "SelfEngine.TemplateEnvironmentRecipe",
+  "format": "FlareEngine.TemplateEnvironmentRecipe",
   "version": 1,
   "generator": {"tool": "EnvironmentCooker", "mode": "sample", "preset": "soft"},
   "source": "Sources/Studio.hdr",

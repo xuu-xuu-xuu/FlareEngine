@@ -7,9 +7,9 @@ class D3D12MemoryAllocator;
 class Localization;
 struct D3D12Presentation;
 void PollD3D12ClusterCounters(D3D12Presentation& presentation);
-bool ValidD3D12ClusterProjection(const se::Mat4& projection,float nearPlane,float farPlane);
+bool ValidD3D12ClusterProjection(const flare::Mat4& projection,float nearPlane,float farPlane);
 inline constexpr UINT ClusterCount=16*9*24,ClusterIndexCapacity=65536;
-struct ClusterGpuLight {se::Vec4 positionRange,radiancePad;};
+struct ClusterGpuLight {flare::Vec4 positionRange,radiancePad;};
 static_assert(sizeof(ClusterGpuLight)==32);
 // 显式正确性读回的固定区间；只有indices中requested部分可读，溢出时有效长度为零。
 inline constexpr UINT64 ClusterInputOffset=0,ClusterInputBytes=256*sizeof(ClusterGpuLight);
@@ -25,7 +25,7 @@ struct D3D12ClusterOutput
     Microsoft::WRL::ComPtr<ID3D12Resource> input,counts,ranges,indices,counters,counterReadback;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> descriptors,graphicsDescriptors;
     UINT increment=0;
-    se::rhi::ClusteredLighting configuration;
+    flare::rhi::ClusteredLighting configuration;
     UINT64 pendingFence=0,sourceFrame=0;
     bool countersPending=false;
     D3D12_CPU_DESCRIPTOR_HANDLE Cpu(UINT slot) const;
@@ -38,7 +38,7 @@ public:
     HRESULT Initialize(ID3D12Device& device,std::shared_ptr<D3D12MemoryAllocator> memory,
         const std::filesystem::path& shaders,const Localization& text);
     HRESULT CreateOutput(std::shared_ptr<D3D12ClusterOutput>& output) const;
-    HRESULT Prepare(D3D12ClusterOutput& output,const se::rhi::ClusteredLighting& configuration) const;
+    HRESULT Prepare(D3D12ClusterOutput& output,const flare::rhi::ClusteredLighting& configuration) const;
     HRESULT Record(ID3D12GraphicsCommandList& commands,D3D12StateRecording& states,
         D3D12ClusterOutput& output,D3D12_GPU_VIRTUAL_ADDRESS constants,const D3D12ClusterCapture* capture=nullptr) const;
 private:

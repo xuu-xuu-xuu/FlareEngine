@@ -1,13 +1,16 @@
 #include "EditorViewportController.h"
 #include "EditorSceneGizmos.h"
 #include "PrefabWorkflow.h"
+#include "SceneInspector.h"
+#include "FunctionLayer/Runtime/FeatureComponents.h"
 #include "CoreLayer/Math/TransformDecomposition.h"
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <utility>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -98,6 +101,9 @@ void EditorViewportController::Dolly(float amount)
 void EditorViewportController::Cancel(EditorSession& s)
 {
     if(gizmo_.Active())gizmo_.End(s,false);
+    if(gesture_==Gesture::ComponentHandle)s.CancelEdit();
+    activeComponentHandle_.reset();
+    multiFollowersBefore_.clear();
     gesture_=Gesture::None;dragAxis_=-1;keys_.fill(false);
     clickPending_=false;contextClick_.reset();lastPick_.reset();
 }
@@ -105,8 +111,16 @@ std::optional<Vec2> EditorViewportController::TakeContextClick()
 {
     return std::exchange(contextClick_, std::nullopt);
 }
+std::optional<Vec2> EditorViewportController::ComponentHandleScreenPos(std::string_view propertyKey)const
+{
+    for (const auto& dot : componentHandles_)
+    {
+        if (dot.propertyKey == propertyKey) return dot.screen;
+    }
+    return std::nullopt;
+}
 
-void EditorViewportController::SelectAt(Vec2 mouse, EditorSession& session, AssetStore& assets, PickIntent intent)
+void EditorViewportController::SelectAt(Vec2 mouse, EditorSession& session, AssetStore& assets, PickIntent intent, bool toggle)
 {
     const auto& world = ActiveWorld(session);
     const auto mesh = PickEditorBounds(world, assets, *snapshot_,
@@ -135,16 +149,17 @@ void EditorViewportController::SelectAt(Vec2 mouse, EditorSession& session, Asse
     lastPick_ = mouse;
     if (choices.empty())
     {
-        if (intent == PickIntent::Surface) session.Select(0);
+        if (intent == PickIntent::Surface && !toggle) session.Select(0);
         return;
     }
     auto chosen = choices.begin();
-    if (samePoint && intent != PickIntent::Context)
+    if (samePoint && intent != PickIntent::Context && !toggle)
     {
         const auto current = std::find(choices.begin(), choices.end(), session.Selected());
         if (current != choices.end() && std::next(current) != choices.end()) chosen = std::next(current);
     }
-    session.Select(*chosen);
+    if (toggle && !session.IsPlaying()) session.ToggleSelection(*chosen);
+    else session.Select(*chosen);
 }
 void EditorViewportController::Blur(EditorSession& s){Cancel(s);focused_=false;}
 bool EditorViewportController::Action(std::string_view action,EditorSession& s,AssetStore& assets)
@@ -226,7 +241,7 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
         if(!focused_&&!toolKey&&ev.key!='F')return false;
         if(ev.key==27){Cancel(s);return true;}
         if(ev.key>=keys_.size())return false;
-        const bool repeated=keys_[ev.key];keys_[ev.key]=true;
+        const bool repeated=keys_[ev.key]||ev.isRepeat;keys_[ev.key]=true;
         if(Flying()){clickPending_=false;return true;}
         if(Captured()||ev.control||ev.alt||repeated)return false;
         if(ev.key=='F')return FrameSelection(s,assets,ev.shift);
@@ -258,17 +273,55 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
         {
             if(!s.IsPlaying())
             {
+                float nearestDot = 10.5f;
+                const ComponentHandleDot* hitDot = nullptr;
+                for (const auto& dot : componentHandles_)
+                {
+                    const float d = std::hypot(mouse.x - dot.screen.x, mouse.y - dot.screen.y);
+                    if (d < nearestDot) { nearestDot = d; hitDot = &dot; }
+                }
                 float nearest=12.f;const HandleSegment* hit=nullptr;
                 for(const auto& h:handles_)if(const auto d=Distance(mouse,h.a,h.b);d<nearest){nearest=d;hit=&h;}
+                if (hitDot && (!hit || nearestDot <= nearest))
+                {
+                    if (s.BeginEdit("EditorUi.ViewportHandle"))
+                    {
+                        activeComponentHandle_ = *hitDot;
+                        gesture_ = Gesture::ComponentHandle;
+                        clickPending_ = false;
+                        return true;
+                    }
+                }
                 if(hit)
                 {
                     const auto e=s.EditWorld().FindByStableId(s.Selected());const auto origin=Pivot(s.EditWorld(),assets,e);
                     const Vec2 direction=hit->axis==3?Vec2{1.0f,-0.5f}:Vec2{hit->b.x-hit->a.x,hit->b.y-hit->a.y};
+                    multiFollowersBefore_.clear();
+                    if (const auto* pt = s.EditWorld().GetTransform(e)) multiPrimaryBefore_ = *pt;
+                    if (s.Selection().size() > 1)
+                    {
+                        const World& ew = s.EditWorld();
+                        for (const StableEntityId sid : s.Selection())
+                        {
+                            if (sid == s.Selected()) continue;
+                            const EntityHandle fh = ew.FindByStableId(sid);
+                            if (!fh) continue;
+                            bool ancestorSelected = false;
+                            for (EntityHandle cur = ew.Get(fh) ? ew.Get(fh)->parent : EntityHandle{}; cur;
+                                 cur = ew.Get(cur) ? ew.Get(cur)->parent : EntityHandle{})
+                            {
+                                if (ew.Get(cur) && s.IsSelected(ew.Get(cur)->stableId)) { ancestorSelected = true; break; }
+                            }
+                            if (ancestorSelected) continue;
+                            if (const auto* ft = ew.GetTransform(fh)) multiFollowersBefore_.emplace_back(sid, *ft);
+                        }
+                    }
                     if(gizmo_.Begin(s,mode_,static_cast<GizmoAxis>(hit->axis),mouse,direction,80,space_,&*snapshot_,&origin))
                     {gesture_=Gesture::Gizmo;dragAxis_=hit->axis;return true;}
+                    multiFollowersBefore_.clear();
                 }
             }
-            SelectAt(mouse,s,assets);
+            SelectAt(mouse,s,assets,PickIntent::Surface,ev.control||ev.shift);
             clickPending_=false;
             return true;
         }
@@ -277,7 +330,17 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
     if(ev.type==PointerMove)
     {
         hoverAxis_=-1;
-        if(canStart)for(const auto& h:handles_)if(Distance(mouse,h.a,h.b)<11.f)hoverAxis_=h.axis;
+        hoverComponentHandle_=-1;
+        if(canStart)
+        {
+            for(const auto& h:handles_)if(Distance(mouse,h.a,h.b)<11.f)hoverAxis_=h.axis;
+            float bestDot=10.5f;
+            for(std::size_t di=0;di<componentHandles_.size();++di)
+            {
+                const float d=std::hypot(mouse.x-componentHandles_[di].screen.x,mouse.y-componentHandles_[di].screen.y);
+                if(d<bestDot){bestDot=d;hoverComponentHandle_=static_cast<int>(di);}
+            }
+        }
         if(!Captured())return false;
         if(clickPending_)
         {
@@ -285,7 +348,69 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
             clickPending_=false;lastPick_.reset();
         }
         const Vec2 delta{mouse.x-lastMouse_.x,mouse.y-lastMouse_.y};lastMouse_=mouse;
-        if(gesture_==Gesture::Gizmo){gizmo_.Update(s,mouse,ev.control);return true;}
+        if(gesture_==Gesture::ComponentHandle && activeComponentHandle_ && snapshot_)
+        {
+            const auto& h = *activeComponentHandle_;
+            const auto p0 = ProjectWorldPoint(*snapshot_, h.worldOrigin);
+            const auto p1 = ProjectWorldPoint(*snapshot_, h.worldOrigin + h.worldAxis);
+            Vec2 screenDir{1.0f, 0.0f};
+            float pxPerUnit = 60.0f;
+            if (p0 && p1)
+            {
+                const Vec2 diff{p1->x - p0->x, p1->y - p0->y};
+                const float len = std::hypot(diff.x, diff.y);
+                if (len > 1e-3f)
+                {
+                    screenDir = {diff.x / len, diff.y / len};
+                    pxPerUnit = std::max(4.0f, len);
+                }
+            }
+            const Vec2 totalDrag{mouse.x - pressedMouse_.x, mouse.y - pressedMouse_.y};
+            const float fineScale = (ev.alt ? 0.1f : 1.0f) * (ev.shift ? 2.5f : 1.0f);
+            const float worldDelta = ((totalDrag.x * screenDir.x + totalDrag.y * screenDir.y) / pxPerUnit) * fineScale;
+            const float nextVal = std::clamp(h.initialValue + worldDelta * h.scaleFactor, h.minVal, h.maxVal);
+            char buf[64]{};
+            const auto [end, ec] = std::to_chars(buf, buf + sizeof(buf), nextVal);
+            if (ec == std::errc{})
+            {
+                (void)ApplySceneInspector(s, s.Selected(), h.propertyKey, std::string(buf, end), &assets);
+            }
+            return true;
+        }
+        if(gesture_==Gesture::Gizmo)
+        {
+            gizmo_.Update(s,mouse,ev.control);
+            if (!multiFollowersBefore_.empty())
+            {
+                const EntityHandle primaryH = s.EditWorld().FindByStableId(s.Selected());
+                if (const auto* curPrimary = s.EditWorld().GetTransform(primaryH))
+                {
+                    const Vec3 posDelta = curPrimary->position - multiPrimaryBefore_.position;
+                    const Quat invBefore = Conjugate(Normalize(multiPrimaryBefore_.rotation));
+                    const Quat rotDelta = Normalize(curPrimary->rotation * invBefore);
+                    const Vec3 scaleRatio{
+                        std::abs(multiPrimaryBefore_.scale.x) > 1e-5f ? curPrimary->scale.x / multiPrimaryBefore_.scale.x : 1.0f,
+                        std::abs(multiPrimaryBefore_.scale.y) > 1e-5f ? curPrimary->scale.y / multiPrimaryBefore_.scale.y : 1.0f,
+                        std::abs(multiPrimaryBefore_.scale.z) > 1e-5f ? curPrimary->scale.z / multiPrimaryBefore_.scale.z : 1.0f,
+                    };
+                    s.Apply("Editor.TransformMulti", [&](World& world) {
+                        for (const auto& [fid, fBefore] : multiFollowersBefore_)
+                        {
+                            const EntityHandle fh = world.FindByStableId(fid);
+                            if (!fh) continue;
+                            Transform fNext = fBefore;
+                            if (mode_ == GizmoMode::Translate) fNext.position = fBefore.position + posDelta;
+                            else if (mode_ == GizmoMode::Rotate) fNext.rotation = Normalize(rotDelta * fBefore.rotation);
+                            else if (mode_ == GizmoMode::Scale)
+                                fNext.scale = {fBefore.scale.x * scaleRatio.x, fBefore.scale.y * scaleRatio.y, fBefore.scale.z * scaleRatio.z};
+                            (void)world.SetTransform(fh, fNext);
+                        }
+                        return true;
+                    });
+                }
+            }
+            return true;
+        }
         if(gesture_==Gesture::Fly||gesture_==Gesture::Orbit)
         {
             camera_.Update({{},delta,ev.shift},0);
@@ -298,27 +423,47 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
             const auto d=Rotate(FreeCameraTransform(camera_.state).rotation,Vec3{-delta.x*units,delta.y*units,0});
             camera_.state.position+=d;pivot_+=d;
         }
-        else if(gesture_==Gesture::Zoom)Dolly((delta.x-delta.y)*.01f);
+        else if(gesture_==Gesture::Zoom)Dolly(-(delta.x+delta.y)*.01f);
         return true;
     }
     if(ev.type==PointerUp&&Captured()&&ev.button==dragButton_)
     {
         const bool click=clickPending_&&std::hypot(mouse.x-pressedMouse_.x,mouse.y-pressedMouse_.y)<=ClickSlop;
         clickPending_=false;
+        if (gesture_ == Gesture::ComponentHandle)
+        {
+            (void)s.CommitEdit();
+            activeComponentHandle_.reset();
+            gesture_ = Gesture::None;
+            dragAxis_ = -1;
+            keys_.fill(false);
+            return true;
+        }
         if(gizmo_.Active())
         {
-            const StableEntityId selectedId=s.Selected();
-            if(const EntityHandle h=s.EditWorld().FindByStableId(selectedId); h && s.EditWorld().GetPrefabLink(h))
+            std::vector<StableEntityId> editedIds = s.Selection();
+            if (editedIds.empty() && s.Selected() != 0) editedIds.push_back(s.Selected());
+            bool anyPrefab = false;
+            for (const StableEntityId eid : editedIds)
+            {
+                if (const EntityHandle h = s.EditWorld().FindByStableId(eid); h && s.EditWorld().GetPrefabLink(h))
+                { anyPrefab = true; break; }
+            }
+            if (anyPrefab)
             {
                 s.Apply("Prefab.TrackOverride", [&](World& world) {
-                    const EntityHandle target=world.FindByStableId(selectedId);
-                    if(!target) return true;
-                    RecordOverrideAfterPropertyEdit(world, &assets, target, "transform.position");
-                    RecordOverrideAfterPropertyEdit(world, &assets, target, "transform.rotation");
-                    RecordOverrideAfterPropertyEdit(world, &assets, target, "transform.scale");
+                    for (const StableEntityId eid : editedIds)
+                    {
+                        const EntityHandle target = world.FindByStableId(eid);
+                        if (!target || !world.GetPrefabLink(target)) continue;
+                        RecordOverrideAfterPropertyEdit(world, &assets, target, "transform.position");
+                        RecordOverrideAfterPropertyEdit(world, &assets, target, "transform.rotation");
+                        RecordOverrideAfterPropertyEdit(world, &assets, target, "transform.scale");
+                    }
                     return true;
                 });
             }
+            multiFollowersBefore_.clear();
             gizmo_.End(s,true);
         }
         if(click&&snapshot_&&canStart)
@@ -338,11 +483,109 @@ bool EditorViewportController::Handle(ui::UiInputEvent& ev,EditorSession& s,Asse
 void EditorViewportController::Prepare(EditorSession& s,AssetStore& assets,ui::UiRect rect,std::uint64_t frame)
 {
     if(!initialized_){pivot_=camera_.state.position+Forward(camera_)*distance_;initialized_=true;}
-    viewport_=rect;overlay_.Clear();sceneLines_.clear();handles_.clear();
-    if(s.IsPlaying()&&gizmo_.Active())Cancel(s);
+    viewport_=rect;overlay_.Clear();sceneLines_.clear();handles_.clear();componentHandles_.clear();
+    if(s.IsPlaying()&&(gizmo_.Active()||gesture_==Gesture::ComponentHandle))Cancel(s);
     snapshot_=(s.IsPlaying()&&!sceneViewDuringPlay_)?std::nullopt:camera_.Snapshot({rect.x,rect.y,rect.width,rect.height},frame);
     if(gizmo_.Active()&&!gizmo_.ProjectionMatches(snapshot_))Cancel(s);
     if(snapshot_)Draw(s,assets);
+}
+
+void EditorViewportController::AppendComponentHandles(const World& world, EntityHandle entity, const CameraSnapshot& c)
+{
+    if (!entity || !world.IsEnabled(entity)) return;
+    const Mat4 matrix = world.GetWorldMatrix(entity);
+    const Vec3 origin = TransformPoint(matrix, {});
+    if (!IsFinite(origin)) return;
+
+    const auto addDot = [&](Vec3 worldPos, Vec3 axisDir, std::string propKey, float curVal,
+                            float minV, float maxV, float scaleFactor, UiColor color) {
+        if (Length(axisDir) < 1e-4f) return;
+        const Vec3 unitAxis = Normalize(axisDir);
+        const auto proj = ProjectWorldPoint(c, worldPos);
+        if (!proj || proj->z <= 0.0f || proj->z >= 1.0f) return;
+        if (proj->x < c.viewport.x || proj->x > c.viewport.x + c.viewport.width ||
+            proj->y < c.viewport.y || proj->y > c.viewport.y + c.viewport.height) return;
+        const int idx = static_cast<int>(componentHandles_.size());
+        const bool hot = (gesture_ == Gesture::ComponentHandle && activeComponentHandle_ &&
+                          activeComponentHandle_->propertyKey == propKey) ||
+                         (hoverComponentHandle_ == idx);
+        componentHandles_.push_back({{proj->x, proj->y}, worldPos, unitAxis, std::move(propKey),
+                                     curVal, minV, maxV, scaleFactor, color});
+        overlay_.CanvasCircle(proj->x, proj->y, hot ? 6.5f : 5.0f, {0.06f, 0.07f, 0.09f, 0.92f});
+        overlay_.CanvasCircle(proj->x, proj->y, hot ? 5.0f : 3.6f, hot ? UiColor{1.0f, 1.0f, 0.42f, 1.0f} : color);
+    };
+
+    constexpr UiColor kLightDot{1.0f, 0.82f, 0.26f, 1.0f};
+    constexpr UiColor kColliderDot{0.34f, 0.92f, 0.48f, 1.0f};
+
+    if (const auto* light = world.GetLight(entity))
+    {
+        if (light->type == LightType::Point)
+        {
+            const float range = std::clamp(light->range, 0.05f, 10000.0f);
+            constexpr Vec3 cardinals[]{{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+            for (const Vec3 dir : cardinals)
+                addDot(origin + dir * range, dir, "light.range", range, 0.05f, 10000.0f, 1.0f, kLightDot);
+        }
+        else if (light->type == LightType::Spot)
+        {
+            const float range = std::clamp(light->range, 0.05f, 10000.0f);
+            const Vec3 toLight = TransformVector(matrix, {0, 0, 1});
+            if (Length(toLight) > 1e-4f)
+            {
+                const Vec3 dir = -Normalize(toLight);
+                const Vec3 side = Normalize(Cross(dir, std::abs(dir.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0}));
+                const Vec3 up = Cross(dir, side);
+                addDot(origin + dir * range, dir, "light.range", range, 0.05f, 10000.0f, 1.0f, kLightDot);
+                const float outerDeg = light->outerAngle * (180.0f / Pi);
+                const float minDeg = std::max(0.01f, light->innerAngle) * (180.0f / Pi);
+                const Vec3 rimCenter = origin + dir * (range * std::cos(light->outerAngle));
+                const float rimRadius = range * std::sin(light->outerAngle);
+                const float degPerMeter = (180.0f / Pi) / std::max(0.15f, range * std::max(0.15f, std::cos(light->outerAngle)));
+                for (const Vec3 radial : {side, -side, up, -up})
+                {
+                    addDot(rimCenter + radial * rimRadius, radial, "light.outerAngle",
+                           outerDeg, minDeg, 88.8f, degPerMeter, kLightDot);
+                }
+            }
+        }
+    }
+
+    const Vec3 axisX = Normalize(Length(TransformVector(matrix, {1,0,0})) > 1e-4f ? TransformVector(matrix, {1,0,0}) : Vec3{1,0,0});
+    const Vec3 axisY = Normalize(Length(TransformVector(matrix, {0,1,0})) > 1e-4f ? TransformVector(matrix, {0,1,0}) : Vec3{0,1,0});
+    const Vec3 axisZ = Normalize(Length(TransformVector(matrix, {0,0,1})) > 1e-4f ? TransformVector(matrix, {0,0,1}) : Vec3{0,0,1});
+
+    if (const auto bh = world.FindComponent(entity, PhysicsBodyComponent::TypeId); bh && world.GetComponent(bh)->Active())
+    {
+        const Vec3 ext = std::get<Vec3>(FeatureValue(world, entity, "body.halfExtents"));
+        addDot(origin + axisX * ext.x, axisX, "body.halfExtents.x", ext.x, 0.001f, 10000.0f, 1.0f, kColliderDot);
+        addDot(origin + axisY * ext.y, axisY, "body.halfExtents.y", ext.y, 0.001f, 10000.0f, 1.0f, kColliderDot);
+        addDot(origin + axisZ * ext.z, axisZ, "body.halfExtents.z", ext.z, 0.001f, 10000.0f, 1.0f, kColliderDot);
+    }
+    if (const auto ch = world.FindComponent(entity, ColliderSettingsComponent::TypeId); ch && world.GetComponent(ch)->Active())
+    {
+        const float shape = std::get<float>(FeatureValue(world, entity, "collider.shape"));
+        if (std::lround(shape) == 1)
+        {
+            const float rad = std::get<float>(FeatureValue(world, entity, "collider.radiusMeters"));
+            for (const Vec3 dir : {axisX, axisY, axisZ})
+                addDot(origin + dir * rad, dir, "collider.radiusMeters", rad, 0.001f, 10000.0f, 1.0f, kColliderDot);
+        }
+        else
+        {
+            const Vec3 ext = std::get<Vec3>(FeatureValue(world, entity, "collider.halfExtentsMeters"));
+            addDot(origin + axisX * ext.x, axisX, "collider.halfExtentsMeters.x", ext.x, 0.001f, 10000.0f, 1.0f, kColliderDot);
+            addDot(origin + axisY * ext.y, axisY, "collider.halfExtentsMeters.y", ext.y, 0.001f, 10000.0f, 1.0f, kColliderDot);
+            addDot(origin + axisZ * ext.z, axisZ, "collider.halfExtentsMeters.z", ext.z, 0.001f, 10000.0f, 1.0f, kColliderDot);
+        }
+    }
+    if (const auto capH = world.FindComponent(entity, CharacterSettingsComponent::TypeId); capH && world.GetComponent(capH)->Active())
+    {
+        const float rad = std::get<float>(FeatureValue(world, entity, "character.radius"));
+        const float halfH = std::get<float>(FeatureValue(world, entity, "character.segmentHalfHeight"));
+        addDot(origin + axisX * rad, axisX, "character.radius", rad, 0.01f, 100.0f, 1.0f, kColliderDot);
+        addDot(origin + Vec3{0, 1, 0} * (halfH + rad), Vec3{0, 1, 0}, "character.segmentHalfHeight", halfH, 0.0f, 100.0f, 1.0f, kColliderDot);
+    }
 }
 void EditorViewportController::Draw(EditorSession& s,AssetStore& assets)
 {
@@ -361,6 +604,7 @@ void EditorViewportController::Draw(EditorSession& s,AssetStore& assets)
     const World& world=ActiveWorld(s);
     if(gizmos_)AppendEditorSceneGizmos(world,s.Selected(),c,overlay_,sceneLines_);
     const auto e=s.IsPlaying()?EntityHandle{}:s.EditWorld().FindByStableId(s.Selected());
+    if(e && gizmos_ && !viewTool_) AppendComponentHandles(s.EditWorld(), e, c);
     if(e)
     {
         // 实体的可见轮廓由渲染器按实际网格和场景深度生成，不再叠加包围盒背面边线。

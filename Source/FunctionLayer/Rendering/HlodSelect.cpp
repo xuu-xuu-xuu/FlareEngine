@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 float ProjectedHlodError(const HlodCell& cell,const HlodView& view)
 {

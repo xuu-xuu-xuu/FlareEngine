@@ -2,7 +2,7 @@
 #include "AssetTasks.h"
 #include "CoreLayer/Math/Projection.h"
 
-namespace se
+namespace flare
 {
 struct StaticModelPart
 {

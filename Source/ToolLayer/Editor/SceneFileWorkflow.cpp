@@ -1,7 +1,7 @@
 #include "SceneFileWorkflow.h"
 #include "ResourceLayer/Assets/AssetIO.h"
 
-namespace se
+namespace flare
 {
 namespace
 {

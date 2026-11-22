@@ -56,7 +56,7 @@ public:
     // G15：用 `.selut` 的显示线性晶格覆盖 33³ LUT（RGBA16F）。晶格索引与 CPU
     // ColorLut::Values 的 (r,g,b) 顺序一致；只在资产 revision 变化时调用。
     HRESULT UploadLut(ID3D12GraphicsCommandList& commands,D3D12StateRecording& states,
-        D3D12ExposureOutput& output,std::span<const se::Vec3> values) const;
+        D3D12ExposureOutput& output,std::span<const flare::Vec3> values) const;
 private:
     Microsoft::WRL::ComPtr<ID3D12Device> device_;
     Microsoft::WRL::ComPtr<ID3D12RootSignature> root_;

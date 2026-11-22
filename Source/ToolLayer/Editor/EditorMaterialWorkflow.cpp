@@ -2,7 +2,7 @@
 
 #include "ResourceLayer/Assets/AssetIO.h"
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -198,4 +198,4 @@ std::optional<MaterialPreview> EditorMaterialWorkflow::Preview() const
     return MaterialPreview{activeId_, session_.Document()};
 }
 
-} // namespace se
+} // namespace flare

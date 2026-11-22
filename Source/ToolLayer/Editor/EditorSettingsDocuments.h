@@ -2,7 +2,7 @@
 #include "EditorSessionStore.h"
 #include "ProjectSettingsService.h"
 
-namespace se
+namespace flare
 {
 enum class EditorSettingsKind { Project,Build };
 

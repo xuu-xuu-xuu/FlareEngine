@@ -5,14 +5,38 @@ using System.Text;
 
 namespace FlareEngine;
 
-public enum QualityLevel { Project, Performance, Balanced, High }
+/// <summary>玩家运行时画质档位预设。</summary>
+public enum F_QualityLevel { Project = 0, Performance = 1, Balanced = 2, High = 3 }
+/// <summary>玩家运行时画质档位预设（兼容无前缀写法）。</summary>
+public enum QualityLevel { Project = 0, Performance = 1, Balanced = 2, High = 3 }
 
+/// <summary>三维空间变换（局部或世界坐标系的位置、四元数旋转与缩放）。</summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct F_Transform
+{
+    /// <summary>三维位置坐标（米）。</summary>
+    public Vector3 Position;
+    /// <summary>单位四元数旋转。</summary>
+    public Quaternion Rotation;
+    /// <summary>三轴缩放倍率（默认 1,1,1）。</summary>
+    public Vector3 Scale;
+    /// <summary>原点无旋转且等比 1 倍缩放的单位变换。</summary>
+    public static F_Transform Identity => new() { Rotation = Quaternion.Identity, Scale = Vector3.One };
+    public static implicit operator Transform(F_Transform value) => new() { Position = value.Position, Rotation = value.Rotation, Scale = value.Scale };
+    public static implicit operator F_Transform(Transform value) => new() { Position = value.Position, Rotation = value.Rotation, Scale = value.Scale };
+}
+
+/// <summary>三维空间变换（局部或世界坐标系的位置、四元数旋转与缩放）。</summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct Transform
 {
+    /// <summary>三维位置坐标（米）。</summary>
     public Vector3 Position;
+    /// <summary>单位四元数旋转。</summary>
     public Quaternion Rotation;
+    /// <summary>三轴缩放倍率（默认 1,1,1）。</summary>
     public Vector3 Scale;
+    /// <summary>原点无旋转且等比 1 倍缩放的单位变换。</summary>
     public static Transform Identity => new() { Rotation = Quaternion.Identity, Scale = Vector3.One };
 }
 [StructLayout(LayoutKind.Sequential)]
@@ -214,6 +238,26 @@ public sealed unsafe partial class EngineSession : IDisposable
             return found != 0 ? new Entity(this, entity) : null;
         });
     }
+    public Entity? FindEntityByTag(string tag)
+    {
+        ArgumentNullException.ThrowIfNull(tag);
+        return Invoke<Entity?>(value =>
+        {
+            Check(NativeMethods.FindEntityByTag(value, tag, checked((uint)Encoding.UTF8.GetByteCount(tag)), out var entity, out var found));
+            return found != 0 ? new Entity(this, entity) : null;
+        });
+    }
+    internal string GetEntityTag(ulong entity)
+        => Invoke(value => ReadString((byte* buffer, uint capacity, out uint required) => NativeMethods.GetTag(value, entity, buffer, capacity, out required)));
+    internal void SetEntityTag(ulong entity, string tag)
+    {
+        var text = string.IsNullOrEmpty(tag) ? "Untagged" : tag;
+        Invoke(value => { Check(NativeMethods.SetTag(value, entity, text, checked((uint)Encoding.UTF8.GetByteCount(text)))); return 0; });
+    }
+    internal int GetEntityLayer(ulong entity)
+        => Invoke(value => { Check(NativeMethods.GetLayer(value, entity, out var layer)); return (int)layer; });
+    internal void SetEntityLayer(ulong entity, int layer)
+        => Invoke(value => { Check(NativeMethods.SetLayer(value, entity, checked((uint)layer))); return 0; });
     public Vector2 MouseDelta => Invoke(value => { Check(NativeMethods.GetMouseDelta(value, out var delta)); return delta; });
     public (bool Locked, bool Visible) CursorMode => Invoke(value =>
     {
@@ -399,7 +443,7 @@ public sealed unsafe partial class EngineSession : IDisposable
     }
 }
 
-// W07：程序化天空覆盖。颜色是显示线性 0..1；太阳方向取场景方向光，不在这里重复定义。
+/// <summary>程序化天空覆盖状态（颜色为显示线性空间 0..1，太阳方向取自场景方向光）。</summary>
 public struct SkyState
 {
     public Vector3 Zenith, Horizon, Ground, SunColor;
@@ -409,35 +453,47 @@ public struct SkyState
 public partial class F_Entity
 {
     internal F_Entity(EngineSession session, ulong handle) { Session = session; Handle = handle; }
+    /// <summary>所属原生引擎会话。</summary>
     public EngineSession Session { get; }
+    /// <summary>底层运行时实体句柄（持久化保存请使用 <see cref="StableId"/>）。</summary>
     public ulong Handle { get; }
+    /// <summary>获取或设置实体的全局激活状态（Active）；禁用后暂停渲染与脚本更新但不会销毁实体。</summary>
     public bool Enabled
     {
         get=>Session.Invoke(value=>{EngineSession.Check(NativeMethods.GetEntityEnabled(value,Handle,out var enabled));return enabled!=0;});
         set=>Session.Invoke(native=>{EngineSession.Check(NativeMethods.SetEntityEnabled(native,Handle,value?1:0));return 0;});
     }
+    /// <summary>检查实体在当前世界中是否仍然存活有效。</summary>
     public bool IsAlive => !Session.IsDisposed && Session.Invoke(value => { EngineSession.Check(NativeMethods.IsAlive(value, Handle, out var alive)); return alive != 0; });
     internal bool IsPending=>!Session.IsDisposed&&Session.Invoke(value=>{EngineSession.Check(NativeMethods.EntityPending(value,Handle,out var pending));return pending!=0;});
+    /// <summary>跨保存与重载保持不变的 64 位实体唯一标识符（StableEntityId）。</summary>
     public ulong StableId => Session.Invoke(value => { EngineSession.Check(NativeMethods.GetStableId(value, Handle, out var id)); return id; });
+    /// <summary>实体在场景层级面板中的名称。</summary>
     public unsafe string Name => Session.Invoke(value => EngineSession.ReadString((byte* buffer, uint capacity, out uint required) => NativeMethods.GetName(value, Handle, buffer, capacity, out required)));
+    /// <summary>获取或设置相对父节点的局部空间完整变换。</summary>
     public Transform Transform
     {
         get => Session.Invoke(value => { EngineSession.Check(NativeMethods.GetTransform(value, Handle, out var transform)); return transform; });
         set => Session.Invoke(native => { EngineSession.Check(NativeMethods.SetTransform(native, Handle, in value)); return 0; });
     }
+    /// <summary>读取合成全部父级层级后的世界空间完整变换。</summary>
     public Transform WorldTransform
         => Session.Invoke(value => { EngineSession.Check(NativeMethods.GetWorldTransform(value, Handle, out var transform)); return transform; });
+    /// <summary>读取当前父实体；位于场景根层级时返回 null。</summary>
     public Entity? Parent
         => Session.Invoke<Entity?>(value => { EngineSession.Check(NativeMethods.GetParent(value, Handle, out var parent)); return parent == 0 ? null : new Entity(Session, parent); });
+    /// <summary>设置父实体（传入 null 解绑回场景根层级）；<paramref name="keepWorld"/> 为 true 时保持世界位姿不变。</summary>
     public void SetParent(F_Entity? parent, bool keepWorld = true)
     {
         if (parent is not null && parent.Session != Session) throw new ArgumentException("Bridge.InvalidEntity");
         Session.Invoke(value => { EngineSession.Check(NativeMethods.SetParent(value, Handle, parent?.Handle ?? 0, keepWorld ? 1 : 0)); return 0; });
     }
+    /// <summary>立即销毁该实体及其子层级。</summary>
     public void Destroy() => Session.Invoke(value => { EngineSession.Check(NativeMethods.DestroyEntity(value, Handle)); return 0; });
-    // W03：角色播放与关节查询。clip 名来自资产；关节不存在返回 null，不是异常。
+    /// <summary>在角色模型上播放指定骨骼动画片段（<paramref name="clip"/> 为导入资产内的片段名）。</summary>
     public void PlayAnimation(string clip,float speed=1f,bool loop=false)
         => Session.Invoke(value=>{EngineSession.Check(NativeMethods.ActorPlay(value,StableId,clip,checked((uint)Encoding.UTF8.GetByteCount(clip)),speed,loop?1:0));return 0;});
+    /// <summary>查询骨骼关节在世界空间中的当前位置；未找到指定关节时返回 null。</summary>
     public Vector3? JointPosition(string joint)
     {
         return Session.Invoke(value=>
@@ -446,12 +502,13 @@ public partial class F_Entity
             return found!=0?(Vector3?)position:null;
         });
     }
+    /// <summary>设置摄像机组件的垂直视场角（弧度制）。</summary>
     public void SetCameraFieldOfView(float radians)
         => Session.Invoke(value=>{EngineSession.Check(NativeMethods.SetCameraFov(value,StableId,radians));return 0;});
-    // 挂接或替换静态网格；运行时可用来布景和生成植株。
+    /// <summary>为实体挂载或替换静态网格资产，并配置投射与接收阴影开关。</summary>
     public void SetMesh(string assetId,bool castsShadow=true,bool receivesShadow=true)
         => Session.Invoke(value=>{EngineSession.Check(NativeMethods.SetMesh(value,Handle,assetId,checked((uint)Encoding.UTF8.GetByteCount(assetId)),castsShadow?1:0,receivesShadow?1:0));return 0;});
-    // W07：世界方向投影到相机归一化屏幕坐标（左上原点，0..1）；不在前方返回 null。
+    /// <summary>将世界空间方向投影到当前摄像机的归一化屏幕 UV（左上原点 0..1）；位于相机背面时返回 null。</summary>
     public Vector2? ProjectDirection(Vector3 direction)
     {
         return Session.Invoke(value=>
@@ -462,6 +519,7 @@ public partial class F_Entity
     }
 }
 
+/// <summary>运行时场景实体实例。</summary>
 public sealed class Entity : F_Entity
 {
     internal Entity(EngineSession session, ulong handle) : base(session, handle) { }

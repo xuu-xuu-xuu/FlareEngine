@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 enum class EditorPanelId : std::uint8_t
@@ -114,4 +114,4 @@ private:
     bool maximizeOnPlay_=false;
 };
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

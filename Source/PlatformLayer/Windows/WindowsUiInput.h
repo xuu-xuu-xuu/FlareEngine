@@ -6,7 +6,7 @@
 #include "FunctionLayer/GameUI/UiTree.h"
 #include "ResourceLayer/Fonts/FontCache.h"
 
-namespace se
+namespace flare
 {
 struct UiClipboard
 {

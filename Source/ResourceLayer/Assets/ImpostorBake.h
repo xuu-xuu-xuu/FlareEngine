@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G05.12：16 视角 Impostor 图集。离线把网格按 22.5° 方位角渲染到 4×4 图集，
 // alpha 通道保存覆盖（运行时 alpha test），颜色为漫反射近似。运行时可插值相邻两视角。

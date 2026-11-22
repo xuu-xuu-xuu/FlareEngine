@@ -9,7 +9,7 @@
 #include <iterator>
 #include <set>
 
-namespace se
+namespace flare
 {
 namespace
 {

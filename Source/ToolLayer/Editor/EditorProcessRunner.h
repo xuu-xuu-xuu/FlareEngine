@@ -6,7 +6,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace se
+namespace flare
 {
 struct ProcessRunResult
 {

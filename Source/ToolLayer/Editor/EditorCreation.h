@@ -4,7 +4,7 @@
 #include <string_view>
 class Localization;
 
-namespace se
+namespace flare
 {
 class AssetStore;
 class World;

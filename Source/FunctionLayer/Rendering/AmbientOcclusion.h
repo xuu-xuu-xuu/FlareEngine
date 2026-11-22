@@ -4,7 +4,7 @@
 #include <span>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G10 原型：CPU 屏幕空间环境光遮蔽与接触阴影参考。输入为视空间深度（正距离）与视空间法线，
 // 输出 [0,1] 的 AO/可见度；GTAO 只调制间接光、接触阴影只调制直接光，二者可独立关闭。

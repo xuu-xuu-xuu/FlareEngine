@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 class EditorDockState
@@ -22,4 +22,4 @@ public:
     static bool Deserialize(std::string_view json, DockNode& layout, std::string& error);
 };
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

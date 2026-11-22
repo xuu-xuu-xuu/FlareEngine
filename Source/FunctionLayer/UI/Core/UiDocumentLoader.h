@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-namespace se::ui
+namespace flare::ui
 {
 
 struct UiDocumentLoadResult
@@ -18,4 +18,4 @@ struct UiDocumentLoadResult
 // 当前只解析树、id 和 classes；styles 只做对象形状校验，不接级联。
 [[nodiscard]] UiDocumentLoadResult LoadUiDocumentJson(std::string_view json, UiDocument& document);
 
-} // namespace se::ui
+} // namespace flare::ui

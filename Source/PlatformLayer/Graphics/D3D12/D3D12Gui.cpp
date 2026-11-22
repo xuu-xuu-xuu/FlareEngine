@@ -6,11 +6,11 @@
 #include <cmath>
 #include <cstring>
 
-bool CreateD3D12GuiTarget(D3D12Presentation& p,const se::rhi::RenderTargetDescription& d,D3D12GuiTarget& out,const Localization& text,const se::Vec4* optimizedClear,bool sampleDepth)
+bool CreateD3D12GuiTarget(D3D12Presentation& p,const flare::rhi::RenderTargetDescription& d,D3D12GuiTarget& out,const Localization& text,const flare::Vec4* optimizedClear,bool sampleDepth)
 {
     Microsoft::WRL::ComPtr<ID3D12Device> device;
     if(FAILED(p.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf()))))return false;
-    const bool hdr=d.format==se::rhi::TextureFormat::Rgba16Float;
+    const bool hdr=d.format==flare::rhi::TextureFormat::Rgba16Float;
     const DXGI_FORMAT colorFormat=hdr?DXGI_FORMAT_R16G16B16A16_FLOAT:DXGI_FORMAT_R8G8B8A8_TYPELESS;
     D3D12_RESOURCE_DESC desc{};desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=d.width;desc.Height=d.height;
     desc.DepthOrArraySize=desc.MipLevels=1;desc.SampleDesc={1,0};desc.Format=colorFormat;desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
@@ -52,9 +52,9 @@ bool PrepareD3D12Gui(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12Gu
     for(size_t i=0;i<g.commands.size();++i)views.push_back(c.textures[i]->views->Cpu(g.commands[i].textureIsData?1:0));
     if(!CheckGraphicsResult(descriptors.Prepare(*device.Get(),views,1),text,"D3D12.DescriptorCapacityExceeded"))return false;
     if(g.indices.empty())return true;
-    if(!CheckGraphicsResult(frame.uploads.Allocate(g.vertices.size()*sizeof(se::GuiVertex),16,u.vertices),text,"D3D12.UploadCapacityExceeded")
+    if(!CheckGraphicsResult(frame.uploads.Allocate(g.vertices.size()*sizeof(flare::GuiVertex),16,u.vertices),text,"D3D12.UploadCapacityExceeded")
         ||!CheckGraphicsResult(frame.uploads.Allocate(g.indices.size()*sizeof(std::uint32_t),16,u.indices),text,"D3D12.UploadCapacityExceeded"))return false;
-    std::memcpy(u.vertices.cpu,g.vertices.data(),g.vertices.size()*sizeof(se::GuiVertex));
+    std::memcpy(u.vertices.cpu,g.vertices.data(),g.vertices.size()*sizeof(flare::GuiVertex));
     std::memcpy(u.indices.cpu,g.indices.data(),g.indices.size()*sizeof(std::uint32_t));return true;
 }
 bool RecordD3D12GuiLayer(D3D12Presentation& p,const D3D12GuiLayer& c,D3D12FrameDescriptors& descriptors,const D3D12GuiUpload& u,D3D12StateRecording& states,UINT width,UINT height,const Localization& text)
@@ -67,9 +67,9 @@ bool RecordD3D12GuiLayer(D3D12Presentation& p,const D3D12GuiLayer& c,D3D12FrameD
         for(const auto* texture:c.textures)if(!use(texture->resource.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE))return false;
         commands.SetPipelineState(c.pipeline->pipeline.Get());commands.SetGraphicsRootSignature(c.pipeline->rootSignature.Get());
         ID3D12DescriptorHeap* heaps[]{descriptors.Heap()};commands.SetDescriptorHeaps(1,heaps);
-        const se::rhi::GuiConstants constants{{2/g.displaySize.x,-2/g.displaySize.y,-1-g.displayPosition.x*2/g.displaySize.x,1+g.displayPosition.y*2/g.displaySize.y}};
+        const flare::rhi::GuiConstants constants{{2/g.displaySize.x,-2/g.displaySize.y,-1-g.displayPosition.x*2/g.displaySize.x,1+g.displayPosition.y*2/g.displaySize.y}};
         commands.SetGraphicsRoot32BitConstants(0,4,&constants,0);
-        const D3D12_VERTEX_BUFFER_VIEW vb{u.vertices.Gpu(),static_cast<UINT>(g.vertices.size()*sizeof(se::GuiVertex)),sizeof(se::GuiVertex)};
+        const D3D12_VERTEX_BUFFER_VIEW vb{u.vertices.Gpu(),static_cast<UINT>(g.vertices.size()*sizeof(flare::GuiVertex)),sizeof(flare::GuiVertex)};
         const D3D12_INDEX_BUFFER_VIEW ib{u.indices.Gpu(),static_cast<UINT>(g.indices.size()*sizeof(std::uint32_t)),DXGI_FORMAT_R32_UINT};
         commands.IASetVertexBuffers(0,1,&vb);commands.IASetIndexBuffer(&ib);commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const D3D12_VIEWPORT viewport{0,0,float(width),float(height),0,1};commands.RSSetViewports(1,&viewport);

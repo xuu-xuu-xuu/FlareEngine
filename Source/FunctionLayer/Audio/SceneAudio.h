@@ -7,7 +7,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace se
+namespace flare
 {
 /// 将 World 中的 AudioListenerComponent 与 AudioSourceComponent 同步到 AudioWorld；
 /// 只在运行时与播放期持有活跃发声句柄，暂停时挂起，停止/卸载时 Clear 释放全部音源。
@@ -46,4 +46,4 @@ private:
 };
 
 [[nodiscard]] bool ValidateSceneAudio(const World& world, std::string& error);
-} // namespace se
+} // namespace flare

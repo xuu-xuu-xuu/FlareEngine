@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <bit>
 
-namespace se
+namespace flare
 {
 namespace
 {

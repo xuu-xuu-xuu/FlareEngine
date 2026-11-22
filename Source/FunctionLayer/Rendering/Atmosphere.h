@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G11 原型：球面大气的 CPU 参考。透射率 LUT 只在参数变化时重建；天空为 16 段单次散射 + 8 段太阳光程。
 struct AtmosphereSettings

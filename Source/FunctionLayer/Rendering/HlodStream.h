@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G05.11：场景单元驻留。`.sehlod` 文件一次读入，按相机位置与半径计算驻留单元；
 // 非驻留单元由调用方回退到实例绘制，驻留判定不改变几何，因此边界仍由单元划分保证。

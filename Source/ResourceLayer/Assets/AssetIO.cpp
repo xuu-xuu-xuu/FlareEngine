@@ -7,7 +7,7 @@
 #include <Windows.h>
 #include <bcrypt.h>
 
-namespace se::asset_io
+namespace flare::asset_io
 {
 bool Read(const std::filesystem::path& path,std::vector<std::uint8_t>& bytes,std::stop_token stop)
 {
@@ -100,7 +100,7 @@ std::string NewId()
 
 std::string Hash(std::span<const std::uint8_t> bytes)
 {
-    return se::Sha256(bytes);
+    return flare::Sha256(bytes);
 }
 
 bool WriteAtomic(const std::filesystem::path& path,std::span<const std::uint8_t> bytes,bool replaceExisting)

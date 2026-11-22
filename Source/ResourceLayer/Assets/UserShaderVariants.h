@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
-namespace se
+namespace flare
 {
 // 主资产保留旧 PBR 包身份；前向/阴影/环境产物共享同一目录和确定的文件命名。
 inline constexpr std::array<std::string_view,4> UserShaderPasses{"pbr","forward","shadowed","environment"};

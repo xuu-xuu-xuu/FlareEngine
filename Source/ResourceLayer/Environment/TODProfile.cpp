@@ -5,7 +5,7 @@
 #include <unordered_set>
 #include <Windows.h>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -37,7 +37,7 @@ bool ParseTODProfile(std::string_view text,TODProfile& profile,std::string& erro
     try{
         bool duplicate=false;std::vector<std::unordered_set<std::string>> keys;
         const auto j=Json::parse(text.begin(),text.end(),[&](int depth,Json::parse_event_t e,Json& v){if(depth>16)throw std::runtime_error("TOD.InvalidProfile");if(e==Json::parse_event_t::object_start)keys.emplace_back();else if(e==Json::parse_event_t::key){if(!keys.back().insert(v.get<std::string>()).second)duplicate=true;}else if(e==Json::parse_event_t::object_end)keys.pop_back();return true;});
-        if(duplicate||!Only(j,{"format","version","dayLengthSeconds","initialTime","rate","sunrise","sunset","azimuthRadians","maximumElevationRadians","keys"})||j.at("format")!="SelfEngine.TODProfile"||!j.at("version").is_number_unsigned())throw std::runtime_error("TOD.InvalidProfile");
+        if(duplicate||!Only(j,{"format","version","dayLengthSeconds","initialTime","rate","sunrise","sunset","azimuthRadians","maximumElevationRadians","keys"})||(j.at("format")!="FlareEngine.TODProfile"&&j.at("format")!="SelfEngine.TODProfile")||!j.at("version").is_number_unsigned())throw std::runtime_error("TOD.InvalidProfile");
         TODProfile p;p.version=j.at("version").get<std::uint32_t>();if(j.at("version")!=1){error="TOD.UnsupportedVersion";return false;}
         p.dayLengthSeconds=j.at("dayLengthSeconds").get<double>();p.initialTime=j.at("initialTime").get<double>();p.rate=j.at("rate").get<double>();p.sunrise=j.at("sunrise").get<double>();p.sunset=j.at("sunset").get<double>();p.azimuthRadians=j.at("azimuthRadians").get<float>();p.maximumElevationRadians=j.at("maximumElevationRadians").get<float>();
         p.keys.clear();if(!j.at("keys").is_array()||j.at("keys").size()>256)throw std::runtime_error("TOD.InvalidProfile");
@@ -48,7 +48,7 @@ bool ParseTODProfile(std::string_view text,TODProfile& profile,std::string& erro
 bool SerializeTODProfile(const TODProfile& p,std::string& text,std::string& error)
 {
     if(!ValidateTODProfile(p,error))return false;
-    Json j{{"format","SelfEngine.TODProfile"},{"version",p.version},{"dayLengthSeconds",p.dayLengthSeconds},{"initialTime",p.initialTime},{"rate",p.rate},{"sunrise",p.sunrise},{"sunset",p.sunset},{"azimuthRadians",p.azimuthRadians},{"maximumElevationRadians",p.maximumElevationRadians},{"keys",Json::array()}};
+    Json j{{"format","FlareEngine.TODProfile"},{"version",p.version},{"dayLengthSeconds",p.dayLengthSeconds},{"initialTime",p.initialTime},{"rate",p.rate},{"sunrise",p.sunrise},{"sunset",p.sunset},{"azimuthRadians",p.azimuthRadians},{"maximumElevationRadians",p.maximumElevationRadians},{"keys",Json::array()}};
     for(const auto& k:p.keys)j["keys"].push_back({{"time",k.time},{"sunColor",Vector(k.value.sunColor)},{"sunIntensity",k.value.sunIntensity},{"skyColor",Vector(k.value.skyColor)},{"fogColor",Vector(k.value.fogColor)},{"fogDensity",k.value.fogDensity}});
     text=j.dump(2)+"\n";return true;
 }

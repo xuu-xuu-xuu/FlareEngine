@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 enum class EditorCommandId : std::uint32_t
@@ -65,4 +65,4 @@ private:
 
 [[nodiscard]] const char* EditorCommandName(EditorCommandId id) noexcept;
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

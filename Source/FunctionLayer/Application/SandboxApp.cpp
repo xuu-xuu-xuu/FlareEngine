@@ -21,8 +21,8 @@ namespace
 {
 struct ProfileFrame
 {
-    se::Profiler* profiler;bool begun;
-    ProfileFrame(se::Profiler* value,std::uint64_t frame):profiler(value),begun(value&&value->BeginFrame(frame)){}
+    flare::Profiler* profiler;bool begun;
+    ProfileFrame(flare::Profiler* value,std::uint64_t frame):profiler(value),begun(value&&value->BeginFrame(frame)){}
     void End(){if(begun){profiler->EndFrame();begun=false;}}
     ~ProfileFrame(){try{End();}catch(...){}}
 };
@@ -33,7 +33,7 @@ struct SandboxLifetime
     Renderer& renderer;
     bool rendererStarted = false;
     bool shutdownFinished = false;
-    std::unique_ptr<se::WindowsUiInput> uiInput;
+    std::unique_ptr<flare::WindowsUiInput> uiInput;
     std::function<void()> windowClosing;
 
     explicit SandboxLifetime(Renderer& value) : renderer(value) {}
@@ -73,7 +73,7 @@ struct SandboxLifetime
 };
 }
 
-int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow, se::ApplicationServices* services)
+int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow, flare::ApplicationServices* services)
 {
     InitializeProcessDiagnostics("engine");
     LogCheckpoint("Application.Start");
@@ -110,7 +110,7 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
     if (IsDebugLoggingEnabled())
         std::cout << "[Debug] RunSandboxApp 中 window 的地址：" << &window << '\n';
     LogCheckpoint("Window.Create.Begin");
-    bool startupLoading=se::StartupProgressActive();
+    bool startupLoading=flare::StartupProgressActive();
     if (!CreateEngineWindow(window, showWindow&&!startupLoading))
     {
         return 1;
@@ -134,7 +134,7 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
         if (services && services->ui)
         {
             services->ui->Layout(float(window.width),float(window.height));
-            lifetime.uiInput = std::make_unique<se::WindowsUiInput>(*services->ui);
+            lifetime.uiInput = std::make_unique<flare::WindowsUiInput>(*services->ui);
         }
         window.messageHandler = [&](HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) -> std::optional<LRESULT> {
             if (services && services->messageHandler) { auto result = services->messageHandler(hwnd,msg,wp,lp); if (result) return result; }
@@ -143,14 +143,14 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
         lifetime.rendererStarted = true;
         const RenderSurface surface{ window.hwnd, window.width, window.height };
         LogCheckpoint("Renderer.Initialize.Begin");
-        if(!se::ReportStartup(se::StartupStage::Renderer))return 1;
+        if(!flare::ReportStartup(flare::StartupStage::Renderer))return 1;
         if (!renderer.Initialize(surface, localization))
         {
             Log(LogLevel::Error, localization.GetText("App.RendererInitFailed"));
             return 1;
         }
         LogCheckpoint("Renderer.Initialize.End");
-        if(!se::ReportStartup(se::StartupStage::FirstFrame))return 1;
+        if(!flare::ReportStartup(flare::StartupStage::FirstFrame))return 1;
         FrameTimer timer{};
         if (!InitializeFrameTimer(timer))
         {
@@ -190,7 +190,7 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
             auto* profiler=services?services->profiler:nullptr;
             ProfileFrame profileFrame(profiler,timer.frameCount);
             {
-            se::CpuScope update(profiler,"CPU.Update");
+            flare::CpuScope update(profiler,"CPU.Update");
             if (services)
             {
                 if (services->ui) { services->ui->Layout(float(window.width),float(window.height)); if(services->advanceUi) services->ui->Update(updateDeltaSeconds); }
@@ -209,8 +209,8 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
             result = RenderResult::Success;
             if (window.drawable)
             {
-                se::FrameData data;
-                {se::CpuScope extract(profiler,"CPU.Extract");if (services && services->extract) services->extract(data);}
+                flare::FrameData data;
+                {flare::CpuScope extract(profiler,"CPU.Extract");if (services && services->extract) services->extract(data);}
                 UINT surfW = window.width;
                 UINT surfH = window.height;
                 if (services && services->liveWindowResize && showWindow && data.editorGuiEnabled)
@@ -222,6 +222,7 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
                     }
                     surfW = paddedSurfW;
                     surfH = paddedSurfH;
+                    data.editorGui.allowOversizedTarget = true;
                 }
                 const RenderFrame frame{
                     { window.hwnd, surfW, surfH },
@@ -241,11 +242,11 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
             }
             if(startupLoading&&window.drawable)
             {
-                if(se::StartupCancelled())return false;
+                if(flare::StartupCancelled())return false;
                 // 隐藏窗口的 Present 可以返回 Occluded；此时首帧命令仍已成功提交。
                 // 先显示已绘制的主窗口，再通知监督进程收起加载窗口。
                 if(showWindow){ShowWindow(window.hwnd,SW_SHOW);SetForegroundWindow(window.hwnd);}
-                if(!se::ReportStartup(se::StartupStage::Ready))return false;
+                if(!flare::ReportStartup(flare::StartupStage::Ready))return false;
                 startupLoading=false;
             }
             return !(services && services->maximumFrames && timer.frameCount >= services->maximumFrames);
@@ -268,7 +269,7 @@ int RunSandboxApp(const std::string& locale, Renderer& renderer, bool showWindow
             pumping = true;
             const bool running = PumpWindowMessages(exitCode);
             pumping = false;
-            se::PollWindowsGamepads(window.input.gamepads);
+            flare::PollWindowsGamepads(window.input.gamepads);
             if (!running || finished || window.closeRequested || !drawFrame()) break;
             if (!window.drawable) Sleep(16);
             else if (window.interactiveResize) Sleep(0);

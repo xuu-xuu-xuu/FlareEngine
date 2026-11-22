@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-namespace se
+namespace flare
 {
 // 编辑器/离屏视口拥有的 HDR、LDR 与深度目标。接口刻意不暴露 D3D12 类型，
 // 由 Function/Rendering 的实现消费 RHI 句柄，Tool/Editor 只借观察视图。

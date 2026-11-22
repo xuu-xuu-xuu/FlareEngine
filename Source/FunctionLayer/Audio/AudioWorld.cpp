@@ -4,7 +4,7 @@
 #include <cmath>
 #include <limits>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -449,4 +449,4 @@ std::vector<VoiceHandle> AudioWorld::ActiveVoices() const
     }
     return result;
 }
-} // namespace se
+} // namespace flare

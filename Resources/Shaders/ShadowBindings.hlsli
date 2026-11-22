@@ -50,11 +50,11 @@ float3 CascadeSelectionForPosition(float3 position)
 #ifdef SE_PCSS
 #include "ShadowFilterBindings.hlsli"
 #endif
-float CascadeVisibility(uint slice,float3 position,float3 normal,float3 lightDirection)
+float CascadeVisibility(uint slice,float3 position,float3 normal,float3 lightDirection,float2 screenPixel)
 {
     float result=1;
 #ifdef SE_PCSS
-    if(filterParameters.w>.5&&framePointCount.z>.5)result=EvaluateShadowFilter(slice,position,normal,lightDirection).visibility;
+    if(filterParameters.w>.5&&framePointCount.z>.5)result=EvaluateShadowFilter(slice,position,normal,lightDirection,screenPixel).visibility;
     else
 #endif
     {
@@ -67,29 +67,50 @@ float CascadeVisibility(uint slice,float3 position,float3 normal,float3 lightDir
         {
             float reference=coordinate.z-shadowParameters.y-shadowParameters.z*(1-saturate(dot(normal,lightDirection)));
             float2 gradient=CascadeReceiverGradient(slice,normal);
-            float2 sampleUv=uv;
-#if SE_CSM_RECEIVER_PLANE
-            // 比较采样器为 point：先对准真实深度 texel 中心，再修正平面深度。
-            // 只补整数 tap 会残留半个 texel 的量化偏差，仍在斜面上形成条纹。
-            sampleUv=(floor(uv/shadowParameters.x)+.5)*shadowParameters.x;
-#endif
-            float2 centerDelta=sampleUv-uv;
-            result=directionalShadow.SampleCmpLevelZero(shadowSampler,float3(sampleUv,slice),reference+dot(gradient,centerDelta));
-            if(framePointCount.z>.5)
+            if(framePointCount.z<=.5)
             {
-                float filtered=0;
-                [unroll]for(int y=-2;y<=2;++y)[unroll]for(int x=-2;x<=2;++x)
-                {
-                    float2 tap=float2(x,y)*shadowParameters.x;
-                    float tapReference=reference+dot(gradient,centerDelta+tap);
-                    filtered+=directionalShadow.SampleCmpLevelZero(shadowSampler,float3(sampleUv+tap,slice),tapReference);
-                }
-                result=filtered/25;
+                float2 sampleUv=uv;
+#if SE_CSM_RECEIVER_PLANE
+                // 非 PCF 模式对准真实深度 texel 中心，保持严格单纹素点采样语义。
+                sampleUv=(floor(uv/shadowParameters.x)+.5)*shadowParameters.x;
+#endif
+                float2 centerDelta=sampleUv-uv;
+                result=directionalShadow.SampleCmpLevelZero(shadowSampler,float3(sampleUv,slice),reference+dot(gradient,centerDelta));
+            }
+            else
+            {
+                // Sigg & Hadwiger (GPU Gems 2)：利用 2×2=4 次硬件双线性比较采样精确求值 4×4 三次 B 样条平滑滤波核。
+                float2 maxGrad=0.0015/max(shadowParameters.xx,1e-6);
+                float2 clampedGradient=clamp(gradient,-maxGrad,maxGrad);
+                float bilinearGuard=0.5*dot(abs(clampedGradient),shadowParameters.xx);
+                float2 invTexel=1.0/max(shadowParameters.xx,1e-6);
+                float2 texPos=uv*invTexel-0.5;
+                float2 baseTex=floor(texPos);
+                float2 f=texPos-baseTex;
+                float2 oneMinusF=1.0-f;
+                float2 g0=(oneMinusF*oneMinusF*oneMinusF)*(1.0/6.0);
+                float2 g1=(4.0-6.0*f*f+3.0*f*f*f)*(1.0/6.0);
+                float2 g2=(1.0+3.0*f+3.0*f*f-3.0*f*f*f)*(1.0/6.0);
+                float2 g3=(f*f*f)*(1.0/6.0);
+                float2 w0=g0+g1;
+                float2 w1=1.0-w0;
+                float2 uv0=(baseTex-0.5+g1/max(w0,1e-6))*shadowParameters.x;
+                float2 uv1=(baseTex+1.5+g3/max(w1,1e-6))*shadowParameters.x;
+                float baseRef=reference-bilinearGuard;
+                float c00=directionalShadow.SampleCmpLevelZero(shadowSampler,float3(uv0.x,uv0.y,slice),baseRef+dot(clampedGradient,float2(uv0.x,uv0.y)-uv));
+                float c10=directionalShadow.SampleCmpLevelZero(shadowSampler,float3(uv1.x,uv0.y,slice),baseRef+dot(clampedGradient,float2(uv1.x,uv0.y)-uv));
+                float c01=directionalShadow.SampleCmpLevelZero(shadowSampler,float3(uv0.x,uv1.y,slice),baseRef+dot(clampedGradient,float2(uv0.x,uv1.y)-uv));
+                float c11=directionalShadow.SampleCmpLevelZero(shadowSampler,float3(uv1.x,uv1.y,slice),baseRef+dot(clampedGradient,float2(uv1.x,uv1.y)-uv));
+                result=lerp(lerp(c00,c10,w1.x),lerp(c01,c11,w1.x),w1.y);
             }
         }
     }
     }
     return result;
+}
+float CascadeVisibility(uint slice,float3 position,float3 normal,float3 lightDirection)
+{
+    return CascadeVisibility(slice,position,normal,lightDirection,float2(0,0));
 }
 float3 CascadeDebugColor(float3 position)
 {
@@ -107,7 +128,7 @@ float3 CascadeDebugColor(float3 position)
     return result;
 }
 #endif
-float ShadowVisibility(float3 position,float3 normal,float3 lightDirection)
+float ShadowVisibility(float3 position,float3 normal,float3 lightDirection,float2 screenPixel)
 {
     float visibility=1;
 #ifdef SE_CASCADED
@@ -116,8 +137,8 @@ float ShadowVisibility(float3 position,float3 normal,float3 lightDirection)
         float3 selected=CascadeSelectionForPosition(position);
         if(selected.x>=0)
         {
-            visibility=CascadeVisibility((uint)selected.x,position,normal,lightDirection);
-            if(selected.y!=selected.x)visibility=lerp(visibility,CascadeVisibility((uint)selected.y,position,normal,lightDirection),selected.z);
+            visibility=CascadeVisibility((uint)selected.x,position,normal,lightDirection,screenPixel);
+            if(selected.y!=selected.x)visibility=lerp(visibility,CascadeVisibility((uint)selected.y,position,normal,lightDirection,screenPixel),selected.z);
         }
     }
 #else
@@ -131,17 +152,39 @@ float ShadowVisibility(float3 position,float3 normal,float3 lightDirection)
             if(all(uv>=0)&&all(uv<=1)&&coordinate.z>=0&&coordinate.z<=1)
             {
                 float reference=coordinate.z-shadowParameters.y-shadowParameters.z*(1-saturate(dot(normal,lightDirection)));
-                if(framePointCount.z<0.5)visibility=directionalShadow.SampleCmpLevelZero(shadowSampler,uv,reference);
+                if(framePointCount.z<0.5)
+                {
+                    float2 center=(floor(uv/shadowParameters.x)+0.5)*shadowParameters.x;
+                    visibility=directionalShadow.SampleCmpLevelZero(shadowSampler,center,reference);
+                }
                 else
                 {
-                    float filtered=0;
-                    [unroll]for(int y=-1;y<=1;++y)[unroll]for(int x=-1;x<=1;++x)
-                        filtered+=directionalShadow.SampleCmpLevelZero(shadowSampler,uv+float2(x,y)*shadowParameters.x,reference);
-                    visibility=filtered/9;
+                    float2 invTexel=1.0/max(shadowParameters.xx,1e-6);
+                    float2 texPos=uv*invTexel-0.5;
+                    float2 baseTex=floor(texPos);
+                    float2 f=texPos-baseTex;
+                    float2 oneMinusF=1.0-f;
+                    float2 g0=(oneMinusF*oneMinusF*oneMinusF)*(1.0/6.0);
+                    float2 g1=(4.0-6.0*f*f+3.0*f*f*f)*(1.0/6.0);
+                    float2 g2=(1.0+3.0*f+3.0*f*f-3.0*f*f*f)*(1.0/6.0);
+                    float2 g3=(f*f*f)*(1.0/6.0);
+                    float2 w0=g0+g1;
+                    float2 w1=1.0-w0;
+                    float2 uv0=(baseTex-0.5+g1/max(w0,1e-6))*shadowParameters.x;
+                    float2 uv1=(baseTex+1.5+g3/max(w1,1e-6))*shadowParameters.x;
+                    float c00=directionalShadow.SampleCmpLevelZero(shadowSampler,float2(uv0.x,uv0.y),reference);
+                    float c10=directionalShadow.SampleCmpLevelZero(shadowSampler,float2(uv1.x,uv0.y),reference);
+                    float c01=directionalShadow.SampleCmpLevelZero(shadowSampler,float2(uv0.x,uv1.y),reference);
+                    float c11=directionalShadow.SampleCmpLevelZero(shadowSampler,float2(uv1.x,uv1.y),reference);
+                    visibility=lerp(lerp(c00,c10,w1.x),lerp(c01,c11,w1.x),w1.y);
                 }
             }
         }
     }
 #endif
     return visibility;
+}
+float ShadowVisibility(float3 position,float3 normal,float3 lightDirection)
+{
+    return ShadowVisibility(position,normal,lightDirection,float2(0,0));
 }

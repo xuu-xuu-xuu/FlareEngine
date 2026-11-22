@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <span>
 
-namespace se
+namespace flare
 {
 // G14：TAA 与时域超分的 CPU 参考。抖动、重投影、YCoCg 邻域夹取、历史混合与失效
 // 都按与 GPU 计划一致的公式实现；真正的历史纹理/速度缓冲仍由 RHI 与 Shader 承担。

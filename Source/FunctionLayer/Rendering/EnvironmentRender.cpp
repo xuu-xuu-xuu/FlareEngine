@@ -2,7 +2,7 @@
 #include "ResourceLayer/Assets/AssetIO.h"
 #include <algorithm>
 
-namespace se
+namespace flare
 {
 namespace
 {

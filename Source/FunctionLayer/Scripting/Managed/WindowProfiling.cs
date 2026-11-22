@@ -15,6 +15,6 @@ public sealed partial class EngineSession
 
 internal static partial class NativeMethods
 {
-    [LibraryImport(Library,EntryPoint="se_session_set_window_profile",StringMarshalling=StringMarshalling.Utf8)]
+    [LibraryImport(Library,EntryPoint="flare_session_set_window_profile",StringMarshalling=StringMarshalling.Utf8)]
     internal static partial int SetWindowProfile(ulong session,string? path,uint length,uint width,uint height);
 }

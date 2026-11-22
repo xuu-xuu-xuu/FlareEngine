@@ -3,7 +3,7 @@
 #include "CoreLayer/Math/Math.h"
 #include <algorithm>
 
-namespace se
+namespace flare
 {
 inline constexpr float CameraRigidTolerance = 1e-4f;
 

@@ -15,7 +15,7 @@
 #include <sstream>
 #include <utility>
 
-namespace se::videoencoder
+namespace flare::videoencoder
 {
 namespace
 {
@@ -451,4 +451,4 @@ void JsonWriter::Null()
     WritePrefix();
     text_ += "null";
 }
-} // namespace se::videoencoder
+} // namespace flare::videoencoder

@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <string>
 
-namespace se
+namespace flare
 {
 rhi::ForwardLighting PrepareForwardLighting(std::span<const LightInstance> lights,float exposure,Vec3 sky,
     std::vector<AssetDiagnostic>& diagnostics,bool clustered)

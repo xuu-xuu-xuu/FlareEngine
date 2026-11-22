@@ -1,10 +1,10 @@
 #pragma once
 #include "HdrImage.h"
 
-namespace se
+namespace flare
 {
 // 离线拟合器来源及原许可证：ThirdParty/LtcReference/UPSTREAM.json。
-inline constexpr const char* LtcCookerVersion="SelfEngine.Ltc.2/ggx-correlated-single-scatter-vndf2018/selfshadow-31e5e96";
+inline constexpr const char* LtcCookerVersion="FlareEngine.Ltc.2/ggx-correlated-single-scatter-vndf2018/selfshadow-31e5e96";
 inline constexpr float LtcMinimumRoughness=.045f,LtcMinimumNv=.0001f;
 struct LtcBakeSettings
 {

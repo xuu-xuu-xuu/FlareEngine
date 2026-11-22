@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 Quat DirectionToRotation(Vec3 directionToLight)
 {

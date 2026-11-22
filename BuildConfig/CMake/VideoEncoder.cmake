@@ -6,10 +6,10 @@ add_executable(FlareVideoEncoder
     Tools/VideoEncoder/VideoEncoderMp4.cpp
     Tools/VideoEncoder/VideoEncoderPpm.cpp
     Tools/VideoEncoder/VideoEncoderSupport.cpp)
-se_target(FlareVideoEncoder)
+flare_target(FlareVideoEncoder)
 target_link_libraries(FlareVideoEncoder PRIVATE mfplat mfreadwrite mfuuid ole32 wmcodecdspuuid)
 set_target_properties(FlareVideoEncoder PROPERTIES OUTPUT_NAME VideoEncoder)
 # 构建入口别名：允许 `cmake --build <dir> --target VideoEncoder` 直接构建交付程序，
 # 而 CMake 目标本身仍沿用 FlareVideoEncoder 命名。
 add_custom_target(VideoEncoder DEPENDS FlareVideoEncoder)
-add_dependencies(SelfEngineEditor FlareVideoEncoder)
+add_dependencies(FlareEditor FlareVideoEncoder)

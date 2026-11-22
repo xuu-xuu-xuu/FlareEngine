@@ -30,32 +30,32 @@ int wmain(int argc,wchar_t** argv)
     try
     {
         const auto directory=std::filesystem::absolute(argv[2]);std::filesystem::create_directories(directory);
-        std::vector<se::AssetDiagnostic> diagnostics;nlohmann::json tables=nlohmann::json::array();
+        std::vector<flare::AssetDiagnostic> diagnostics;nlohmann::json tables=nlohmann::json::array();
         const auto record=[&](const char* name,bool hit,std::chrono::steady_clock::time_point start)
         {
-            std::vector<std::uint8_t> bytes;if(!se::asset_io::Read(directory/name,bytes))return false;
+            std::vector<std::uint8_t> bytes;if(!flare::asset_io::Read(directory/name,bytes))return false;
             const auto ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
-            tables.push_back({{"file",name},{"sha256",se::Sha256(bytes)},{"bytes",bytes.size()},{"cache_hit",hit},{"cpu_wall_ms",ms}});return true;
+            tables.push_back({{"file",name},{"sha256",flare::Sha256(bytes)},{"bytes",bytes.size()},{"cache_hit",hit},{"cpu_wall_ms",ms}});return true;
         };
         const auto failed=[&](const char* name){for(const auto& d:diagnostics)print(d.key.c_str(),d.detail);print("RenderingCooker.Failed",name);return 1;};
-        bool hit=false;auto start=std::chrono::steady_clock::now();const se::BrdfEnergySettings direct;
-        if(!se::CookBrdfEnergy(directory/"direct-energy.sebrdf",direct,hit,diagnostics,threads)||!record("direct-energy.sebrdf",hit,start))return failed("direct-energy.sebrdf");
-        start=std::chrono::steady_clock::now();const se::LtcBakeSettings ltc;
-        if(!se::CookLtc(directory/"rectangle.seltc",ltc,hit,diagnostics)||!record("rectangle.seltc",hit,start))return failed("rectangle.seltc");
-        start=std::chrono::steady_clock::now();se::SheenEnergyLut sheen;
-        hit=se::LoadSheenEnergy(directory/"sheen.sesheen",sheen)&&sheen.size==ltc.size&&sheen.samples==4096;
-        if((!hit&&(!se::BakeSheenEnergy(ltc.size,4096,sheen)||!se::SaveSheenEnergy(directory/"sheen.sesheen",sheen)))||!record("sheen.sesheen",hit,start))return failed("sheen.sesheen");
-        start=std::chrono::steady_clock::now();const se::SkinDiffuseSettings skin;
-        if(!se::CookSkinDiffuse(directory/"skin.seskin",skin,hit,diagnostics,threads)||!record("skin.seskin",hit,start))return failed("skin.seskin");
-        const auto report=nlohmann::json{{"format","SelfEngine.RenderingTables"},{"schema",1},{"tables",tables},
-            {"direct",{{"algorithm",se::BrdfEnergyCookerVersion},{"width",direct.width},{"height",direct.height},{"samples",direct.samples}}},
-            {"ltc",{{"algorithm",se::LtcCookerVersion},{"size",ltc.size},{"sample_side",ltc.sampleSide}}},
+        bool hit=false;auto start=std::chrono::steady_clock::now();const flare::BrdfEnergySettings direct;
+        if(!flare::CookBrdfEnergy(directory/"direct-energy.sebrdf",direct,hit,diagnostics,threads)||!record("direct-energy.sebrdf",hit,start))return failed("direct-energy.sebrdf");
+        start=std::chrono::steady_clock::now();const flare::LtcBakeSettings ltc;
+        if(!flare::CookLtc(directory/"rectangle.seltc",ltc,hit,diagnostics)||!record("rectangle.seltc",hit,start))return failed("rectangle.seltc");
+        start=std::chrono::steady_clock::now();flare::SheenEnergyLut sheen;
+        hit=flare::LoadSheenEnergy(directory/"sheen.sesheen",sheen)&&sheen.size==ltc.size&&sheen.samples==4096;
+        if((!hit&&(!flare::BakeSheenEnergy(ltc.size,4096,sheen)||!flare::SaveSheenEnergy(directory/"sheen.sesheen",sheen)))||!record("sheen.sesheen",hit,start))return failed("sheen.sesheen");
+        start=std::chrono::steady_clock::now();const flare::SkinDiffuseSettings skin;
+        if(!flare::CookSkinDiffuse(directory/"skin.seskin",skin,hit,diagnostics,threads)||!record("skin.seskin",hit,start))return failed("skin.seskin");
+        const auto report=nlohmann::json{{"format","FlareEngine.RenderingTables"},{"schema",1},{"tables",tables},
+            {"direct",{{"algorithm",flare::BrdfEnergyCookerVersion},{"width",direct.width},{"height",direct.height},{"samples",direct.samples}}},
+            {"ltc",{{"algorithm",flare::LtcCookerVersion},{"size",ltc.size},{"sample_side",ltc.sampleSide}}},
             {"sheen",{{"distribution","Charlie/Ashikhmin; normalized directional energy"},{"size",ltc.size},{"samples",4096}}},
-            {"skin",{{"algorithm",se::SkinDiffuseCookerVersion},{"width",skin.width},{"height",skin.height},{"samples_per_gaussian",skin.samples}}},
+            {"skin",{{"algorithm",flare::SkinDiffuseCookerVersion},{"width",skin.width},{"height",skin.height},{"samples_per_gaussian",skin.samples}}},
             {"timing_scope","offline CPU bake/load; not frame/GPU timing"},{"gpu_upload","RGBA32Float; CPU LTC RG plus sheen energy/normalizer BA packed only during upload"},
             {"ltc_citation","Heitz, Dupuy, Hill, Neubelt. Real-Time Polygonal-Light Shading with Linearly Transformed Cosines. ACM TOG 35(4), 2016."},
             {"ltc_license_notice","Binary distributions retain ThirdParty/LtcReference/LICENSE and glm/LICENSE-MIT.txt."}}.dump(2);
-        if(!se::asset_io::WriteAtomic(directory/"rendering-tables.json",{reinterpret_cast<const std::uint8_t*>(report.data()),report.size()}))return failed("rendering-tables.json");
+        if(!flare::asset_io::WriteAtomic(directory/"rendering-tables.json",{reinterpret_cast<const std::uint8_t*>(report.data()),report.size()}))return failed("rendering-tables.json");
         print("RenderingCooker.Complete");return 0;
     }
     catch(const std::exception&){print("RenderingCooker.Failed");return 1;}

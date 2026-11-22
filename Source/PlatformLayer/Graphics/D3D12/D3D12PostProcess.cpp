@@ -151,9 +151,9 @@ bool RecordD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const 
     const auto width=targets.width,height=targets.height;
     const auto use=[&](ID3D12Resource& resource,D3D12_RESOURCE_STATES state,const char* name){return CheckGraphicsResult(states.Use(commands,resource,state,name),text,"D3D12.StateTrackingFailed");};
     const auto stamp=[&](UINT stage,bool end){if(p.timingEnabled)commands.EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,first+stage*2+(end?1:0));};
-    const auto fullscreen=[&](UINT pipeline,UINT table,UINT width,UINT height,D3D12_CPU_DESCRIPTOR_HANDLE rtv,se::Vec4 options){
+    const auto fullscreen=[&](UINT pipeline,UINT table,UINT width,UINT height,D3D12_CPU_DESCRIPTOR_HANDLE rtv,flare::Vec4 options){
         const auto& program=*content.postPipelines[pipeline];commands.SetPipelineState(program.pipeline.Get());commands.SetGraphicsRootSignature(program.rootSignature.Get());
-        const se::rhi::PostProcessConstants constants{{content.forward->exposure,settings.bloomThreshold,settings.bloom?settings.bloomStrength:0,settings.toneMapping?1.0f:0.0f},
+        const flare::rhi::PostProcessConstants constants{{content.forward->exposure,settings.bloomThreshold,settings.bloom?settings.bloomStrength:0,settings.toneMapping?1.0f:0.0f},
             {float(width),float(height),1.0f/float(width),1.0f/float(height)},options};commands.SetGraphicsRoot32BitConstants(0,12,&constants,0);
         ID3D12DescriptorHeap* heaps[]{frame.postDescriptors.Heap()};commands.SetDescriptorHeaps(1,heaps);commands.SetGraphicsRootDescriptorTable(1,frame.postDescriptors.Draw(table));
         commands.OMSetRenderTargets(1,&rtv,FALSE,nullptr);const D3D12_VIEWPORT viewport{0,0,float(width),float(height),0,1};const D3D12_RECT scissor{0,0,LONG(width),LONG(height)};
@@ -233,7 +233,7 @@ bool RecordD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const 
             const D3D12_RECT scissor{LONG(std::clamp(std::floor(quad.clip.x),0.0f,float(width))),LONG(std::clamp(std::floor(quad.clip.y),0.0f,float(height))),
                 LONG(std::clamp(std::ceil(quad.clip.x+quad.clip.z),0.0f,float(width))),LONG(std::clamp(std::ceil(quad.clip.y+quad.clip.w),0.0f,float(height)))};
             if(scissor.right<=scissor.left||scissor.bottom<=scissor.top||quad.rectangle.z<=0||quad.rectangle.w<=0||quad.color.w<=0)continue;
-            const se::rhi::OverlayConstants constants{quad.rectangle,quad.color,{float(width),float(height),0,0}};commands.SetGraphicsRoot32BitConstants(0,12,&constants,0);commands.RSSetScissorRects(1,&scissor);commands.DrawInstanced(6,1,0,0);
+            const flare::rhi::OverlayConstants constants{quad.rectangle,quad.color,{float(width),float(height),0,0}};commands.SetGraphicsRoot32BitConstants(0,12,&constants,0);commands.RSSetScissorRects(1,&scissor);commands.DrawInstanced(6,1,0,0);
         }
     }
     stamp(5,true);return true;

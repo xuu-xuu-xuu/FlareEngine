@@ -8,7 +8,7 @@
 #include <limits>
 #include <set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -99,7 +99,7 @@ bool EncodeDiffuseProbeAsset(const DiffuseProbeAsset& asset,std::vector<std::uin
                 {"probe_count",grid.diffuse.size()},{"cell_count",grid.cellValid.size()}};
         }
         Json sources=Json::array();for(const auto& source:asset.sources)sources.push_back({{"path",source.path},{"sha256",source.sha256}});
-        const Json metadata{{"format","SelfEngine.DiffuseProbe"},{"schema",1},{"algorithm",DiffuseProbeCookerVersion},{"basis",basis},
+        const Json metadata{{"format","FlareEngine.DiffuseProbe"},{"schema",1},{"algorithm",DiffuseProbeCookerVersion},{"basis",basis},
             {"units","diffuse E/pi"},{"transfer","linear-rgb-f32-le"},{"coefficients_per_probe",9},{"channels",3},
             {"environment_source_sha256",asset.environmentSourceHash},{"local_source_sha256",asset.localSourceHash},{"sources",sources},
             {"bake",{{"samples",asset.bakeSettings.samples},{"ray_bias",asset.bakeSettings.rayBias},{"max_distance",asset.bakeSettings.maxDistance}}},
@@ -118,7 +118,7 @@ bool DecodeDiffuseProbeAsset(std::span<const std::uint8_t> bytes,DiffuseProbeAss
     try
     {
         const auto metadata=Json::parse(bytes.begin()+12,bytes.begin()+12+length);
-        if(metadata.at("format")!="SelfEngine.DiffuseProbe"||metadata.at("schema")!=1||metadata.at("algorithm")!=DiffuseProbeCookerVersion)
+        if(metadata.at("format")!="FlareEngine.DiffuseProbe"||metadata.at("schema")!=1||metadata.at("algorithm")!=DiffuseProbeCookerVersion)
         {asset_io::Diagnostic(diagnostics,"DiffuseProbe.VersionUnsupported");return false;}
         if(metadata.at("basis")!=basis||metadata.at("units")!="diffuse E/pi"||metadata.at("transfer")!="linear-rgb-f32-le"
             ||metadata.at("coefficients_per_probe")!=9||metadata.at("channels")!=3)return Invalid(diagnostics,"basis/units/layout");

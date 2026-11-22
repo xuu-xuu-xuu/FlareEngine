@@ -3,7 +3,7 @@
 
 struct ID3D12Device;
 
-namespace se::d3d12
+namespace flare::d3d12
 {
 // 必须在任何 D3D12 设备创建之前调用；失败只表示 DRED 不可用，不影响渲染。
 bool EnableDred(long* result=nullptr) noexcept;

@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace se
+namespace flare
 {
 struct MaterialThumbnail
 {
@@ -15,4 +15,4 @@ struct MaterialThumbnail
 // baseColor 为线性 RGBA；metallic/roughness 取 [0,1]。
 MaterialThumbnail RenderMaterialThumbnail(const Vec4& baseColor, float metallic, float roughness,
     std::uint32_t size = 64);
-} // namespace se
+} // namespace flare

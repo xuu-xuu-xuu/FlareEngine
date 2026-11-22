@@ -25,7 +25,7 @@
 #include <iterator>
 #include <set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -213,14 +213,14 @@ int RunManagedEditorWorker(const EditorWorkerOptions& options,const fs::path& en
             if(!WriteJsonAtomic(operation/"build-status.json",status))return 5;
         }
         if(!candidate.empty()){lastCandidate=candidate;lastManifest=candidateManifest;}
-        SetPathEnvironment(L"SELFENGINE_EDITOR_RESTART_REQUEST",operation/"restart.json");
-        SetPathEnvironment(L"SELFENGINE_EDITOR_BUILD_STATUS",operation/"build-status.json");
-        SetPathEnvironment(L"SELFENGINE_EDITOR_BUILD_DIAGNOSTICS",operation/"build.log");
-        SetPathEnvironment(L"SELFENGINE_EDITOR_ENGINE_ROOT",engineRoot);
+        SetPathEnvironment(L"FLARE_EDITOR_RESTART_REQUEST",operation/"restart.json");
+        SetPathEnvironment(L"FLARE_EDITOR_BUILD_STATUS",operation/"build-status.json");
+        SetPathEnvironment(L"FLARE_EDITOR_BUILD_DIAGNOSTICS",operation/"build.log");
+        SetPathEnvironment(L"FLARE_EDITOR_ENGINE_ROOT",engineRoot);
         if(workflow)
         {
-            SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SMOKE_WORKFLOW_STAGE",std::to_wstring(workflowStage).c_str());
-            SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SMOKE_HOST_START",std::to_wstring(GetTickCount64()).c_str());
+            SetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_WORKFLOW_STAGE",std::to_wstring(workflowStage).c_str());
+            SetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_HOST_START",std::to_wstring(GetTickCount64()).c_str());
         }
         if(!ReportStartup(StartupStage::Runtime))return 0;
         int exitCode=1;
@@ -236,13 +236,13 @@ int RunManagedEditorWorker(const EditorWorkerOptions& options,const fs::path& en
             if(!manifest.is_object())manifest=candidateManifest.value("projectSettings",Json::object());
             const auto scene=options.scene.empty()?project/TextPath(manifest.value("entryScene",std::string{})):fs::absolute(options.scene);
             const auto ui=TextPath(settings.value("entryUi",std::string{}));
-            SetPathEnvironment(L"SELFENGINE_EDITOR_SCENE_FILE",scene);
-            SetPathEnvironment(L"SELFENGINE_EDITOR_UI_FILE",ui.empty()?fs::path{}:project/ui);
-            SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_EXPLICIT",(!options.scene.empty()||options.smokePlayback)?L"1":nullptr);
-            SetEnvironmentVariableW(L"SELFENGINE_EDITOR_MANAGED_HOST",L"1");
+            SetPathEnvironment(L"FLARE_EDITOR_SCENE_FILE",scene);
+            SetPathEnvironment(L"FLARE_EDITOR_UI_FILE",ui.empty()?fs::path{}:project/ui);
+            SetEnvironmentVariableW(L"FLARE_EDITOR_SCENE_EXPLICIT",(!options.scene.empty()||options.smokePlayback)?L"1":nullptr);
+            SetEnvironmentVariableW(L"FLARE_EDITOR_MANAGED_HOST",L"1");
             SetEnvironmentVariableW(L"FLARE_EDITOR_UNCOMPILED_SCRIPTS",nullptr);
-            SetPathEnvironment(L"SELFENGINE_EDITOR_CAPTURE_FILE",options.capture.empty()?fs::path{}:fs::absolute(options.capture));
-            SetEnvironmentVariableW(L"SELFENGINE_EDITOR_CAPTURE_FRAME",std::to_wstring(options.frames?options.frames:30).c_str());
+            SetPathEnvironment(L"FLARE_EDITOR_CAPTURE_FILE",options.capture.empty()?fs::path{}:fs::absolute(options.capture));
+            SetEnvironmentVariableW(L"FLARE_EDITOR_CAPTURE_FRAME",std::to_wstring(options.frames?options.frames:30).c_str());
             std::vector<std::wstring> run{L"--editor",L"--project-root",project.wstring(),L"--project",(candidate/TextPath(candidateManifest.at("assembly").get<std::string>())).wstring(),
                 L"--scene",scene.wstring(),L"--locale",WideText(options.locale)};
             const auto bindings=TextPath(settings.value("bindings",std::string{}));if(!bindings.empty()){run.push_back(L"--bindings");run.push_back((project/bindings).wstring());}
@@ -287,7 +287,7 @@ int RunManagedEditorWorker(const EditorWorkerOptions& options,const fs::path& en
 int RunNativeEditorWorker(const EditorWorkerOptions& options)
 {
     if(!ReportStartup(StartupStage::Runtime))return 0;
-    SetEnvironmentVariableW(L"SELFENGINE_EDITOR_MANAGED_HOST",nullptr);
+    SetEnvironmentVariableW(L"FLARE_EDITOR_MANAGED_HOST",nullptr);
     SetEnvironmentVariableW(L"FLARE_EDITOR_UNCOMPILED_SCRIPTS",nullptr);
     EditorRenderer renderer;
     if(!options.capture.empty())renderer.SetCaptureOutput(options.capture,options.frames?options.frames:30);
@@ -372,17 +372,17 @@ int RunEditorWorker(const EditorWorkerOptions& options)
         return busy?6:7;
     }
     EditorLoadingScreen loading(loadingStrings,options.projectRoot,options.hidden);
-    SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SCENE_EXPLICIT",(!options.scene.empty()||options.smokePlayback)?L"1":nullptr);
+    SetEnvironmentVariableW(L"FLARE_EDITOR_SCENE_EXPLICIT",(!options.scene.empty()||options.smokePlayback)?L"1":nullptr);
     // 仅正式 Worker 参数设置烟测环境；RunEditorApp 的共用驱动负责执行和报告。
-    SetPathEnvironment(L"SELFENGINE_EDITOR_SMOKE_REPORT",options.smokeExportReport.empty()?fs::path{}:fs::absolute(options.smokeExportReport));
-    SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SMOKE_EXPORT",options.smokeExportName.empty()?nullptr:WideText(options.smokeExportName).c_str());
-    SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SMOKE_PLAYBACK",options.smokePlayback?L"1":nullptr);
-    SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SMOKE_CANCEL_MS",std::to_wstring(options.smokeCancelMilliseconds).c_str());
-    SetPathEnvironment(L"SELFENGINE_EDITOR_SMOKE_WORKFLOW",options.smokeWorkflow.empty()?fs::path{}:fs::absolute(options.smokeWorkflow));
-    SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SMOKE_WORKFLOW_STAGE",nullptr);
-    SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SMOKE_HOST_START",nullptr);
-    SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SMOKE_SUPERVISOR_PID",options.smokeWorkflow.empty()?nullptr:std::to_wstring(GetCurrentProcessId()).c_str());
-    SetEnvironmentVariableW(L"SELFENGINE_EDITOR_SMOKE_SUPERVISOR_START",options.smokeWorkflow.empty()?nullptr:std::to_wstring(supervisorStarted).c_str());
+    SetPathEnvironment(L"FLARE_EDITOR_SMOKE_REPORT",options.smokeExportReport.empty()?fs::path{}:fs::absolute(options.smokeExportReport));
+    SetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_EXPORT",options.smokeExportName.empty()?nullptr:WideText(options.smokeExportName).c_str());
+    SetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_PLAYBACK",options.smokePlayback?L"1":nullptr);
+    SetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_CANCEL_MS",std::to_wstring(options.smokeCancelMilliseconds).c_str());
+    SetPathEnvironment(L"FLARE_EDITOR_SMOKE_WORKFLOW",options.smokeWorkflow.empty()?fs::path{}:fs::absolute(options.smokeWorkflow));
+    SetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_WORKFLOW_STAGE",nullptr);
+    SetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_HOST_START",nullptr);
+    SetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_SUPERVISOR_PID",options.smokeWorkflow.empty()?nullptr:std::to_wstring(GetCurrentProcessId()).c_str());
+    SetEnvironmentVariableW(L"FLARE_EDITOR_SMOKE_SUPERVISOR_START",options.smokeWorkflow.empty()?nullptr:std::to_wstring(supervisorStarted).c_str());
     bool firstNativeLoad=true;
     for(;;)
     {
@@ -412,10 +412,10 @@ int RunEditorWorker(const EditorWorkerOptions& options)
         const Json status{{"schemaVersion",1},{"state","ready"},{"managed",bootInManagedHost},{"hasCandidate",false},
             {"sourceIdentity",""},{"candidateIdentity",""},{"candidateRoot",""},{"diagnosticKey",""},{"diagnosticsPath",PathText(operation/"build.log")},{"sourceFiles",Json::array()}};
         if(!WriteJsonAtomic(operation/"build-status.json",status))return 5;
-        SetPathEnvironment(L"SELFENGINE_EDITOR_RESTART_REQUEST",operation/"restart.json");
-        SetPathEnvironment(L"SELFENGINE_EDITOR_BUILD_STATUS",operation/"build-status.json");
-        SetPathEnvironment(L"SELFENGINE_EDITOR_BUILD_DIAGNOSTICS",operation/"build.log");
-        SetPathEnvironment(L"SELFENGINE_EDITOR_ENGINE_ROOT",engineRoot);
+        SetPathEnvironment(L"FLARE_EDITOR_RESTART_REQUEST",operation/"restart.json");
+        SetPathEnvironment(L"FLARE_EDITOR_BUILD_STATUS",operation/"build-status.json");
+        SetPathEnvironment(L"FLARE_EDITOR_BUILD_DIAGNOSTICS",operation/"build.log");
+        SetPathEnvironment(L"FLARE_EDITOR_ENGINE_ROOT",engineRoot);
         int result=1;
         if(bootInManagedHost)
         {
@@ -457,12 +457,12 @@ int RunEditorWorker(const EditorWorkerOptions& options)
                     }
                 }
             }
-            SetPathEnvironment(L"SELFENGINE_EDITOR_SCENE_FILE",scene);
-            SetPathEnvironment(L"SELFENGINE_EDITOR_UI_FILE",ui.empty()?fs::path{}:project/ui);
-            SetEnvironmentVariableW(L"SELFENGINE_EDITOR_MANAGED_HOST",L"1");
+            SetPathEnvironment(L"FLARE_EDITOR_SCENE_FILE",scene);
+            SetPathEnvironment(L"FLARE_EDITOR_UI_FILE",ui.empty()?fs::path{}:project/ui);
+            SetEnvironmentVariableW(L"FLARE_EDITOR_MANAGED_HOST",L"1");
             SetEnvironmentVariableW(L"FLARE_EDITOR_UNCOMPILED_SCRIPTS",(hasScriptsProject&&initialDll.empty())?L"1":nullptr);
-            SetPathEnvironment(L"SELFENGINE_EDITOR_CAPTURE_FILE",options.capture.empty()?fs::path{}:fs::absolute(options.capture));
-            SetEnvironmentVariableW(L"SELFENGINE_EDITOR_CAPTURE_FRAME",std::to_wstring(options.frames?options.frames:30).c_str());
+            SetPathEnvironment(L"FLARE_EDITOR_CAPTURE_FILE",options.capture.empty()?fs::path{}:fs::absolute(options.capture));
+            SetEnvironmentVariableW(L"FLARE_EDITOR_CAPTURE_FRAME",std::to_wstring(options.frames?options.frames:30).c_str());
             std::vector<std::wstring> run{L"--editor",L"--project-root",project.wstring(),L"--project",initialDll.wstring(),
                 L"--bindings",bindingsFile.wstring(),L"--scene",scene.wstring(),L"--locale",WideText(options.locale)};
             if(!ui.empty()){run.push_back(L"--ui");run.push_back((project/ui).wstring());}

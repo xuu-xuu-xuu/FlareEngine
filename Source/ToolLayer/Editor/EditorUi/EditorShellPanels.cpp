@@ -7,10 +7,11 @@
 #include <Windows.h>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 using namespace detail;
 
@@ -39,7 +40,123 @@ std::string CleanAssetDisplayName(const EditorAssetEntry& entry)
     else if (fileName.ends_with(".scene.json")) fileName.erase(fileName.size() - 11);
     return fileName;
 }
+
+constexpr std::uint64_t kFastDoubleClickMs = 340;
+
+std::uint32_t Utf8CodepointCount(std::string_view text) noexcept
+{
+    std::uint32_t count = 0;
+    for (std::size_t i = 0; i < text.size();)
+    {
+        ++count;
+        ++i;
+        while (i < text.size() && (static_cast<unsigned char>(text[i]) & 0xc0u) == 0x80u) ++i;
+    }
+    return count;
+}
+
+std::size_t Utf8ByteAtCodepoint(std::string_view s, std::uint32_t count) noexcept
+{
+    std::size_t i = 0;
+    while (i < s.size() && count--)
+    {
+        ++i;
+        while (i < s.size() && (static_cast<unsigned char>(s[i]) & 0xc0u) == 0x80u) ++i;
+    }
+    return i;
+}
+
+std::uint32_t StemCodepointsForAsset(std::string_view displayName, bool isFolder) noexcept
+{
+    if (isFolder) return Utf8CodepointCount(displayName);
+    const std::size_t dot = displayName.find_last_of('.');
+    if (dot == std::string_view::npos || dot == 0) return Utf8CodepointCount(displayName);
+    return Utf8CodepointCount(displayName.substr(0, dot));
+}
 } // namespace
+
+void EditorShell::PaintInlineTextEdit(UiTextEdit& edit, UiElementHandle element, UiElementHandle selectionEl,
+                                      float& scroll, float width, float height)
+{
+    if (!element.IsValid()) return;
+    const auto raw = edit.Text();
+    const auto caret = Utf8ByteAtCodepoint(raw, edit.Caret());
+    const auto anchor = Utf8ByteAtCodepoint(raw, edit.Anchor());
+    const std::string display = edit.DisplayText();
+    const bool composing = edit.Composing();
+    const std::size_t first = std::min(caret, anchor);
+    const std::size_t last = composing ? first + edit.Composition().size() : std::max(caret, anchor);
+
+    const float padX = 4.0f;
+    const float available = std::max(1.0f, width - padX * 2.0f);
+    const auto at = [&](std::size_t byte) -> float {
+        const std::size_t clamped = std::min(byte, display.size());
+        if (text_ != nullptr)
+        {
+            return text_->CaretRect(display, 13.0f, 100000.0f, false, static_cast<std::uint32_t>(clamped)).x;
+        }
+        return static_cast<float>(Utf8CodepointCount(std::string_view(display).substr(0, clamped))) * 7.2f;
+    };
+
+    const std::size_t active = composing ? last : caret;
+    const float activeX = std::max(0.0f, at(active));
+    scroll = std::clamp(scroll, std::max(0.0f, activeX - std::max(0.0f, available - 2.0f)), activeX);
+
+    std::size_t start = 0;
+    std::size_t end = display.size();
+    if (text_ != nullptr)
+    {
+        start = std::min<std::size_t>(display.size(), text_->HitTestCaret(display, 13.0f, 100000.0f, false, scroll, 0.0f));
+        scroll = at(start);
+        end = std::min<std::size_t>(display.size(), text_->HitTestCaret(display, 13.0f, 100000.0f, false, scroll + available, 0.0f));
+        if (end < start) end = start;
+    }
+    document_.SetText(element, std::string_view(display).substr(start, end - start));
+
+    if (selectionEl.IsValid())
+    {
+        const float left = std::clamp(at(first) - scroll, 0.0f, available);
+        const float right = std::clamp(at(last) - scroll, left, available);
+        const bool isCaretOnly = (first == last);
+        const float hlHeight = std::max(12.0f, height - 4.0f);
+        auto highlight = AbsoluteStyle(padX + left, (height - hlHeight) * 0.5f,
+                                       isCaretOnly ? 1.5f : std::max(1.5f, right - left), hlHeight);
+        highlight.background = isCaretOnly
+            ? UiInk(flare::palette::Heading)
+            : UiInk(flare::palette::workspace::Selection, 0.88f);
+        highlight.cornerRadius = isCaretOnly ? 0.0f : 2.0f;
+        highlight.padding = {};
+        highlight.pointerEvents = UiPointerEvents::None;
+        document_.SetStyle(selectionEl, highlight);
+        document_.SetVisible(selectionEl, true);
+    }
+}
+
+void EditorShell::PlaceInlineTextCaret(UiTextEdit& edit, UiElementHandle element, UiElementHandle selectionEl,
+                                       float& scroll, float clickX, bool extendSelection)
+{
+    if (!element.IsValid()) return;
+    const UiRect rect = layout_.Rect(element);
+    const std::string raw(edit.Text());
+    const float localX = std::max(0.0f, clickX - rect.x - 4.0f + scroll);
+    std::uint32_t targetCp = 0;
+    if (text_ != nullptr)
+    {
+        const std::size_t byte = std::min<std::size_t>(raw.size(),
+            text_->HitTestCaret(raw, 13.0f, 100000.0f, false, localX, 0.0f));
+        std::u32string prefix;
+        if (DecodeUtf8(std::string_view(raw).substr(0, byte), prefix))
+            targetCp = static_cast<std::uint32_t>(prefix.size());
+    }
+    else
+    {
+        const std::uint32_t total = Utf8CodepointCount(raw);
+        targetCp = std::min<std::uint32_t>(total, static_cast<std::uint32_t>(std::lround(localX / 7.2f)));
+    }
+    if (extendSelection) edit.Select(edit.Anchor(), targetCp);
+    else edit.SetCaret(targetCp);
+    PaintInlineTextEdit(edit, element, selectionEl, scroll, rect.width, rect.height);
+}
 
 bool EditorShell::AssetsHasFolders() const noexcept
 {
@@ -79,7 +196,7 @@ void EditorShell::BuildHierarchyRow(int index, UiElementHandle row)
             UiColor badgeColor = UiColor{0.36f, 0.42f, 0.50f, 0.85f};
             float radius = 2.5f;
             if (node.prefab) { badgeColor = UiColor{0.28f, 0.62f, 1.0f, 0.95f}; radius = 2.5f; }
-            else if (node.iconKind == "camera") { badgeColor = UiInk(flare::Gold, 0.92f); radius = 3.0f; }
+            else if (node.iconKind == "camera") { badgeColor = UiInk(flare::palette::Gold, 0.92f); radius = 3.0f; }
             else if (node.iconKind == "light") { badgeColor = UiColor{0.96f, 0.72f, 0.24f, 0.95f}; radius = 5.0f; }
             else if (node.iconKind == "mesh") { badgeColor = UiColor{0.26f, 0.70f, 0.88f, 0.90f}; radius = 2.5f; }
             else if (node.iconKind == "audio") { badgeColor = UiColor{0.95f, 0.56f, 0.22f, 0.92f}; radius = 3.0f; }
@@ -140,8 +257,8 @@ void EditorShell::BuildAssetIcon(UiElementHandle parent, float x, float y, float
 
     if (entry.type == "folder")
     {
-        const UiColor goldTab = UiInk(flare::Gold, 0.82f);
-        const UiColor goldBody = UiInk(flare::Gold, 0.96f);
+        const UiColor goldTab = UiInk(flare::palette::Gold, 0.82f);
+        const UiColor goldBody = UiInk(flare::palette::Gold, 0.96f);
         addRect(x, y + size * 0.12f, size * 0.46f, size * 0.22f, goldTab, 2.0f);
         addRect(x, y + size * 0.26f, size, size * 0.64f, goldBody, 2.5f);
         return;
@@ -165,12 +282,12 @@ void EditorShell::BuildAssetIcon(UiElementHandle parent, float x, float y, float
         return;
     }
 
-    const UiColor darkGlyph = UiInk(flare::Background);
+    const UiColor darkGlyph = UiInk(flare::palette::Background);
     const float glyphFont = size >= 28.0f ? 12.0f : 9.5f;
 
     if (entry.type == "scene")
     {
-        addRect(x, y, size, size, UiInk(flare::Gold), 3.5f);
+        addRect(x, y, size, size, UiInk(flare::palette::Gold), 3.5f);
         addGlyph(x, y, size, size, "★", darkGlyph, glyphFont);
     }
     else if (entry.type == "model")
@@ -265,12 +382,12 @@ void EditorShell::BuildAssetRow(int index, UiElementHandle row)
     rowStyle.padding = {textLeft, 0.0f, 6.0f, 0.0f};
     rowStyle.fontSize = 13.0f;
     rowStyle.textFlow = UiTextFlow::SingleLineEllipsis;
-    rowStyle.color = entry.type == "folder" ? UiInk(flare::Heading) : kText;
+    rowStyle.color = entry.type == "folder" ? UiInk(flare::palette::Heading) : kText;
     if (index == hoveredFolderDropRow_ && entry.type == "folder")
     {
         rowStyle.borderWidth = 1.0f;
-        rowStyle.borderColor = UiInk(flare::workspace::Focus);
-        rowStyle.background = UiInk(flare::workspace::Focus, 0.22f);
+        rowStyle.borderColor = UiInk(flare::palette::workspace::Focus);
+        rowStyle.background = UiInk(flare::palette::workspace::Focus, 0.22f);
     }
     document_.SetStyle(row, rowStyle);
     document_.SetText(row, CleanAssetDisplayName(entry));
@@ -314,15 +431,19 @@ bool EditorShell::BeginHierarchyRename(std::uint64_t id)
 
     hierarchyEditingId_ = id;
     pendingHierarchyRenameId_ = 0;
+    hierarchyEditScroll_ = 0.0f;
+    hierarchyEditSelecting_ = false;
     auto style = ButtonStyle(indent, y, w, kHierarchyRowHeight, kSurface);
     style.cornerRadius = 3.0f;
     style.borderWidth = 1.0f;
-    style.borderColor = UiInk(flare::workspace::Focus);
+    style.borderColor = UiInk(flare::palette::workspace::Focus);
     style.padding = {4.0f, 0.0f, 4.0f, 0.0f};
     document_.SetStyle(hierarchyEditElement_, style);
     hierarchyEdit_->SetText(currentLabel);
-    hierarchyEdit_->HandleKey('A', false, true);
+    hierarchyEdit_->Select(0, std::numeric_limits<std::uint32_t>::max());
     document_.SetVisible(hierarchyEditElement_, true);
+    PaintInlineTextEdit(*hierarchyEdit_, hierarchyEditElement_, hierarchyEditSelection_,
+                        hierarchyEditScroll_, w, kHierarchyRowHeight);
     dispatcher_.SetFocus(hierarchyEditElement_);
     return true;
 }
@@ -332,6 +453,9 @@ void EditorShell::EndHierarchyRename(bool commit)
     if (hierarchyEditingId_ == 0) return;
     const std::uint64_t id = hierarchyEditingId_;
     hierarchyEditingId_ = 0;
+    hierarchyEditSelecting_ = false;
+    if (dispatcher_.PointerCapture() == hierarchyEditElement_)
+        dispatcher_.ReleasePointerCapture();
     if (hierarchyEditElement_.IsValid())
         document_.SetVisible(hierarchyEditElement_, false);
     if (!commit || !hierarchyEdit_ || !propertyHandler_) return;
@@ -407,15 +531,19 @@ bool EditorShell::BeginAssetRename(const std::string& path)
 
     assetsRenamingPath_ = path;
     pendingAssetRenamePath_.clear();
+    assetsRenameScroll_ = 0.0f;
+    assetsRenameSelecting_ = false;
     auto style = ButtonStyle(editX, editY, editW, editH, kSurface);
     style.cornerRadius = 3.0f;
     style.borderWidth = 1.0f;
-    style.borderColor = UiInk(flare::workspace::Focus);
+    style.borderColor = UiInk(flare::palette::workspace::Focus);
     style.padding = {4.0f, 0.0f, 4.0f, 0.0f};
     document_.SetStyle(assetsRenameElement_, style);
     assetsRename_->SetText(initialName);
-    assetsRename_->HandleKey('A', false, true);
+    assetsRename_->Select(0, StemCodepointsForAsset(initialName, entry.type == "folder"));
     document_.SetVisible(assetsRenameElement_, true);
+    PaintInlineTextEdit(*assetsRename_, assetsRenameElement_, assetsRenameSelection_,
+                        assetsRenameScroll_, editW, editH);
     dispatcher_.SetFocus(assetsRenameElement_);
     return true;
 }
@@ -425,6 +553,9 @@ void EditorShell::EndAssetRename(bool commit)
     if (assetsRenamingPath_.empty()) return;
     const std::string targetPath = assetsRenamingPath_;
     assetsRenamingPath_.clear();
+    assetsRenameSelecting_ = false;
+    if (dispatcher_.PointerCapture() == assetsRenameElement_)
+        dispatcher_.ReleasePointerCapture();
     if (assetsRenameElement_.IsValid())
         document_.SetVisible(assetsRenameElement_, false);
     if (!commit || !assetsRename_ || !assetRenameHandler_) return;
@@ -459,7 +590,7 @@ void EditorShell::RefreshAssetsBreadcrumb(float width)
 
     auto barStyle = AbsoluteStyle(0.0f, 24.0f, width, 20.0f);
     barStyle.width = UiLength::Percent(100.0f);
-    barStyle.background = UiInk(flare::workspace::Header, 0.72f);
+    barStyle.background = UiInk(flare::palette::workspace::Header, 0.72f);
     barStyle.borderWidth = 1.0f;
     barStyle.borderColor = kBorder;
     document_.SetStyle(assetsBreadcrumbBar_, barStyle);
@@ -540,7 +671,7 @@ void EditorShell::RefreshAssetsBreadcrumb(float width)
         bs.fontSize = 11.5f;
         bs.cornerRadius = 3.0f;
         bs.padding = {4.0f, 0.0f, 4.0f, 0.0f};
-        bs.color = isActiveScope ? UiInk(flare::Gold) : kMuted;
+        bs.color = isActiveScope ? UiInk(flare::palette::Gold) : kMuted;
         document_.SetText(assetsBreadcrumbButtons_[i], text);
         document_.SetStyle(assetsBreadcrumbButtons_[i], bs);
         x += bw + 1.0f;
@@ -602,13 +733,13 @@ void EditorShell::RebuildAssetsGrid(float width, float height)
         const bool folderDropHover = (static_cast<int>(i) == hoveredFolderDropRow_ && entry.type == "folder");
         auto st = AbsoluteStyle(cx, cy, cardW, cardH);
         st.background = folderDropHover
-            ? UiInk(flare::workspace::Focus, 0.25f)
+            ? UiInk(flare::palette::workspace::Focus, 0.25f)
             : (selected
-                ? UiInk(activePanel_ == EditorPanelId::Assets ? flare::workspace::Selection : flare::workspace::InactiveSelection)
-                : UiInk(flare::workspace::Header, 0.55f));
+                ? UiInk(activePanel_ == EditorPanelId::Assets ? flare::palette::workspace::Selection : flare::palette::workspace::InactiveSelection)
+                : UiInk(flare::palette::workspace::Header, 0.55f));
         st.cornerRadius = 6.0f;
         st.borderWidth = 1.0f;
-        st.borderColor = (selected || folderDropHover) ? UiInk(flare::workspace::Focus) : kBorder;
+        st.borderColor = (selected || folderDropHover) ? UiInk(flare::palette::workspace::Focus) : kBorder;
         document_.SetStyle(card, st);
 
         BuildAssetIcon(card, (cardW - 38.0f) * 0.5f, 8.0f, 38.0f, entry);
@@ -619,7 +750,7 @@ void EditorShell::RebuildAssetsGrid(float width, float height)
             const std::string name = CleanAssetDisplayName(entry);
             auto ls = AbsoluteStyle(4.0f, 52.0f, cardW - 8.0f, 28.0f);
             ls.background = UiColor{0, 0, 0, 0};
-            ls.color = entry.type == "folder" ? UiInk(flare::Heading) : kText;
+            ls.color = entry.type == "folder" ? UiInk(flare::palette::Heading) : kText;
             ls.fontSize = 11.5f;
             ls.textFlow = UiTextFlow::SingleLineEllipsis;
             ls.padding = {std::max(0.0f, (cardW - 8.0f - MeasuredWidth(name, 11.5f)) * 0.5f), 0.0f, 2.0f, 0.0f};
@@ -632,12 +763,16 @@ void EditorShell::RebuildAssetsGrid(float width, float height)
         const std::string type = entry.type;
         const std::string folderRel = entry.relativeDir.empty() ? entry.displayName : (entry.relativeDir + "/" + entry.displayName);
         dispatcher_.AddHandler(card, UiEventType::PointerDown, [this, path, type, folderRel](UiInputEvent& event) {
-            if (assetsRenamingPath_ != path) EndAssetRename(true);
-            const bool alreadySelected = assetsModel_.Selected(path) && activePanel_ == EditorPanelId::Assets;
+            if (!assetsRenamingPath_.empty() && assetsRenamingPath_ != path) EndAssetRename(true);
+            const bool panelWasActive = (panelWasActiveBeforePointerDown_ == EditorPanelId::Assets);
+            const bool wasSelectedBefore = assetsModel_.Selected(path);
+            const bool alreadySelected = wasSelectedBefore && panelWasActive;
             SelectAsset(path);
-            assetsGridDirty_ = true;
+            if (!wasSelectedBefore) assetsGridDirty_ = true;
             if (event.button == 1)
             {
+                pendingAssetRenamePath_.clear();
+                wasSelectedOnAssetDown_ = false;
                 OpenAssetItemMenu(path, type, event.x, event.y);
                 event.handled = true;
                 event.StopPropagation();
@@ -645,10 +780,11 @@ void EditorShell::RebuildAssetsGrid(float width, float height)
             }
             if (event.button != 0) return;
             const std::uint64_t now = NowMilliseconds();
-            const bool doubleClick = (path == lastAssetClickPath_) && (now - lastAssetClickTick_ <= 380);
+            const bool doubleClick = (path == lastAssetClickPath_) && (now - lastAssetClickTick_ <= kFastDoubleClickMs);
             if (doubleClick)
             {
                 pendingAssetRenamePath_.clear();
+                wasSelectedOnAssetDown_ = false;
                 lastAssetClickPath_.clear();
                 lastAssetClickTick_ = 0;
                 if (type == "folder") SetCurrentAssetFolder(folderRel);
@@ -658,17 +794,17 @@ void EditorShell::RebuildAssetsGrid(float width, float height)
                 return;
             }
             wasSelectedOnAssetDown_ = alreadySelected;
+            if (!alreadySelected) pendingAssetRenamePath_.clear();
+            assetRenameDownTick_ = now;
             lastAssetClickPath_ = path;
             lastAssetClickTick_ = now;
-            if (type != "folder")
-            {
-                if (!assetDrag_) assetDrag_ = std::make_unique<EditorAssetDragState>();
-                assetDrag_->assetPath = path;
-                assetDrag_->startX = event.x;
-                assetDrag_->startY = event.y;
-                assetDrag_->dragging = false;
-                dispatcher_.SetPointerCapture(Slot(EditorPanelId::Assets).content);
-            }
+            if (!assetDrag_) assetDrag_ = std::make_unique<EditorAssetDragState>();
+            assetDrag_->assetPath = path;
+            assetDrag_->startX = event.x;
+            assetDrag_->startY = event.y;
+            assetDrag_->dragging = false;
+            assetDrag_->isFolder = (type == "folder");
+            dispatcher_.SetPointerCapture(Slot(EditorPanelId::Assets).content);
             event.handled = true;
             event.StopPropagation();
         });
@@ -691,7 +827,7 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
         gamePlaceholder_ = document_.CreateElement(UiElementKind::Label);
         if (document_.SetParent(gamePlaceholder_, slot.content))
         {
-            auto ps = ButtonStyle(12.0f, 12.0f, 220.0f, 28.0f, UiInk(flare::workspace::Header, 0.75f));
+            auto ps = ButtonStyle(12.0f, 12.0f, 220.0f, 28.0f, UiInk(flare::palette::workspace::Header, 0.75f));
             ps.color = kMuted;
             ps.cornerRadius = 6.0f;
             document_.SetStyle(gamePlaceholder_, ps);
@@ -707,14 +843,19 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             hierarchyList_->SetRowBackgroundProvider([this](int index) {
                 const auto rows = hierarchyModel_.VisibleRows();
                 if (index < 0 || static_cast<std::size_t>(index) >= rows.size()) return UiColor{0, 0, 0, 0};
-                if (hierarchyModel_.Nodes()[rows[index]].id == inspectorModel_.Target())
+                const std::uint64_t rowId = hierarchyModel_.Nodes()[rows[index]].id;
+                if (pingedHierarchyId_ != 0 && rowId == pingedHierarchyId_ && NowMilliseconds() < pingUntilTick_)
                 {
-                    return UiInk(activePanel_ == EditorPanelId::Hierarchy ? flare::workspace::Selection
-                                                                          : flare::workspace::InactiveSelection);
+                    return UiColor{0.20f, 0.50f, 0.86f, 0.72f};
+                }
+                if (inspectorModel_.Target() != 0 && (rowId == inspectorModel_.Target() || hierarchyModel_.IsSelected(rowId)))
+                {
+                    return UiInk(activePanel_ == EditorPanelId::Hierarchy ? flare::palette::workspace::Selection
+                                                                          : flare::palette::workspace::InactiveSelection);
                 }
                 if (index == hoveredHierarchyRow_)
                 {
-                    return UiInk(flare::workspace::Hover, 0.55f);
+                    return UiInk(flare::palette::workspace::Hover, 0.55f);
                 }
                 return UiColor{0, 0, 0, 0};
             });
@@ -727,16 +868,60 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
         {
             document_.SetStyle(hierarchyEditElement_, ButtonStyle(0.0f, 0.0f, 120.0f, kHierarchyRowHeight, kSurface));
             document_.SetVisible(hierarchyEditElement_, false);
-            hierarchyEdit_ = std::make_unique<UiTextEdit>(document_, hierarchyEditElement_, text_);
+            hierarchyEditSelection_ = document_.CreateElement(UiElementKind::Panel);
+            document_.SetParent(hierarchyEditSelection_, hierarchyEditElement_);
+            hierarchyEdit_ = std::make_unique<UiTextEdit>(document_, hierarchyEditElement_, text_, PlatformServices());
+            const auto repaintHierarchyEdit = [this]() {
+                if (!hierarchyEdit_ || !hierarchyEditElement_.IsValid()) return;
+                const UiStyle st = document_.Style(hierarchyEditElement_);
+                PaintInlineTextEdit(*hierarchyEdit_, hierarchyEditElement_, hierarchyEditSelection_,
+                                    hierarchyEditScroll_, st.width.value, st.height.value);
+            };
             dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::PointerDown, [this](UiInputEvent& event) {
                 dispatcher_.SetFocus(hierarchyEditElement_);
+                if (event.button == 0 && hierarchyEdit_)
+                {
+                    const std::uint64_t now = NowMilliseconds();
+                    if (now - hierarchyEditLastClickTick_ <= kFastDoubleClickMs)
+                    {
+                        hierarchyEdit_->Select(0, std::numeric_limits<std::uint32_t>::max());
+                        const UiStyle st = document_.Style(hierarchyEditElement_);
+                        PaintInlineTextEdit(*hierarchyEdit_, hierarchyEditElement_, hierarchyEditSelection_,
+                                            hierarchyEditScroll_, st.width.value, st.height.value);
+                        hierarchyEditLastClickTick_ = 0;
+                    }
+                    else
+                    {
+                        hierarchyEditLastClickTick_ = now;
+                        hierarchyEditSelecting_ = true;
+                        dispatcher_.SetPointerCapture(hierarchyEditElement_);
+                        PlaceInlineTextCaret(*hierarchyEdit_, hierarchyEditElement_, hierarchyEditSelection_,
+                                             hierarchyEditScroll_, event.x, event.shift);
+                    }
+                }
                 event.handled = true;
                 event.StopPropagation();
+            });
+            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::PointerMove, [this](UiInputEvent& event) {
+                if (!hierarchyEditSelecting_ || !hierarchyEdit_) return;
+                PlaceInlineTextCaret(*hierarchyEdit_, hierarchyEditElement_, hierarchyEditSelection_,
+                                     hierarchyEditScroll_, event.x, true);
+                event.handled = true;
+            });
+            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::PointerUp, [this](UiInputEvent& event) {
+                if (!hierarchyEditSelecting_) return;
+                hierarchyEditSelecting_ = false;
+                if (dispatcher_.PointerCapture() == hierarchyEditElement_)
+                    dispatcher_.ReleasePointerCapture();
+                event.handled = true;
+            });
+            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::PointerCaptureLost, [this](UiInputEvent&) {
+                hierarchyEditSelecting_ = false;
             });
             dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::FocusLost, [this](UiInputEvent&) {
                 EndHierarchyRename(true);
             });
-            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::KeyDown, [this](UiInputEvent& event) {
+            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::KeyDown, [this, repaintHierarchyEdit](UiInputEvent& event) {
                 if (event.key == UiKeyEnter || event.key == UiKeyEscape)
                 {
                     EndHierarchyRename(event.key == UiKeyEnter);
@@ -745,30 +930,43 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 else if (hierarchyEdit_)
                 {
                     hierarchyEdit_->HandleKey(event.key, event.shift, event.control);
+                    repaintHierarchyEdit();
                 }
                 event.handled = true;
             });
-            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::TextInput, [this](UiInputEvent& event) {
+            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::TextInput, [this, repaintHierarchyEdit](UiInputEvent& event) {
                 if (!hierarchyEdit_ || event.codepoint == 0) return;
                 const char32_t cp = event.codepoint;
                 std::string utf8;
                 if (EncodeUtf8({&cp, 1}, utf8))
+                {
                     event.handled = hierarchyEdit_->InsertText(utf8);
+                    repaintHierarchyEdit();
+                }
             });
-            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::ImeComposition, [this](UiInputEvent& event) {
-                if (hierarchyEdit_) hierarchyEdit_->SetComposition(event.text);
+            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::ImeComposition, [this, repaintHierarchyEdit](UiInputEvent& event) {
+                if (hierarchyEdit_)
+                {
+                    hierarchyEdit_->SetComposition(event.text);
+                    repaintHierarchyEdit();
+                }
                 event.handled = true;
             });
-            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::ImeCommit, [this](UiInputEvent& event) {
+            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::ImeCommit, [this, repaintHierarchyEdit](UiInputEvent& event) {
                 if (hierarchyEdit_)
                 {
                     hierarchyEdit_->SetComposition(event.text);
                     hierarchyEdit_->CommitComposition();
+                    repaintHierarchyEdit();
                 }
                 event.handled = true;
             });
-            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::ImeCancel, [this](UiInputEvent&) {
-                if (hierarchyEdit_) hierarchyEdit_->CancelComposition();
+            dispatcher_.AddHandler(hierarchyEditElement_, UiEventType::ImeCancel, [this, repaintHierarchyEdit](UiInputEvent&) {
+                if (hierarchyEdit_)
+                {
+                    hierarchyEdit_->CancelComposition();
+                    repaintHierarchyEdit();
+                }
             });
         }
         dispatcher_.AddHandler(slot.content, UiEventType::PointerDown, [this](UiInputEvent& event) {
@@ -782,7 +980,8 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 pendingHierarchyRenameId_ = 0;
                 const auto parent = row >= 0 && static_cast<std::size_t>(row) < rows.size()
                     ? hierarchyModel_.Nodes()[rows[row]].id : 0;
-                if (parent && selectionHandler_) selectionHandler_(parent);
+                if (parent && selectionHandler_ && !hierarchyModel_.IsSelected(parent))
+                    selectionHandler_(parent);
                 OpenCreateMenu(EditorPanelId::Hierarchy, event.x, event.y, parent);
                 event.handled = true;
                 return;
@@ -813,8 +1012,32 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 }
                 const std::uint64_t id = node.id;
                 const std::uint64_t now = NowMilliseconds();
-                const bool alreadySelected = (hierarchyModel_.Selected() == id && activePanel_ == EditorPanelId::Hierarchy);
-                const bool doubleClick = (id == lastHierarchyClickId_) && (now - lastHierarchyClickTick_ <= 380);
+                if (event.control || event.shift)
+                {
+                    pendingHierarchyRenameId_ = 0;
+                    wasSelectedOnHierarchyDown_ = false;
+                    lastHierarchyClickId_ = 0;
+                    lastHierarchyClickTick_ = 0;
+                    if (event.control) hierarchyModel_.ToggleSelection(id);
+                    else hierarchyModel_.SelectRange(id);
+                    if (hierarchyList_) { hierarchyList_->Invalidate(); hierarchyList_->Sync(); }
+                    if (multiSelectionHandler_)
+                        multiSelectionHandler_(hierarchyModel_.SelectedIds(), hierarchyModel_.Selected());
+                    else if (selectionHandler_)
+                        selectionHandler_(hierarchyModel_.Selected());
+                    event.handled = true;
+                    return;
+                }
+                const bool panelWasActive = (panelWasActiveBeforePointerDown_ == EditorPanelId::Hierarchy);
+                const bool alreadySelected = (hierarchyModel_.Selected() == id &&
+                                              hierarchyModel_.SelectedIds().size() <= 1 &&
+                                              panelWasActive);
+                const bool hasIcon = node.prefab || !node.iconKind.empty();
+                const float labelStart = 6.0f + static_cast<float>(node.depth) * 12.0f + (hasIcon ? 22.0f : 10.0f);
+                const float labelEnd = labelStart + std::max(44.0f, MeasuredWidth(node.label, 13.0f) + 24.0f);
+                const float localX = event.x - rect.x;
+                const bool hitLabel = (localX >= labelStart - 4.0f && localX <= labelEnd);
+                const bool doubleClick = (id == lastHierarchyClickId_) && (now - lastHierarchyClickTick_ <= kFastDoubleClickMs);
                 lastHierarchyClickId_ = id;
                 lastHierarchyClickTick_ = doubleClick ? 0 : now;
                 if (doubleClick)
@@ -824,10 +1047,12 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 }
                 else
                 {
-                    wasSelectedOnHierarchyDown_ = alreadySelected;
-                    if (!alreadySelected) pendingHierarchyRenameId_ = 0;
+                    wasSelectedOnHierarchyDown_ = alreadySelected && hitLabel;
+                    hierarchyRenameDownTick_ = now;
+                    if (!wasSelectedOnHierarchyDown_) pendingHierarchyRenameId_ = 0;
                 }
                 hierarchyModel_.Select(id);
+                if (hierarchyList_) { hierarchyList_->Invalidate(); hierarchyList_->Sync(); }
                 dispatcher_.SetPointerCapture(Slot(EditorPanelId::Hierarchy).content);
                 if (selectionHandler_) selectionHandler_(id);
                 if (doubleClick && viewportAction_) viewportAction_("Frame");
@@ -836,6 +1061,12 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             {
                 pendingHierarchyRenameId_ = 0;
                 wasSelectedOnHierarchyDown_ = false;
+                if (!event.control && !event.shift)
+                {
+                    hierarchyModel_.Select(0);
+                    if (hierarchyList_) { hierarchyList_->Invalidate(); hierarchyList_->Sync(); }
+                    if (selectionHandler_) selectionHandler_(0);
+                }
             }
             event.handled = true;
         }, UiEventPhase::Bubble);
@@ -948,6 +1179,7 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 if (event.button == 0 && wasSelDown && draggedId != 0)
                 {
                     pendingHierarchyRenameId_ = draggedId;
+                    pendingHierarchyRenameDownTick_ = hierarchyRenameDownTick_;
                     pendingHierarchyRenameTick_ = NowMilliseconds();
                 }
                 return;
@@ -1018,14 +1250,18 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             assetsList_->SetRowBackgroundProvider([this](int index) {
                 const auto& entries = assetsModel_.Filtered();
                 if (index < 0 || static_cast<std::size_t>(index) >= entries.size()) return UiColor{0, 0, 0, 0};
+                if (!pingedAssetPath_.empty() && entries[index].path == pingedAssetPath_ && NowMilliseconds() < pingUntilTick_)
+                {
+                    return UiColor{0.20f, 0.50f, 0.86f, 0.72f};
+                }
                 if (assetsModel_.Selected(entries[index].path))
                 {
-                    return UiInk(activePanel_ == EditorPanelId::Assets ? flare::workspace::Selection
-                                                                       : flare::workspace::InactiveSelection);
+                    return UiInk(activePanel_ == EditorPanelId::Assets ? flare::palette::workspace::Selection
+                                                                       : flare::palette::workspace::InactiveSelection);
                 }
                 if (index == hoveredAssetRow_)
                 {
-                    return UiInk(flare::workspace::Hover, 0.55f);
+                    return UiInk(flare::palette::workspace::Hover, 0.55f);
                 }
                 return UiColor{0, 0, 0, 0};
             });
@@ -1086,7 +1322,7 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
             auto filterStyle = ButtonStyle(3.0f, 2.0f, 100.0f, 20.0f, kSurface);
             filterStyle.cornerRadius = 4.0f;
             document_.SetStyle(assetsFilterElement_, filterStyle);
-            assetsFilter_ = std::make_unique<UiTextEdit>(document_, assetsFilterElement_, text_);
+            assetsFilter_ = std::make_unique<UiTextEdit>(document_, assetsFilterElement_, text_, PlatformServices());
             dispatcher_.AddHandler(assetsFilterElement_, UiEventType::PointerDown, [this](UiInputEvent&) {
                 dispatcher_.SetFocus(assetsFilterElement_);
             });
@@ -1141,7 +1377,7 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
         {
             auto createStyle = ButtonStyle(2.0f, 1.0f, 24.0f, 22.0f, kSurfaceActive);
             createStyle.cornerRadius = 4.0f;
-            createStyle.color = UiInk(flare::Gold);
+            createStyle.color = UiInk(flare::palette::Gold);
             createStyle.padding = {5.0f, 0.0f, 0.0f, 0.0f};
             document_.SetStyle(assetsCreateElement_, createStyle);
             document_.SetText(assetsCreateElement_, "＋");
@@ -1161,7 +1397,7 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
         {
             auto importStyle = ButtonStyle(0.0f, 0.0f, 52.0f, 24.0f, kSurfaceActive);
             importStyle.cornerRadius = 4.0f;
-            importStyle.color = UiInk(flare::Gold);
+            importStyle.color = UiInk(flare::palette::Gold);
             document_.SetStyle(assetsImportElement_, importStyle);
             document_.SetText(assetsImportElement_, Text("EditorUi.Import", "Import"));
             dispatcher_.AddHandler(assetsImportElement_, UiEventType::PointerDown, [this](UiInputEvent& event) {
@@ -1175,16 +1411,60 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
         {
             document_.SetStyle(assetsRenameElement_, ButtonStyle(0.0f, 0.0f, 120.0f, kAssetRowHeight, kSurface));
             document_.SetVisible(assetsRenameElement_, false);
-            assetsRename_ = std::make_unique<UiTextEdit>(document_, assetsRenameElement_, text_);
+            assetsRenameSelection_ = document_.CreateElement(UiElementKind::Panel);
+            document_.SetParent(assetsRenameSelection_, assetsRenameElement_);
+            assetsRename_ = std::make_unique<UiTextEdit>(document_, assetsRenameElement_, text_, PlatformServices());
+            const auto repaintAssetRename = [this]() {
+                if (!assetsRename_ || !assetsRenameElement_.IsValid()) return;
+                const UiStyle st = document_.Style(assetsRenameElement_);
+                PaintInlineTextEdit(*assetsRename_, assetsRenameElement_, assetsRenameSelection_,
+                                    assetsRenameScroll_, st.width.value, st.height.value);
+            };
             dispatcher_.AddHandler(assetsRenameElement_, UiEventType::PointerDown, [this](UiInputEvent& event) {
                 dispatcher_.SetFocus(assetsRenameElement_);
+                if (event.button == 0 && assetsRename_)
+                {
+                    const std::uint64_t now = NowMilliseconds();
+                    if (now - assetsRenameLastClickTick_ <= kFastDoubleClickMs)
+                    {
+                        assetsRename_->Select(0, std::numeric_limits<std::uint32_t>::max());
+                        const UiStyle st = document_.Style(assetsRenameElement_);
+                        PaintInlineTextEdit(*assetsRename_, assetsRenameElement_, assetsRenameSelection_,
+                                            assetsRenameScroll_, st.width.value, st.height.value);
+                        assetsRenameLastClickTick_ = 0;
+                    }
+                    else
+                    {
+                        assetsRenameLastClickTick_ = now;
+                        assetsRenameSelecting_ = true;
+                        dispatcher_.SetPointerCapture(assetsRenameElement_);
+                        PlaceInlineTextCaret(*assetsRename_, assetsRenameElement_, assetsRenameSelection_,
+                                             assetsRenameScroll_, event.x, event.shift);
+                    }
+                }
                 event.handled = true;
                 event.StopPropagation();
+            });
+            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::PointerMove, [this](UiInputEvent& event) {
+                if (!assetsRenameSelecting_ || !assetsRename_) return;
+                PlaceInlineTextCaret(*assetsRename_, assetsRenameElement_, assetsRenameSelection_,
+                                     assetsRenameScroll_, event.x, true);
+                event.handled = true;
+            });
+            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::PointerUp, [this](UiInputEvent& event) {
+                if (!assetsRenameSelecting_) return;
+                assetsRenameSelecting_ = false;
+                if (dispatcher_.PointerCapture() == assetsRenameElement_)
+                    dispatcher_.ReleasePointerCapture();
+                event.handled = true;
+            });
+            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::PointerCaptureLost, [this](UiInputEvent&) {
+                assetsRenameSelecting_ = false;
             });
             dispatcher_.AddHandler(assetsRenameElement_, UiEventType::FocusLost, [this](UiInputEvent&) {
                 EndAssetRename(true);
             });
-            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::KeyDown, [this](UiInputEvent& event) {
+            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::KeyDown, [this, repaintAssetRename](UiInputEvent& event) {
                 if (event.key == UiKeyEnter || event.key == UiKeyEscape)
                 {
                     EndAssetRename(event.key == UiKeyEnter);
@@ -1193,30 +1473,43 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 else if (assetsRename_)
                 {
                     assetsRename_->HandleKey(event.key, event.shift, event.control);
+                    repaintAssetRename();
                 }
                 event.handled = true;
             });
-            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::TextInput, [this](UiInputEvent& event) {
+            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::TextInput, [this, repaintAssetRename](UiInputEvent& event) {
                 if (!assetsRename_ || event.codepoint == 0) return;
                 const char32_t cp = event.codepoint;
                 std::string utf8;
                 if (EncodeUtf8({&cp, 1}, utf8))
+                {
                     event.handled = assetsRename_->InsertText(utf8);
+                    repaintAssetRename();
+                }
             });
-            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::ImeComposition, [this](UiInputEvent& event) {
-                if (assetsRename_) assetsRename_->SetComposition(event.text);
+            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::ImeComposition, [this, repaintAssetRename](UiInputEvent& event) {
+                if (assetsRename_)
+                {
+                    assetsRename_->SetComposition(event.text);
+                    repaintAssetRename();
+                }
                 event.handled = true;
             });
-            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::ImeCommit, [this](UiInputEvent& event) {
+            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::ImeCommit, [this, repaintAssetRename](UiInputEvent& event) {
                 if (assetsRename_)
                 {
                     assetsRename_->SetComposition(event.text);
                     assetsRename_->CommitComposition();
+                    repaintAssetRename();
                 }
                 event.handled = true;
             });
-            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::ImeCancel, [this](UiInputEvent&) {
-                if (assetsRename_) assetsRename_->CancelComposition();
+            dispatcher_.AddHandler(assetsRenameElement_, UiEventType::ImeCancel, [this, repaintAssetRename](UiInputEvent&) {
+                if (assetsRename_)
+                {
+                    assetsRename_->CancelComposition();
+                    repaintAssetRename();
+                }
             });
         }
         assetsPreview_ = document_.CreateElement(UiElementKind::Label);
@@ -1304,17 +1597,25 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                     event.handled = true;
                     return;
                 }
-                const bool alreadySelected = assetsModel_.Selected(path) && activePanel_ == EditorPanelId::Assets;
+                const bool panelWasActive = (panelWasActiveBeforePointerDown_ == EditorPanelId::Assets);
+                const bool alreadySelected = assetsModel_.Selected(path) && panelWasActive;
+                const float indent = 6.0f + static_cast<float>(entry.depth) * 14.0f;
+                const float iconX = indent + (treeMode ? 12.0f : 2.0f);
+                const float labelStart = iconX + 19.0f;
+                const float labelEnd = labelStart + std::max(48.0f, MeasuredWidth(CleanAssetDisplayName(entry), 13.0f) + 24.0f);
+                const float localX = event.x - rect.x;
+                const bool hitLabel = (localX >= labelStart - 4.0f && localX <= labelEnd);
                 SelectAsset(path);
                 if (event.button == 1)
                 {
                     pendingAssetRenamePath_.clear();
+                    wasSelectedOnAssetDown_ = false;
                     OpenAssetItemMenu(path, type, event.x, event.y);
                     event.handled = true;
                     return;
                 }
                 const std::uint64_t now = NowMilliseconds();
-                const bool doubleClick = (path == lastAssetClickPath_) && (now - lastAssetClickTick_ <= 380);
+                const bool doubleClick = (path == lastAssetClickPath_) && (now - lastAssetClickTick_ <= kFastDoubleClickMs);
                 if (doubleClick)
                 {
                     pendingAssetRenamePath_.clear();
@@ -1347,19 +1648,18 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                     event.handled = true;
                     return;
                 }
-                wasSelectedOnAssetDown_ = alreadySelected;
-                if (!alreadySelected) pendingAssetRenamePath_.clear();
+                wasSelectedOnAssetDown_ = alreadySelected && hitLabel;
+                if (!wasSelectedOnAssetDown_) pendingAssetRenamePath_.clear();
+                assetRenameDownTick_ = now;
                 lastAssetClickPath_ = path;
                 lastAssetClickTick_ = now;
-                if (type != "folder")
-                {
-                    if (!assetDrag_) assetDrag_ = std::make_unique<EditorAssetDragState>();
-                    assetDrag_->assetPath = path;
-                    assetDrag_->startX = event.x;
-                    assetDrag_->startY = event.y;
-                    assetDrag_->dragging = false;
-                    dispatcher_.SetPointerCapture(Slot(EditorPanelId::Assets).content);
-                }
+                if (!assetDrag_) assetDrag_ = std::make_unique<EditorAssetDragState>();
+                assetDrag_->assetPath = path;
+                assetDrag_->startX = event.x;
+                assetDrag_->startY = event.y;
+                assetDrag_->dragging = false;
+                assetDrag_->isFolder = (type == "folder");
+                dispatcher_.SetPointerCapture(Slot(EditorPanelId::Assets).content);
                 event.handled = true;
                 return;
             }
@@ -1418,17 +1718,20 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 lastAssetClickPath_.clear();
                 lastAssetClickTick_ = 0;
             }
-            if (!assetDrag_->dragging) return;
+            if (!assetDrag_->dragging || assetDrag_->isFolder) return;
             if (dragGhost_.IsValid())
             {
                 if (CurrentInputRoot().IsValid()) document_.SetParent(dragGhost_, CurrentInputRoot());
                 document_.SetVisible(dragGhost_, true);
-                UiStyle ghostStyle = document_.Style(dragGhost_);
-                ghostStyle.left = UiLength::Px(event.x + 8.0f);
-                ghostStyle.top = UiLength::Px(event.y);
-                document_.SetStyle(dragGhost_, ghostStyle);
                 const auto sep = assetDrag_->assetPath.find_last_of("/\\");
-                document_.SetText(dragGhost_, assetDrag_->assetPath.substr(sep == std::string::npos ? 0 : sep + 1));
+                const std::string ghostLabel = assetDrag_->assetPath.substr(sep == std::string::npos ? 0 : sep + 1);
+                const float ghostW = std::clamp(MeasuredWidth(ghostLabel, 12.5f) + 20.0f, 80.0f, 240.0f);
+                UiStyle ghostStyle = document_.Style(dragGhost_);
+                ghostStyle.left = UiLength::Px(event.x + 16.0f);
+                ghostStyle.top = UiLength::Px(event.y + 18.0f);
+                ghostStyle.width = UiLength::Px(ghostW);
+                document_.SetStyle(dragGhost_, ghostStyle);
+                document_.SetText(dragGhost_, ghostLabel);
             }
             const auto target = UiHitTest(document_, layout_).Hit(CurrentInputRoot(), event.x, event.y).target;
             const bool overViewport = target == ViewportPanel();
@@ -1458,50 +1761,135 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 else if (assetsList_) { assetsList_->Invalidate(); assetsList_->Sync(); }
             }
 
+            const UiRect hierPanel = layout_.Rect(Slot(EditorPanelId::Hierarchy).panel);
             const UiRect hierContent = layout_.Rect(Slot(EditorPanelId::Hierarchy).content);
-            const bool overHierarchy = dock_.SurfaceFor(EditorPanelId::Hierarchy) == inputSurface_ &&
-                                       document_.Visible(Slot(EditorPanelId::Hierarchy).panel) &&
-                                       insideRect(hierContent);
+            const bool overHierarchyPanel = dock_.SurfaceFor(EditorPanelId::Hierarchy) == inputSurface_ &&
+                                            document_.Visible(Slot(EditorPanelId::Hierarchy).panel) &&
+                                            insideRect(hierPanel);
+            const bool overHierarchy = overHierarchyPanel && insideRect(hierContent);
+            const float hOffset = hierarchyList_ ? hierarchyList_->Offset() : 0.0f;
+            const auto visibleHierarchyRows = hierarchyModel_.VisibleRows();
+            int hoveredEntityRow = -1;
             if (overHierarchy)
             {
-                const float hOffset = hierarchyList_ ? hierarchyList_->Offset() : 0.0f;
-                const int hRow = static_cast<int>((event.y - hierContent.y + hOffset) / kHierarchyRowHeight);
-                if (hRow != hoveredHierarchyRow_)
+                const int rawRow = static_cast<int>((event.y - hierContent.y + hOffset) / kHierarchyRowHeight);
+                if (rawRow >= 0 && static_cast<std::size_t>(rawRow) < visibleHierarchyRows.size())
                 {
-                    hoveredHierarchyRow_ = hRow;
-                    if (hierarchyList_) { hierarchyList_->Invalidate(); hierarchyList_->Sync(); }
+                    hoveredEntityRow = rawRow;
                 }
             }
-            else if (hoveredHierarchyRow_ != -1)
+            if (hoveredEntityRow != hoveredHierarchyRow_)
             {
-                hoveredHierarchyRow_ = -1;
+                hoveredHierarchyRow_ = hoveredEntityRow;
                 if (hierarchyList_) { hierarchyList_->Invalidate(); hierarchyList_->Sync(); }
             }
             const UiRect inspPanel = layout_.Rect(Slot(EditorPanelId::Inspector).panel);
             const bool overInspector = dock_.SurfaceFor(EditorPanelId::Inspector) == inputSurface_ &&
                                        document_.Visible(Slot(EditorPanelId::Inspector).panel) &&
                                        insideRect(inspPanel);
+            assetDragCursor_ = EditorDragCursor::None;
+            if (nextFolderRow >= 0)
+            {
+                assetDragCursor_ = EditorDragCursor::Allow;
+            }
+            else if (overViewport)
+            {
+                const bool canDropViewport =
+                    IsAssetPathCompatible(assetDrag_->assetPath, "model") ||
+                    IsAssetPathCompatible(assetDrag_->assetPath, "prefab") ||
+                    IsAssetPathCompatible(assetDrag_->assetPath, "material") ||
+                    IsAssetPathCompatible(assetDrag_->assetPath, "tod") ||
+                    IsAssetPathCompatible(assetDrag_->assetPath, "scene") ||
+                    IsAssetPathCompatible(assetDrag_->assetPath, "script");
+                assetDragCursor_ = canDropViewport ? EditorDragCursor::Allow : EditorDragCursor::Forbid;
+            }
             if (dropHighlight_.IsValid())
             {
-                if (overInspector || overHierarchy)
+                if (overInspector || overHierarchyPanel)
                 {
-                    if (CurrentInputRoot().IsValid()) document_.SetParent(dropHighlight_, CurrentInputRoot());
-                    UiRect highlightRect = overInspector ? inspPanel : layout_.Rect(Slot(EditorPanelId::Hierarchy).panel);
+                    bool showHighlight = false;
+                    bool compatible = false;
+                    bool outlineOnly = false;
+                    UiRect highlightRect{};
                     if (overInspector)
                     {
                         if (const auto slotIdx = InspectorSlotAt(event.x, event.y, false))
                         {
-                            const UiRect slotRect = InspectorFieldRect(inspectorModel_.Properties()[*slotIdx].key);
-                            if (slotRect.width > 0.0f && slotRect.height > 0.0f) highlightRect = slotRect;
+                            const auto& slotProp = inspectorModel_.Properties()[*slotIdx];
+                            const UiRect slotRect = InspectorFieldRect(slotProp.key);
+                            if (slotRect.width > 0.0f && slotRect.height > 0.0f)
+                            {
+                                highlightRect = slotRect;
+                                showHighlight = true;
+                                compatible = IsAssetPathCompatible(assetDrag_->assetPath, slotProp.acceptedAssetKind);
+                            }
                         }
+                        else if (inspectorModel_.Target() != 0 &&
+                                 (IsAssetPathCompatible(assetDrag_->assetPath, "script") ||
+                                  IsAssetPathCompatible(assetDrag_->assetPath, "material")))
+                        {
+                            highlightRect = inspPanel;
+                            showHighlight = true;
+                            compatible = true;
+                            outlineOnly = true;
+                        }
+                        assetDragCursor_ = compatible ? EditorDragCursor::Allow : EditorDragCursor::Forbid;
                     }
-                    UiStyle hl = document_.Style(dropHighlight_);
-                    hl.left = UiLength::Px(highlightRect.x);
-                    hl.top = UiLength::Px(highlightRect.y);
-                    hl.width = UiLength::Px(highlightRect.width);
-                    hl.height = UiLength::Px(highlightRect.height);
-                    document_.SetStyle(dropHighlight_, hl);
-                    document_.SetVisible(dropHighlight_, true);
+                    else
+                    {
+                        const bool isEntityAttachAsset = IsAssetPathCompatible(assetDrag_->assetPath, "script") ||
+                                                         IsAssetPathCompatible(assetDrag_->assetPath, "material");
+                        const bool isSceneCreateAsset = IsAssetPathCompatible(assetDrag_->assetPath, "model") ||
+                                                        IsAssetPathCompatible(assetDrag_->assetPath, "prefab");
+                        if (hoveredEntityRow >= 0 && (isEntityAttachAsset || isSceneCreateAsset))
+                        {
+                            const float rowTop = hierContent.y + static_cast<float>(hoveredEntityRow) * kHierarchyRowHeight - hOffset;
+                            const float clipTop = std::max(hierContent.y, rowTop);
+                            const float clipBottom = std::min(hierContent.y + hierContent.height, rowTop + kHierarchyRowHeight);
+                            if (clipBottom > clipTop)
+                            {
+                                highlightRect = UiRect{hierContent.x + 1.0f, clipTop,
+                                                       std::max(0.0f, hierContent.width - 2.0f), clipBottom - clipTop};
+                                showHighlight = true;
+                                compatible = true;
+                            }
+                        }
+                        else if (overHierarchy && isSceneCreateAsset)
+                        {
+                            highlightRect = hierContent;
+                            showHighlight = true;
+                            compatible = true;
+                            outlineOnly = true;
+                        }
+                        assetDragCursor_ = compatible ? EditorDragCursor::Allow : EditorDragCursor::Forbid;
+                    }
+                    if (showHighlight)
+                    {
+                        if (CurrentInputRoot().IsValid()) document_.SetParent(dropHighlight_, CurrentInputRoot());
+                        UiStyle hl = document_.Style(dropHighlight_);
+                        hl.left = UiLength::Px(highlightRect.x);
+                        hl.top = UiLength::Px(highlightRect.y);
+                        hl.width = UiLength::Px(highlightRect.width);
+                        hl.height = UiLength::Px(highlightRect.height);
+                        hl.borderWidth = 1.5f;
+                        if (compatible)
+                        {
+                            hl.background = outlineOnly ? UiColor{0.0f, 0.0f, 0.0f, 0.0f}
+                                                        : UiColor{0.18f, 0.72f, 0.46f, 0.10f};
+                            hl.borderColor = UiColor{0.24f, 0.82f, 0.52f, 0.92f};
+                        }
+                        else
+                        {
+                            hl.background = UiColor{0.84f, 0.24f, 0.24f, 0.12f};
+                            hl.borderColor = UiColor{0.88f, 0.30f, 0.30f, 0.92f};
+                        }
+                        document_.SetStyle(dropHighlight_, hl);
+                        document_.SetVisible(dropHighlight_, true);
+                    }
+                    else
+                    {
+                        document_.SetVisible(dropHighlight_, false);
+                    }
                 }
                 else
                 {
@@ -1516,23 +1904,28 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                 if (event.button == 0 && wasSelectedOnAssetDown_ && !assetsModel_.SelectedPath().empty())
                 {
                     pendingAssetRenamePath_ = assetsModel_.SelectedPath();
+                    pendingAssetRenameDownTick_ = assetRenameDownTick_;
                     pendingAssetRenameTick_ = NowMilliseconds();
                 }
                 wasSelectedOnAssetDown_ = false;
                 return;
             }
-            const bool dropped = assetDrag_->dragging && event.button == 0;
+            const bool dropped = assetDrag_->dragging && !assetDrag_->isFolder && event.button == 0;
+            const bool wasFolder = assetDrag_->isFolder;
+            const bool wasDragged = assetDrag_->dragging;
             const std::string path = assetDrag_->assetPath;
             const auto dropHandler = assetDrag_->dropHandler;
             const int folderDropIdx = hoveredFolderDropRow_;
             CancelAssetDrag();
             if (!dropped)
             {
-                if (event.button == 0 && wasSelectedOnAssetDown_ && !path.empty())
+                if (event.button == 0 && !wasDragged && wasSelectedOnAssetDown_ && !path.empty())
                 {
                     pendingAssetRenamePath_ = path;
+                    pendingAssetRenameDownTick_ = assetRenameDownTick_;
                     pendingAssetRenameTick_ = NowMilliseconds();
                 }
+                (void)wasFolder;
                 wasSelectedOnAssetDown_ = false;
                 event.handled = true;
                 return;
@@ -1594,15 +1987,25 @@ void EditorShell::BuildPanelContent(PanelSlot& slot)
                          document_.Visible(Slot(EditorPanelId::Inspector).panel) && insideRect(inspPanel))
                 {
                     bool slotHandled = false;
+                    bool slotRejected = false;
                     if (assetInspectorSlotDropHandler_)
                     {
                         if (const auto slotIdx = InspectorSlotAt(event.x, event.y, false))
                         {
-                            slotHandled = assetInspectorSlotDropHandler_(
-                                path, inspectorModel_.Target(), inspectorModel_.Properties()[*slotIdx].key);
+                            const auto& slotProp = inspectorModel_.Properties()[*slotIdx];
+                            if (!IsAssetPathCompatible(path, slotProp.acceptedAssetKind))
+                            {
+                                SetStatus(Text("EditorUi.DropIncompatible", "Asset type does not match target slot"));
+                                slotRejected = true;
+                            }
+                            else
+                            {
+                                slotHandled = assetInspectorSlotDropHandler_(
+                                    path, inspectorModel_.Target(), slotProp.key);
+                            }
                         }
                     }
-                    if (!slotHandled && assetEntityDropHandler_)
+                    if (!slotHandled && !slotRejected && assetEntityDropHandler_)
                     {
                         assetEntityDropHandler_(path, inspectorModel_.Target(), EditorPanelId::Inspector);
                     }
@@ -1744,7 +2147,7 @@ void EditorShell::BuildScrollThumb(EditorPanelId panel)
     style.top = UiLength::Px(0.0f);
     style.width = UiLength::Px(6.0f);
     style.height = UiLength::Px(20.0f);
-    style.background = UiInk(flare::Silver, 0.72f);
+    style.background = UiInk(flare::palette::Silver, 0.72f);
     style.borderColor = kBorder;
     style.borderWidth = 1.0f;
     document_.SetStyle(thumb, style);
@@ -1848,6 +2251,17 @@ void EditorShell::SetHierarchy(std::vector<EditorHierarchyNode> nodes)
     {
         hierarchyList_->Invalidate();
         hierarchyList_->SetItemCount(static_cast<int>(hierarchyModel_.VisibleRows().size()));
+        hierarchyList_->Sync();
+    }
+}
+
+void EditorShell::SetHierarchySelection(const std::vector<std::uint64_t>& ids, std::uint64_t primary)
+{
+    if (hierarchyModel_.SelectedIds() == ids && hierarchyModel_.Selected() == primary) return;
+    hierarchyModel_.SetSelection(ids, primary);
+    if (hierarchyList_)
+    {
+        hierarchyList_->Invalidate();
         hierarchyList_->Sync();
     }
 }
@@ -1967,8 +2381,17 @@ void EditorShell::SetAssetDropHandler(std::function<bool(const std::string&, flo
 
 void EditorShell::CancelAssetDrag()
 {
+    assetDragCursor_ = EditorDragCursor::None;
     if (dragGhost_.IsValid()) document_.SetVisible(dragGhost_, false);
-    if (dropHighlight_.IsValid() && !tabDragging_) document_.SetVisible(dropHighlight_, false);
+    if (dropHighlight_.IsValid() && !tabDragging_)
+    {
+        UiStyle hl = document_.Style(dropHighlight_);
+        hl.background = UiInk(flare::palette::workspace::Focus, 0.15f);
+        hl.borderWidth = 2.0f;
+        hl.borderColor = UiInk(flare::palette::workspace::Focus);
+        document_.SetStyle(dropHighlight_, hl);
+        document_.SetVisible(dropHighlight_, false);
+    }
     if (hoveredFolderDropRow_ != -1)
     {
         hoveredFolderDropRow_ = -1;
@@ -1989,10 +2412,11 @@ void EditorShell::CancelAssetDrag()
     }
     if (assetDrag_)
     {
-        if (assetDrag_->dragging && assetDrag_->hoverHandler)
+        if (assetDrag_->dragging && !assetDrag_->isFolder && assetDrag_->hoverHandler)
             assetDrag_->hoverHandler({}, 0.0f, 0.0f, false);
         assetDrag_->assetPath.clear();
         assetDrag_->dragging = false;
+        assetDrag_->isFolder = false;
     }
     if (dispatcher_.PointerCapture() == Slot(EditorPanelId::Assets).content)
         dispatcher_.ReleasePointerCapture();
@@ -2058,11 +2482,11 @@ void EditorShell::LayoutConsoleToolbar(float panelWidth)
                                   bool active, const UiColor& activeTextColor) {
         if (!btn.IsValid()) return;
         document_.SetVisible(btn, true);
-        UiStyle st = ButtonStyle(x, 2.0f, w, 20.0f, active ? UiInk(flare::workspace::Selection) : kSurfaceRaised);
+        UiStyle st = ButtonStyle(x, 2.0f, w, 20.0f, active ? UiInk(flare::palette::workspace::Selection) : kSurfaceRaised);
         st.fontSize = 11.5f;
         st.cornerRadius = 4.0f;
         st.borderWidth = 1.0f;
-        st.borderColor = active ? UiInk(flare::workspace::Focus, 0.72f) : kBorder;
+        st.borderColor = active ? UiInk(flare::palette::workspace::Focus, 0.72f) : kBorder;
         st.color = active ? activeTextColor : kMuted;
         const float tw = MeasuredWidth(label, 11.5f);
         st.padding.left = std::max(4.0f, (w - tw) * 0.5f);
@@ -2103,7 +2527,7 @@ void EditorShell::LayoutConsoleToolbar(float panelWidth)
         {
             const std::string lbl = Text("EditorUi.ConsoleCollapse", "Collapse");
             const float w = std::max(54.0f, MeasuredWidth(lbl, 11.5f) + 14.0f);
-            stylePill(consoleCollapseButton_, lx, w, lbl, consoleCollapse_, UiInk(flare::Gold));
+            stylePill(consoleCollapseButton_, lx, w, lbl, consoleCollapse_, UiInk(flare::palette::Gold));
             lx += w + 4.0f;
         }
         else document_.SetVisible(consoleCollapseButton_, false);
@@ -2115,7 +2539,7 @@ void EditorShell::LayoutConsoleToolbar(float panelWidth)
         {
             const std::string lbl = Text("EditorUi.ConsoleClearOnPlay", "Clear on Play");
             const float w = std::max(60.0f, MeasuredWidth(lbl, 11.5f) + 14.0f);
-            stylePill(consoleClearOnPlayButton_, lx, w, lbl, consoleClearOnPlay_, UiInk(flare::Gold));
+            stylePill(consoleClearOnPlayButton_, lx, w, lbl, consoleClearOnPlay_, UiInk(flare::palette::Gold));
             lx += w + 4.0f;
         }
         else document_.SetVisible(consoleClearOnPlayButton_, false);
@@ -2154,4 +2578,4 @@ void EditorShell::LayoutConsoleToolbar(float panelWidth)
                kText);
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

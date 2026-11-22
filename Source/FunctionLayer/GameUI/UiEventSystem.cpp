@@ -1,7 +1,7 @@
 #include "UiEventSystem.h"
 #include "UiControlGeometry.h"
 #include <cmath>
-namespace se
+namespace flare
 {
 bool UiEventSystem::Interactive(UiKind kind)noexcept
 {return kind==UiKind::Button||kind==UiKind::Checkbox||kind==UiKind::Slider||kind==UiKind::TextInput||kind==UiKind::ScrollView;}

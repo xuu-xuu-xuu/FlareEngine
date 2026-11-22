@@ -1,5 +1,5 @@
 {
-  "type": "SelfEngine.Material",
+  "type": "FlareEngine.Material",
   "version": 1,
   "name": "02 绒布",
   "baseColor": [0.055, 0.075, 0.2, 1],

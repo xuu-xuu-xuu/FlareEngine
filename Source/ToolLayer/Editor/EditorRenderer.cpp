@@ -1,6 +1,6 @@
 #include "EditorRenderer.h"
 
-namespace se
+namespace flare
 {
 EditorRenderer::EditorRenderer(std::filesystem::path resources):renderer_(SandboxScene::BasicLit,std::move(resources)){}
 bool EditorRenderer::Initialize(const RenderSurface& surface,const Localization& localization)

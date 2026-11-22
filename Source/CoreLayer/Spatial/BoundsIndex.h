@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace se::spatial
+namespace flare::spatial
 {
 struct Leaf {std::uint64_t key=0;Aabb bounds;};
 struct Ray {Vec3 origin{},direction{};double maximumDistance=0;};

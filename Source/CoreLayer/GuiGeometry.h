@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // 自有 CPU 绘制数据；颜色是 sRGB RGB + 线性 alpha，纹理标识由宿主解析。
 struct GuiVertex {Vec2 position,uv;std::uint32_t color=0xffffffff;};
@@ -21,5 +21,6 @@ struct GuiGeometry
     std::vector<GuiVertex> vertices;
     std::vector<std::uint32_t> indices;
     std::vector<GuiCommand> commands;
+    bool allowOversizedTarget=false;
 };
 }

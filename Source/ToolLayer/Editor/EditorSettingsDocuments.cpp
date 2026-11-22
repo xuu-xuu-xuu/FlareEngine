@@ -2,7 +2,7 @@
 #include "ResourceLayer/Assets/AssetIO.h"
 #include <Windows.h>
 
-namespace se
+namespace flare
 {
 namespace
 {

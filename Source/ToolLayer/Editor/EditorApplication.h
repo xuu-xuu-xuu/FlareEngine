@@ -9,7 +9,7 @@
 class Renderer;
 struct InputState;
 
-namespace se
+namespace flare
 {
 class World;
 class UiTree;
@@ -52,4 +52,4 @@ int RunEditorApp(Renderer& renderer, const std::string& locale,
     const std::filesystem::path& projectRoot, bool hidden = false, std::uint64_t maximumFrames = 0,
     EditorApplicationHooks* hooks = nullptr);
 
-} // namespace se
+} // namespace flare

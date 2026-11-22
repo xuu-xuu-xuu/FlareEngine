@@ -42,7 +42,7 @@
 #undef DeviceCapabilities
 #endif
 
-namespace se::rhi
+namespace flare::rhi
 {
 namespace
 {
@@ -393,8 +393,8 @@ struct CommandContext::Impl
     struct OcclusionFrame
     {
         bool active=false;
-        std::vector<std::vector<se::VisibilityItem>> bounds;
-        se::VisibilityFrustum frustum{};
+        std::vector<std::vector<flare::VisibilityItem>> bounds;
+        flare::VisibilityFrustum frustum{};
         OcclusionSettings settings;
     } occlusion;
     Mat4 viewProjection;
@@ -796,8 +796,11 @@ Result CommandContext::ConfigureGui(TextureHandle sceneTarget,TextureHandle comp
     if(scene==output||!scene->target||!scene->target->depth||scene->target->srgb||!output->target||!output->target->srgb||output->target->depth||program->kind!=PipelineKind::Gui)return Fail(Error::Unsupported);
     std::vector<std::shared_ptr<TextureEntry>> resolved;
     if(auto result=ResolveGuiGeometry(*d,g,textures,d->presentation.frames[0].guiDescriptors.Maximum(),output.get(),true,resolved);!result)return result;
-    // 150%/200% 等分数缩放会产生亚像素差异，拖边期间合成目标可按分块预留余量；有效像素区不得超出合成目标。
-    if(g.displaySize.x*g.framebufferScale.x>output->native.width+1.0f||g.displaySize.y*g.framebufferScale.y>output->native.height+1.0f)return Fail(Error::InvalidArgument);
+    // 150%/200% 等分数缩放会产生亚像素差异；常规路径按 1px 容差严格校验，拖边显式启用预留分块目标时允许合成目标大于有效像素区。
+    const float expectedW=g.displaySize.x*g.framebufferScale.x,expectedH=g.displaySize.y*g.framebufferScale.y;
+    if(g.allowOversizedTarget
+        ?(expectedW>output->native.width+1.0f||expectedH>output->native.height+1.0f)
+        :(std::abs(expectedW-output->native.width)>1.0f||std::abs(expectedH-output->native.height)>1.0f))return Fail(Error::InvalidArgument);
     impl_->guiGeometry=g;impl_->guiScene=scene;impl_->guiComposite=output;impl_->guiPipeline=program;impl_->guiTextures=std::move(resolved);
     impl_->leases.insert(impl_->leases.end(),{scene,output,program});
     for(const auto& texture:impl_->guiTextures)impl_->leases.push_back(texture);
@@ -952,13 +955,13 @@ Result CommandContext::ConfigureForward(const ForwardLighting& lighting,Pipeline
     for(const auto& texture:impl_->shadingTextures)if(texture)impl_->leases.push_back(texture);
     impl_->outputPipeline=pipeline;impl_->skyPipeline=sky;impl_->leases.insert(impl_->leases.end(),{pipeline,sky});return {};
 }
-Result CommandContext::ConfigureOcclusion(std::span<const se::VisibilityItem> bounds,const se::VisibilityFrustum& frustum,
+Result CommandContext::ConfigureOcclusion(std::span<const flare::VisibilityItem> bounds,const flare::VisibilityFrustum& frustum,
     const OcclusionSettings& settings)
 {
     const OcclusionBatch batch{bounds};
     return ConfigureOcclusion(std::span<const OcclusionBatch>(&batch,1),frustum,settings);
 }
-Result CommandContext::ConfigureOcclusion(std::span<const OcclusionBatch> batches,const se::VisibilityFrustum& frustum,
+Result CommandContext::ConfigureOcclusion(std::span<const OcclusionBatch> batches,const flare::VisibilityFrustum& frustum,
     const OcclusionSettings& settings)
 {
     auto device=impl_?impl_->device.lock():nullptr;
@@ -968,12 +971,12 @@ Result CommandContext::ConfigureOcclusion(std::span<const OcclusionBatch> batche
     if(impl_->shadow||impl_->post||impl_->guiScene||impl_->guiPipeline
         ||impl_->composition||!impl_->draws.empty()||impl_->pipeline)return Fail(Error::Unsupported);
     if(impl_->phase!=0&&impl_->phase!=2)return Fail(Error::InvalidState);
-    if(batches.empty()||batches.size()>D3D12MeshMaxDraws||!se::ValidVisibilityFrustum(frustum)
+    if(batches.empty()||batches.size()>D3D12MeshMaxDraws||!flare::ValidVisibilityFrustum(frustum)
         ||!IsFinite(settings.depthBias)||settings.depthBias<0||settings.depthBias>0.1f)return Fail(Error::InvalidArgument);
     impl_->occlusion.bounds.clear();impl_->occlusion.bounds.reserve(batches.size());
     for(const auto& batch:batches)
     {
-        if(batch.bounds.empty()||batch.bounds.size()>se::MaximumVisibilityItems)return Fail(Error::InvalidArgument);
+        if(batch.bounds.empty()||batch.bounds.size()>flare::MaximumVisibilityItems)return Fail(Error::InvalidArgument);
         for(std::size_t index=0;index<batch.bounds.size();++index)
         {
             const auto& item=batch.bounds[index];
@@ -1290,8 +1293,8 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
     if(vertex->usage!=BufferUsage::Vertex||index->usage!=BufferUsage::Index||(pipeline->kind!=PipelineKind::TexturedMesh&&!pbr)
         ||index->maxIndex>=vertex->count||impl_->draws.size()>=D3D12MeshMaxDraws)return Fail(Error::InvalidArgument);
     if(impl_->pipeline&&(impl_->viewProjection.values!=draw.viewProjection.values
-        ||se::rhi::IsForward(impl_->pipeline->kind)!=forward||se::rhi::IsShadowed(impl_->pipeline->kind)!=shadow
-        ||IsEnvironment(impl_->pipeline->kind)!=environment||se::rhi::IsInstanced(impl_->pipeline->kind)!=IsInstanced(pipeline->kind)))
+        ||flare::rhi::IsForward(impl_->pipeline->kind)!=forward||flare::rhi::IsShadowed(impl_->pipeline->kind)!=shadow
+        ||IsEnvironment(impl_->pipeline->kind)!=environment||flare::rhi::IsInstanced(impl_->pipeline->kind)!=IsInstanced(pipeline->kind)))
         return Fail(Error::Unsupported);
     D3D12Mesh mesh;mesh.vertices=vertex->resource;mesh.indices=index->resource;
     mesh.vertexView={vertex->resource->GetGPUVirtualAddress(),vertex->bytes,vertex->stride};
@@ -1326,7 +1329,7 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
     impl_->geometry.push_back(std::move(mesh));impl_->draws.push_back(draw);
     // CommandContext 持有快照，调用方临时 ranges 无需活到 Submit。
     auto& ranges=impl_->geometryClusters.emplace_back();
-    if(draw.geometryClusters.size()<=se::MaximumVisibilityItems)ranges.assign(draw.geometryClusters.begin(),draw.geometryClusters.end());
+    if(draw.geometryClusters.size()<=flare::MaximumVisibilityItems)ranges.assign(draw.geometryClusters.begin(),draw.geometryClusters.end());
     impl_->draws.back().geometryClusters=ranges;
     impl_->instances.emplace_back(instances.begin(),instances.end());impl_->instanceCount+=instances.size();
     impl_->leases.insert(impl_->leases.end(),{vertex,index,texture,pipeline});

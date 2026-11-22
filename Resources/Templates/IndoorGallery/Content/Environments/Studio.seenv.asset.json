@@ -1,1 +1,8 @@
-{"version":1,"id":"71000000000000000000000000000009","options":{"scale":1,"generateTangents":true}}
+{
+  "id": "71000000000000000000000000000009",
+  "options": {
+    "generateTangents": true,
+    "scale": 1.0
+  },
+  "version": 1
+}

@@ -6,7 +6,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 struct EditorProjectInfo
@@ -62,4 +62,4 @@ public:
     [[nodiscard]] virtual EditorLayoutInfo Layout() const = 0;
 };
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

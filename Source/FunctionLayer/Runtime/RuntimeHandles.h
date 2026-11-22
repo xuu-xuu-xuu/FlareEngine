@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-namespace se
+namespace flare
 {
 struct EntityHandle
 {

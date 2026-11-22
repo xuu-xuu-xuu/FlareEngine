@@ -5,7 +5,7 @@
 #include <cmath>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -47,7 +47,8 @@ bool ScenePhysics::Synchronize(const World& world,PhysicsWorld& physics)
     std::unordered_set<StableEntityId> wanted,characters;
     for(const auto entity:world.Entities())
     {
-        if(!world.IsEnabled(entity))continue;const auto id=world.Get(entity)->stableId;
+        if(!world.IsEnabled(entity))continue;const auto* record=world.Get(entity);const auto id=record->stableId;
+        const std::uint32_t entityLayer=std::min<std::uint32_t>(record->layer,31u);
         const auto* component=world.GetRegisteredComponent<PhysicsBodyComponent>(world.FindComponent(entity,PhysicsBodyComponent::TypeId));
         const auto* collider=world.GetRegisteredComponent<ColliderSettingsComponent>(world.FindComponent(entity,ColliderSettingsComponent::TypeId));
         const bool hasBody=component&&component->Enabled();
@@ -61,6 +62,7 @@ bool ScenePhysics::Synchronize(const World& world,PhysicsWorld& physics)
             const auto& colliderVals=hasCollider?collider->values:emptyProps;
             const bool stale=existing!=bodies_.end()&&(!physics.IsAlive(existing->second.handle)
                 ||existing->second.hasBody!=hasBody||existing->second.hasCollider!=hasCollider
+                ||existing->second.entityLayer!=entityLayer
                 ||!SameProperties(existing->second.bodyProperties,bodyVals)
                 ||!SameProperties(existing->second.colliderProperties,colliderVals)
                 ||LengthSquared(existing->second.scale-transform.scale)!=0);
@@ -97,9 +99,10 @@ bool ScenePhysics::Synchronize(const World& world,PhysicsWorld& physics)
                         description.radius=std::get<float>(collider->values[2])*maxScale;
                         description.isTrigger=std::get<bool>(collider->values[3]);
                     }
+                    description.layer = 1u << entityLayer;
                     description.entityStableId=id;
                     const auto handle=physics.CreateBody(description);if(!handle)return false;
-                    bodies_.emplace(id,Body{handle,hasBody,hasCollider,bodyVals,colliderVals,transform.scale});
+                    bodies_.emplace(id,Body{handle,hasBody,hasCollider,entityLayer,bodyVals,colliderVals,transform.scale});
                 }
             }
             else if(const auto* state=physics.GetBody(existing->second.handle))

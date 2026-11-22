@@ -5,7 +5,7 @@
 #include <cstring>
 #include <limits>
 
-namespace se
+namespace flare
 {
 namespace
 {

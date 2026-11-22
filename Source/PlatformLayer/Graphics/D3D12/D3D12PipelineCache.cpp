@@ -16,7 +16,7 @@
 #include <fstream>
 #include <sstream>
 
-namespace rhi=se::rhi;
+namespace rhi=flare::rhi;
 using Microsoft::WRL::ComPtr;
 struct D3D12PipelineCache::Impl
 {
@@ -181,7 +181,7 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     sampler.MaxAnisotropy=1;sampler.ComparisonFunc=D3D12_COMPARISON_FUNC_ALWAYS;sampler.BorderColor=D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
     sampler.MaxLOD=D3D12_FLOAT32_MAX;sampler.ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC samplers[]{sampler,sampler,sampler};
-    samplers[1].ShaderRegister=1;samplers[1].Filter=D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT;samplers[1].ComparisonFunc=D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    samplers[1].ShaderRegister=1;samplers[1].Filter=D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;samplers[1].ComparisonFunc=D3D12_COMPARISON_FUNC_LESS_EQUAL;
     samplers[1].AddressU=samplers[1].AddressV=samplers[1].AddressW=D3D12_TEXTURE_ADDRESS_MODE_BORDER;samplers[1].BorderColor=D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
     samplers[2].ShaderRegister=2;samplers[2].Filter=D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     samplers[2].AddressU=samplers[2].AddressV=samplers[2].AddressW=D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -244,12 +244,12 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     if(gui){root.NumParameters=2;root.NumStaticSamplers=1;samplers[0]=samplers[2];samplers[0].ShaderRegister=0;root.pStaticSamplers=samplers;}
     ComPtr<ID3DBlob> serialized,diagnostics;
     if(!CheckGraphicsResult(D3D12SerializeRootSignature(&root,D3D_ROOT_SIGNATURE_VERSION_1,serialized.GetAddressOf(),diagnostics.GetAddressOf()),text,"D3D12.SerializeRootSignatureFailed"))return {};
-    const auto rootHash=se::Sha256(std::span<const std::uint8_t>(
+    const auto rootHash=flare::Sha256(std::span<const std::uint8_t>(
         static_cast<const std::uint8_t*>(serialized->GetBufferPointer()),serialized->GetBufferSize()));
     if(rootHash.empty())return {};
     // 键已包含着色器源码键（= 宏 + 依赖 + 布局的 SHA-256）、绑定布局与顶点布局版本，
     // 因此蒙皮/非蒙皮、压缩/参考顶点、不同 SE_* 宏组合不会共用同一条目。
-    const auto key=se::Sha256(program->source.key+":"+program->bytecodeKey+":"+std::to_string(static_cast<int>(description.kind))
+    const auto key=flare::Sha256(program->source.key+":"+program->bytecodeKey+":"+std::to_string(static_cast<int>(description.kind))
         +":"+std::to_string(description.bindingLayoutVersion)+":"+std::to_string(description.vertexLayoutVersion)+":"+std::to_string(static_cast<int>(depth))+":"+std::to_string(static_cast<int>(description.blend))
         +":"+std::to_string(static_cast<int>(description.colorFormat))+":root:"+rootHash+":triangle-list:cull-none:one-sample:d32-if-depth:v1"
         +(surface?":material:"+std::to_string(description.materialLayoutVersion)+":alpha:"+std::to_string(static_cast<unsigned>(description.alphaMode)):std::string{})
@@ -291,9 +291,9 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
         {"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,offsetof(D3D12TriangleVertex,position),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
         {"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,offsetof(D3D12TriangleVertex,color),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}};
     const D3D12_INPUT_ELEMENT_DESC guiInputs[]{
-        {"POSITION",0,DXGI_FORMAT_R32G32_FLOAT,0,offsetof(se::GuiVertex,position),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
-        {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,offsetof(se::GuiVertex,uv),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
-        {"COLOR",0,DXGI_FORMAT_R8G8B8A8_UNORM,0,offsetof(se::GuiVertex,color),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}};
+        {"POSITION",0,DXGI_FORMAT_R32G32_FLOAT,0,offsetof(flare::GuiVertex,position),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,offsetof(flare::GuiVertex,uv),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
+        {"COLOR",0,DXGI_FORMAT_R8G8B8A8_UNORM,0,offsetof(flare::GuiVertex,color),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0}};
     const D3D12_INPUT_ELEMENT_DESC surfaceDepthInputs[]{
         {"POSITION",0,compressed?DXGI_FORMAT_R16G16B16A16_UNORM:DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},
         {"TEXCOORD",0,compressed?DXGI_FORMAT_R16G16_FLOAT:DXGI_FORMAT_R32G32_FLOAT,0,compressed?8u:24u,D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,0},

@@ -1,10 +1,10 @@
 #pragma once
 #include "HdrImage.h"
 
-namespace se
+namespace flare
 {
 // 六 Gaussian 归一化球面扩散；仅预积分 diffuse，不含厚度、透射、屏幕模糊或跨对象采样。
-inline constexpr const char* SkinDiffuseCookerVersion="SelfEngine.SkinDiffuse.1/normalized-six-gaussian-sphere/exponential-cdf";
+inline constexpr const char* SkinDiffuseCookerVersion="FlareEngine.SkinDiffuse.1/normalized-six-gaussian-sphere/exponential-cdf";
 inline constexpr float SkinDiffuseMaximumCurvature=8;
 struct SkinDiffuseSettings
 {

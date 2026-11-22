@@ -1,9 +1,9 @@
 #pragma once
 #include "HdrImage.h"
 
-namespace se
+namespace flare
 {
-inline constexpr const char* BrdfEnergyCookerVersion="SelfEngine.BrdfEnergy.1/ggx-correlated-schlick-vndf2018";
+inline constexpr const char* BrdfEnergyCookerVersion="FlareEngine.BrdfEnergy.1/ggx-correlated-schlick-vndf2018";
 inline constexpr float BrdfEnergyMinimumRoughness=.045f,BrdfEnergyMinimumNv=.0001f;
 struct BrdfEnergySettings
 {

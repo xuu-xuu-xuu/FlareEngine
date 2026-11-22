@@ -10,7 +10,7 @@
 #include <string>
 #include <string_view>
 
-namespace se::ui
+namespace flare::ui
 {
 
 // 单一文本编辑模型；TextField/TextArea 复用，不直接读全局状态。
@@ -64,4 +64,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

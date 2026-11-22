@@ -11,7 +11,7 @@
 #include <regex>
 #include <utility>
 
-namespace se::videoencoder
+namespace flare::videoencoder
 {
 namespace
 {
@@ -628,4 +628,4 @@ void ConvertRgbToNv12(std::span<const std::uint8_t> rgb, std::uint32_t width,
         }
     }
 }
-} // namespace se::videoencoder
+} // namespace flare::videoencoder

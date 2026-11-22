@@ -2,7 +2,7 @@
 #include "AssetIO.h"
 #include "StaticModelPreparation.h"
 
-namespace se
+namespace flare
 {
 bool PrepareModelImages(const StaticModel& model, const std::filesystem::path& source,
     const std::filesystem::path& allowedRoot, PreparedModelImages& output,

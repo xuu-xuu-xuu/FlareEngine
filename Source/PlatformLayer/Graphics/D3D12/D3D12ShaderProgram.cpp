@@ -17,7 +17,7 @@
 
 using Microsoft::WRL::ComPtr;
 namespace fs=std::filesystem;
-namespace rhi=se::rhi;
+namespace rhi=flare::rhi;
 namespace
 {
 using Json=nlohmann::json;
@@ -40,7 +40,7 @@ Json UserPbrInterface(rhi::PipelineKind kind=rhi::PipelineKind::PbrMesh)
 {
     Json fields=Json::array();for(const auto& field:pbrFields)fields.push_back({{"name",field.name},{"offset",field.offset},{"size",field.size},
         {"type",field.matrix?"column_major float4x4":"float4"}});
-    Json result{{"type","SelfEngine.UserPbrInterface"},{"version",1},{"backend","D3D12"},{"vertex_profile","vs_5_1"},{"pixel_profile","ps_5_1"},
+    Json result{{"type","FlareEngine.UserPbrInterface"},{"version",1},{"backend","D3D12"},{"vertex_profile","vs_5_1"},{"pixel_profile","ps_5_1"},
         {"layout",rhi::PbrMaterialLayoutVersion},{"vertex_stride",sizeof(rhi::Vertex)},
         {"vertex",Json::array({{{"semantic","POSITION0"},{"type","float3"},{"offset",offsetof(rhi::Vertex,position)}},
                               {{"semantic","NORMAL0"},{"type","float3"},{"offset",offsetof(rhi::Vertex,normal)}},
@@ -106,7 +106,7 @@ public:
         if(error||!Within(root_,path))return E_ACCESSDENIED;
         auto opened=std::make_unique<File>();opened->path=path;
         if(!Read(path,opened->bytes,maxSourceBytes)||total_+opened->bytes.size()>maxProgramBytes)return E_FAIL;
-        const auto size=opened->bytes.size();total_+=size;const auto hash=se::Sha256(std::span<const std::uint8_t>(opened->bytes));if(hash.empty())return E_FAIL;
+        const auto size=opened->bytes.size();total_+=size;const auto hash=flare::Sha256(std::span<const std::uint8_t>(opened->bytes));if(hash.empty())return E_FAIL;
         dependencies.insert_or_assign(Utf8(path.lexically_relative(root_)),hash);
         if(opened->bytes.empty())opened->bytes.push_back(0);
         *data=opened->bytes.data();*bytes=static_cast<UINT>(size);opened_.emplace(*data,std::move(opened));return S_OK;
@@ -139,7 +139,7 @@ bool Fields(ID3D12ShaderReflection& shader,bool mesh,bool pbr,std::string& reaso
     const std::string name=depth?"ShadowConstants":pbr?"PbrConstants":mesh?"DrawConstants":"CameraConstants";
     auto* constants=shader.GetConstantBufferByName(name.c_str());D3D12_SHADER_BUFFER_DESC buffer{};
     if(!constants||FAILED(constants->GetDesc(&buffer))){reason=name+": missing";return false;}
-    const auto expectedSize=pbr?sizeof(rhi::PbrDrawConstants):mesh?sizeof(rhi::MeshDrawConstants):sizeof(se::Mat4);
+    const auto expectedSize=pbr?sizeof(rhi::PbrDrawConstants):mesh?sizeof(rhi::MeshDrawConstants):sizeof(flare::Mat4);
     if(buffer.Size!=expectedSize||buffer.Type!=D3D_CT_CBUFFER)
     {reason=name+".size="+std::to_string(buffer.Size)+", expected="+std::to_string(expectedSize);return false;}
     const ShaderField legacyFields[]{
@@ -535,7 +535,7 @@ bool Layout(const D3D12ShaderProgram& program,std::string* detail=nullptr)
     return true;
 }
 std::string BlobHash(ID3DBlob& blob)
-{return se::Sha256(std::span(static_cast<const std::uint8_t*>(blob.GetBufferPointer()),blob.GetBufferSize()));}
+{return flare::Sha256(std::span(static_cast<const std::uint8_t*>(blob.GetBufferPointer()),blob.GetBufferSize()));}
 void U32(std::vector<std::uint8_t>& bytes,UINT value){for(UINT shift=0;shift<32;shift+=8)bytes.push_back(static_cast<std::uint8_t>(value>>shift));}
 UINT U32(const std::uint8_t* bytes){return UINT(bytes[0])|(UINT(bytes[1])<<8)|(UINT(bytes[2])<<16)|(UINT(bytes[3])<<24);}
 bool Atomic(const fs::path& path,std::span<const std::uint8_t> bytes)
@@ -596,7 +596,7 @@ std::shared_ptr<const D3D12ShaderProgram> ReadArtifact(D3D12ShaderSource source,
         program->vertex=std::move(parts.vertex);program->pixel=std::move(parts.pixel);
         const auto vertexHash=BlobHash(*program->vertex.Get()),pixelHash=BlobHash(*program->pixel.Get());
         if(vertexHash.empty()||pixelHash.empty()||metadata.at("vertex_sha256")!=vertexHash||metadata.at("pixel_sha256")!=pixelHash||!Layout(*program))return {};
-        program->bytecodeKey=se::Sha256(vertexHash+":"+pixelHash);return program;
+        program->bytecodeKey=flare::Sha256(vertexHash+":"+pixelHash);return program;
     }
     catch(const Json::exception&){return {};}
 }
@@ -629,7 +629,7 @@ bool ReadD3D12ShaderSource(const rhi::PipelineDescription& description,D3D12Shad
         source.depthNormals=true;
     }
     if(description.materialLayoutVersion!=0&&description.materialLayoutVersion!=rhi::MaterialSurfaceLayoutVersion)return false;
-    if(!se::IsValidMaterialAlphaMode(description.alphaMode)||(!description.materialLayoutVersion&&description.alphaMode!=se::MaterialAlphaMode::Opaque))return false;
+    if(!flare::IsValidMaterialAlphaMode(description.alphaMode)||(!description.materialLayoutVersion&&description.alphaMode!=flare::MaterialAlphaMode::Opaque))return false;
     source.materialLayoutVersion=description.materialLayoutVersion;
     source.shadingLayoutVersion=description.shadingLayoutVersion;
     if(source.shadingLayoutVersion)
@@ -654,12 +654,12 @@ bool ReadD3D12ShaderSource(const rhi::PipelineDescription& description,D3D12Shad
     {
         std::u32string decoded;
         if(!Identifier(source.macros[index].name)||source.macros[index].value.size()>4096||source.macros[index].value.find('\0')!=std::string::npos
-            ||!se::DecodeUtf8(source.macros[index].value,decoded)
+            ||!flare::DecodeUtf8(source.macros[index].value,decoded)
             ||(index&&source.macros[index].name==source.macros[index-1].name)){Diagnostic(text,"Shader.SourceInvalid",source.path);return false;}
     }
     std::error_code error;const auto path=fs::weakly_canonical(source.path,error);std::vector<std::uint8_t> original;
     if(error||!Read(path,original,maxSourceBytes)){Diagnostic(text,"Shader.SourceInvalid",source.path);return false;}
-    Includes includes(path.parent_path());const auto hash=se::Sha256(std::span<const std::uint8_t>(original));if(hash.empty())return false;
+    Includes includes(path.parent_path());const auto hash=flare::Sha256(std::span<const std::uint8_t>(original));if(hash.empty())return false;
     includes.dependencies.emplace(Utf8(path.filename()),hash);
     std::vector<D3D_SHADER_MACRO> macros;for(const auto& macro:source.macros)macros.push_back({macro.name.c_str(),macro.value.c_str()});macros.push_back({nullptr,nullptr});
     ComPtr<ID3DBlob> preprocessed,diagnostics;const auto name=Utf8(path.filename());
@@ -675,7 +675,7 @@ bool ReadD3D12ShaderSource(const rhi::PipelineDescription& description,D3D12Shad
     {Diagnostic(text,"D3D12.ShaderCompileFailed",source.path,diagnostics.Get(),"preprocess");return false;}
     source.preprocessed.assign(static_cast<const char*>(preprocessed->GetBufferPointer()),preprocessed->GetBufferSize());
     for(const auto& [relative,digest]:includes.dependencies)source.dependencies.push_back({relative,digest});
-    source.key=se::Sha256(Metadata(source).dump());if(source.key.empty())return false;output=std::move(source);return true;
+    source.key=flare::Sha256(Metadata(source).dump());if(source.key.empty())return false;output=std::move(source);return true;
 }
 std::shared_ptr<const D3D12ShaderProgram> CompileD3D12ShaderProgram(D3D12ShaderSource source,const Localization& text)
 {
@@ -688,7 +688,7 @@ std::shared_ptr<const D3D12ShaderProgram> CompileD3D12ShaderProgram(D3D12ShaderS
     if(!compile("VSMain","vs_5_1",program->vertex)||!compile("PSMain","ps_5_1",program->pixel))return {};
     std::string reason;if(!Layout(*program,&reason)){Diagnostic(text,"Shader.LayoutMismatch",input.path,nullptr,reason);return {};}
     const auto vertex=BlobHash(*program->vertex.Get()),pixel=BlobHash(*program->pixel.Get());if(vertex.empty()||pixel.empty())return {};
-    program->bytecodeKey=se::Sha256(vertex+":"+pixel);return program;
+    program->bytecodeKey=flare::Sha256(vertex+":"+pixel);return program;
 }
 std::shared_ptr<const D3D12ShaderProgram> LoadD3D12ShaderProgram(D3D12ShaderSource source,D3D12ShaderLoadStatistics& stats,const Localization& text)
 {
@@ -732,7 +732,7 @@ bool Digest(const std::string& value)
 bool RelativeDependency(const std::string& value)
 {
     std::u32string decoded;
-    if(value.empty()||value.size()>4096||value.find_first_of("\\:")!=std::string::npos||value.find('\0')!=std::string::npos||!se::DecodeUtf8(value,decoded))return false;
+    if(value.empty()||value.size()>4096||value.find_first_of("\\:")!=std::string::npos||value.find('\0')!=std::string::npos||!flare::DecodeUtf8(value,decoded))return false;
     const fs::path path(std::u8string_view(reinterpret_cast<const char8_t*>(value.data()),value.size()));
     if(path.is_absolute()||path.has_root_name()||path.filename().empty()||Utf8(path.lexically_normal())!=value)return false;
     for(const auto& part:path)if(part=="."||part=="..")return false;return true;
@@ -743,8 +743,8 @@ bool PackageSource(const Json& metadata,D3D12ShaderSource& source)
     {
         const auto kind=static_cast<rhi::PipelineKind>(metadata.at("kind").get<int>());if(!UserSurfaceKind(kind))return false;
         const auto expectedInterface=UserPbrInterface(kind);
-        if(metadata.at("package_type")!="SelfEngine.UserPbr"||metadata.at("package_schema")!=1||metadata.at("debug_data_stripped")!=true
-            ||metadata.at("interface")!=expectedInterface||metadata.at("interface_sha256")!=se::Sha256(expectedInterface.dump())
+        if(metadata.at("package_type")!="FlareEngine.UserPbr"||metadata.at("package_schema")!=1||metadata.at("debug_data_stripped")!=true
+            ||metadata.at("interface")!=expectedInterface||metadata.at("interface_sha256")!=flare::Sha256(expectedInterface.dump())
             ||!metadata.at("flags").is_number_unsigned()||metadata.at("flags").get<UINT64>()>UINT_MAX)return false;
         source.kind=kind;source.layoutVersion=rhi::BindingLayout(kind);source.flags=metadata.at("flags").get<UINT>();
         constexpr UINT strict=D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_WARNINGS_ARE_ERRORS;
@@ -754,7 +754,7 @@ bool PackageSource(const Json& metadata,D3D12ShaderSource& source)
         for(const auto& item:macros)
         {
             rhi::ShaderMacro macro{item.at("name").get<std::string>(),item.at("value").get<std::string>()};std::u32string decoded;
-            if(!Identifier(macro.name)||macro.value.size()>4096||macro.value.find('\0')!=std::string::npos||!se::DecodeUtf8(macro.value,decoded)
+            if(!Identifier(macro.name)||macro.value.size()>4096||macro.value.find('\0')!=std::string::npos||!flare::DecodeUtf8(macro.value,decoded)
                 ||(!source.macros.empty()&&source.macros.back().name>=macro.name))return false;
             source.macros.push_back(std::move(macro));
         }
@@ -766,7 +766,7 @@ bool PackageSource(const Json& metadata,D3D12ShaderSource& source)
         }
         const auto canonical=Metadata(source);if(metadata.size()!=canonical.size()+8)return false;
         for(auto it=canonical.begin();it!=canonical.end();++it)if(metadata.at(it.key())!=it.value())return false;
-        source.key=se::Sha256(canonical.dump());return !source.key.empty()&&metadata.at("source_key")==source.key;
+        source.key=flare::Sha256(canonical.dump());return !source.key.empty()&&metadata.at("source_key")==source.key;
     }
     catch(const std::exception&){return false;}
 }
@@ -781,7 +781,7 @@ bool NoPrivateShaderParts(ID3DBlob& code)
 }
 }
 std::string D3D12UserPbrInterfaceDescription(){return UserPbrInterface().dump(2);}
-std::string D3D12UserPbrInterfaceHash(){return se::Sha256(UserPbrInterface().dump());}
+std::string D3D12UserPbrInterfaceHash(){return flare::Sha256(UserPbrInterface().dump());}
 bool WriteD3D12UserPbrPackage(const D3D12ShaderProgram& program,const fs::path& artifact,const Localization& text)
 {
     if(program.source.materialLayoutVersion||!UserSurfaceKind(program.source.kind)||program.source.layoutVersion!=rhi::BindingLayout(program.source.kind)
@@ -795,8 +795,8 @@ bool WriteD3D12UserPbrPackage(const D3D12ShaderProgram& program,const fs::path& 
     {Diagnostic(text,"Shader.UserPackageInvalid",artifact);return false;}
     auto metadata=Metadata(packed.source);metadata["source_key"]=packed.source.key;
     metadata["vertex_sha256"]=BlobHash(*packed.vertex.Get());metadata["pixel_sha256"]=BlobHash(*packed.pixel.Get());
-    metadata["package_type"]="SelfEngine.UserPbr";metadata["package_schema"]=1;metadata["interface"]=UserPbrInterface(program.source.kind);
-    metadata["interface_sha256"]=se::Sha256(metadata["interface"].dump());metadata["debug_data_stripped"]=true;
+    metadata["package_type"]="FlareEngine.UserPbr";metadata["package_schema"]=1;metadata["interface"]=UserPbrInterface(program.source.kind);
+    metadata["interface_sha256"]=flare::Sha256(metadata["interface"].dump());metadata["debug_data_stripped"]=true;
     D3D12ShaderSource check;std::vector<std::uint8_t> bytes;
     if(!PackageSource(metadata,check)||!EncodeArtifact(metadata,packed,bytes))
     {Diagnostic(text,"Shader.UserPackageInvalid",artifact);return false;}
@@ -806,7 +806,7 @@ std::shared_ptr<const D3D12ShaderProgram> LoadD3D12UserPbrPackage(const rhi::Pip
     D3D12ShaderLoadStatistics& stats,const Localization& text)
 {
     const auto reject=[&]()->std::shared_ptr<const D3D12ShaderProgram>{++stats.artifactRejections;Diagnostic(text,"Shader.UserPackageInvalid",description.shader);return {};};
-    if(description.materialLayoutVersion||description.shadingLayoutVersion||description.alphaMode!=se::MaterialAlphaMode::Opaque)return reject();
+    if(description.materialLayoutVersion||description.shadingLayoutVersion||description.alphaMode!=flare::MaterialAlphaMode::Opaque)return reject();
     if(description.shaderInput!=rhi::ShaderInput::Artifact||!UserSurfaceKind(description.kind)
         ||description.bindingLayoutVersion!=rhi::BindingLayout(description.kind)||description.shader.empty()||!description.macros.empty())return reject();
     ArtifactParts parts;D3D12ShaderSource source;
@@ -815,6 +815,6 @@ std::shared_ptr<const D3D12ShaderProgram> LoadD3D12UserPbrPackage(const rhi::Pip
     auto program=std::make_shared<D3D12ShaderProgram>();source.path=description.shader;program->source=std::move(source);
     program->vertex=std::move(parts.vertex);program->pixel=std::move(parts.pixel);std::string reason;
     if(!Layout(*program,&reason)){++stats.artifactRejections;Diagnostic(text,"Shader.LayoutMismatch",description.shader,nullptr,reason);return {};}
-    program->bytecodeKey=se::Sha256(BlobHash(*program->vertex.Get())+":"+BlobHash(*program->pixel.Get()));
+    program->bytecodeKey=flare::Sha256(BlobHash(*program->vertex.Get())+":"+BlobHash(*program->pixel.Get()));
     if(program->bytecodeKey.empty())return reject();++stats.artifactLoads;return program;
 }

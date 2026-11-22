@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-namespace se
+namespace flare
 {
 class World;
 // 默认场景的稳定实体 ID。创建成功时必须全部存在。

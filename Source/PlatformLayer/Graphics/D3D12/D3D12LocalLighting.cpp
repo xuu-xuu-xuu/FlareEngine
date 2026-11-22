@@ -1,6 +1,6 @@
 #include "D3D12LocalLighting.h"
 
-using namespace se;
+using namespace flare;
 bool ValidD3D12LocalLight(const rhi::LocalLight& light)
 {
     const auto p=light.position,r=light.radiance;

@@ -4,7 +4,7 @@
 #include <array>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 bool CharacterController::Move(PhysicsWorld& world,Vec3 horizontalDirection,bool jumpPressed,float seconds)
 {

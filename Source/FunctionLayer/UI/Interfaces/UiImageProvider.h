@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string_view>
 
-namespace se::ui
+namespace flare::ui
 {
 
 struct UiImageInfo
@@ -22,4 +22,4 @@ public:
     [[nodiscard]] virtual bool Resolve(std::string_view image, UiImageInfo& info) const = 0;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

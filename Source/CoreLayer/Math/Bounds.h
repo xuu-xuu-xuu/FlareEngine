@@ -3,7 +3,7 @@
 #include "CoreLayer/Math/Projection.h"
 #include <limits>
 
-namespace se
+namespace flare
 {
 struct Aabb {Vec3 minimum{},maximum{};};
 inline bool IsValid(const Aabb& box)

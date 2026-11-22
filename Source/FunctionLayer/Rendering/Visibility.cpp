@@ -1,6 +1,6 @@
 #include "Visibility.h"
 
-namespace se
+namespace flare
 {
 std::optional<Aabb> WorldBoundsCache::Resolve(StableEntityId entity,const Mat4& world,const std::shared_ptr<const StaticRenderModel>& model)
 {

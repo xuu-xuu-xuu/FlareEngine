@@ -12,15 +12,6 @@ public sealed class ScriptProject : IDisposable
         protected override Assembly? Load(AssemblyName name)
         {
             if (name.Name == typeof(F_Behaviour).Assembly.GetName().Name) return typeof(F_Behaviour).Assembly;
-            if (name.Name == "SelfEngine.Managed")
-            {
-                var shimPath = Path.Combine(AppContext.BaseDirectory, "SelfEngine.Managed.dll");
-                if (File.Exists(shimPath))
-                {
-                    using var shimStream = File.OpenRead(shimPath);
-                    return LoadFromStream(shimStream);
-                }
-            }
             var path = resolver.ResolveAssemblyToPath(name);
             if (path is null) return null;
             using var stream = File.OpenRead(path);

@@ -4,7 +4,7 @@
 #include <iomanip>
 #include <sstream>
 
-namespace se
+namespace flare
 {
 namespace
 {

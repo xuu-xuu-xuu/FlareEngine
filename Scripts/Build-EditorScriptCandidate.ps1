@@ -195,30 +195,29 @@ try {
         if(!$packageMode){
             New-Item -ItemType Directory -Path (Join-Path $sdkRoot 'SDK/Managed') -Force|Out-Null
             Copy-Item -LiteralPath (Join-Path $runtime 'FlareEngine.Managed.dll') -Destination (Join-Path $sdkRoot 'SDK/Managed/FlareEngine.Managed.dll')
-            if(Test-Path -LiteralPath (Join-Path $runtime 'SelfEngine.Managed.dll')){
-                Copy-Item -LiteralPath (Join-Path $runtime 'SelfEngine.Managed.dll') -Destination (Join-Path $sdkRoot 'SDK/Managed/SelfEngine.Managed.dll')
+            if(Test-Path -LiteralPath (Join-Path $runtime 'FlareEngine.Managed.xml') -PathType Leaf){
+                Copy-Item -LiteralPath (Join-Path $runtime 'FlareEngine.Managed.xml') -Destination (Join-Path $sdkRoot 'SDK/Managed/FlareEngine.Managed.xml')
             }
             $targets=@'
 <Project><ItemGroup>
-  <ProjectReference Remove="$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(FlareEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj;$(SelfEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(SelfEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj"/>
-  <Reference Remove="FlareEngine.Managed;SelfEngine.Managed"/>
+  <ProjectReference Remove="$(FlareEngineRoot)/Source/FunctionLayer/Scripting/Managed/Engine.Managed.csproj;$(FlareEngineRoot)\Source\FunctionLayer\Scripting\Managed\Engine.Managed.csproj"/>
+  <Reference Remove="FlareEngine.Managed"/>
   <Reference Include="FlareEngine.Managed"><HintPath>$(MSBuildThisFileDirectory)/Managed/FlareEngine.Managed.dll</HintPath><Private>false</Private></Reference>
   <Using Include="FlareEngine"/>
 </ItemGroup></Project>
 '@
             [IO.File]::WriteAllText((Join-Path $sdkRoot 'SDK/FlareEngine.Scripts.targets'),$targets,$utf8)
-            [IO.File]::WriteAllText((Join-Path $sdkRoot 'SDK/SelfEngine.Scripts.targets'),$targets,$utf8)
         }
         $properties=Get-EnginePackageScriptProperties $sdkRoot (Join-Path $OperationDirectory 'script-obj')
-        if(!$packageMode){$properties[0]='-p:FlareEngineRoot='+$engineRoot;$properties[1]='-p:SelfEngineRoot='+$engineRoot}
+        if(!$packageMode){$properties[0]='-p:FlareEngineRoot='+$engineRoot}
         # 多个用户 ProjectReference 不能共用一个 obj/project.assets.json。
         # 保留每个项目原有 Directory.Build.props，再为各项目分配独立中间目录。
         $scriptProps=Join-Path $OperationDirectory 'Candidate.Script.Directory.Build.props'
         $isolatedObj=[Security.SecurityElement]::Escape((Join-Path $OperationDirectory 'script-obj'))
         $scriptPropsText=@'
 <Project>
-  <PropertyGroup><_SelfEngineOriginalProps>$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildProjectDirectory)'))</_SelfEngineOriginalProps></PropertyGroup>
-  <Import Project="$(_SelfEngineOriginalProps)" Condition="'$(_SelfEngineOriginalProps)' != ''"/>
+  <PropertyGroup><_FlareEngineOriginalProps>$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildProjectDirectory)'))</_FlareEngineOriginalProps></PropertyGroup>
+  <Import Project="$(_FlareEngineOriginalProps)" Condition="'$(_FlareEngineOriginalProps)' != ''"/>
   <PropertyGroup><BaseIntermediateOutputPath>__OBJECT_ROOT__\$(MSBuildProjectName)\</BaseIntermediateOutputPath><MSBuildProjectExtensionsPath>__OBJECT_ROOT__\$(MSBuildProjectName)\</MSBuildProjectExtensionsPath><DefaultItemExcludes>$(DefaultItemExcludes);**\bin\**;**\obj\**</DefaultItemExcludes></PropertyGroup>
 </Project>
 '@

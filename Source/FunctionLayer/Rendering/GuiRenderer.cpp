@@ -2,7 +2,7 @@
 #include "FunctionLayer/Application/FrameData.h"
 #include "PlatformLayer/Windows/ExecutablePath.h"
 #include <cmath>
-namespace se
+namespace flare
 {
 rhi::Result GuiRenderer::Configure(rhi::Device& device,rhi::CommandContext& commands,const FrameData& f,std::uint32_t width,std::uint32_t height,const std::filesystem::path& shaders)
 {

@@ -3,10 +3,10 @@
 #include <filesystem>
 #include <string>
 
-namespace se
+namespace flare
 {
 // 编辑工作进程：拥有唯一项目的编辑世界与编辑会话。
-// 正式启动器 SelfEngineEditor 与 EditorSandbox 共用本入口，不复制第二套编辑流程。
+// 正式启动器 FlareEditor 与 EditorSandbox 共用本入口，不复制第二套编辑流程。
 struct EditorWorkerOptions
 {
     std::filesystem::path projectRoot;

@@ -5,7 +5,7 @@
 #include <span>
 #include <vector>
 
-namespace se
+namespace flare
 {
 inline constexpr std::uint32_t MaximumVisibilityItems=65536;
 struct VisibilityItem

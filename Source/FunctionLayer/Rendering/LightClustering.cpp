@@ -4,7 +4,7 @@
 #include <numeric>
 #include <set>
 
-namespace se
+namespace flare
 {
 namespace
 {

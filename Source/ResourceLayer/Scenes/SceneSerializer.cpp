@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <Windows.h>
 
-namespace se
+namespace flare
 {
 struct SceneDocument::Data {nlohmann::json root;};
 namespace
@@ -91,7 +91,7 @@ bool SerializeScene(const World& world,std::string& jsonText,std::string& error)
     try
     {
         if(world.Size()>maxEntities){error="Scene.TooLarge";return false;}
-        Json root{{"format","SelfEngine.Scene"},{"version",2},{"entities",Json::array()},{"retiredIds",Json::array()}};
+        Json root{{"format","FlareEngine.Scene"},{"version",2},{"entities",Json::array()},{"retiredIds",Json::array()}};
         const auto& environment=world.EnvironmentSettings();
         if(!environment.todProfile.empty()||environment.preserveTime)root["environment"]={{"todProfile",environment.todProfile},{"preserveTime",environment.preserveTime}};
         for(const auto id:world.KnownStableIds())if(!world.FindByStableId(id))root["retiredIds"].push_back(std::to_string(id));
@@ -112,6 +112,9 @@ bool SerializeScene(const World& world,std::string& jsonText,std::string& error)
             }
             Json entityJson{{"id",std::to_string(record.stableId)},{"name",record.name},{"enabled",record.enabled},
                 {"parent",record.parent?Json(std::to_string(world.Get(record.parent)->stableId)):Json(nullptr)},{"components",std::move(components)}};
+            if(!record.tag.empty()&&record.tag!="Untagged") entityJson["tag"]=record.tag;
+            if(record.layer!=0) entityJson["layer"]=record.layer;
+            if(record.staticFlags!=0) entityJson["staticFlags"]=record.staticFlags;
             if(record.prefabLink) entityJson["prefab"]=detail::WritePrefabLinkJson(*record.prefabLink);
             root["entities"].push_back(std::move(entityJson));
         }
@@ -134,7 +137,7 @@ bool ParseSceneDocument(std::string_view jsonText,SceneDocument& document,std::s
             else if(event==Json::parse_event_t::key&&!objectKeys.empty()){if(!objectKeys.back().emplace(parsed.get<std::string>(),true).second)duplicate=true;}
             else if(event==Json::parse_event_t::object_end&&!objectKeys.empty())objectKeys.pop_back();return true;
         });
-        if(duplicate||!OnlyKeys(root,{"format","version","entities","retiredIds","environment"})||root.value("format",std::string{})!="SelfEngine.Scene"
+        if(duplicate||!OnlyKeys(root,{"format","version","entities","retiredIds","environment"})||(root.value("format",std::string{})!="FlareEngine.Scene"&&root.value("format",std::string{})!="SelfEngine.Scene")
             ||!root.contains("version")||!root["version"].is_number_integer()){error="Scene.InvalidData";return false;}
         if(root["version"]!=1&&root["version"]!=2){error="Scene.UnsupportedVersion";return false;}
         if(!root.contains("entities")||!root["entities"].is_array()||root["entities"].size()>maxEntities){error="Scene.InvalidData";return false;}
@@ -166,12 +169,26 @@ bool InstantiateScene(const SceneDocument& document,World& world,std::string& er
         for(const auto& data:root["entities"])
         {
             StableEntityId id=0,parent=0;
-            if(!OnlyKeys(data,{"id","name","enabled","parent","components","prefab"})||!data.contains("id")||!ReadId(data["id"],id)
+            if(!OnlyKeys(data,{"id","name","enabled","parent","components","prefab","tag","layer","staticFlags"})||!data.contains("id")||!ReadId(data["id"],id)
                 ||!data.contains("name")||!data["name"].is_string()||!data.contains("enabled")||!data["enabled"].is_boolean()
                 ||!data.contains("parent")||(!data["parent"].is_null()&&!ReadId(data["parent"],parent))
                 ||!data.contains("components")||!data["components"].is_array()||data["components"].size()>4096){error="Scene.InvalidData";return false;}
             const auto entity=loaded.Create(data["name"].get<std::string>(),id);
             if(!entity||!loaded.SetEnabled(entity,data["enabled"].get<bool>())){error=loaded.LastError();return false;}
+            if(data.contains("tag"))
+            {
+                if(!data["tag"].is_string()||!loaded.SetTag(entity,data["tag"].get<std::string>())){error="Scene.InvalidData";return false;}
+            }
+            if(data.contains("layer"))
+            {
+                if(!data["layer"].is_number_integer()||data["layer"].get<std::int64_t>()<0||data["layer"].get<std::int64_t>()>31
+                    ||!loaded.SetLayer(entity,static_cast<std::uint32_t>(data["layer"].get<std::int64_t>()))){error="Scene.InvalidData";return false;}
+            }
+            if(data.contains("staticFlags"))
+            {
+                if(!data["staticFlags"].is_number_integer()||data["staticFlags"].get<std::int64_t>()<0||data["staticFlags"].get<std::int64_t>()>255
+                    ||!loaded.SetStaticFlags(entity,static_cast<std::uint32_t>(data["staticFlags"].get<std::int64_t>()))){error="Scene.InvalidData";return false;}
+            }
             if(data.contains("prefab")&&!data["prefab"].is_null())
             {
                 PrefabLink link;

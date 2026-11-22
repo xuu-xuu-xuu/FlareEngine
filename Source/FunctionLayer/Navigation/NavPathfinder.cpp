@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -238,4 +238,4 @@ NavPathResult FindNavPath(const NavMeshData& navMesh, Vec3 start, Vec3 goal, Vec
     result.totalLengthMeters = totalLen;
     return result;
 }
-} // namespace se
+} // namespace flare

@@ -8,7 +8,7 @@
 #include <map>
 #include <set>
 
-namespace se
+namespace flare
 {
 namespace
 {

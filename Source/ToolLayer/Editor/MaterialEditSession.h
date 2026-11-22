@@ -2,7 +2,7 @@
 #include "ResourceLayer/Assets/MaterialMetadata.h"
 #include <optional>
 
-namespace se
+namespace flare
 {
 // 只拥有可变文档/有限历史；文件、AssetStore 与 GPU 寿命仍由原有模块负责。
 class MaterialEditSession

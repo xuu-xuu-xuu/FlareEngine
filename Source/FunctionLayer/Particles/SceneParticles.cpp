@@ -5,7 +5,7 @@
 #include <limits>
 #include <utility>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -253,4 +253,4 @@ const ParticleSimulator* SceneParticles::FindSimulator(StableEntityId entityId) 
     const auto it = emitters_.find(entityId);
     return it != emitters_.end() ? &it->second.simulator : nullptr;
 }
-} // namespace se
+} // namespace flare

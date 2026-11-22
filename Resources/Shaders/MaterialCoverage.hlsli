@@ -1,5 +1,5 @@
-#ifndef SELF_ENGINE_MATERIAL_COVERAGE
-#define SELF_ENGINE_MATERIAL_COVERAGE
+#ifndef FLARE_ENGINE_MATERIAL_COVERAGE
+#define FLARE_ENGINE_MATERIAL_COVERAGE
 cbuffer MaterialSurfaceConstants:register(b4)
 {
     float4 surfaceBaseColorFactor;

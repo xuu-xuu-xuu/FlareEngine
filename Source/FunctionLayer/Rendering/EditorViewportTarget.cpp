@@ -1,6 +1,6 @@
 #include "EditorViewportTarget.h"
 
-namespace se
+namespace flare
 {
 bool NullEditorViewportTarget::Resize(std::uint32_t width,std::uint32_t height,std::string& errorKey)
 {

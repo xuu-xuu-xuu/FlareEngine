@@ -1,7 +1,7 @@
 #include "FrameData.h"
 #include "FeatureFrameData.h"
 #include "FunctionLayer/Runtime/FeatureComponents.h"
-namespace se
+namespace flare
 {
 void BuildFrameData(const Environment& environment,const UiTree* ui,const PhysicsWorld* physics,FrameData& output)
 {
@@ -28,7 +28,11 @@ void BuildFrameData(const World& world,const UiTree* ui,const PhysicsWorld* phys
         for(auto p=entity;p;){const auto* r=world.Get(p);if(!r||!r->enabled){enabled=false;break;}
             const auto* transform=world.GetTransform(p);
             if(!transform||!HasUnitScale(transform->scale))rigidHierarchy=false;
-            if(activeOn(p,ComponentTypes::Script)||activeOn(p,CharacterSettingsComponent::TypeId)
+            if((r->staticFlags&EntityStaticFlags::Explicit)!=0)
+            {
+                if((r->staticFlags&EntityStaticFlags::Batching)==0)staticHierarchy=false;
+            }
+            else if(activeOn(p,ComponentTypes::Script)||activeOn(p,CharacterSettingsComponent::TypeId)
                 ||activeOn(p,ActorSettingsComponent::TypeId)||activeOn(p,NavigationAgentComponent::TypeId))
                 staticHierarchy=false;
             else if(activeOn(p,PhysicsBodyComponent::TypeId))

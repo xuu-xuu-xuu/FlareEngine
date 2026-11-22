@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <set>
 
-namespace se
+namespace flare
 {
 namespace
 {

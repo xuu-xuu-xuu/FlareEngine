@@ -17,10 +17,10 @@ struct D3D12Presentation;
 struct D3D12FrameContext;
 struct D3D12PreparedPipeline;
 struct D3D12IndirectCommand;
-inline constexpr UINT D3D12MeshConstantStride=se::rhi::MaterialConstantAlignment;
+inline constexpr UINT D3D12MeshConstantStride=flare::rhi::MaterialConstantAlignment;
 inline constexpr UINT D3D12MeshMaxDraws=65536;
 
-using D3D12MeshVertex=se::rhi::Vertex;
+using D3D12MeshVertex=flare::rhi::Vertex;
 struct D3D12MeshPipeline
 {
     Microsoft::WRL::ComPtr<ID3D12RootSignature> rootSignature;
@@ -39,38 +39,38 @@ struct D3D12Mesh
 struct D3D12MeshDraw
 {
     const D3D12Mesh* mesh=nullptr; // 调用者保持至 GPU 最后使用完成。
-    se::Mat4 world;
-    se::Vec4 tint{1,1,1,1};
+    flare::Mat4 world;
+    flare::Vec4 tint{1,1,1,1};
     bool textureIsData=false,unlit=false;
-    se::rhi::DrawIndexed::Pbr pbr;
-    std::span<const se::rhi::InstanceParameters> instances;
+    flare::rhi::DrawIndexed::Pbr pbr;
+    std::span<const flare::rhi::InstanceParameters> instances;
     const D3D12MeshPipeline* pipeline=nullptr; // 单绘制 Pipeline；空表示使用该批次默认 Pipeline。
     float impostorView=0,impostorNext=0,impostorBlend=0; // 仅 MeshDrawConstants 的 Impostor 编码。
     // G14：速度 Pass 的上一帧世界矩阵与顶点布局；由 RHI 绘制路径填充。
     bool hasPreviousWorld=false;
-    se::Mat4 previousWorld;
+    flare::Mat4 previousWorld;
     bool compressedVertices=false;
     bool outline=false;
     // W06/W03：外观覆盖与蒙皮调色板；由 RHI 绘制路径填充。
-    se::Vec4 look{};
+    flare::Vec4 look{};
     // 调色板字节（每关节 3×float4，共 48 字节）；空表示静态绘制。
     // 呈现层在本帧复制作业里写入上传环，再由 RecordD3D12Meshes 绑定到参数 4 的 t8。
     std::span<const std::byte> skinPalette;
     std::uint32_t skinJointOffset=0,skinJointCount=0;
-    se::MaterialAlphaMode alphaMode=se::MaterialAlphaMode::Opaque;
+    flare::MaterialAlphaMode alphaMode=flare::MaterialAlphaMode::Opaque;
     float alphaCutoff=.5f;
-    se::rhi::ShadingMaterialConstants layers;
+    flare::rhi::ShadingMaterialConstants layers;
     std::array<const D3D12Texture*,6> layerTextures{};
-    se::Aabb worldBounds;
+    flare::Aabb worldBounds;
     bool hasWorldBounds=false;
     bool staticShadowCaster=false;
-    std::span<const se::rhi::GeometryCluster> geometryClusters;
+    std::span<const flare::rhi::GeometryCluster> geometryClusters;
 };
 
 bool InitializeD3D12MeshPipeline(D3D12MeshPipeline& pipeline,const D3D12Context& context,
     const std::filesystem::path& shader,const Localization& localization);
 bool InitializeD3D12MeshPipeline(D3D12MeshPipeline& pipeline,const D3D12Context& context,
-    const se::rhi::PipelineDescription& description,const Localization& localization);
+    const flare::rhi::PipelineDescription& description,const Localization& localization);
 bool InitializeD3D12Mesh(D3D12Mesh& mesh,const D3D12Context& context,D3D12Presentation& presentation,
     std::span<const D3D12MeshVertex> vertices,std::span<const std::uint32_t> indices,
     D3D12TexturePixels texture,const Localization& localization);
@@ -78,13 +78,13 @@ bool InitializeD3D12Mesh(D3D12Mesh& mesh,const D3D12Context& context,D3D12Presen
     std::span<const D3D12MeshVertex> vertices,std::span<const std::uint32_t> indices,
     const D3D12Texture& sharedTexture,const Localization& localization);
 bool ValidateD3D12MeshDraws(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
-    const se::Mat4& viewProjection,const Localization& localization,bool allowEmptyInstanced=false);
+    const flare::Mat4& viewProjection,const Localization& localization,bool allowEmptyInstanced=false);
 // 仅在关联 FrameContext 已完成复用等待且分配 Draw 常量后记录。
 // 在任何 GPU Pass 录制前只打包一次；主颜色/通用预绘共享同一 b0 切片。
 void PrepareD3D12MeshConstants(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
-    const se::Mat4& viewProjection,D3D12FrameContext& frame);
+    const flare::Mat4& viewProjection,D3D12FrameContext& frame);
 // indirect 为空表示普通绘制；非空时与 draws 一一对应（G06.10 多批次）。
 void RecordD3D12Meshes(const D3D12MeshPipeline& pipeline,std::span<const D3D12MeshDraw> draws,
-    const se::Mat4& viewProjection,D3D12FrameContext& frame,ID3D12GraphicsCommandList& commands,UINT width,UINT height,
-    bool cacheBindings=false,se::rhi::DrawBindingStatistics* statistics=nullptr,
+    const flare::Mat4& viewProjection,D3D12FrameContext& frame,ID3D12GraphicsCommandList& commands,UINT width,UINT height,
+    bool cacheBindings=false,flare::rhi::DrawBindingStatistics* statistics=nullptr,
     std::span<const D3D12IndirectCommand> indirect={},UINT firstDraw=0);

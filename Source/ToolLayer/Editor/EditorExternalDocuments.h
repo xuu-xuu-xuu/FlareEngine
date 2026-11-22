@@ -2,7 +2,7 @@
 #include "EditorSessionStore.h"
 #include <functional>
 
-namespace se
+namespace flare
 {
 struct EditorExternalDocument
 {

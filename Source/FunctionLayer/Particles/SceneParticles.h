@@ -7,7 +7,7 @@
 #include <optional>
 #include <vector>
 
-namespace se
+namespace flare
 {
 /// 场景粒子协调器：管理拥有 ParticleEmitterComponent 的实体模拟器，推进仿真并生成只读渲染批。
 class SceneParticles
@@ -50,4 +50,4 @@ private:
     std::map<StableEntityId, Entry> emitters_;
     std::uint64_t syncTick_ = 0;
 };
-} // namespace se
+} // namespace flare

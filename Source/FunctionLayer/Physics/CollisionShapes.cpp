@@ -5,7 +5,7 @@
 #include <cmath>
 #include <limits>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -582,4 +582,4 @@ std::optional<CapsuleContact> CollideCapsuleSphere(Vec3 center, float segmentHal
     const Vec3 contactPoint = sphere.center + normal * sphere.radius;
     return CapsuleContact{normal, contactPoint, depth};
 }
-} // namespace se
+} // namespace flare

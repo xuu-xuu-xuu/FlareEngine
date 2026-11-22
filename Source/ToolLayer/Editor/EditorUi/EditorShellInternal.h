@@ -14,7 +14,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se::ui::editor::detail
+namespace flare::ui::editor::detail
 {
 
 inline constexpr float kTabHeight = 24.0f;
@@ -22,15 +22,15 @@ inline constexpr float kMinimumGroupSize = 80.0f;
 inline constexpr float kSplitterReach = 3.5f;
 inline constexpr float kTabArrowWidth = 18.0f;
 
-inline const auto kBackground = UiInk(flare::Background);
-inline const auto kSurface = UiInk(flare::workspace::Field);
-inline const auto kSurfaceRaised = UiInk(flare::workspace::Header);
-inline const auto kSurfaceActive = UiInk(flare::workspace::Selection);
-inline const auto kContent = UiInk(flare::workspace::Panel);
-inline const auto kBorder = UiInk(flare::workspace::Divider);
-inline const auto kText = UiInk(flare::Text);
-inline const auto kMuted = UiInk(flare::Muted);
-inline const auto kAccent = UiInk(flare::workspace::Focus);
+inline const auto kBackground = UiInk(flare::palette::Background);
+inline const auto kSurface = UiInk(flare::palette::workspace::Field);
+inline const auto kSurfaceRaised = UiInk(flare::palette::workspace::Header);
+inline const auto kSurfaceActive = UiInk(flare::palette::workspace::Selection);
+inline const auto kContent = UiInk(flare::palette::workspace::Panel);
+inline const auto kBorder = UiInk(flare::palette::workspace::Divider);
+inline const auto kText = UiInk(flare::palette::Text);
+inline const auto kMuted = UiInk(flare::palette::Muted);
+inline const auto kAccent = UiInk(flare::palette::workspace::Focus);
 
 [[nodiscard]] inline std::array<UiRect, 2> SplitDockRects(const DockNode& node, const UiRect& rect)
 {
@@ -186,9 +186,9 @@ struct TabStripMetrics
     return UiColor{channels[0], channels[1], channels[2], 0.38f};
 }
 
-} // namespace se::ui::editor::detail
+} // namespace flare::ui::editor::detail
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 struct EditorAssetDragState
 {
@@ -196,6 +196,7 @@ struct EditorAssetDragState
     float startX = 0.0f;
     float startY = 0.0f;
     bool dragging = false;
+    bool isFolder = false;
     std::function<void(const std::string&, float, float, bool)> hoverHandler;
     std::function<bool(const std::string&, float, float)> dropHandler;
 };
@@ -253,4 +254,4 @@ struct EditorInspectorColor
     std::array<UiElementHandle, 3> channels{}, channelLabels{}, channelSelections{};
     std::array<std::unique_ptr<UiTextEdit>, 3> editors;
 };
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

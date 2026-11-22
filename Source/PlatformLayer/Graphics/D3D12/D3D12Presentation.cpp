@@ -100,7 +100,7 @@ void ReportDeviceRemoval(D3D12Presentation& presentation, const Localization& lo
             std::ostringstream name;
             name << "gpu-crash-" << std::put_time(&local, "%Y%m%d-%H%M%S") << ".txt";
             const auto path = directory / name.str();
-            if (!error && se::d3d12::DumpDred(device.Get(), path))
+            if (!error && flare::d3d12::DumpDred(device.Get(), path))
                 Log(LogLevel::Warning, localization.GetText("D3D12.DredDumpWritten") + ": " + path.string());
             else Log(LogLevel::Warning, localization.GetText("D3D12.DredDumpFailed"));
         }
@@ -136,7 +136,7 @@ HRESULT WaitForFence(D3D12Presentation& presentation, UINT64 value, D3D12WaitRea
         ~WaitExit(){const auto completed=p.fence->GetCompletedValue();if(trace||completed<value||completed==UINT64_MAX)
             LogCheckpoint("GPU.Wait.End","target="+std::to_string(value)+" completed="+std::to_string(completed),p.submittedFrames);}
     } waitExit{trace,presentation,value};
-    se::CpuScope waitScope(presentation.cpuProfiler,"CPU.GpuFenceWait");
+    flare::CpuScope waitScope(presentation.cpuProfiler,"CPU.GpuFenceWait");
     ++presentation.waitCounts[static_cast<size_t>(reason)];
     const ULONGLONG deadline = GetTickCount64() + 10000;
     while (completed < value)
@@ -420,27 +420,27 @@ template<class Input,class FillItem>
 bool BuildGpuDrivenRanges(const D3D12FrameContent& content,UINT count,bool meshlets,
     std::vector<Input>& inputs,std::vector<UINT>& sources,FillItem&& fillItem)
 {
-    const se::Aabb invalidBounds{{1,1,1},{-1,-1,-1}};
+    const flare::Aabb invalidBounds{{1,1,1},{-1,-1,-1}};
     std::size_t estimated=0;
     for(UINT index=0;index<count;++index)
     {
         const auto& draw=content.meshes[index];
-        estimated+=(meshlets&&!draw.geometryClusters.empty()&&draw.geometryClusters.size()<=se::MaximumVisibilityItems)
+        estimated+=(meshlets&&!draw.geometryClusters.empty()&&draw.geometryClusters.size()<=flare::MaximumVisibilityItems)
             ?draw.geometryClusters.size():1u;
     }
-    estimated=(std::min)(estimated,static_cast<std::size_t>(se::MaximumVisibilityItems));
+    estimated=(std::min)(estimated,static_cast<std::size_t>(flare::MaximumVisibilityItems));
     inputs.reserve(estimated);sources.reserve(estimated);
-    std::vector<se::Aabb> clusterBounds;
+    std::vector<flare::Aabb> clusterBounds;
     for(UINT index=0;index<count;++index)
     {
         const auto& draw=content.meshes[index];clusterBounds.clear();UINT covered=0;
-        bool clusters=meshlets&&!draw.geometryClusters.empty()&&draw.geometryClusters.size()<=se::MaximumVisibilityItems;
+        bool clusters=meshlets&&!draw.geometryClusters.empty()&&draw.geometryClusters.size()<=flare::MaximumVisibilityItems;
         if(clusters)
         {
             clusterBounds.reserve(draw.geometryClusters.size());
             for(const auto& cluster:draw.geometryClusters)
             {
-                const auto transformed=se::TransformBounds(cluster.localBounds,draw.world);
+                const auto transformed=flare::TransformBounds(cluster.localBounds,draw.world);
                 if(!transformed||!cluster.indexCount||cluster.indexCount%3||cluster.firstIndex!=covered
                     ||covered>draw.mesh->indexCount||cluster.indexCount>draw.mesh->indexCount-covered){clusters=false;break;}
                 covered+=cluster.indexCount;clusterBounds.push_back(*transformed);
@@ -449,7 +449,7 @@ bool BuildGpuDrivenRanges(const D3D12FrameContent& content,UINT count,bool meshl
         clusters=clusters&&covered==draw.mesh->indexCount;
         if(clusters)
         {
-            if(draw.geometryClusters.size()>se::MaximumVisibilityItems-inputs.size())return false;
+            if(draw.geometryClusters.size()>flare::MaximumVisibilityItems-inputs.size())return false;
             for(UINT part=0;part<draw.geometryClusters.size();++part)
             {
                 const auto& cluster=draw.geometryClusters[part];
@@ -460,8 +460,8 @@ bool BuildGpuDrivenRanges(const D3D12FrameContent& content,UINT count,bool meshl
         }
         else
         {
-            if(inputs.size()==se::MaximumVisibilityItems)return false;
-            const auto bounds=!meshlets&&draw.hasWorldBounds&&se::IsValid(draw.worldBounds)?draw.worldBounds:invalidBounds;
+            if(inputs.size()==flare::MaximumVisibilityItems)return false;
+            const auto bounds=!meshlets&&draw.hasWorldBounds&&flare::IsValid(draw.worldBounds)?draw.worldBounds:invalidBounds;
             Input entry{};
             fillItem(entry,index,draw,bounds,0u,0u);
             inputs.push_back(std::move(entry));sources.push_back(index);
@@ -479,7 +479,7 @@ void FillMeshletMaterialViews(const D3D12FrameContext& frame,const D3D12FrameCon
     const auto kind=active->prepared->program->source.kind;
     if(!draw.mesh->textureViews)return;
     outViews[outCount++]=draw.mesh->textureViews->Cpu(draw.textureIsData?1:0);
-    if(se::rhi::UsesLitLayout(kind))
+    if(flare::rhi::UsesLitLayout(kind))
     {
         for(const auto& tex:draw.mesh->pbrTextures)
         {
@@ -487,12 +487,12 @@ void FillMeshletMaterialViews(const D3D12FrameContext& frame,const D3D12FrameCon
             outViews[outCount++]=tex.views->Cpu(1);
         }
     }
-    if(se::rhi::IsShadowed(kind))
+    if(flare::rhi::IsShadowed(kind))
     {
         if(!frame.shadow||!frame.shadow->srv)return;
         outViews[outCount++]=frame.shadow->srv->Cpu();
     }
-    if(se::rhi::IsEnvironment(kind))
+    if(flare::rhi::IsEnvironment(kind))
     {
         for(const auto* tex:content.environmentTextures)
         {
@@ -512,8 +512,8 @@ void PrepareMeshletOrHeterogeneous(D3D12Presentation& p,D3D12FrameContext& frame
     if(!statistics.hzbRequested)frame.heterogeneousHiZ.reset();
     const auto count=std::min(content.opaqueDrawCount,content.meshes.size());statistics.sourceDraws=static_cast<UINT>(count);statistics.cpuDraws=static_cast<UINT>(count);
     if(oldIndirect||!content.meshPipeline||!count)return;
-    const auto frustum=se::BuildFrustum(content.viewProjection);se::VisibilityFrustum quantized{};
-    if(!frustum||!se::QuantizeVisibilityFrustum(*frustum,quantized))return;
+    const auto frustum=flare::BuildFrustum(content.viewProjection);flare::VisibilityFrustum quantized{};
+    if(!frustum||!flare::QuantizeVisibilityFrustum(*frustum,quantized))return;
 
     // 17.02 硬件 Amplification + Mesh Shader 双轨；不支持硬件或显式关闭或初始化/准备失败时自动无缝回退 17.01。
     if(wantMeshShader&&p.meshShaderTier1)
@@ -537,7 +537,7 @@ void PrepareMeshletOrHeterogeneous(D3D12Presentation& p,D3D12FrameContext& frame
                 FillMeshletMaterialViews(frame,content,content.meshes[idx],cachedViews[idx].views,cachedViews[idx].count);
             std::vector<D3D12MeshletInput> inputs;std::vector<UINT> sources;
             const bool rangeOk=BuildGpuDrivenRanges(content,static_cast<UINT>(count),true,inputs,sources,
-                [&](D3D12MeshletInput& entry,UINT idx,const D3D12MeshDraw& draw,const se::Aabb& bounds,UINT firstIdx,UINT idxCount)
+                [&](D3D12MeshletInput& entry,UINT idx,const D3D12MeshDraw& draw,const flare::Aabb& bounds,UINT firstIdx,UINT idxCount)
                 {
                     entry.draw=&draw;entry.b0=frame.drawConstants[idx];entry.worldBounds=bounds;
                     entry.firstIndex=firstIdx;entry.indexCount=idxCount;entry.baseVertex=0;
@@ -579,7 +579,7 @@ void PrepareMeshletOrHeterogeneous(D3D12Presentation& p,D3D12FrameContext& frame
 
     std::vector<D3D12HeterogeneousInput> inputs;std::vector<UINT> sources;
     if(!BuildGpuDrivenRanges(content,static_cast<UINT>(count),statistics.meshlets,inputs,sources,
-        [&](D3D12HeterogeneousInput& entry,UINT idx,const D3D12MeshDraw& draw,const se::Aabb& bounds,UINT firstIdx,UINT idxCount)
+        [&](D3D12HeterogeneousInput& entry,UINT idx,const D3D12MeshDraw& draw,const flare::Aabb& bounds,UINT firstIdx,UINT idxCount)
         {
             entry={&draw,frame.drawConstants[idx],bounds,frame.descriptors.Draw(idx),firstIdx,idxCount,0};
         }))return;
@@ -613,7 +613,7 @@ void PrepareMeshletOrHeterogeneous(D3D12Presentation& p,D3D12FrameContext& frame
 bool RecordHeterogeneous(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,UINT width,UINT height,const Localization& text)
 {
     auto& commands=*p.commandList.Get();UINT previousCpu=UINT_MAX,segmentIndex=0;
-    const auto add=[&](const se::rhi::DrawBindingStatistics& value)
+    const auto add=[&](const flare::rhi::DrawBindingStatistics& value)
     {auto& total=p.opaqueBindings;total.pipelines+=value.pipelines;total.rootSignatures+=value.rootSignatures;total.descriptorTables+=value.descriptorTables;
         total.vertexBuffers+=value.vertexBuffers;total.indexBuffers+=value.indexBuffers;total.constants+=value.constants;total.instanceBuffers+=value.instanceBuffers;};
     for(const auto& segment:frame.heterogeneous->Segments())
@@ -623,7 +623,7 @@ bool RecordHeterogeneous(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
             for(UINT entry=segment.sourceFirst;entry<segment.sourceFirst+segment.sourceCount;++entry)
             {
                 const UINT source=frame.heterogeneousSources[entry];if(source==previousCpu)continue;previousCpu=source;
-                se::rhi::DrawBindingStatistics bindings;
+                flare::rhi::DrawBindingStatistics bindings;
                 RecordD3D12Meshes(*content.meshPipeline,content.meshes.subspan(source,1),content.viewProjection,frame,commands,width,height,false,&bindings,{},source);add(bindings);
             }
         }
@@ -632,7 +632,7 @@ bool RecordHeterogeneous(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
             // Compute 和 ExecuteIndirect 都可修改绑定；每段完整恢复，不复用跨段缓存。
             const auto& pipeline=*segment.pipeline;commands.SetPipelineState(pipeline.pipeline.Get());commands.SetGraphicsRootSignature(pipeline.rootSignature.Get());
             ID3D12DescriptorHeap* heaps[]{frame.descriptors.Heap()};commands.SetDescriptorHeaps(1,heaps);
-            if(se::rhi::IsForward(pipeline.prepared->program->source.kind)){commands.SetGraphicsRootConstantBufferView(2,frame.forwardConstants.Gpu());++p.opaqueBindings.constants;}
+            if(flare::rhi::IsForward(pipeline.prepared->program->source.kind)){commands.SetGraphicsRootConstantBufferView(2,frame.forwardConstants.Gpu());++p.opaqueBindings.constants;}
             const D3D12_VIEWPORT viewport{0,0,float(width),float(height),0,1};const D3D12_RECT scissor{0,0,LONG(width),LONG(height)};
             commands.RSSetViewports(1,&viewport);commands.RSSetScissorRects(1,&scissor);commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             if(!CheckGraphicsResult(p.heterogeneousBuilder->RecordBucket(commands,*frame.heterogeneous,*frame.heterogeneousOutput,segmentIndex),text,"D3D12.IndirectRecordFailed"))return false;
@@ -645,7 +645,7 @@ bool RecordHeterogeneous(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
 bool RecordMeshlet(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,D3D12StateRecording& states,UINT width,UINT height,const Localization& text)
 {
     auto& commands=*p.commandList.Get();UINT previousCpu=UINT_MAX,segmentIndex=0;
-    const auto add=[&](const se::rhi::DrawBindingStatistics& value)
+    const auto add=[&](const flare::rhi::DrawBindingStatistics& value)
     {auto& total=p.opaqueBindings;total.pipelines+=value.pipelines;total.rootSignatures+=value.rootSignatures;total.descriptorTables+=value.descriptorTables;
         total.vertexBuffers+=value.vertexBuffers;total.indexBuffers+=value.indexBuffers;total.constants+=value.constants;total.instanceBuffers+=value.instanceBuffers;};
     for(const auto& segment:frame.meshlet->Segments())
@@ -658,7 +658,7 @@ bool RecordMeshlet(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12Fram
                 const auto& draw=content.meshes[source];
                 if(FAILED(states.Use(commands,*draw.mesh->vertices.Get(),D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER,"Meshlet.FallbackVb"))
                     ||FAILED(states.Use(commands,*draw.mesh->indices.Get(),D3D12_RESOURCE_STATE_INDEX_BUFFER,"Meshlet.FallbackIb")))return false;
-                se::rhi::DrawBindingStatistics bindings;
+                flare::rhi::DrawBindingStatistics bindings;
                 RecordD3D12Meshes(*content.meshPipeline,content.meshes.subspan(source,1),content.viewProjection,frame,commands,width,height,false,&bindings,{},source);add(bindings);
             }
         }
@@ -715,7 +715,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         if(!presentation.queue||FAILED(presentation.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf())))
             ||content.gui||triangle||!content.meshPipeline||!content.meshPipeline->prepared
             ||content.meshes.empty()||content.meshes.size()!=indirects.size()||indirects.size()>D3D12MeshMaxDraws
-            ||!se::rhi::IsInstanced(content.meshPipeline->prepared->program->source.kind))
+            ||!flare::rhi::IsInstanced(content.meshPipeline->prepared->program->source.kind))
         {Log(LogLevel::Error,localization.GetText("D3D12.IndirectInputsInvalid"));return false;}
         const bool hizExpected=bool(indirects.front().hiz);
         for(size_t index=0;index<indirects.size();++index)
@@ -723,9 +723,9 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
             const auto& batch=indirects[index];
             if(!batch.kernel||!batch.output||batch.kernel->Device()!=device.Get()
                 ||batch.bounds.size()!=content.meshes[index].instances.size()
-                ||batch.bounds.size()>se::MaximumVisibilityItems
+                ||batch.bounds.size()>flare::MaximumVisibilityItems
                 ||batch.output->inputCapacity<batch.bounds.size()||batch.output->outputCapacity<batch.bounds.size()
-                ||!se::ValidVisibilityFrustum(batch.frustum)
+                ||!flare::ValidVisibilityFrustum(batch.frustum)
                 ||bool(batch.timestamps.heap)!=bool(batch.timestampReadback)
                 ||bool(batch.hiz)!=hizExpected||bool(batch.hizKernel)!=hizExpected||bool(batch.prepass)!=hizExpected)
             {Log(LogLevel::Error,localization.GetText("D3D12.IndirectInputsInvalid"));return false;}
@@ -763,7 +763,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
                     ||!std::isfinite(batch.depthBias)||batch.depthBias<0||batch.depthBias>0.1f)
                 {Log(LogLevel::Error,localization.GetText("D3D12.IndirectInputsInvalid"));return false;}
                 // 主 Pass 只着色不写深度；prepass 已写入同一深度，必须使用 LESS_EQUAL + 写掩码 0。
-                if(content.meshPipeline->prepared->depth!=se::rhi::DepthMode::ReadOnlyLessEqual)
+                if(content.meshPipeline->prepared->depth!=flare::rhi::DepthMode::ReadOnlyLessEqual)
                 {Log(LogLevel::Error,localization.GetText("D3D12.IndirectInputsInvalid"));return false;}
             }
         }
@@ -799,17 +799,17 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     const auto sceneDsv=content.sceneHdr?content.sceneHdr->dsv:gui?gui->scene->dsv:presentation.dsv;
     if(post&&!forward)return false;
     if(forward&&(!content.outputPipeline||!content.outputPipeline->prepared
-        ||!se::rhi::IsOutput(content.outputPipeline->prepared->program->source.kind)))return false;
-    if(forward&&(!content.skyPipeline||!content.skyPipeline->prepared||!se::rhi::IsSky(content.skyPipeline->prepared->program->source.kind)))return false;
-    if(content.meshPipeline&&(!content.meshPipeline->prepared||se::rhi::IsForward(content.meshPipeline->prepared->program->source.kind)!=forward
-        ||se::rhi::IsClustered(content.meshPipeline->prepared->program->source.kind)!=(forward&&content.forward->cluster.enabled)
-        ||se::rhi::IsShadowed(content.meshPipeline->prepared->program->source.kind)!=shadow
-        ||se::rhi::IsEnvironment(content.meshPipeline->prepared->program->source.kind)!=(content.environment!=nullptr)))return false;
+        ||!flare::rhi::IsOutput(content.outputPipeline->prepared->program->source.kind)))return false;
+    if(forward&&(!content.skyPipeline||!content.skyPipeline->prepared||!flare::rhi::IsSky(content.skyPipeline->prepared->program->source.kind)))return false;
+    if(content.meshPipeline&&(!content.meshPipeline->prepared||flare::rhi::IsForward(content.meshPipeline->prepared->program->source.kind)!=forward
+        ||flare::rhi::IsClustered(content.meshPipeline->prepared->program->source.kind)!=(forward&&content.forward->cluster.enabled)
+        ||flare::rhi::IsShadowed(content.meshPipeline->prepared->program->source.kind)!=shadow
+        ||flare::rhi::IsEnvironment(content.meshPipeline->prepared->program->source.kind)!=(content.environment!=nullptr)))return false;
     if(content.environment&&(!shadow
         ||std::any_of(content.environmentTextures.begin(),content.environmentTextures.end(),[](const auto* texture){return !texture||!texture->resource||!texture->views;})))return false;
     if(shadow&&(!forward||!content.shadowPipeline||!content.shadowPipeline->prepared
-        ||content.shadowPipeline->prepared->program->source.kind!=se::rhi::PipelineKind::ShadowDepth
-        ||content.outputPipeline->prepared->program->source.kind!=(content.shadow->cascadeCount?se::rhi::PipelineKind::CascadedShadowOutput:se::rhi::PipelineKind::ShadowOutput)))return false;
+        ||content.shadowPipeline->prepared->program->source.kind!=flare::rhi::PipelineKind::ShadowDepth
+        ||content.outputPipeline->prepared->program->source.kind!=(content.shadow->cascadeCount?flare::rhi::PipelineKind::CascadedShadowOutput:flare::rhi::PipelineKind::ShadowOutput)))return false;
     if(content.shadowCapture&&!shadow)return false;
     if(content.hdrCapture&&!forward)return false;
     if (!presentation.queue || !presentation.states || !presentation.swapChain || !presentation.rtvs
@@ -818,7 +818,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         || presentation.frameCursor >= D3D12Presentation::frameCount
         || !presentation.frames[presentation.frameCursor].allocator
         || (triangle && (!triangle->pipeline || !triangle->rootSignature || !triangle->vertices || !triangle->prepared
-            ||triangle->prepared->colorFormat!=se::rhi::ColorFormat::Rgba8Unorm||triangle->prepared->depth!=se::rhi::DepthMode::Disabled)))
+            ||triangle->prepared->colorFormat!=flare::rhi::ColorFormat::Rgba8Unorm||triangle->prepared->depth!=flare::rhi::DepthMode::Disabled)))
     {
         Log(LogLevel::Error, localization.GetText("D3D12.ClearInputsInvalid"));
         return false;
@@ -827,7 +827,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     {Log(LogLevel::Error,localization.GetText("D3D12.MeshDrawsInvalid"));return false;}
     if(content.meshPipeline)
     {
-        se::CpuScope validation(presentation.cpuProfiler,"CPU.MeshValidation");
+        flare::CpuScope validation(presentation.cpuProfiler,"CPU.MeshValidation");
         if(!presentation.depth||!presentation.dsv
             ||!ValidateD3D12MeshDraws(*content.meshPipeline,content.meshes,clipFromWorld,localization,indirect))return false;
         // 多批次允许每个绘制使用自己的 prepared Pipeline；HZB 开启时逐一确认只读深度模式。
@@ -835,11 +835,11 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
             for(const auto& draw:content.meshes)
             {
                 const auto& active=draw.pipeline?*draw.pipeline:*content.meshPipeline;
-                if(active.prepared->depth!=se::rhi::DepthMode::ReadOnlyLessEqual)
+                if(active.prepared->depth!=flare::rhi::DepthMode::ReadOnlyLessEqual)
                 {Log(LogLevel::Error,localization.GetText("D3D12.IndirectInputsInvalid"));return false;}
             }
     }
-    if (triangle && !se::IsFinite(clipFromWorld))
+    if (triangle && !flare::IsFinite(clipFromWorld))
     {
         Log(LogLevel::Error, localization.GetText("Camera.InvalidProjection"));
         return false;
@@ -865,8 +865,8 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         D3D12TrackedHeap::Readback,"FrameCapture"),localization,"D3D12.StateTrackingFailed"))return false;
     auto& frame = presentation.frames[presentation.frameCursor];
     if(!BeginD3D12FrameCommands(presentation,localization))return false;
-    std::optional<se::CpuScope> recording;recording.emplace(presentation.cpuProfiler,"CPU.CommandRecord");
-    const bool pbr=content.meshPipeline&&se::rhi::UsesLitLayout(content.meshPipeline->prepared->program->source.kind);
+    std::optional<flare::CpuScope> recording;recording.emplace(presentation.cpuProfiler,"CPU.CommandRecord");
+    const bool pbr=content.meshPipeline&&flare::rhi::UsesLitLayout(content.meshPipeline->prepared->program->source.kind);
     const auto opaqueCount=std::min(content.opaqueDrawCount,content.meshes.size());
     const auto opaqueMeshes=content.meshes.first(opaqueCount),transparentMeshes=content.meshes.subspan(opaqueCount);
     if(shadow&&!PrepareD3D12Shadow(presentation,frame,content,localization)){presentation.commandList->Close();return false;}
@@ -907,7 +907,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     if(!PrepareD3D12RayTracing(presentation,frame,content,rasterWidth,rasterHeight,localization))
     {presentation.commandList->Close();return false;}
     D3D12FrameContent aoContent=content;
-    std::optional<se::rhi::ScreenSpaceOcclusionSettings> maskedAo;
+    std::optional<flare::rhi::ScreenSpaceOcclusionSettings> maskedAo;
     if(frame.rayTracing&&frame.rayTracing->visibilityValid&&content.screenSpaceOcclusion&&!content.screenSpaceCapture)
     {
         maskedAo=*content.screenSpaceOcclusion;
@@ -921,13 +921,13 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     if(!PrepareD3D12ShadingExtensions(presentation,frame,content,localization))
     {presentation.commandList->Close();return false;}
     const bool shadowDebugOrPreview=content.shadow&&(content.shadow->preview
-        ||content.shadow->filter.debug!=se::rhi::ShadowFilterDebugMode::None);
+        ||content.shadow->filter.debug!=flare::rhi::ShadowFilterDebugMode::None);
     const bool pureRtDirectionalShadows=forward&&frame.rayTracing&&frame.rayTracing->statistics.shadowsValid
         &&frame.rayTracing->allShadowCastersTraced&&!shadowDebugOrPreview
         &&frame.shading&&transparentMeshes.empty()&&!content.shadowCapture
         &&!(content.forward&&content.forward->indoor.volumetricFog&&content.forward->indoor.fogDensity>0);
     if(pureRtDirectionalShadows&&frame.forwardConstants.cpu)
-        reinterpret_cast<se::rhi::ForwardFrameConstants*>(frame.forwardConstants.cpu)->pointCount.y=0.f;
+        reinterpret_cast<flare::rhi::ForwardFrameConstants*>(frame.forwardConstants.cpu)->pointCount.y=0.f;
     const bool beforeOpaqueWork=depthNormals||(frame.ambientOcclusion&&frame.ambientOcclusion->statistics.valid)
         ||(frame.rayTracing&&frame.rayTracing->valid)||frame.shading
         ||(forward&&!indirect&&(content.forward->gpuDriven||content.forward->meshletCulling));
@@ -977,8 +977,8 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     const auto uploadMaterial=[&](const D3D12MeshDraw& draw,D3D12UploadSlice& slice)
     {
         if(!CheckGraphicsResult(frame.uploads.Allocate(256,256,slice),localization,"D3D12.UploadCapacityExceeded"))return false;
-        const se::Vec3 x{draw.world(0,0),draw.world(1,0),draw.world(2,0)},y{draw.world(0,1),draw.world(1,1),draw.world(2,1)},z{draw.world(0,2),draw.world(1,2),draw.world(2,2)};
-        const se::rhi::MaterialSurfaceConstants material{draw.tint,{draw.alphaCutoff,float(draw.alphaMode),draw.pbr.doubleSided?1.f:0.f,se::Dot(se::Cross(x,y),z)<0?-1.f:1.f}};
+        const flare::Vec3 x{draw.world(0,0),draw.world(1,0),draw.world(2,0)},y{draw.world(0,1),draw.world(1,1),draw.world(2,1)},z{draw.world(0,2),draw.world(1,2),draw.world(2,2)};
+        const flare::rhi::MaterialSurfaceConstants material{draw.tint,{draw.alphaCutoff,float(draw.alphaMode),draw.pbr.doubleSided?1.f:0.f,flare::Dot(flare::Cross(x,y),z)<0?-1.f:1.f}};
         std::memset(slice.cpu,0,256);std::memcpy(slice.cpu,&material,sizeof(material));return true;
     };
     const bool hasSurfaceMaterials=std::any_of(content.meshes.begin(),content.meshes.end(),[&](const auto& draw)
@@ -991,31 +991,31 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     {
         D3D12UploadSlice slice;
         auto& constants=presentation.dedicatedUploads?frame.baselineConstants:frame.uploads;
-        if(!CheckGraphicsResult(constants.Allocate(pbr?se::rhi::PbrConstantStride:D3D12MeshConstantStride,256,slice),localization,"D3D12.UploadCapacityExceeded"))
+        if(!CheckGraphicsResult(constants.Allocate(pbr?flare::rhi::PbrConstantStride:D3D12MeshConstantStride,256,slice),localization,"D3D12.UploadCapacityExceeded"))
         {presentation.commandList->Close();return false;}
         frame.drawConstants.push_back(slice);
         const auto& item=content.meshes[draw];const auto* program=item.pipeline?item.pipeline:content.meshPipeline;
         if(program&&program->prepared->materialRootParameter!=UINT_MAX&&!uploadMaterial(item,frame.materialConstants[draw]))return false;
     }
-    presentation.frameDrawConstantBytes=UINT64(content.meshes.size())*(pbr?se::rhi::PbrConstantStride:D3D12MeshConstantStride);
+    presentation.frameDrawConstantBytes=UINT64(content.meshes.size())*(pbr?flare::rhi::PbrConstantStride:D3D12MeshConstantStride);
     // 此子区段已包含在CommandRecord内；成本报告不可重复相加。
-    std::optional<se::CpuScope> instancePacking;instancePacking.emplace(presentation.cpuProfiler,"CPU.InstancePacking");
+    std::optional<flare::CpuScope> instancePacking;instancePacking.emplace(presentation.cpuProfiler,"CPU.InstancePacking");
     for(const auto& draw:content.meshes)
     {
         D3D12UploadSlice slice;
         if(!draw.instances.empty())
         {
-            const UINT64 bytes=UINT64(draw.instances.size())*se::rhi::InstanceGpuStride;
+            const UINT64 bytes=UINT64(draw.instances.size())*flare::rhi::InstanceGpuStride;
             if(!CheckGraphicsResult(frame.uploads.Allocate(bytes,16,slice),localization,"D3D12.UploadCapacityExceeded"))
             {presentation.commandList->Close();return false;}
             for(size_t instanceIndex=0;instanceIndex<draw.instances.size();++instanceIndex)
             {
                 const auto& p=draw.instances[instanceIndex];const auto& world=p.world;
-                const se::Vec3 x{world(0,0),world(1,0),world(2,0)},y{world(0,1),world(1,1),world(2,1)},z{world(0,2),world(1,2),world(2,2)};
-                const float sign=se::Dot(se::Cross(x,y),z)<0?-1.0f:1.0f;
-                const se::rhi::InstanceGpuData data{clipFromWorld*world,world,se::Transpose(*se::Inverse(world)),p.tint,
+                const flare::Vec3 x{world(0,0),world(1,0),world(2,0)},y{world(0,1),world(1,1),world(2,1)},z{world(0,2),world(1,2),world(2,2)};
+                const float sign=flare::Dot(flare::Cross(x,y),z)<0?-1.0f:1.0f;
+                const flare::rhi::InstanceGpuData data{clipFromWorld*world,world,flare::Transpose(*flare::Inverse(world)),p.tint,
                     {p.metallic,p.roughness,p.normalScale,sign},{p.normalMapping?1.0f:0.0f,p.unlit?1.0f:0.0f,p.doubleSided?1.0f:0.0f,p.receivesShadow?1.0f:0.0f}};
-                std::memcpy(slice.cpu+instanceIndex*se::rhi::InstanceGpuStride,&data,sizeof(data));
+                std::memcpy(slice.cpu+instanceIndex*flare::rhi::InstanceGpuStride,&data,sizeof(data));
             }
             presentation.frameInstances+=draw.instances.size();presentation.frameInstanceBytes+=bytes;
         }
@@ -1049,14 +1049,14 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         if(!pack(content.meshes,frame.skinSlices)){presentation.commandList->Close();return false;}
         if(!pack(content.shadowMeshes,frame.shadowSkinSlices)){presentation.commandList->Close();return false;}
     }
-    const bool hasMaskCasters=std::any_of(content.shadowMeshes.begin(),content.shadowMeshes.end(),[](const auto& draw){return draw.alphaMode==se::MaterialAlphaMode::Mask;});
+    const bool hasMaskCasters=std::any_of(content.shadowMeshes.begin(),content.shadowMeshes.end(),[](const auto& draw){return draw.alphaMode==flare::MaterialAlphaMode::Mask;});
     if(hasMaskCasters){frame.shadowMaterialConstants.assign(content.shadowMeshes.size(),{});frame.shadowMaterialTables.assign(content.shadowMeshes.size(),{});}
     else{frame.shadowMaterialConstants.clear();frame.shadowMaterialTables.clear();}
     std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> maskViews;std::vector<size_t> maskIndices;
     for(size_t caster=0;caster<content.shadowMeshes.size();++caster)
     {
         const auto& draw=content.shadowMeshes[caster];
-        if(draw.alphaMode!=se::MaterialAlphaMode::Mask)continue;
+        if(draw.alphaMode!=flare::MaterialAlphaMode::Mask)continue;
         if(!draw.mesh->textureViews||!uploadMaterial(draw,frame.shadowMaterialConstants[caster]))return false;
         maskViews.push_back(draw.mesh->textureViews->Cpu(draw.textureIsData?1:0));maskIndices.push_back(caster);
     }
@@ -1254,7 +1254,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
                 if(!use(batch.output->instances.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,"Indirect.InstanceRead")
                     ||!use(batch.output->arguments.Get(),D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT,"Indirect.ArgumentRead"))return false;
                 frame.instanceSlices[batchIndex]={batch.output->instances.Get(),nullptr,0,
-                    UINT64{batch.bounds.size()}*se::rhi::InstanceGpuStride};
+                    UINT64{batch.bounds.size()}*flare::rhi::InstanceGpuStride};
                 indirectCommands[batchIndex]=batch.kernel->Command(*batch.output);
             }
         }
@@ -1309,7 +1309,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
         {presentation.commandList->Close();return false;}
     }
     D3D12FrameContent indoorContent=content;
-    std::optional<se::rhi::ForwardLighting> maskedForward;
+    std::optional<flare::rhi::ForwardLighting> maskedForward;
     if(forward&&frame.rayTracing&&frame.rayTracing->valid&&content.forward)
     {
         if((frame.rayTracing->reflectionsValid&&content.forward->indoor.reflections)
@@ -1476,7 +1476,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     if(presentation.cpuProfiler)presentation.cpuProfiler->RecordCpuDuration("CPU.MeshSubmit",meshSubmitMs,1);
     if(presentation.cpuProfiler&&shadow)presentation.cpuProfiler->RecordCpuDuration("CPU.ShadowRecord",shadowRecordMs,1);
     recording.reset();
-    se::CpuScope submission(presentation.cpuProfiler,"CPU.SubmitPresent");
+    flare::CpuScope submission(presentation.cpuProfiler,"CPU.SubmitPresent");
     ID3D12CommandList* lists[] = { presentation.commandList.Get() };
     presentation.gpuWorkPending = true;
     presentation.untrackedSubmission = true;
@@ -1530,7 +1530,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
 }
 
 bool RenderD3D12Frame(D3D12Presentation& presentation,const Localization& localization,
-    const D3D12Triangle* triangle,const D3D12FrameCapture* capture,const se::Mat4& clipFromWorld)
+    const D3D12Triangle* triangle,const D3D12FrameCapture* capture,const flare::Mat4& clipFromWorld)
 {
     D3D12FrameContent content;content.triangle=triangle;content.viewProjection=clipFromWorld;
     return RenderD3D12Frame(presentation,localization,content,capture);

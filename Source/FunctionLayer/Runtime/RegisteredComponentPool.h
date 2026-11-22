@@ -4,7 +4,7 @@
 #include <memory>
 #include <span>
 
-namespace se
+namespace flare
 {
 // 只擦除池接口，池中保存实际派生类型；每种类型一个池，不切片组件。
 class RegisteredComponentPool

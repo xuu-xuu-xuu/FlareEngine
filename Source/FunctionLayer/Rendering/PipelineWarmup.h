@@ -2,7 +2,7 @@
 #include "PlatformLayer/Graphics/Rhi.h"
 #include <span>
 
-namespace se
+namespace flare
 {
 // G02：PSO 预热的统计。cached 由 Device 的 pipelineCacheHits 差值得到，
 // created 由 pipelineCreations 差值得到，失败数只统计本次请求。

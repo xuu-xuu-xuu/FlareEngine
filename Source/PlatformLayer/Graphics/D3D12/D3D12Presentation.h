@@ -53,7 +53,7 @@ struct D3D12OcclusionTelemetry
 {
     ID3D12QueryHeap* queries=nullptr;
 };
-namespace se {class Profiler;}
+namespace flare {class Profiler;}
 
 class Localization;
 struct D3D12Context;
@@ -147,41 +147,41 @@ struct D3D12FrameContent
     const D3D12MeshPipeline* meshPipeline = nullptr;
     std::span<const D3D12MeshDraw> meshes;
     std::size_t opaqueDrawCount=SIZE_MAX; // 未声明透明时保持旧整批语义。
-    se::Mat4 viewProjection;
+    flare::Mat4 viewProjection;
     UINT64 sourceFrame=0;
-    const se::rhi::ForwardLighting* forward=nullptr;
+    const flare::rhi::ForwardLighting* forward=nullptr;
     const D3D12MeshPipeline* outputPipeline=nullptr;
     const D3D12MeshPipeline* skyPipeline=nullptr;
     const D3D12FrameCapture* hdrCapture=nullptr;
     const D3D12FrameCapture* sceneDepthCapture=nullptr;
-    const se::rhi::DepthNormalSettings* depthNormals=nullptr;
+    const flare::rhi::DepthNormalSettings* depthNormals=nullptr;
     const D3D12FrameCapture* depthNormalDepthCapture=nullptr;
     const D3D12FrameCapture* depthNormalCapture=nullptr;
-    const se::rhi::ScreenSpaceOcclusionSettings* screenSpaceOcclusion=nullptr;
+    const flare::rhi::ScreenSpaceOcclusionSettings* screenSpaceOcclusion=nullptr;
     const D3D12FrameCapture* screenSpaceCapture=nullptr;
     const D3D12FrameCapture* halfAoCapture=nullptr;
     std::array<const D3D12Texture*,5> shadingTextures{};
-    const se::rhi::ShadowSettings* shadow=nullptr;
+    const flare::rhi::ShadowSettings* shadow=nullptr;
     const D3D12MeshPipeline* shadowPipeline=nullptr;
     std::span<const D3D12MeshDraw> shadowMeshes;
     const D3D12FrameCapture* shadowCapture=nullptr;
-    const se::rhi::EnvironmentBindings* environment=nullptr;
+    const flare::rhi::EnvironmentBindings* environment=nullptr;
     std::array<const D3D12Texture*,3> environmentTextures{};
     // G15：输出 LUT 布局的 ShadowOutput 采样源；由 ForwardLighting::colorLut 解析。
     const D3D12Texture* colorLut=nullptr;
-    const se::rhi::PostProcessSettings* post=nullptr;
+    const flare::rhi::PostProcessSettings* post=nullptr;
     std::array<const D3D12MeshPipeline*,5> postPipelines{};
-    std::span<const se::rhi::OverlayQuad> overlays;
+    std::span<const flare::rhi::OverlayQuad> overlays;
     bool cacheOpaqueBindings=false;
     const D3D12GuiContent* gui=nullptr;
     const D3D12GuiTarget* sceneHdr=nullptr;
     const D3D12GuiTarget* sceneLdr=nullptr;
     const D3D12GuiLayer* gameUi=nullptr;
-    std::span<const se::rhi::SceneLine> sceneLines;
+    std::span<const flare::rhi::SceneLine> sceneLines;
     std::filesystem::path sceneOverlayShader;
     float sceneLineScale=1;
     bool sceneGrid=false;
-    se::rhi::ParticleFrame particles;
+    flare::rhi::ParticleFrame particles;
     std::filesystem::path particleShader;
     // G06.10：多批次遮挡；与 content.meshes 一一对应，空表示普通绘制。
     const D3D12IndirectBatch* indirects=nullptr;
@@ -214,12 +214,12 @@ struct D3D12Presentation
     std::shared_ptr<D3D12IndoorHistory> indoorHistory;
     std::shared_ptr<D3D12Particles> particlePass;
     std::shared_ptr<D3D12DepthNormalTarget> depthNormalTarget;
-    se::rhi::DepthNormalStatistics depthNormalStatistics;
+    flare::rhi::DepthNormalStatistics depthNormalStatistics;
     std::shared_ptr<D3D12AmbientOcclusion> ambientOcclusionBuilder;
     std::shared_ptr<D3D12AmbientOcclusionOutput> ambientOcclusionOutput;
-    se::rhi::ScreenSpaceOcclusionStatistics screenSpaceStatistics;
+    flare::rhi::ScreenSpaceOcclusionStatistics screenSpaceStatistics;
     std::shared_ptr<D3D12RayTracingSystem> rayTracing;
-    se::rhi::RayTracingStatistics rayTracingStatistics;
+    flare::rhi::RayTracingStatistics rayTracingStatistics;
     std::shared_ptr<D3D12ShadingDefaults> shadingDefaults;
     std::shared_ptr<D3D12Heterogeneous> heterogeneousBuilder;
     std::shared_ptr<D3D12Meshlet> meshletBuilder;
@@ -227,8 +227,8 @@ struct D3D12Presentation
     bool meshShaderTier1=false,rayTracingTier1_1=false;
     double cpuMeshSubmitMilliseconds=0;
     double cpuShadowRecordMilliseconds=0;
-    se::rhi::GpuDrivenStatistics gpuDrivenStatistics;
-    se::rhi::ClusteredStatistics clustered;
+    flare::rhi::GpuDrivenStatistics gpuDrivenStatistics;
+    flare::rhi::ClusteredStatistics clustered;
     UINT64 shadowCreations=0;
     UINT64 shadowCacheHits=0,shadowCacheMisses=0;
     Microsoft::WRL::ComPtr<ID3D12Resource> hdr;
@@ -246,7 +246,7 @@ struct D3D12Presentation
     UINT64 nextFenceValue = 1;
     UINT frameCursor = 0; // 独立于 GetCurrentBackBufferIndex，不按交换链索引复用 allocator。
     UINT64 submittedFrames = 0;
-    se::rhi::DrawBindingStatistics opaqueBindings;
+    flare::rhi::DrawBindingStatistics opaqueBindings;
     UINT64 frameInstances=0,frameInstanceBytes=0,frameDrawConstantBytes=0;
     UINT64 signalCount = 0;
     std::array<UINT64, static_cast<size_t>(D3D12WaitReason::Count)> waitCounts{};
@@ -265,10 +265,10 @@ struct D3D12Presentation
     std::unique_ptr<D3D12StateRecording> uploadStates;
     UINT64 uploadSubmissions=0,uploadedBytes=0;
     bool dedicatedUploads=false;
-    se::Profiler* cpuProfiler=nullptr; // 呈现线程借用，须覆盖本次记录/等待。
+    flare::Profiler* cpuProfiler=nullptr; // 呈现线程借用，须覆盖本次记录/等待。
     bool timingEnabled=false;
     UINT64 timestampFrequency=0,droppedTimingSamples=0;
-    std::deque<se::rhi::GpuTiming> timings;
+    std::deque<flare::rhi::GpuTiming> timings;
 };
 
 // 创建呈现资源、两组 FrameContext、共用命令列表和 Fence；初始化阶段不提交命令。
@@ -279,7 +279,7 @@ bool InitializeD3D12Presentation(D3D12Presentation& presentation,
 // 普通帧只等待将要复用的 FrameContext；成功返回不保证 GPU 已完成。
 bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& localization,
     const D3D12Triangle* triangle = nullptr, const D3D12FrameCapture* capture = nullptr,
-    const se::Mat4& clipFromWorld = {});
+    const flare::Mat4& clipFromWorld = {});
 bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& localization,
     const D3D12FrameContent& content, const D3D12FrameCapture* capture = nullptr);
 

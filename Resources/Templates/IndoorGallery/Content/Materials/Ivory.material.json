@@ -1,5 +1,5 @@
 {
-  "type": "SelfEngine.Material",
+  "type": "FlareEngine.Material",
   "version": 1,
   "name": "象牙白陶",
   "baseColor": [

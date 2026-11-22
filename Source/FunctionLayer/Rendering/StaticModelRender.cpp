@@ -11,7 +11,7 @@
 #include <utility>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -404,7 +404,7 @@ bool StaticModelRenderCache::Upload(std::shared_ptr<const StaticModel> model,con
                 }
             }
             BindLayerTextures(*binding);
-            binding->featureMask=se::FeatureMaskFor(*binding);
+            binding->featureMask=flare::FeatureMaskFor(*binding);
             gpu.material=std::move(binding);
         }
         auto result=skinnedMesh
@@ -412,7 +412,7 @@ bool StaticModelRenderCache::Upload(std::shared_ptr<const StaticModel> model,con
             :compress
             ?device.CreateBuffer({rhi::BufferUsage::Vertex,sizeof(PackedVertex),mesh.name+".vertices"},std::as_bytes(std::span(packed)),gpu.vertices)
             :device.CreateBuffer({rhi::BufferUsage::Vertex,sizeof(rhi::Vertex),mesh.name+".vertices"},std::as_bytes(std::span(vertices)),gpu.vertices);
-        const auto reordered=se::OptimizeVertexCache(mesh.indices);
+        const auto reordered=flare::OptimizeVertexCache(mesh.indices);
         if(meshletSubmission_&&!skinnedMesh&&!compress)
         {
             MeshData sourceMesh;sourceMesh.name=mesh.name;sourceMesh.vertices=mesh.vertices;sourceMesh.indices=reordered;

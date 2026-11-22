@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 namespace
 {
@@ -502,4 +502,4 @@ UiElementHandle UiDispatcher::PointerCapture() const noexcept
     return impl_ ? impl_->capture : UiElementHandle{};
 }
 
-} // namespace se::ui
+} // namespace flare::ui

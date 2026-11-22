@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 namespace
 {
@@ -747,4 +747,4 @@ void UiLayoutEngine::Impl::ArrangeNode(UiElementHandle handle, const UiRect& raw
     ClearLayoutDirty(handle);
 }
 
-} // namespace se::ui
+} // namespace flare::ui

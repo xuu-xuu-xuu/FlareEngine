@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -740,4 +740,4 @@ bool BakeNavMesh(
     }
     return true;
 }
-} // namespace se
+} // namespace flare

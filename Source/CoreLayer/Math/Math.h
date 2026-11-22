@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <optional>
 
-namespace se
+namespace flare
 {
 constexpr float Pi = 3.14159265358979323846f;
 struct Vec2 { float x = 0, y = 0; };

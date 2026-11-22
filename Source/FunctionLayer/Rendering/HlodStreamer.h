@@ -6,7 +6,7 @@
 #include <string>
 #include <thread>
 
-namespace se
+namespace flare
 {
 // G05.13：`.sehlod` 后台读取。工作线程只做文件解析并发布一次结果；
 // 呈现线程通过 Poll 取得场景；取消会请求停止并确认线程结束，不遗留借用 this 的线程。

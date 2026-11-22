@@ -19,11 +19,12 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class Localization;
 
-namespace se
+namespace flare
 {
 
 struct ToolkitAssetInspectorState
@@ -35,7 +36,15 @@ struct ToolkitAssetInspectorState
     std::string targetPath;
     bool inspectUi = false;
     bool editTod = false;
+    bool isTodAsset = false;
     bool preferScriptUndo = false;
+    bool preferMaterialUndo = false;
+    bool lockedToEntity = false;
+    StableEntityId lockedEntityId = 0;
+    std::vector<StableEntityId> lockedSelection;
+    bool lockedToAsset = false;
+    std::string lockedAssetPath;
+    std::unordered_set<StableEntityId> playKeepEntities;
     std::filesystem::path explicitUiPath;
     std::shared_ptr<const ImageData> previewImage;
     std::string previewImageKey;
@@ -103,4 +112,4 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& context,
 
 bool SaveAllToolkitDocuments(ToolkitWorkspaceContext& context);
 
-} // namespace se
+} // namespace flare

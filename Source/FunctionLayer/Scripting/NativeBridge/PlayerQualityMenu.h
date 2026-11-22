@@ -6,7 +6,7 @@
 #include <bitset>
 
 class Localization;
-namespace se
+namespace flare
 {
 // 独立 UI 树，玩家菜单不污染项目 UI 的节点 ID、焦点、序列化或脚本事件。
 class PlayerQualityMenu

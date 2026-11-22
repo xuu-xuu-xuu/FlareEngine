@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se
+namespace flare
 {
 
 // DirectWrite 适配器：只存在于平台侧；核心只 include UiTextService。
@@ -72,4 +72,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace se
+} // namespace flare

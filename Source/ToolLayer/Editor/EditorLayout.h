@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 
-namespace se
+namespace flare
 {
 // 稳定面板标识：只用于持久化与显隐，显示名可随语言变化。
 enum class EditorPanel { Hierarchy, Inspector, Assets, MaterialEditor, Viewport, UiDesigner, ProjectSettings, BuildExport, Console };

@@ -2,7 +2,7 @@
 #include "EditorProcessRunner.h"
 #include <Windows.h>
 
-namespace se::detail
+namespace flare::detail
 {
 // 窄 Win32 接缝用于确定性覆盖 Job 失败，不通过环境变量或用户参数削弱正式路径。
 struct ProcessJobApi

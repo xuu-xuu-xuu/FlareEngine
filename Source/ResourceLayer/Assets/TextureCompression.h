@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G04：BC1（DXT1）基线编码器。4x4 块、RGB565 端点 + 2 位索引，8:1。
 // 后续 BC7/BC5 接入时保持同一调用面，只替换编码器。

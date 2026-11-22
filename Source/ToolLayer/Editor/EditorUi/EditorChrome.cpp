@@ -2,7 +2,7 @@
 
 #include <utility>
 
-namespace se::ui::editor
+namespace flare::ui::editor
 {
 
 EditorChrome::EditorChrome(EditorCommandRouter& router, EditorCommandBus& bus)
@@ -59,4 +59,4 @@ const std::vector<EditorToolbarItem>& EditorChrome::Toolbar() const noexcept
     return toolbar_;
 }
 
-} // namespace se::ui::editor
+} // namespace flare::ui::editor

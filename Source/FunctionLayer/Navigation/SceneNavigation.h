@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 /// 从静态世界实体（网格及静态非触发碰撞体）提取世界空间三角网供导航烘焙使用。
 void CollectNavigationSceneGeometry(
@@ -91,4 +91,4 @@ private:
     std::map<AssetId, CachedNavMesh> cache_;
     std::map<StableEntityId, AgentRuntime> agents_;
 };
-} // namespace se
+} // namespace flare

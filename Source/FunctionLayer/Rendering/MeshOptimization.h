@@ -4,7 +4,7 @@
 #include <span>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G03：FIFO 顶点缓存的平均未命中率（ACMR）。用于离线重排前后对比；
 // 只统计索引流，不改变三角形顺序。

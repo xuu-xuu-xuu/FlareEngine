@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <sstream>
 
-namespace se
+namespace flare
 {
 namespace
 {

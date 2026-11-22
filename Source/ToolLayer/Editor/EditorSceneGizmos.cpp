@@ -1,14 +1,17 @@
 #include "EditorSceneGizmos.h"
+#include "FunctionLayer/Runtime/FeatureComponents.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 namespace
 {
 constexpr ui::UiColor CameraColor{.36f, .8f, 1, 1};
 constexpr ui::UiColor LightColor{1, .78f, .23f, 1};
+constexpr ui::UiColor AudioColor{.95f, .58f, .22f, 1};
+constexpr ui::UiColor AudioOuterColor{.95f, .58f, .22f, .55f};
 constexpr float IconOffset = 22.0f;
 
 bool Active(const World& world, EntityHandle entity, ComponentTypeId type)
@@ -45,6 +48,16 @@ void CameraIcon(ui::UiDisplayList& overlay, Vec2 center, ui::UiColor color)
     line(4, 5, -9, 5); line(-9, 5, -9, -5);
     line(4, -3, 10, -7); line(10, -7, 10, 7); line(10, 7, 4, 3);
     line(-6, -5, -4, -8); line(-4, -8, 0, -8); line(0, -8, 2, -5);
+}
+
+void AudioIcon(ui::UiDisplayList& overlay, Vec2 center, ui::UiColor color)
+{
+    const auto line = [&](float x0, float y0, float x1, float y1) {
+        overlay.Line(center.x + x0, center.y + y0, center.x + x1, center.y + y1, 1.6f, color);
+    };
+    line(-7, -3, -3, -3); line(-3, -3, 2, -7); line(2, -7, 2, 7); line(2, 7, -3, 3); line(-3, 3, -7, 3); line(-7, 3, -7, -3);
+    line(5, -3.5f, 6.5f, 0); line(6.5f, 0, 5, 3.5f);
+    line(7.5f, -6.0f, 9.5f, 0); line(9.5f, 0, 7.5f, 6.0f);
 }
 
 void LightIcon(ui::UiDisplayList& overlay, Vec2 center, ui::UiColor color, bool badge)
@@ -104,6 +117,59 @@ void Arrow(std::vector<rhi::SceneLine>& lines, Vec3 origin, Vec3 direction, Vec3
     SceneLine(lines, tip, neck - side * head, LightColor);
     SceneLine(lines, tip, neck + up * head, LightColor);
     SceneLine(lines, tip, neck - up * head, LightColor);
+}
+
+void DrawSphereGuide(std::vector<rhi::SceneLine>& lines, Vec3 origin, float radius, ui::UiColor color, int segments = 48)
+{
+    if (!IsFinite(origin) || !std::isfinite(radius) || radius <= 0.0f) return;
+    constexpr Vec3 first[]{{1, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+    constexpr Vec3 second[]{{0, 1, 0}, {0, 0, 1}, {0, 0, 1}};
+    for (int plane = 0; plane < 3; ++plane)
+    {
+        for (int i = 0; i < segments; ++i)
+        {
+            const float a = i * 2 * Pi / segments;
+            const float b = (i + 1) * 2 * Pi / segments;
+            SceneLine(lines, origin + (first[plane] * std::cos(a) + second[plane] * std::sin(a)) * radius,
+                      origin + (first[plane] * std::cos(b) + second[plane] * std::sin(b)) * radius, color);
+        }
+    }
+}
+
+void DrawRectangleLight(const World& world, EntityHandle entity, std::vector<rhi::SceneLine>& lines)
+{
+    const float w = std::clamp(std::get<float>(FeatureValue(world, entity, "rectangle.width")), 0.001f, 1000.0f);
+    const float h = std::clamp(std::get<float>(FeatureValue(world, entity, "rectangle.height")), 0.001f, 1000.0f);
+    const Mat4 matrix = world.GetWorldMatrix(entity);
+    const Vec3 origin = TransformPoint(matrix, {});
+    if (!IsFinite(origin)) return;
+    const float hw = w * 0.5f, hh = h * 0.5f;
+    const std::array<Vec3, 4> corners{{
+        TransformPoint(matrix, {-hw, -hh, 0.0f}),
+        TransformPoint(matrix, { hw, -hh, 0.0f}),
+        TransformPoint(matrix, { hw,  hh, 0.0f}),
+        TransformPoint(matrix, {-hw,  hh, 0.0f}),
+    }};
+    for (int i = 0; i < 4; ++i) SceneLine(lines, corners[i], corners[(i + 1) % 4], LightColor);
+    const Vec3 forward = TransformVector(matrix, {0.0f, 0.0f, -1.0f});
+    if (Length(forward) > 1e-4f)
+    {
+        const Vec3 dir = Normalize(forward);
+        const Vec3 side = Normalize(Cross(dir, std::abs(dir.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0}));
+        const Vec3 up = Cross(dir, side);
+        Arrow(lines, origin, dir, side, up, std::max(0.35f, std::min(w, h) * 0.65f));
+    }
+}
+
+void DrawAudioSource(const World& world, EntityHandle entity, std::vector<rhi::SceneLine>& lines)
+{
+    const float spatial = std::get<float>(FeatureValue(world, entity, "audio.spatialBlend"));
+    if (spatial <= 0.01f) return;
+    const float minD = std::clamp(std::get<float>(FeatureValue(world, entity, "audio.minDistanceMeters")), 0.01f, 10000.0f);
+    const float maxD = std::clamp(std::get<float>(FeatureValue(world, entity, "audio.maxDistanceMeters")), minD, 10000.0f);
+    const Vec3 origin = TransformPoint(world.GetWorldMatrix(entity), {});
+    DrawSphereGuide(lines, origin, minD, AudioColor, 40);
+    if (maxD > minD + 0.01f) DrawSphereGuide(lines, origin, maxD, AudioOuterColor, 48);
 }
 
 void DrawLight(const World& world, EntityHandle entity, const CameraSnapshot& editor,
@@ -169,8 +235,11 @@ void DrawLight(const World& world, EntityHandle entity, const CameraSnapshot& ed
 std::optional<Vec2> EditorSceneIconCenter(const World& world, EntityHandle entity,
                                         const CameraSnapshot& editorCamera)
 {
-    if (!world.IsAlive(entity) || !world.IsEnabled(entity) ||
-        (!Active(world, entity, ComponentTypes::Camera) && !Active(world, entity, ComponentTypes::Light))) return {};
+    const bool hasGadget = Active(world, entity, ComponentTypes::Camera) ||
+                           Active(world, entity, ComponentTypes::Light) ||
+                           Active(world, entity, RectangleLightComponent::TypeId) ||
+                           Active(world, entity, AudioSourceComponent::TypeId);
+    if (!world.IsAlive(entity) || !world.IsEnabled(entity) || !hasGadget) return {};
     const auto point = ProjectWorldPoint(editorCamera, TransformPoint(world.GetWorldMatrix(entity), {}));
     if (!point || point->z < 0 || point->z > 1) return {};
     const Vec2 center{point->x, point->y - IconOffset};
@@ -189,12 +258,15 @@ void AppendEditorSceneGizmos(const World& world, StableEntityId selected,
         const auto center = EditorSceneIconCenter(world, entity, editorCamera);
         if (!center) continue;
         const bool camera = Active(world, entity, ComponentTypes::Camera);
-        const bool light = Active(world, entity, ComponentTypes::Light);
+        const bool light = Active(world, entity, ComponentTypes::Light) ||
+                           Active(world, entity, RectangleLightComponent::TypeId);
+        const bool audio = Active(world, entity, AudioSourceComponent::TypeId);
         overlay.CanvasCircle(center->x, center->y, EditorSceneIconRadius, {.06f, .07f, .08f, .88f});
         if (world.Get(entity)->stableId == selected)
-            IconRing(overlay, *center, EditorSceneIconRadius - 1, camera ? CameraColor : LightColor, 1.5f);
+            IconRing(overlay, *center, EditorSceneIconRadius - 1, camera ? CameraColor : (light ? LightColor : AudioColor), 1.5f);
         if (camera) CameraIcon(overlay, *center, CameraColor);
         if (light) LightIcon(overlay, camera ? Vec2{center->x + 7, center->y - 7} : *center, LightColor, camera);
+        else if (audio && !camera) AudioIcon(overlay, *center, AudioColor);
     }
     const auto entity = world.FindByStableId(selected);
     if (!entity || !world.IsEnabled(entity)) return;
@@ -202,6 +274,10 @@ void AppendEditorSceneGizmos(const World& world, StableEntityId selected,
         DrawCameraFrustum(world, entity, editorCamera, lines);
     if (world.GetLight(entity) && Active(world, entity, ComponentTypes::Light))
         DrawLight(world, entity, editorCamera, lines);
+    if (Active(world, entity, RectangleLightComponent::TypeId))
+        DrawRectangleLight(world, entity, lines);
+    if (Active(world, entity, AudioSourceComponent::TypeId))
+        DrawAudioSource(world, entity, lines);
 }
 
 void AppendDropPreviewGizmo(const Aabb& worldBounds, bool valid, std::vector<rhi::SceneLine>& lines)

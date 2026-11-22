@@ -19,10 +19,10 @@ namespace
 constexpr UINT commandBytes=sizeof(D3D12HeterogeneousCommand);
 struct alignas(256) Parameters
 {
-    se::VisibilityFrustum frustum;
+    flare::VisibilityFrustum frustum;
     UINT count=0,padding[3]{};
-    se::Mat4 clipFromWorld;
-    se::Vec4 screen;
+    flare::Mat4 clipFromWorld;
+    flare::Vec4 screen;
     UINT occlusionEnabled=0,occlusionPadding[3]{};
 };
 static_assert(sizeof(Parameters)==256&&offsetof(Parameters,count)==96&&offsetof(Parameters,clipFromWorld)==112
@@ -37,14 +37,14 @@ D3D12HeterogeneousFallback EligibleRangeOnly(const D3D12HeterogeneousInput& item
         ||item.firstIndex>mesh.indexCount||count>mesh.indexCount-item.firstIndex
         ||item.firstIndex>mesh.indexView.SizeInBytes/stride||count>mesh.indexView.SizeInBytes/stride-item.firstIndex)
         return Reason::InvalidGeometry;
-    if(!se::IsValid(item.worldBounds))return Reason::InvalidBounds;
+    if(!flare::IsValid(item.worldBounds))return Reason::InvalidBounds;
     return Reason::None;
 }
 bool ValidOcclusion(ID3D12Device& device,const D3D12HeterogeneousOcclusion& value)
 {
-    const auto inverse=se::Inverse(value.clipFromWorld);
-    if(!value.output||!se::IsFinite(value.clipFromWorld)||!inverse||!se::IsFinite(*inverse)
-        ||!se::IsFinite(value.depthBias)||value.depthBias<1e-6f||value.depthBias>.01f)return false;
+    const auto inverse=flare::Inverse(value.clipFromWorld);
+    if(!value.output||!flare::IsFinite(value.clipFromWorld)||!inverse||!flare::IsFinite(*inverse)
+        ||!flare::IsFinite(value.depthBias)||value.depthBias<1e-6f||value.depthBias>.01f)return false;
     const auto& input=*value.output;
     if(!input.depth||!input.texture||!input.descriptors||!input.hzbSrv.ptr||!input.width||!input.height
         ||D3D12HiZ::Levels(input.width,input.height)!=input.mipCount)return false;
@@ -76,11 +76,11 @@ bool TrustedGeometryProgram(const D3D12ShaderSource& source,const std::filesyste
     const wchar_t* file=nullptr;
     switch(source.kind)
     {
-    case se::rhi::PipelineKind::PbrMesh:file=L"Pbr.hlsl";break;
-    case se::rhi::PipelineKind::ForwardMesh:file=L"Forward.hlsl";break;
-    case se::rhi::PipelineKind::ShadowedMesh:file=L"ShadowedForward.hlsl";break;
-    case se::rhi::PipelineKind::EnvironmentMesh:file=L"EnvironmentForward.hlsl";break;
-    case se::rhi::PipelineKind::BasicLitMesh:file=L"BasicLit.hlsl";break;
+    case flare::rhi::PipelineKind::PbrMesh:file=L"Pbr.hlsl";break;
+    case flare::rhi::PipelineKind::ForwardMesh:file=L"Forward.hlsl";break;
+    case flare::rhi::PipelineKind::ShadowedMesh:file=L"ShadowedForward.hlsl";break;
+    case flare::rhi::PipelineKind::EnvironmentMesh:file=L"EnvironmentForward.hlsl";break;
+    case flare::rhi::PipelineKind::BasicLitMesh:file=L"BasicLit.hlsl";break;
     default:return false;
     }
     const auto expected=(builtinDirectory/file).lexically_normal().native();
@@ -118,7 +118,7 @@ D3D12HeterogeneousFallback Eligible(const D3D12HeterogeneousInput& item,const D3
     using Reason=D3D12HeterogeneousFallback;
     if(!item.draw||!item.draw->mesh)return Reason::InvalidGeometry;
     const auto& draw=*item.draw;const auto& mesh=*draw.mesh;const auto* pipeline=Pipeline(item,fallback);
-    if(draw.alphaMode!=se::MaterialAlphaMode::Opaque)return Reason::Alpha;
+    if(draw.alphaMode!=flare::MaterialAlphaMode::Opaque)return Reason::Alpha;
     if(!draw.instances.empty())return Reason::Instances;
     if(!draw.skinPalette.empty()||draw.skinJointCount||draw.skinJointOffset)return Reason::Skin;
     if(draw.outline)return Reason::Outline;
@@ -129,19 +129,19 @@ D3D12HeterogeneousFallback Eligible(const D3D12HeterogeneousInput& item,const D3
         ||pipeline->prepared->materialRootParameter!=UINT_MAX||source.depthNormals)
         return Reason::MaterialExtension;
     // 源 AABB 尚无量化 decode 膨胀证明；压缩顶点与蒙皮/实例一样先走完整 CPU 路径。
-    if(source.skinnedVertex||source.compressedVertex||se::rhi::IsInstanced(kind))return Reason::UnsupportedPipeline;
-    if(kind!=se::rhi::PipelineKind::PbrMesh&&kind!=se::rhi::PipelineKind::ForwardMesh
-        &&kind!=se::rhi::PipelineKind::ShadowedMesh&&kind!=se::rhi::PipelineKind::EnvironmentMesh
-        &&kind!=se::rhi::PipelineKind::BasicLitMesh)return Reason::UnsupportedPipeline;
-    if(source.layoutVersion!=se::rhi::BindingLayout(kind)||pipeline->prepared->blend!=se::rhi::BlendMode::Opaque
-        ||pipeline->prepared->alphaMode!=se::MaterialAlphaMode::Opaque)return Reason::UnsupportedPipeline;
+    if(source.skinnedVertex||source.compressedVertex||flare::rhi::IsInstanced(kind))return Reason::UnsupportedPipeline;
+    if(kind!=flare::rhi::PipelineKind::PbrMesh&&kind!=flare::rhi::PipelineKind::ForwardMesh
+        &&kind!=flare::rhi::PipelineKind::ShadowedMesh&&kind!=flare::rhi::PipelineKind::EnvironmentMesh
+        &&kind!=flare::rhi::PipelineKind::BasicLitMesh)return Reason::UnsupportedPipeline;
+    if(source.layoutVersion!=flare::rhi::BindingLayout(kind)||pipeline->prepared->blend!=flare::rhi::BlendMode::Opaque
+        ||pipeline->prepared->alphaMode!=flare::MaterialAlphaMode::Opaque)return Reason::UnsupportedPipeline;
     if(!trustedGeometry)return Reason::UnsupportedPipeline;
-    const UINT expectedStride=static_cast<UINT>(sizeof(se::rhi::Vertex));
+    const UINT expectedStride=static_cast<UINT>(sizeof(flare::rhi::Vertex));
     if(!mesh.vertices||!mesh.indices||mesh.vertexView.StrideInBytes!=expectedStride||!item.materialTable.ptr
         ||!mesh.vertexView.SizeInBytes||mesh.vertexView.SizeInBytes%expectedStride
         ||!BufferRange(mesh.vertices.Get(),mesh.vertexView.BufferLocation,mesh.vertexView.SizeInBytes)
         ||!BufferRange(mesh.indices.Get(),mesh.indexView.BufferLocation,mesh.indexView.SizeInBytes)
-        ||!se::IsFinite(draw.world)||item.baseVertex!=0)return Reason::InvalidGeometry;
+        ||!flare::IsFinite(draw.world)||item.baseVertex!=0)return Reason::InvalidGeometry;
     const UINT stride=mesh.indexView.Format==DXGI_FORMAT_R16_UINT?2:mesh.indexView.Format==DXGI_FORMAT_R32_UINT?4:0;
     const UINT count=item.indexCount?item.indexCount:mesh.indexCount;
     if(!stride||!count||count%3||item.firstIndex%3||(!item.indexCount&&item.firstIndex)
@@ -149,8 +149,8 @@ D3D12HeterogeneousFallback Eligible(const D3D12HeterogeneousInput& item,const D3
         ||item.firstIndex>mesh.indexCount||count>mesh.indexCount-item.firstIndex
         ||item.firstIndex>mesh.indexView.SizeInBytes/stride||count>mesh.indexView.SizeInBytes/stride-item.firstIndex)
         return Reason::InvalidGeometry;
-    if(!se::IsValid(item.worldBounds))return Reason::InvalidBounds;
-    if(!item.b0.resource||item.b0.offset%256||item.b0.size<sizeof(se::rhi::PbrDrawConstants)
+    if(!flare::IsValid(item.worldBounds))return Reason::InvalidBounds;
+    if(!item.b0.resource||item.b0.offset%256||item.b0.size<sizeof(flare::rhi::PbrDrawConstants)
         ||item.b0.offset>item.b0.resource->GetDesc().Width
         ||item.b0.size>item.b0.resource->GetDesc().Width-item.b0.offset
         ||!BufferRange(item.b0.resource,item.b0.Gpu(),item.b0.size)||item.b0.Gpu()%256)
@@ -205,7 +205,7 @@ HRESULT D3D12Heterogeneous::GetSignature(ID3D12RootSignature& root,ComPtr<ID3D12
 HRESULT D3D12Heterogeneous::CreateOutput(UINT capacity,D3D12HeterogeneousOutput& output) const
 {
     if(!device_)return E_UNEXPECTED;
-    if(capacity>se::MaximumVisibilityItems)return E_INVALIDARG;
+    if(capacity>flare::MaximumVisibilityItems)return E_INVALIDARG;
     D3D12_RESOURCE_DESC description{};description.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;
     description.Width=UINT64{std::max(1u,capacity)}*commandBytes;description.Height=1;
     description.DepthOrArraySize=description.MipLevels=1;description.SampleDesc={1,0};
@@ -215,10 +215,10 @@ HRESULT D3D12Heterogeneous::CreateOutput(UINT capacity,D3D12HeterogeneousOutput&
     if(FAILED(result))return result;output=std::move(next);return S_OK;
 }
 HRESULT D3D12Heterogeneous::Prepare(D3D12UploadArena& arena,const D3D12MeshPipeline& defaultPipeline,
-    std::span<const D3D12HeterogeneousInput> input,const se::VisibilityFrustum& frustum,UINT capacity,D3D12HeterogeneousPrepared& output,const D3D12HeterogeneousOcclusion* occlusion)
+    std::span<const D3D12HeterogeneousInput> input,const flare::VisibilityFrustum& frustum,UINT capacity,D3D12HeterogeneousPrepared& output,const D3D12HeterogeneousOcclusion* occlusion)
 {
     if(!device_)return E_UNEXPECTED;
-    if(input.size()>se::MaximumVisibilityItems||capacity>se::MaximumVisibilityItems||!se::ValidVisibilityFrustum(frustum))return E_INVALIDARG;
+    if(input.size()>flare::MaximumVisibilityItems||capacity>flare::MaximumVisibilityItems||!flare::ValidVisibilityFrustum(frustum))return E_INVALIDARG;
     // 每批只解析一次引擎目录；同一 program 只核对一次完整源路径和宏。
     std::error_code pathError;const auto executable=GetExecutableDirectory();
     auto builtinDirectory=executable.empty()?std::filesystem::path{}:
@@ -238,7 +238,7 @@ HRESULT D3D12Heterogeneous::Prepare(D3D12UploadArena& arena,const D3D12MeshPipel
     D3D12HeterogeneousPrepared next;next.statistics_.sourceDraws=static_cast<UINT>(input.size());
     if(occlusion)next.occlusion_=occlusion->output;
     std::vector<D3D12HeterogeneousCommand> records;records.reserve(input.size());
-    std::vector<se::VisibilityItem> bounds;bounds.reserve(input.size());
+    std::vector<flare::VisibilityItem> bounds;bounds.reserve(input.size());
     for(UINT first=0;first<input.size();)
     {
         UINT end=first+1;
@@ -309,10 +309,10 @@ HRESULT D3D12Heterogeneous::Prepare(D3D12UploadArena& arena,const D3D12MeshPipel
     if(next.count_)
     {
         auto result=arena.Allocate(UINT64{next.count_}*commandBytes,16,next.inputCommands_);if(FAILED(result))return result;
-        result=arena.Allocate(bounds.size()*sizeof(se::VisibilityItem),16,next.bounds_);if(FAILED(result))return result;
+        result=arena.Allocate(bounds.size()*sizeof(flare::VisibilityItem),16,next.bounds_);if(FAILED(result))return result;
         result=arena.Allocate(sizeof(Parameters),256,next.constants_);if(FAILED(result))return result;
         std::memcpy(next.inputCommands_.cpu,records.data(),records.size()*commandBytes);
-        std::memcpy(next.bounds_.cpu,bounds.data(),bounds.size()*sizeof(se::VisibilityItem));
+        std::memcpy(next.bounds_.cpu,bounds.data(),bounds.size()*sizeof(flare::VisibilityItem));
         Parameters parameters{};parameters.frustum=frustum;parameters.count=next.count_;
         if(occlusion){parameters.clipFromWorld=occlusion->clipFromWorld;parameters.screen={float(occlusion->output->width),float(occlusion->output->height),occlusion->depthBias,float(occlusion->output->mipCount)};parameters.occlusionEnabled=1;}
         std::memcpy(next.constants_.cpu,&parameters,sizeof(parameters));
@@ -324,7 +324,7 @@ HRESULT D3D12Heterogeneous::RecordCull(ID3D12GraphicsCommandList& commands,D3D12
 {
     if(!device_)return E_UNEXPECTED;
     if(!prepared.count_)return S_OK;
-    if(prepared.count_>output.capacity||output.capacity>se::MaximumVisibilityItems||!output.commands
+    if(prepared.count_>output.capacity||output.capacity>flare::MaximumVisibilityItems||!output.commands
         ||!BufferRange(output.commands.Get(),output.commands->GetGPUVirtualAddress(),UINT64{output.capacity}*commandBytes)
         ||!prepared.inputCommands_.resource||!prepared.bounds_.resource||!prepared.constants_.resource)return E_INVALIDARG;
     auto result=states.Use(commands,*prepared.inputCommands_.resource,D3D12_RESOURCE_STATE_COPY_SOURCE,"Heterogeneous.Template");

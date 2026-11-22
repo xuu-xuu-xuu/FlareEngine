@@ -1,7 +1,7 @@
 #pragma once
 #include "ResourceLayer/Assets/DiffuseProbeAsset.h"
 
-namespace se
+namespace flare
 {
 class World;
 class AssetStore;

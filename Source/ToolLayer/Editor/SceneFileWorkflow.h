@@ -1,7 +1,7 @@
 #pragma once
 #include "EditorSession.h"
 
-namespace se
+namespace flare
 {
 enum class FileActionResult { Done,Waiting,Failed };
 enum class UnsavedChoice { Save,Discard,Cancel };

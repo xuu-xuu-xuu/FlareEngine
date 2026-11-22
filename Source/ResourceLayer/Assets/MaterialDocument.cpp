@@ -8,7 +8,7 @@
 #include <cctype>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -59,7 +59,7 @@ bool SerializeMaterialDocument(const MaterialDocument& material,std::string& out
     if(!ValidateMaterialDocument(material)){asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial");return false;}
     try
     {
-        nlohmann::json json={{"type","SelfEngine.Material"},{"version",1}};
+        nlohmann::json json={{"type","FlareEngine.Material"},{"version",1}};
         for(const auto& field:MaterialProperties())
         {
             PropertyValue value;std::string error;if(!ReadMaterialProperty(material,field.key,value,error))return false;
@@ -75,7 +75,7 @@ bool DeserializeMaterialDocument(std::string_view text,MaterialDocument& output,
     {
         if(text.size()>65536){asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial","document size");return false;}
         const auto json=nlohmann::json::parse(text);
-        if(json.at("type")!="SelfEngine.Material"||json.at("version")!=1)
+        if((json.at("type")!="FlareEngine.Material"&&json.at("type")!="SelfEngine.Material")||json.at("version")!=1)
         {asset_io::Diagnostic(diagnostics,"Assets.MaterialVersionUnsupported");return false;}
         for(const char* key:{"clearCoat","sheen","anisotropy","subsurface"})if(json.contains(key)&&!json.at(key).is_object())
         {asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial",key);return false;}

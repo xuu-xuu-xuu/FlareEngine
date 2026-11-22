@@ -165,7 +165,7 @@ try {
         $dotnet=$command.Source
         Step 'script_sdk' $dotnet @('--list-sdks')
         if((Get-Content -LiteralPath (Join-Path $case 'script_sdk.log') -Raw -Encoding UTF8) -notmatch '(?m)^10\.\d+\.\d+[^\r\n]*\['){Fail 'Export.SdkMissing'}
-        $scriptProperties=if($packageMode){Get-EnginePackageScriptProperties $workspace (Join-Path $case 'script-obj')}else{@(('-p:FlareEngineRoot='+$workspace),('-p:SelfEngineRoot='+$workspace))}
+        $scriptProperties=if($packageMode){Get-EnginePackageScriptProperties $workspace (Join-Path $case 'script-obj')}else{@('-p:FlareEngineRoot='+$workspace)}
         Step 'script_name' $dotnet (@('msbuild',$ScriptProject,'-nologo','-getProperty:AssemblyName','-p:Configuration=Release','-p:SelfContained=false','-p:UseAppHost=false')+$scriptProperties)
         $assemblyName=(Get-Content -LiteralPath (Join-Path $case 'script_name.log') -Raw -Encoding UTF8).Trim()
         if(!$assemblyName -or $assemblyName.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0 -or $assemblyName -in @('.','..')){Fail 'Export.InvalidSettings' 'AssemblyName'}

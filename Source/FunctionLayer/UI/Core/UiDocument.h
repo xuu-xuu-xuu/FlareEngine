@@ -8,7 +8,7 @@
 #include <memory>
 #include <string_view>
 
-namespace se::ui
+namespace flare::ui
 {
 
 enum class UiDocumentError : std::uint8_t
@@ -97,4 +97,4 @@ private:
     void DestroyElementInternal(std::uint32_t slotIndex) noexcept;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

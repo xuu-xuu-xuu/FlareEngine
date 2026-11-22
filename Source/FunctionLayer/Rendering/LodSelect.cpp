@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 float ProjectedLodError(float worldError,const Vec3& meshCenter,const LodView& view)
 {

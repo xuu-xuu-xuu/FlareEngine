@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 /// 纯领域 16-bit PCM 音频缓冲描述（与 AssetStore 资源寿命解耦）。
 struct AudioClipData
@@ -147,4 +147,4 @@ private:
     bool paused_ = false;
     mutable std::string error_;
 };
-} // namespace se
+} // namespace flare

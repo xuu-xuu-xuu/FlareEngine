@@ -11,7 +11,7 @@
 #include <numbers>
 #include <thread>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -73,7 +73,7 @@ struct EditorLoadingScreen::Impl
     {
         PAINTSTRUCT paint{};const auto destination=target?target:BeginPaint(hwnd,&paint);RECT client{};GetClientRect(hwnd,&client);
         const auto dc=CreateCompatibleDC(destination);const auto bitmap=CreateCompatibleBitmap(destination,client.right,client.bottom);
-        const auto oldBitmap=SelectObject(dc,bitmap);const auto brush=CreateSolidBrush(flare::Native(flare::Background));FillRect(dc,&client,brush);DeleteObject(brush);
+        const auto oldBitmap=SelectObject(dc,bitmap);const auto brush=CreateSolidBrush(flare::palette::Native(flare::palette::Background));FillRect(dc,&client,brush);DeleteObject(brush);
         const UINT dpi=GetDpiForWindow(hwnd);const auto n=[&](int value){return MulDiv(value,dpi?dpi:96,96);};
         const auto text=[&](const std::wstring& value,HFONT font,COLORREF color,int x,int y,int width,int height,UINT flags=DT_LEFT){
             RECT rect{n(x),n(y),n(x+width),n(y+height)};SelectObject(dc,font);SetTextColor(dc,color);SetBkMode(dc,TRANSPARENT);
@@ -87,12 +87,12 @@ struct EditorLoadingScreen::Impl
             graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
             graphics.DrawImage(loadingMark.get(),(client.right-logo)/2,n(40),logo,logo);
         }
-        text(L"Flare",heading,flare::Native(flare::Heading),Margin,207,width-2*Margin,42,DT_CENTER);
+        text(L"Flare",heading,flare::palette::Native(flare::palette::Heading),Margin,207,width-2*Margin,42,DT_CENTER);
         const auto progress=owner.channel_.Read();
         const bool cancelled=owner.Cancelled() || progress.cancelled;
         const auto& stage=stages[static_cast<size_t>(progress.stage)];
-        text(cancelled?cancelling:subtitle,label,flare::Native(flare::Heading),Margin,height-202,width-2*Margin,28,DT_CENTER);
-        text(std::to_wstring(progress.percent)+L"%",detailFont,flare::Native(flare::Gold),Margin,height-171,width-2*Margin,20,DT_CENTER);
+        text(cancelled?cancelling:subtitle,label,flare::palette::Native(flare::palette::Heading),Margin,height-202,width-2*Margin,28,DT_CENTER);
+        text(std::to_wstring(progress.percent)+L"%",detailFont,flare::palette::Native(flare::palette::Gold),Margin,height-171,width-2*Margin,20,DT_CENTER);
 
         RECT ribbon{n(Margin),client.bottom-n(143),client.right-n(Margin),client.bottom-n(79)};
         const float phase=animate ? static_cast<float>((GetTickCount64()-animationStart)%CycleMs)
@@ -103,15 +103,15 @@ struct EditorLoadingScreen::Impl
             // 系统绘图服务不可用时仍显示真实的填充长度和读数。
             RECT track{ribbon.left,(ribbon.top+ribbon.bottom)/2,ribbon.right,(ribbon.top+ribbon.bottom)/2+n(3)};
             const auto trackBrush=static_cast<HBRUSH>(GetStockObject(DC_BRUSH));
-            SetDCBrushColor(dc,flare::Native(flare::Border));FillRect(dc,&track,trackBrush);
+            SetDCBrushColor(dc,flare::palette::Native(flare::palette::Border));FillRect(dc,&track,trackBrush);
             track.right=track.left+MulDiv(track.right-track.left,progress.percent,100);
-            SetDCBrushColor(dc,flare::Native(flare::Gold));FillRect(dc,&track,trackBrush);
+            SetDCBrushColor(dc,flare::palette::Native(flare::palette::Gold));FillRect(dc,&track,trackBrush);
         }
-        text(project,detailFont,flare::Native(flare::Text),Margin,height-64,width-2*Margin-110,22);
-        text(stage,detailFont,flare::Native(flare::Muted),Margin,height-42,width-2*Margin-110,20);
+        text(project,detailFont,flare::palette::Native(flare::palette::Text),Margin,height-64,width-2*Margin-110,22);
+        text(stage,detailFont,flare::palette::Native(flare::palette::Muted),Margin,height-42,width-2*Margin-110,20);
         RECT action=CancelRect(hwnd);
         action.right-=n(8);
-        SelectObject(dc,detailFont);SetTextColor(dc,flare::Native(cancelled?flare::Disabled:flare::Muted));SetBkMode(dc,TRANSPARENT);
+        SelectObject(dc,detailFont);SetTextColor(dc,flare::palette::Native(cancelled?flare::palette::Disabled:flare::palette::Muted));SetBkMode(dc,TRANSPARENT);
         DrawTextW(dc,cancel.c_str(),-1,&action,DT_RIGHT|DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX);
         BitBlt(destination,0,0,client.right,client.bottom,dc,0,0,SRCCOPY);
         SelectObject(dc,oldBitmap);DeleteObject(bitmap);DeleteDC(dc);if(!target)EndPaint(hwnd,&paint);
@@ -183,7 +183,7 @@ struct EditorLoadingScreen::Impl
         if(!RegisterClassW(&type)&&GetLastError()!=ERROR_CLASS_ALREADY_EXISTS){SetEvent(ready);return;}
         const UINT dpi=GetDpiForSystem();Fonts(dpi);const int width=MulDiv(WindowWidth,dpi,96),height=MulDiv(WindowHeight,dpi,96);
         RECT area{};SystemParametersInfoW(SPI_GETWORKAREA,0,&area,0);
-        wchar_t offscreen[8]{};const bool testOffscreen=GetEnvironmentVariableW(L"SELFENGINE_TEST_OFFSCREEN",offscreen,8)>0;
+        wchar_t offscreen[8]{};const bool testOffscreen=GetEnvironmentVariableW(L"FLARE_TEST_OFFSCREEN",offscreen,8)>0;
         window=CreateWindowExW(WS_EX_APPWINDOW,type.lpszClassName,title.c_str(),WS_POPUP|WS_BORDER,
             testOffscreen?-30000:area.left+(area.right-area.left-width)/2,testOffscreen?-30000:area.top+(area.bottom-area.top-height)/2,width,height,nullptr,nullptr,instance,this);
         if(window)

@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <map>
 
-namespace se
+namespace flare
 {
 // G04：纹理驻留策略。记录每张纹理已加载的 mip 区间与最近使用帧；
 // 只做预算与选择，不负责 IO/上传。

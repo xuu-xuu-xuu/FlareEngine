@@ -64,20 +64,20 @@ int RunEditor(int argc,wchar_t** argv)
     const auto executableDirectory=GetExecutableDirectory();
     std::error_code fileError;
     bool temporaryLogDirectory=false;
-    if(GetEnvironmentVariableW(L"SELFENGINE_LOG_DIRECTORY",nullptr,0)==0 &&
+    if(GetEnvironmentVariableW(L"FLARE_LOG_DIRECTORY",nullptr,0)==0 &&
        std::filesystem::is_regular_file(executableDirectory/"editor-package.json",fileError))
     {
-        const auto logs=se::ProjectWorkspaceSession::UserDataDirectory(executableDirectory)/"Logs";
-        temporaryLogDirectory=SetEnvironmentVariableW(L"SELFENGINE_LOG_DIRECTORY",logs.c_str())!=FALSE;
+        const auto logs=flare::ProjectWorkspaceSession::UserDataDirectory(executableDirectory)/"Logs";
+        temporaryLogDirectory=SetEnvironmentVariableW(L"FLARE_LOG_DIRECTORY",logs.c_str())!=FALSE;
     }
     InitializeProcessDiagnostics("editor");
-    if(temporaryLogDirectory)SetEnvironmentVariableW(L"SELFENGINE_LOG_DIRECTORY",nullptr);
+    if(temporaryLogDirectory)SetEnvironmentVariableW(L"FLARE_LOG_DIRECTORY",nullptr);
     LogCheckpoint("Editor.Entry");
     LogCheckpoint("Editor.Console",std::string("enabled=")+(ShowDebugConsole?"1":"0")+
         " attached="+(GetConsoleCP()?"1":"0")+" window="+(GetConsoleWindow()?"1":"0"));
-    se::EditorLaunchOptions options;
+    flare::EditorLaunchOptions options;
     std::string error;
-    if(!se::ParseEditorLaunchOptions(argc,argv,options,error))
+    if(!flare::ParseEditorLaunchOptions(argc,argv,options,error))
     {
         std::cerr<<"[Error] "<<error<<"\n";
         if(options.uiErrors)
@@ -89,8 +89,10 @@ int RunEditor(int argc,wchar_t** argv)
     }
     if(options.worker)
     {
-        se::EditorWorkerOptions worker;
-        worker.projectRoot=options.project;
+        flare::EditorWorkerOptions worker;
+        worker.projectRoot=std::filesystem::is_regular_file(options.project,fileError)
+            ? options.project.parent_path()
+            : options.project;
         worker.scene=options.scene;
         worker.capture=options.capture;
         worker.locale=options.locale;
@@ -102,9 +104,9 @@ int RunEditor(int argc,wchar_t** argv)
         worker.smokeCancelMilliseconds=options.smokeCancelMilliseconds;
         worker.smokePlayback=options.smokePlayback;
         worker.smokeWorkflow=options.smokeWorkflow;
-        return se::RunEditorWorker(worker);
+        return flare::RunEditorWorker(worker);
     }
-    return se::RunEditorLauncher(options);
+    return flare::RunEditorLauncher(options);
 }
 
 int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int)

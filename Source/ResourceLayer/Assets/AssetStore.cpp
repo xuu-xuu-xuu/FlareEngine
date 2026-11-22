@@ -12,7 +12,7 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 
-namespace se
+namespace flare
 {
 namespace
 {

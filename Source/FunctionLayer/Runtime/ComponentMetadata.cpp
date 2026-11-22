@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 namespace
 {

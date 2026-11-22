@@ -3,7 +3,7 @@
 #include <Windows.h>
 #include <vector>
 
-namespace se
+namespace flare
 {
 class LauncherIntro
 {

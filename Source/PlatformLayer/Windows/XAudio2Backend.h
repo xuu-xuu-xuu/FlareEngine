@@ -10,7 +10,7 @@ struct IXAudio2;
 struct IXAudio2MasteringVoice;
 struct IXAudio2SourceVoice;
 
-namespace se
+namespace flare
 {
 /// Windows XAudio2 硬件音频后端：仅依赖系统内置 xaudio2_9/8 DLL，零第三方分发 DLL。
 class XAudio2Backend final : public AudioBackend
@@ -63,4 +63,4 @@ private:
     AudioVoiceHandle nextHandle_ = 1;
     std::unordered_map<AudioVoiceHandle, VoiceEntry> voices_;
 };
-} // namespace se
+} // namespace flare

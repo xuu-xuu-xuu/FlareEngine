@@ -4,7 +4,7 @@
 #include "ResourceLayer/Assets/StaticModel.h"
 #include "FunctionLayer/Rendering/FrameGraph.h"
 
-namespace se
+namespace flare
 {
 // 只消费一帧自有快照，稳定选择灯光并生成显式用途/顺序；不接触原生屏障。
 rhi::ForwardLighting PrepareForwardLighting(std::span<const LightInstance> lights,float exposure,Vec3 sky,

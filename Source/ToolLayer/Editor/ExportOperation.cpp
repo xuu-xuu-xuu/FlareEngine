@@ -1,6 +1,6 @@
 #include "ExportOperation.h"
 
-namespace se
+namespace flare
 {
 bool ExportOperationController::FailState(std::string& errorKey,const char* key)
 {

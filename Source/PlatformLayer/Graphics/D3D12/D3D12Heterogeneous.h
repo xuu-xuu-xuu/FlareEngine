@@ -30,7 +30,7 @@ struct D3D12HeterogeneousInput
 {
     const D3D12MeshDraw* draw=nullptr;
     D3D12UploadSlice b0;
-    se::Aabb worldBounds;
+    flare::Aabb worldBounds;
     D3D12_GPU_DESCRIPTOR_HANDLE materialTable{};
     // 0 表示使用完整 mesh，且 firstIndex 必须为 0；非 0 可指定 Meshlet 的真实 IB 范围。
     UINT firstIndex=0,indexCount=0;
@@ -68,7 +68,7 @@ struct D3D12HiZOutput;
 struct D3D12HeterogeneousOcclusion
 {
     std::shared_ptr<const D3D12HiZOutput> output;
-    se::Mat4 clipFromWorld;
+    flare::Mat4 clipFromWorld;
     float depthBias=1e-5f; // 原始0..1深度单位；有效范围[1e-6,.01]，避免零容差自剔。
 };
 // 必须随 FrameContext 保持到 Fence 完成；上传页不能提前 Reset。
@@ -97,7 +97,7 @@ public:
     // 失败不替换 output。任何不支持输入使所在的整个相邻绑定桶回 CPU，不漏掉桶内其余成员。
     // 容量不足/非法视锥返回失败，调用者应整批回 CPU；不截断、不排序、不进行 CPU 可见性剔除。
     HRESULT Prepare(D3D12UploadArena& arena,const D3D12MeshPipeline& defaultPipeline,
-        std::span<const D3D12HeterogeneousInput> input,const se::VisibilityFrustum& frustum,
+        std::span<const D3D12HeterogeneousInput> input,const flare::VisibilityFrustum& frustum,
         UINT capacity,D3D12HeterogeneousPrepared& output,const D3D12HeterogeneousOcclusion* occlusion=nullptr);
     // 固定命令数，不读回可见列表：复制完整命令，然后 GPU 仅改 InstanceCount，最后转换为 INDIRECT_ARGUMENT。
     HRESULT RecordCull(ID3D12GraphicsCommandList& commands,D3D12StateRecording& states,

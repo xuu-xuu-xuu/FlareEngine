@@ -1,7 +1,7 @@
 #pragma once
 #include <cmath>
 
-namespace se
+namespace flare
 {
 // 只保存值与 UI 时间；不持有树、控件指针或完成回调。
 template<class Value> struct UiTransition

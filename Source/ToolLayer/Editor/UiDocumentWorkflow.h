@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 
 // 拥有 .ui.json 文档打开/保存、有界撤销历史与画布拖拽事务，不依赖任何具体 UI 壳。
@@ -81,4 +81,4 @@ private:
     bool externalConflict_ = false;
 };
 
-} // namespace se
+} // namespace flare

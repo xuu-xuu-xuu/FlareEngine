@@ -8,7 +8,7 @@
 #include <sstream>
 #include <string>
 
-namespace se
+namespace flare
 {
 namespace
 {

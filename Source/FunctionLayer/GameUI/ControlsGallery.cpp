@@ -1,7 +1,7 @@
 #include "ControlsGallery.h"
 #include <algorithm>
 
-namespace se
+namespace flare
 {
 bool BuildControlsGallery(UiTree& output,const Localization& text,ControlsGallery& gallery,std::string imageAsset)
 {

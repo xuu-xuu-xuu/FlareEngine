@@ -1,7 +1,7 @@
 #pragma once
 #include "Math/Math.h"
 
-namespace se
+namespace flare
 {
 // glTF clear coat 的数据默认值；0 权重不启用涂层，normalScale 不借用 base normal。
 struct ClearCoatParameters

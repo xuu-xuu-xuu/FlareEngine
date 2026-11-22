@@ -1,6 +1,6 @@
 #include "MaterialSurfacePipelines.h"
 
-namespace se
+namespace flare
 {
 namespace
 {

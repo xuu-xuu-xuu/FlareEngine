@@ -4,7 +4,7 @@
 #include <Windows.h>
 #include <dwmapi.h>
 
-namespace se::flare
+namespace flare::palette
 {
 constexpr COLORREF Native(Color color) { return RGB(color.r,color.g,color.b); }
 

@@ -2,7 +2,7 @@
 #include "CoreLayer/Math/Math.h"
 #include <stdexcept>
 
-namespace se
+namespace flare
 {
 MeshData MakeUnitCube()
 {

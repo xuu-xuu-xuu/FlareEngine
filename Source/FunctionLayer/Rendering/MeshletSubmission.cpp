@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace se
+namespace flare
 {
 namespace
 {

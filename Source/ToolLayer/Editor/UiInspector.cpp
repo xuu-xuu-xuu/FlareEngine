@@ -4,7 +4,7 @@
 #include <sstream>
 #include <cmath>
 #include <nlohmann/json.hpp>
-namespace se
+namespace flare
 {
 namespace
 {

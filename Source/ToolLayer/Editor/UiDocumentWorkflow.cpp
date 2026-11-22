@@ -4,7 +4,7 @@
 
 #include <cmath>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -307,4 +307,4 @@ bool UiDocumentWorkflow::Dirty(const UiTree* ui) const
     return ui->SaveJson() != savedJson_;
 }
 
-} // namespace se
+} // namespace flare

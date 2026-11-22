@@ -30,7 +30,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::videoencoder
+namespace flare::videoencoder
 {
 // ---- MP4 时间戳归一（E20） ----
 // Media Foundation 的 muxer 把“写出时刻”写进 mvhd/tkhd/mdhd 的 creation/modification 字段，
@@ -1741,4 +1741,4 @@ bool NormalizeMp4Timestamps(const std::filesystem::path& path, Diagnostic& diagn
 {
     return NormalizeMp4TimestampsInternal(path, diagnostic);
 }
-} // namespace se::videoencoder
+} // namespace flare::videoencoder

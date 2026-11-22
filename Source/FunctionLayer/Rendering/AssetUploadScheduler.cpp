@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <thread>
 
-namespace se
+namespace flare
 {
 namespace
 {

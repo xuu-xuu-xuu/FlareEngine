@@ -29,7 +29,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -245,7 +245,7 @@ bool EditorFeatureTools::Start()
     if(operation_=="navmesh")CollectNavigationSceneGeometry(session_.EditWorld(),&assets_,input.navVertices,input.navIndices);
     if(operation_.starts_with("bc"))input.image=assets_.LoadTextureImage(sourceId,diagnostics);
     if(operation_=="hlod")for(auto entity:session_.EditWorld().Entities())if(const auto* mesh=session_.EditWorld().GetMesh(entity))
-    {auto model=Model(assets_,mesh->meshAsset,diagnostics);if(model&&session_.EditWorld().IsEnabled(entity))input.instances.push_back({std::move(model),session_.EditWorld().GetWorldMatrix(entity),mesh->materials});}
+    {const auto mc=session_.EditWorld().FindComponent(entity,ComponentTypes::Mesh);if(mc&&(!session_.EditWorld().GetComponent(mc)||!session_.EditWorld().GetComponent(mc)->Enabled()))continue;auto model=Model(assets_,mesh->meshAsset,diagnostics);if(model&&session_.EditWorld().IsEnabled(entity))input.instances.push_back({std::move(model),session_.EditWorld().GetWorldMatrix(entity),mesh->materials});}
     static std::atomic<unsigned> sequence=0;const auto name=std::to_string(GetTickCount64())+'-'+std::to_string(++sequence);
     input.stage=root_/L"out/AssetTools"/name;input.destination=assets_.SourceRoot()/L"Derived"/name;input.shaderBuilder=GetExecutableDirectory()/L"ShaderBuilder.exe";
     if(!std::filesystem::is_regular_file(input.shaderBuilder))input.shaderBuilder=GetExecutableDirectory().parent_path()/L"Tools/ShaderBuilder.exe";

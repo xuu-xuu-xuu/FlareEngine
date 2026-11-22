@@ -8,7 +8,7 @@
 #include <set>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -314,7 +314,7 @@ bool ParseInputActionDocument(std::string_view jsonText, InputActionDocument& ou
         });
 
         if (duplicate || !root.is_object() ||
-            root.value("format", std::string{}) != "SelfEngine.InputActions" ||
+            (root.value("format", std::string{}) != "FlareEngine.InputActions" && root.value("format", std::string{}) != "SelfEngine.InputActions") ||
             !root.contains("version") || !root["version"].is_number_integer())
         {
             errorKey = "Input.InvalidDocument";
@@ -509,7 +509,7 @@ bool SerializeInputActionDocument(const InputActionDocument& document, std::stri
     }
 
     const Json docJson{
-        {"format", "SelfEngine.InputActions"},
+        {"format", "FlareEngine.InputActions"},
         {"version", document.version},
         {"actions", std::move(actionsJson)}
     };
@@ -594,4 +594,4 @@ bool WriteInputActionDocument(const std::filesystem::path& path, const InputActi
     errorKey.clear();
     return true;
 }
-} // namespace se
+} // namespace flare

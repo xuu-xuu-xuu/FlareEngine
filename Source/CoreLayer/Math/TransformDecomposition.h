@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace se
+namespace flare
 {
 // 只接受可重建的非奇异 TRS；镜像统一放在 X 尺度，不以近似分解丢掉剪切。
 inline bool TryDecomposeTrs(const Mat4& matrix,Transform& output,float tolerance=1e-4f)

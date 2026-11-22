@@ -5,7 +5,7 @@
 #include <memory>
 
 class Localization;
-namespace se
+namespace flare
 {
 // CPU 绘制的独立线程窗口：主线程编译/读资产/创建 GPU 时仍能刷新与响应取消。
 class EditorLoadingScreen

@@ -24,7 +24,7 @@
 
 using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
-namespace rhi = se::rhi;
+namespace rhi = flare::rhi;
 
 namespace
 {
@@ -95,7 +95,7 @@ Json HashShaderFiles(const fs::path& shaderDirectory, std::span<const char* cons
     {
         std::vector<std::uint8_t> bytes;
         if (!ReadBytes(shaderDirectory / name, bytes)) return {};
-        const auto digest = se::Sha256(bytes);
+        const auto digest = flare::Sha256(bytes);
         if (digest.empty()) return {};
         hashes[name] = digest;
     }
@@ -380,7 +380,7 @@ bool WriteMeshletPackage(const Json& identity, std::span<const StageBlobInput> s
             {"name", stage.name},
             {"offset", offset},
             {"size", size},
-            {"sha256", se::Sha256(stage.dxil)}
+            {"sha256", flare::Sha256(stage.dxil)}
         });
     }
 
@@ -449,7 +449,7 @@ bool LoadMeshletPackage(const fs::path& artifactPath, const Json& expectedIdenti
             if (!size || UINT64(offset) + size > payloadSize) return false;
             std::vector<std::uint8_t> blob(bytes.begin() + payloadOffset + offset,
                 bytes.begin() + payloadOffset + offset + size);
-            if (!HasSignedDxilContainer(blob) || se::Sha256(blob) != expectedSha) return false;
+            if (!HasSignedDxilContainer(blob) || flare::Sha256(blob) != expectedSha) return false;
             loaded.insert_or_assign(name, std::move(blob));
         }
         stagesOut = std::move(loaded);
@@ -538,7 +538,7 @@ D3D12HeterogeneousFallback Eligible(const D3D12MeshletInput& item, const D3D12Me
     const auto& draw = *item.draw;
     const auto& mesh = *draw.mesh;
     const auto* pipeline = ResolvePipeline(item, fallback);
-    if (draw.alphaMode != se::MaterialAlphaMode::Opaque) return Reason::Alpha;
+    if (draw.alphaMode != flare::MaterialAlphaMode::Opaque) return Reason::Alpha;
     if (!draw.instances.empty()) return Reason::Instances;
     if (!draw.skinPalette.empty() || draw.skinJointCount || draw.skinJointOffset) return Reason::Skin;
     if (draw.outline) return Reason::Outline;
@@ -557,7 +557,7 @@ D3D12HeterogeneousFallback Eligible(const D3D12MeshletInput& item, const D3D12Me
         && kind != rhi::PipelineKind::BasicLitMesh)
         return Reason::UnsupportedPipeline;
     if (source.layoutVersion != rhi::BindingLayout(kind) || pipeline->prepared->blend != rhi::BlendMode::Opaque
-        || pipeline->prepared->alphaMode != se::MaterialAlphaMode::Opaque)
+        || pipeline->prepared->alphaMode != flare::MaterialAlphaMode::Opaque)
         return Reason::UnsupportedPipeline;
     if (!trustedGeometry) return Reason::UnsupportedPipeline;
     const UINT viewCount = RequiredMaterialViews(kind);
@@ -569,7 +569,7 @@ D3D12HeterogeneousFallback Eligible(const D3D12MeshletInput& item, const D3D12Me
         || !mesh.vertexView.SizeInBytes || mesh.vertexView.SizeInBytes % expectedStride
         || !BufferRange(mesh.vertices.Get(), mesh.vertexView.BufferLocation, mesh.vertexView.SizeInBytes)
         || !BufferRange(mesh.indices.Get(), mesh.indexView.BufferLocation, mesh.indexView.SizeInBytes)
-        || !se::IsFinite(draw.world) || item.baseVertex != 0)
+        || !flare::IsFinite(draw.world) || item.baseVertex != 0)
         return Reason::InvalidGeometry;
     const UINT stride = mesh.indexView.Format == DXGI_FORMAT_R16_UINT ? 2u : mesh.indexView.Format == DXGI_FORMAT_R32_UINT ? 4u : 0u;
     const UINT count = item.indexCount ? item.indexCount : mesh.indexCount;
@@ -578,7 +578,7 @@ D3D12HeterogeneousFallback Eligible(const D3D12MeshletInput& item, const D3D12Me
         || item.firstIndex > mesh.indexCount || count > mesh.indexCount - item.firstIndex
         || item.firstIndex > mesh.indexView.SizeInBytes / stride || count > mesh.indexView.SizeInBytes / stride - item.firstIndex)
         return Reason::InvalidGeometry;
-    if (!se::IsValid(item.worldBounds)) return Reason::InvalidBounds;
+    if (!flare::IsValid(item.worldBounds)) return Reason::InvalidBounds;
     if (!item.b0.resource || item.b0.offset % 256 || item.b0.size < sizeof(rhi::PbrDrawConstants)
         || item.b0.offset > item.b0.resource->GetDesc().Width
         || item.b0.size > item.b0.resource->GetDesc().Width - item.b0.offset
@@ -597,15 +597,15 @@ D3D12HeterogeneousFallback EligibleRangeOnly(const D3D12MeshletInput& item)
         || item.firstIndex > mesh.indexCount || count > mesh.indexCount - item.firstIndex
         || item.firstIndex > mesh.indexView.SizeInBytes / stride || count > mesh.indexView.SizeInBytes / stride - item.firstIndex)
         return Reason::InvalidGeometry;
-    if (!se::IsValid(item.worldBounds)) return Reason::InvalidBounds;
+    if (!flare::IsValid(item.worldBounds)) return Reason::InvalidBounds;
     return Reason::None;
 }
 
 bool ValidOcclusion(ID3D12Device& device, const D3D12HeterogeneousOcclusion& value)
 {
-    const auto inverse = se::Inverse(value.clipFromWorld);
-    if (!value.output || !se::IsFinite(value.clipFromWorld) || !inverse || !se::IsFinite(*inverse)
-        || !se::IsFinite(value.depthBias) || value.depthBias < 1e-6f || value.depthBias > .01f)
+    const auto inverse = flare::Inverse(value.clipFromWorld);
+    if (!value.output || !flare::IsFinite(value.clipFromWorld) || !inverse || !flare::IsFinite(*inverse)
+        || !flare::IsFinite(value.depthBias) || value.depthBias < 1e-6f || value.depthBias > .01f)
         return false;
     const auto& input = *value.output;
     if (!input.depth || !input.texture || !input.width || !input.height
@@ -923,7 +923,7 @@ const D3D12Meshlet::PipelineEntry* D3D12Meshlet::GetOrCreatePipeline(
     sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC samplers[]{sampler, sampler, sampler};
     samplers[1].ShaderRegister = 1;
-    samplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT;
+    samplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
     samplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
     samplers[1].AddressU = samplers[1].AddressV = samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
     samplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
@@ -1013,11 +1013,11 @@ const D3D12Meshlet::PipelineEntry* D3D12Meshlet::GetOrCreatePipeline(
 }
 
 HRESULT D3D12Meshlet::Prepare(D3D12UploadArena& arena, D3D12MeshletOutput& output, const D3D12MeshPipeline& defaultPipeline,
-    std::span<const D3D12MeshletInput> input, const se::VisibilityFrustum& frustum,
+    std::span<const D3D12MeshletInput> input, const flare::VisibilityFrustum& frustum,
     D3D12MeshletPrepared& prepared, const D3D12HeterogeneousOcclusion* occlusion, const Localization& text)
 {
     if (!initialized_ || !device2_) return E_UNEXPECTED;
-    if (input.size() > se::MaximumVisibilityItems || !se::ValidVisibilityFrustum(frustum))
+    if (input.size() > flare::MaximumVisibilityItems || !flare::ValidVisibilityFrustum(frustum))
         return E_INVALIDARG;
     if (occlusion && !ValidOcclusion(*device2_.Get(), *occlusion)) return E_INVALIDARG;
 
@@ -1046,7 +1046,7 @@ HRESULT D3D12Meshlet::Prepare(D3D12UploadArena& arena, D3D12MeshletOutput& outpu
     next.statistics_.sourceRanges = static_cast<UINT>(input.size());
     if (occlusion) next.occlusion_ = occlusion->output;
 
-    std::vector<se::VisibilityItem> gpuBounds;
+    std::vector<flare::VisibilityItem> gpuBounds;
     gpuBounds.reserve(input.size() * 2u);
     std::vector<rhi::GpuMeshletItem> gpuItems;
     gpuItems.reserve(input.size() * 2u);
@@ -1269,14 +1269,14 @@ HRESULT D3D12Meshlet::Prepare(D3D12UploadArena& arena, D3D12MeshletOutput& outpu
             cursor += mat.viewCount;
         }
 
-        auto result = arena.Allocate(gpuBounds.size() * sizeof(se::VisibilityItem), 16, next.bounds_);
+        auto result = arena.Allocate(gpuBounds.size() * sizeof(flare::VisibilityItem), 16, next.bounds_);
         if (SUCCEEDED(result))
             result = arena.Allocate(gpuItems.size() * sizeof(rhi::GpuMeshletItem), 16, next.items_);
         if (SUCCEEDED(result))
             result = arena.Allocate(sizeof(rhi::MeshletCullConstants), 256, next.cullConstants_);
         if (FAILED(result)) return result;
 
-        std::memcpy(next.bounds_.cpu, gpuBounds.data(), gpuBounds.size() * sizeof(se::VisibilityItem));
+        std::memcpy(next.bounds_.cpu, gpuBounds.data(), gpuBounds.size() * sizeof(flare::VisibilityItem));
         std::memcpy(next.items_.cpu, gpuItems.data(), gpuItems.size() * sizeof(rhi::GpuMeshletItem));
 
         rhi::MeshletCullConstants cullConstants{};

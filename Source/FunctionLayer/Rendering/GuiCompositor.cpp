@@ -1,6 +1,6 @@
 #include "GuiCompositor.h"
 #include "FunctionLayer/Application/FrameData.h"
-namespace se
+namespace flare
 {
 namespace
 {

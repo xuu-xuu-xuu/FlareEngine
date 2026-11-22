@@ -2,7 +2,7 @@
 #include "FunctionLayer/Rendering/Renderer.h"
 #include "FunctionLayer/Rendering/SandboxRenderer.h"
 
-namespace se
+namespace flare
 {
 // 产品编辑器组合根：Scene 面板使用 BasicLit + Shadow + 程序化 Sky，
 // 场景渲染到 EditorViewportTarget，GUI 由 GuiCompositor 合成。

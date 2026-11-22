@@ -4,7 +4,7 @@
 #include <system_error>
 #include <vector>
 
-namespace se
+namespace flare
 {
 void RecordEditorFileStamp(EditorFileStamp& stamp, const std::filesystem::path& path)
 {
@@ -124,4 +124,4 @@ void ExternalChangeMonitor::Consume()
     size_ = std::filesystem::file_size(path_, error);
     valid_ = !error;
 }
-} // namespace se
+} // namespace flare

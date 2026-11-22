@@ -16,7 +16,7 @@
 #include <sstream>
 #include <iostream>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -250,8 +250,7 @@ std::filesystem::path ProjectWorkspaceSession::EngineRootFromExecutable()
 {
     std::error_code error;
     wchar_t configured[32768]{};
-    auto length=GetEnvironmentVariableW(L"FLARE_EDITOR_ENGINE_ROOT",configured,32768);
-    if(length==0||length>=32768)length=GetEnvironmentVariableW(L"SELFENGINE_EDITOR_ENGINE_ROOT",configured,32768);
+    const auto length=GetEnvironmentVariableW(L"FLARE_EDITOR_ENGINE_ROOT",configured,32768);
     if(length>0&&length<32768)
     {
         const std::filesystem::path root(configured);
@@ -400,7 +399,7 @@ bool ProjectWorkspaceSession::CreateProject(ProjectTemplate projectTemplate,cons
     const auto candidate=base/(std::wstring(L".")+Wide(name)+L".candidate-"+Wide(std::to_string(GetTickCount64())));
     std::filesystem::remove_all(candidate,error);
     std::vector<ProjectDiagnostic> diagnostics;
-    if(!::se::CreateProject(templateDirectory,candidate,diagnostics))
+    if(!::flare::CreateProject(templateDirectory,candidate,diagnostics))
     {
         errorKey=diagnostics.empty()?"Project.CreateFailed":diagnostics.back().key;
         detail=diagnostics.empty()?Utf8(candidate):diagnostics.back().detail;

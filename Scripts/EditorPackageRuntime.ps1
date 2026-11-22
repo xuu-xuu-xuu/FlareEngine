@@ -2,7 +2,7 @@
 function Get-EngineScriptInputs([string]$ScriptProject) {
     $directory=Split-Path -Parent ([IO.Path]::GetFullPath($ScriptProject))
     $files=@(Get-ChildItem -LiteralPath $directory -File -Recurse -Force | Where-Object {
-        $_.FullName.Substring($directory.Length+1) -notmatch '(^|[\\/])(bin|obj|out|\.cache|\.git)([\\/]|$)'
+        $_.FullName.Substring($directory.Length+1) -notmatch '(^|[\\/])(bin|obj|out|\.cache|\.git)([\\/]|$)' -and $_.Name -notlike '*.user'
     } | Sort-Object FullName)
     return @(foreach($file in $files){
         $entry=$file
@@ -38,7 +38,7 @@ function Read-EngineEditorPackage([string]$Root) {
         if($relative -ne 'editor-package.json' -and !$listed.ContainsKey($relative)){throw ('Export.EditorPackageInvalid '+$relative)}
     }
     foreach($required in @('Tools/ProjectTool.exe','Player/FlareEngine.Bootstrap.exe','Player/EngineNative.dll','Player/FlareEngine.Managed.dll',
-        'Player/FlareEngine.Bootstrap.runtimeconfig.json','SDK/Managed/FlareEngine.Managed.dll','SDK/FlareEngine.Scripts.props','SDK/FlareEngine.Scripts.targets')){
+        'Player/FlareEngine.Bootstrap.runtimeconfig.json','SDK/Managed/FlareEngine.Managed.dll','SDK/Managed/FlareEngine.Managed.xml','SDK/FlareEngine.Scripts.props','SDK/FlareEngine.Scripts.targets')){
         if(!$listed.ContainsKey($required)){throw ('Export.EditorPackageInvalid '+$required)}
     }
     return [ordered]@{schema=1;identity='editor-package.json plus verified file hashes';git_head=$manifest.git_head;dirty=$manifest.source_dirty;
@@ -69,9 +69,8 @@ function Find-EnginePrecompiledScripts([string]$Root,[string]$ScriptProject) {
 }
 
 function Get-EnginePackageScriptProperties([string]$Root,[string]$IntermediateDirectory) {
-    # CustomAfterMicrosoftCommonTargets 也兼容旧模板里的 Engine.Managed.csproj 与 SelfEngine.Managed 引用。
     # 只替换引擎 API 引用，项目自己的 ProjectReference 不受影响。
-    return @(('-p:FlareEngineRoot='+$Root),('-p:SelfEngineRoot='+$Root),('-p:CustomAfterMicrosoftCommonTargets='+(Join-Path $Root 'SDK/FlareEngine.Scripts.targets')),
+    return @(('-p:FlareEngineRoot='+$Root),('-p:CustomAfterMicrosoftCommonTargets='+(Join-Path $Root 'SDK/FlareEngine.Scripts.targets')),
         ('-p:BaseIntermediateOutputPath='+([IO.Path]::GetFullPath($IntermediateDirectory).TrimEnd('\')+'\')),
         ('-p:MSBuildProjectExtensionsPath='+([IO.Path]::GetFullPath($IntermediateDirectory).TrimEnd('\')+'\')))
 }

@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace se
+namespace flare
 {
 class ObjectHeap;
 class ObjectTracer;

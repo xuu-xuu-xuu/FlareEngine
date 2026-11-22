@@ -21,7 +21,7 @@ struct D3D12IndirectOcclusion
 {
     ID3D12DescriptorHeap* heap=nullptr;
     D3D12_GPU_DESCRIPTOR_HANDLE srv{};
-    se::Mat4 clipFromWorld;
+    flare::Mat4 clipFromWorld;
     UINT width=0,height=0,mipCount=0;
     float depthBias=1e-6f;
 };
@@ -37,7 +37,7 @@ public:
     static constexpr UINT argumentBytes=48,commandCountOffset=20;
     HRESULT Initialize(D3D12Context& context,const std::filesystem::path& shader,const Localization& text);
     HRESULT CreateOutput(UINT inputCapacity,UINT outputCapacity,D3D12IndirectOutput& output) const;
-    HRESULT Prepare(D3D12UploadArena& arena,std::span<const se::VisibilityItem> items,const se::VisibilityFrustum& frustum,
+    HRESULT Prepare(D3D12UploadArena& arena,std::span<const flare::VisibilityItem> items,const flare::VisibilityFrustum& frustum,
         D3D12UploadSlice instanceData,UINT indexCount,UINT capacity,D3D12IndirectPrepared& output,
         const D3D12IndirectOcclusion* occlusion=nullptr) const;
     // 四个查询：初始状态前、局部前缀后、组前缀后、Gather后；输出仍为UAV，由消费方声明读用途。
@@ -62,8 +62,8 @@ struct D3D12IndirectBatch
 {
     const D3D12Indirect* kernel=nullptr;
     const D3D12IndirectOutput* output=nullptr;
-    std::span<const se::VisibilityItem> bounds;
-    se::VisibilityFrustum frustum;
+    std::span<const flare::VisibilityItem> bounds;
+    flare::VisibilityFrustum frustum;
     D3D12VisibilityTimestamps timestamps; // 使用0..4，最后一个查询覆盖消费屏障/绑定/间接绘制。
     // G06.11：多批次时每批次占用独立的 4 个 cull 查询；默认 0 保持实验路径。
     UINT timestampFirstQuery=0;

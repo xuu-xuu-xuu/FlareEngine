@@ -15,7 +15,7 @@
 #include <optional>
 #include <unordered_map>
 
-namespace se
+namespace flare
 {
 namespace
 {

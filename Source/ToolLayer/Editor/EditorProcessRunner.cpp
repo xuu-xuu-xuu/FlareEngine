@@ -8,7 +8,7 @@
 #include <iterator>
 #include <utility>
 
-namespace se
+namespace flare
 {
 namespace
 {

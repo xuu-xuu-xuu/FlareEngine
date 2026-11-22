@@ -1,7 +1,7 @@
 #pragma once
 #include "ResourceLayer/Fonts/FontCache.h"
 #include "CoreLayer/Math/Projection.h"
-namespace se
+namespace flare
 {
 struct UiTextPresentation
 {

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <tuple>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -64,4 +64,4 @@ void TriggerTracker::Clear() noexcept
     active_.clear();
     events_.clear();
 }
-} // namespace se
+} // namespace flare

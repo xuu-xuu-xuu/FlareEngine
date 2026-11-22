@@ -1,10 +1,10 @@
 add_custom_target(CopyLocalizationResources ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:SelfEngineEditor>/Resources/Localization"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:FlareEditor>/Resources/Localization"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Localization/zh-CN.txt"
         "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Localization/en-US.txt"
-        "$<TARGET_FILE_DIR:SelfEngineEditor>/Resources/Localization" VERBATIM)
-add_dependencies(SelfEngineEditor CopyLocalizationResources CopyRendererResources)
+        "$<TARGET_FILE_DIR:FlareEditor>/Resources/Localization" VERBATIM)
+add_dependencies(FlareEditor CopyLocalizationResources CopyRendererResources)
 add_custom_target(CopyFlareBranding ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Resources/Branding"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -14,39 +14,39 @@ add_custom_target(CopyFlareBranding ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Branding/FlareMark-README.png"
         "${CMAKE_BINARY_DIR}/Resources/Branding/FlareMarkTransparent.png" VERBATIM)
-add_dependencies(SelfEngineEditor CopyFlareBranding)
+add_dependencies(FlareEditor CopyFlareBranding)
 add_custom_target(CopyEditorTemplates ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/Resources"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Templates"
         "${CMAKE_BINARY_DIR}/Resources/Templates" VERBATIM)
-add_dependencies(SelfEngineEditor CopyEditorTemplates)
+add_dependencies(FlareEditor CopyEditorTemplates)
 add_dependencies(EngineNative CopyLocalizationResources)
 add_custom_target(CopyRendererResources ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:SelfEngineEditor>/Resources/Shaders"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:FlareEditor>/Resources/Shaders"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Shaders"
-        "$<TARGET_FILE_DIR:SelfEngineEditor>/Resources/Shaders"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:SelfEngineEditor>/Resources/Textures"
+        "$<TARGET_FILE_DIR:FlareEditor>/Resources/Shaders"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:FlareEditor>/Resources/Textures"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Textures"
-        "$<TARGET_FILE_DIR:SelfEngineEditor>/Resources/Textures" VERBATIM)
+        "$<TARGET_FILE_DIR:FlareEditor>/Resources/Textures" VERBATIM)
 add_dependencies(EngineNative CopyRendererResources)
 
 add_executable(ShaderBuilder Source/ToolLayer/Tools/ShaderBuilder.cpp)
-se_target(ShaderBuilder)
+flare_target(ShaderBuilder)
 target_link_libraries(ShaderBuilder PRIVATE EngineGraphics EnginePlatform)
 add_dependencies(ShaderBuilder CopyLocalizationResources)
 
 add_executable(EnvironmentCooker Source/ToolLayer/Tools/EnvironmentCooker.cpp)
-se_target(EnvironmentCooker)
+flare_target(EnvironmentCooker)
 target_link_libraries(EnvironmentCooker PRIVATE EngineAssets EnginePlatform)
 add_dependencies(EnvironmentCooker CopyLocalizationResources)
 add_executable(DiffuseProbeCooker Source/ToolLayer/Tools/DiffuseProbeCooker.cpp)
-se_target(DiffuseProbeCooker)
+flare_target(DiffuseProbeCooker)
 target_link_libraries(DiffuseProbeCooker PRIVATE EngineDiffuseProbes EngineProject)
 add_dependencies(DiffuseProbeCooker CopyLocalizationResources)
 
 add_executable(NavigationCooker Source/ToolLayer/Tools/NavigationCooker.cpp)
-se_target(NavigationCooker)
+flare_target(NavigationCooker)
 target_link_libraries(NavigationCooker PRIVATE EngineSceneNavigation EngineProject EnginePlatform)
 add_dependencies(NavigationCooker CopyLocalizationResources)
 

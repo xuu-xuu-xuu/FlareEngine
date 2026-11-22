@@ -7,7 +7,7 @@
 #include <cmath>
 #include <numbers>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -37,7 +37,7 @@ void Shape(Sheet& sheet,float phase,float width,float height)
     }
 }
 
-void DrawSheet(Graphics& g,const Sheet& sheet,flare::Color ink,bool lit,float penScale)
+void DrawSheet(Graphics& g,const Sheet& sheet,flare::palette::Color ink,bool lit,float penScale)
 {
     const auto color=[ink](BYTE alpha){return Color(alpha,ink.r,ink.g,ink.b);};
     std::array<PointF,Samples*2> outline;
@@ -73,12 +73,12 @@ void DrawLoadingRibbon(HDC dc,const RECT& bounds,int percent,float phase)
     if(filled<width)
     {
         g.SetClip(RectF(filled,0,width-filled,height));
-        DrawSheet(g,sheet,flare::Muted,false,height/64.0f);
+        DrawSheet(g,sheet,flare::palette::Muted,false,height/64.0f);
     }
     if(filled>0)
     {
         g.SetClip(RectF(0,0,filled,height));
-        DrawSheet(g,sheet,flare::Gold,true,height/64.0f);
+        DrawSheet(g,sheet,flare::palette::Gold,true,height/64.0f);
     }
 }
 }

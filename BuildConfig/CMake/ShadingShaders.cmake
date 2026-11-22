@@ -42,12 +42,12 @@ add_custom_command(OUTPUT "${raytracing_output}" "${raytracing_output}.json"
     DEPENDS ShaderBuilder "${raytracing_source}" VERBATIM)
 add_custom_target(BuildRayTracingShaders DEPENDS "${raytracing_output}" "${raytracing_output}.json")
 add_dependencies(BuildShaders BuildRayTracingShaders)
-add_dependencies(SelfEngineEditor BuildShaders)
+add_dependencies(FlareEditor BuildShaders)
 add_dependencies(EngineNative BuildShaders)
 
 # 生产LUT由独立离线工具生成，渲染线程只加载；不会在打开材质时阻塞烘焙。
 add_executable(RenderingCooker Source/ToolLayer/Tools/RenderingCooker.cpp)
-se_target(RenderingCooker)
+flare_target(RenderingCooker)
 target_link_libraries(RenderingCooker PRIVATE EngineAssets EngineCore EnginePlatform)
 add_dependencies(RenderingCooker CopyLocalizationResources)
 set(shading_assets)
@@ -58,5 +58,5 @@ add_custom_command(OUTPUT ${shading_assets}
     COMMAND RenderingCooker defaults "${CMAKE_CURRENT_BINARY_DIR}/Resources/Lighting"
     DEPENDS RenderingCooker VERBATIM)
 add_custom_target(BuildShadingResources ALL DEPENDS ${shading_assets})
-add_dependencies(SelfEngineEditor BuildShadingResources)
+add_dependencies(FlareEditor BuildShadingResources)
 add_dependencies(EngineNative BuildShadingResources)

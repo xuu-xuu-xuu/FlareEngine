@@ -19,8 +19,8 @@
 #endif
 
 class Localization;
-namespace se {class Profiler;}
-namespace se::rhi
+namespace flare {class Profiler;}
+namespace flare::rhi
 {
 enum class Error { None, InvalidArgument, InvalidHandle, InvalidState, Unsupported, BackendFailure, CapacityExceeded };
 struct Result
@@ -628,7 +628,7 @@ struct OcclusionSettings
 // bounds.id 是该批次实例缓冲内的局部下标（0..size-1），批次顺序必须与绘制顺序一致。
 struct OcclusionBatch
 {
-    std::span<const se::VisibilityItem> bounds;
+    std::span<const flare::VisibilityItem> bounds;
 };
 class Device;
 class CommandContext
@@ -642,10 +642,10 @@ public:
     Result ConfigureForward(const ForwardLighting& lighting,PipelineHandle outputPipeline,PipelineHandle skyPipeline);
     // G06.08：在 Clear 之后、DrawInstanced 之前声明遮挡批次。bounds 与 instances 由调用方保活。
     // 非 Forward 帧只允许一次实例化绘制；G06.10 起 Forward 实例化可同时配置 Forward，但仍与阴影/后处理/GUI 互斥。
-    Result ConfigureOcclusion(std::span<const se::VisibilityItem> bounds,const se::VisibilityFrustum& frustum,
+    Result ConfigureOcclusion(std::span<const flare::VisibilityItem> bounds,const flare::VisibilityFrustum& frustum,
         const OcclusionSettings& settings=OcclusionSettings{});
     // G06.10：多批次版本。Batch 顺序与后续 DrawInstanced 顺序一一对应；Forward/阴影/后处理/GUI 仍互斥。
-    Result ConfigureOcclusion(std::span<const OcclusionBatch> batches,const se::VisibilityFrustum& frustum,
+    Result ConfigureOcclusion(std::span<const OcclusionBatch> batches,const flare::VisibilityFrustum& frustum,
         const OcclusionSettings& settings=OcclusionSettings{});
     // 通用离屏场景目标；必须在 ConfigureForward/ConfigureGui 之前设置。
     Result ConfigureComposition(const FrameComposition& composition);

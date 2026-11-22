@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G15：ACES fitted 色调映射与 33³ LUT / lift-gamma-gain 调色。
 // 链路约定：HDR（线性）→ tonemap（显示线性 [0,1]）→ 调色（LUT 或 LGG）→ 只做一次 sRGB 编码。

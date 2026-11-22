@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace se
+namespace flare
 {
 inline constexpr std::uint32_t PrefabDocumentVersion = 1;
 inline constexpr std::string_view PrefabFileExtension = ".prefab.json";
@@ -63,6 +63,9 @@ struct PrefabNodeRecord
     std::uint64_t localParentId = 0;
     std::string name;
     bool enabled = true;
+    std::string tag = "Untagged";
+    std::uint32_t layer = 0;
+    std::uint32_t staticFlags = 0;
     std::vector<PrefabComponentRecord> components;
     std::vector<PrefabScriptRecord> scripts;
 };
@@ -85,4 +88,4 @@ struct PrefabDocument
 [[nodiscard]] bool WritePrefabDocument(const std::filesystem::path& path, const PrefabDocument& document,
                                        std::string& error, bool replaceExisting = true);
 [[nodiscard]] bool ExtractTransformFromPrefabComponent(const PrefabComponentRecord& component, Transform& outTransform);
-} // namespace se
+} // namespace flare

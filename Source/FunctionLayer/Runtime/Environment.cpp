@@ -1,6 +1,6 @@
 #include "Environment.h"
 #include <stdexcept>
-namespace se
+namespace flare
 {
 Environment::Environment():events_(world_),scenes_(world_,events_)
 {

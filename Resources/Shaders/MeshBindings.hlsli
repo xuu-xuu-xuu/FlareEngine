@@ -1,5 +1,5 @@
-#ifndef SELF_ENGINE_MESH_BINDINGS
-#define SELF_ENGINE_MESH_BINDINGS
+#ifndef FLARE_ENGINE_MESH_BINDINGS
+#define FLARE_ENGINE_MESH_BINDINGS
 // 与 PlatformLayer/Graphics/MaterialLayout.h 对应，由构建时反射校验。
 cbuffer DrawConstants : register(b0)
 {

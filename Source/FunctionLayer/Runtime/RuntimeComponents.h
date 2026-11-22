@@ -4,7 +4,7 @@
 #include <functional>
 #include <utility>
 
-namespace se
+namespace flare
 {
 class TransformComponent final:public ComponentBase
 {

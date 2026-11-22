@@ -1,5 +1,5 @@
-#ifndef SELF_ENGINE_AMBIENT_OCCLUSION_BINDINGS
-#define SELF_ENGINE_AMBIENT_OCCLUSION_BINDINGS
+#ifndef FLARE_ENGINE_AMBIENT_OCCLUSION_BINDINGS
+#define FLARE_ENGINE_AMBIENT_OCCLUSION_BINDINGS
 // 私有 compute b0，272B；图形端沿 schema40 的 b5/b6，不与这里混用。
 cbuffer AmbientOcclusionConstants:register(b0)
 {

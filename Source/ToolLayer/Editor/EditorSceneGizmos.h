@@ -3,7 +3,7 @@
 #include "FunctionLayer/Rendering/UiPaint.h"
 #include "PlatformLayer/Graphics/Rhi.h"
 
-namespace se
+namespace flare
 {
 inline constexpr float EditorSceneIconRadius = 13.0f;
 

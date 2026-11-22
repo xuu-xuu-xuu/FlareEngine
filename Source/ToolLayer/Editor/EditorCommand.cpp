@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <fstream>
 
-namespace se
+namespace flare
 {
 bool EditorCommandRouter::Register(std::string id,Handler handler,EnableCheck check)
 {

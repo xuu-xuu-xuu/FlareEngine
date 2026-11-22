@@ -25,7 +25,7 @@ class D3D12MemoryAllocator
 {
 public:
     D3D12MemoryAllocator(ID3D12Device& device,std::shared_ptr<D3D12StateRegistry> states);
-    bool Configure(se::rhi::MemorySettings settings); // 无活跃资源时，创建 Presentation 前配置。
+    bool Configure(flare::rhi::MemorySettings settings); // 无活跃资源时，创建 Presentation 前配置。
     HRESULT Create(const D3D12_RESOURCE_DESC& description,D3D12_RESOURCE_STATES initial,
         const D3D12_CLEAR_VALUE* clear,Microsoft::WRL::ComPtr<ID3D12Resource>& output,const std::string& name);
     HRESULT CreateTransientSlot(UINT64 bytes,UINT64 alignment,D3D12MemoryCategory category,

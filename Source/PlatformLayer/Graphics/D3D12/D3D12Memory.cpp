@@ -54,7 +54,7 @@ struct D3D12MemoryAllocator::Impl : public std::enable_shared_from_this<Impl>
     ID3D12Device* device;
     std::shared_ptr<D3D12StateRegistry> states;
     const std::thread::id owner=std::this_thread::get_id();
-    se::rhi::MemorySettings settings;
+    flare::rhi::MemorySettings settings;
     D3D12MemoryStatistics stats;
     std::vector<std::shared_ptr<Block>> blocks;
     std::map<UINT64,std::weak_ptr<Lease>> allocations;
@@ -100,13 +100,13 @@ struct D3D12TransientAliasSlot
 };
 D3D12MemoryAllocator::D3D12MemoryAllocator(ID3D12Device& device,std::shared_ptr<D3D12StateRegistry> states)
     :impl_(std::make_shared<Impl>(device,std::move(states))){}
-bool D3D12MemoryAllocator::Configure(se::rhi::MemorySettings settings)
+bool D3D12MemoryAllocator::Configure(flare::rhi::MemorySettings settings)
 {
     auto& p=*impl_;
     constexpr UINT64 alignment=D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
     if(p.owner!=std::this_thread::get_id()||p.stats.resources||settings.heapPageBytes<alignment||settings.heapPageBytes%alignment
         ||settings.heapPageBytes>settings.budgetBytes||settings.budgetBytes>4ull*1024*1024*1024||settings.budgetBytes%alignment
-        ||(settings.mode!=se::rhi::MemoryMode::Placed&&settings.mode!=se::rhi::MemoryMode::CommittedBaseline))return false;
+        ||(settings.mode!=flare::rhi::MemoryMode::Placed&&settings.mode!=flare::rhi::MemoryMode::CommittedBaseline))return false;
     p.Trim();p.settings=settings;p.stats.budget=settings.budgetBytes;return true;
 }
 HRESULT D3D12MemoryAllocator::Create(const D3D12_RESOURCE_DESC& description,D3D12_RESOURCE_STATES initial,
@@ -119,7 +119,7 @@ HRESULT D3D12MemoryAllocator::Create(const D3D12_RESOURCE_DESC& description,D3D1
     const auto allocation=p.device->GetResourceAllocationInfo(0,1,&description);
     if(!allocation.SizeInBytes||allocation.SizeInBytes==UINT64_MAX||!allocation.Alignment||(allocation.Alignment&(allocation.Alignment-1)))return E_INVALIDARG;
     auto lease=std::make_shared<Impl::Lease>();lease->owner=impl_;
-    lease->info={p.nextAllocation++,0,0,allocation.SizeInBytes,allocation.Alignment,Category(description),p.settings.mode==se::rhi::MemoryMode::Placed,name};
+    lease->info={p.nextAllocation++,0,0,allocation.SizeInBytes,allocation.Alignment,Category(description),p.settings.mode==flare::rhi::MemoryMode::Placed,name};
     const auto budgetFailure=[&]{++p.stats.budgetFailures;return D3D12MemoryBudgetExceeded;};
     if(allocation.SizeInBytes>p.settings.budgetBytes)return budgetFailure();
     Microsoft::WRL::ComPtr<ID3D12Resource> candidate;
@@ -183,7 +183,7 @@ HRESULT D3D12MemoryAllocator::Create(const D3D12_RESOURCE_DESC& description,D3D1
 }
 bool D3D12MemoryAllocator::IsPlacedMode() const noexcept
 {
-    return impl_&&impl_->settings.mode==se::rhi::MemoryMode::Placed;
+    return impl_&&impl_->settings.mode==flare::rhi::MemoryMode::Placed;
 }
 HRESULT D3D12MemoryAllocator::CreateTransientSlot(UINT64 bytes,UINT64 alignment,D3D12MemoryCategory category,
     std::shared_ptr<D3D12TransientAliasSlot>& output,const std::string& name)
@@ -191,7 +191,7 @@ HRESULT D3D12MemoryAllocator::CreateTransientSlot(UINT64 bytes,UINT64 alignment,
     auto& p=*impl_;
     if(p.owner!=std::this_thread::get_id()||!p.states)return E_UNEXPECTED;
     if(output||!bytes||!alignment||(alignment&(alignment-1))||p.nextAllocation==UINT64_MAX)return E_INVALIDARG;
-    if(p.settings.mode!=se::rhi::MemoryMode::Placed)return E_NOTIMPL;
+    if(p.settings.mode!=flare::rhi::MemoryMode::Placed)return E_NOTIMPL;
 
     const UINT64 effectiveAlign=std::max(UINT64{D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT},alignment);
     const UINT64 alignedBytes=Align(bytes,effectiveAlign);

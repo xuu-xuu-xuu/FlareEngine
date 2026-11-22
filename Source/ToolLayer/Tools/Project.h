@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace se
+namespace flare
 {
 struct ProjectDiagnostic {std::string key,detail;};
 struct ProjectAsset {std::string id,type;};

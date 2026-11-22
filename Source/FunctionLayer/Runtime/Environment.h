@@ -8,7 +8,7 @@
 #include "SkeletalAnimation.h"
 #include "CoreLayer/FixedStepClock.h"
 
-namespace se
+namespace flare
 {
 enum class EnvironmentPhase:std::uint32_t {Prepare,FrameBegin,PreTick,FixedPreTick,BeforePhysics,AfterPhysics,FixedPostTick,Tick,AfterLogic,PostTick,FrameEnd,FixedEnd,PrepareFinished};
 struct EnvironmentHooks

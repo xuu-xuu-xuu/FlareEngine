@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -54,4 +54,4 @@ MaterialThumbnail RenderMaterialThumbnail(const Vec4& baseColor, float metallic,
     }
     return output;
 }
-} // namespace se
+} // namespace flare

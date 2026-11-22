@@ -5,7 +5,7 @@
 #include <span>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G09 原型：Forward+ 固定 16×9×24 集群。指数 Z 切分与 XY 视口划分在 CPU/GPU 共用同一公式；
 // 先计数、再前缀和、最后填索引，容量不足时整体回退到全局灯列表（overflow）。

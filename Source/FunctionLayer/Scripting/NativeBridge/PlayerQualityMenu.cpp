@@ -5,7 +5,7 @@
 #include <windowsx.h>
 #include <algorithm>
 
-namespace se
+namespace flare
 {
 namespace
 {

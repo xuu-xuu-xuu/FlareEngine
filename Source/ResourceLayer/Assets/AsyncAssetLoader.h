@@ -2,7 +2,7 @@
 #include "StaticModelPreparation.h"
 #include <cstdint>
 
-namespace se
+namespace flare
 {
 namespace detail { struct AssetDemand; struct CpuReservation; }
 enum class AsyncAssetKind { Image, Model };

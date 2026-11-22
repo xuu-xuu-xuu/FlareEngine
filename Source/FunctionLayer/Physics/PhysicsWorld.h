@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace se
+namespace flare
 {
 struct BodyDesc
 {
@@ -32,7 +32,7 @@ struct BodyState
 };
 struct PhysicsContact {BodyHandle a,b;ContactManifold manifold;};
 struct BodyPair {BodyHandle a,b;bool operator==(const BodyPair&)const=default;};
-struct ContactEvent {BodyHandle a,b;std::uint64_t entityA=0,entityB=0;bool began=false;bool ended=false;};
+struct ContactEvent {BodyHandle a,b;std::uint64_t entityA=0,entityB=0;bool began=false;bool ended=false;Vec3 point{},normal{};float normalImpulse=0.0f;};
 struct DebugLine {Vec3 from,to,color;};
 struct RayHit {BodyHandle body;std::uint64_t entityStableId=0;float distance=0;Vec3 point{},normal{};};
 struct PhysicsStatistics {std::size_t candidates=0,contacts=0,sleeping=0;float maximumPenetration=0;std::size_t aabbUpdates=0,aabbTests=0,cachedFeatureMatches=0,warmStartedContacts=0;};

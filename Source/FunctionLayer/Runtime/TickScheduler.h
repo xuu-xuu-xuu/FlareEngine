@@ -3,7 +3,7 @@
 #include <memory>
 #include <span>
 
-namespace se
+namespace flare
 {
 enum class TickStage:std::uint32_t {FrameBegin,PreTick,FixedPreTick,FixedPostTick,Tick,PostTick};
 enum class TickTimeDomain {Frame,Simulation};

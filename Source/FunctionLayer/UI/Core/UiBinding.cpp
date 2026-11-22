@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 namespace
 {
@@ -185,4 +185,4 @@ std::size_t UiBindingTable::BindingCount() const noexcept
     return impl_->text.size() + impl_->visible.size() + impl_->enabled.size();
 }
 
-} // namespace se::ui
+} // namespace flare::ui

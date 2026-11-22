@@ -6,7 +6,7 @@
 #include <functional>
 
 class Localization;
-namespace se { struct FrameData; class Profiler; }
+namespace flare { struct FrameData; class Profiler; }
 
 // 当前工程只支持 Windows；借用窗口，不拥有或销毁 HWND。
 struct RenderSurface
@@ -23,8 +23,8 @@ struct RenderFrame
     double rawDeltaSeconds = 0.0;    // 实际测得的更新间隔。
     double elapsedSeconds = 0.0;    // 实际累计时间。
     std::uint64_t updateIndex = 0;  // 包含不可绘制期间的更新，不等于呈现帧数。
-    const se::FrameData* data = nullptr; // 仅在本次 Render 调用期间有效；异步使用须自行复制。
-    se::Profiler* profiler=nullptr; // 可选 CPU 采集，生命周期覆盖本次 Render。
+    const flare::FrameData* data = nullptr; // 仅在本次 Render 调用期间有效；异步使用须自行复制。
+    flare::Profiler* profiler=nullptr; // 可选 CPU 采集，生命周期覆盖本次 Render。
     bool interactiveResize = false;
 };
 

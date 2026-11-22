@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 namespace
 {
@@ -750,4 +750,4 @@ bool UiGeometryBuilder::Build(const UiDisplayList& displayList,
     return errors.empty();
 }
 
-} // namespace se::ui
+} // namespace flare::ui

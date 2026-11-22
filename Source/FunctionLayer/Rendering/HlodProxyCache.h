@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace se
+namespace flare
 {
 // G05.13：HLOD 代理显存策略。只做预算/每帧上传上限/最久未用淘汰的决策，
 // 代理的 GPU 资源仍由调用方持有并在淘汰时释放；不引入第二套资源所有权。

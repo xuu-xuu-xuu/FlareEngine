@@ -15,7 +15,7 @@ add_library(EngineEditorUi STATIC
     Source/ToolLayer/Editor/EditorUi/EditorInspector.cpp
     Source/ToolLayer/Editor/EditorUi/EditorColorPicker.cpp
     Source/ToolLayer/Editor/EditorUi/EditorPanels.cpp)
-se_target(EngineEditorUi)
+flare_target(EngineEditorUi)
 target_link_libraries(EngineEditorUi PUBLIC EngineUiCore EngineUiWidgets EngineCore PRIVATE user32 imm32)
 
 add_library(EngineEditor STATIC
@@ -48,10 +48,11 @@ add_library(EngineEditor STATIC
     Source/ToolLayer/Editor/EditorMaterialWorkflow.cpp
     Source/ToolLayer/Editor/EditorWorkspaceHost.cpp
     Source/ToolLayer/Editor/NavigationBakeService.cpp
+    Source/ToolLayer/Editor/PrefabWorkflow.cpp
     Source/ToolLayer/Editor/UICanvasEditor.cpp)
-se_target(EngineEditor)
+flare_target(EngineEditor)
 target_link_libraries(EngineEditor PUBLIC EngineRuntime EngineScenePhysics EngineAudio EngineSceneAudio EngineParticles EngineSceneParticles EngineNavigation EngineSceneNavigation EngineAssets EngineGameUI EnginePlatform EngineProjectSession EngineColorGrading)
-target_link_libraries(EngineEditor PRIVATE comdlg32 shell32)
+target_link_libraries(EngineEditor PRIVATE comdlg32 shell32 shlwapi)
 
 add_library(EngineEditorApp STATIC
     Source/ToolLayer/Editor/EditorApplication.cpp
@@ -64,14 +65,13 @@ add_library(EngineEditorApp STATIC
     Source/ToolLayer/Editor/EditorFeatureTools.cpp
     Source/ToolLayer/Editor/EditorCreation.cpp
     Source/ToolLayer/Editor/ViewportDropWorkflow.cpp
-    Source/ToolLayer/Editor/PrefabWorkflow.cpp
     Source/ToolLayer/Editor/EditorClipPreview.cpp
     Source/ToolLayer/Editor/EditorScriptWorkflow.cpp
     Source/ToolLayer/Editor/EditorPlayInput.cpp
     Source/ToolLayer/Editor/EditorViewportController.cpp
     Source/ToolLayer/Editor/EditorSceneGizmos.cpp
     Source/ToolLayer/Editor/EditorFloatingWindows.cpp)
-se_target(EngineEditorApp)
+flare_target(EngineEditorApp)
 target_link_libraries(EngineEditorApp PUBLIC EngineEditor EngineScenePhysics EngineSandboxHost EngineEditorUi EngineUiRender EnginePlatform EngineSandboxRenderer PRIVATE dwmapi)
 
 add_library(EngineEditorProduct STATIC
@@ -81,19 +81,18 @@ add_library(EngineEditorProduct STATIC
     Source/ToolLayer/Editor/EditorWorker.cpp
     Source/ToolLayer/Editor/EditorLoadingScreen.cpp
     Source/ToolLayer/Editor/LoadingRibbon.cpp)
-se_target(EngineEditorProduct)
+flare_target(EngineEditorProduct)
 
 add_library(EngineEditorRenderer STATIC Source/ToolLayer/Editor/EditorRenderer.cpp)
-se_target(EngineEditorRenderer)
+flare_target(EngineEditorRenderer)
 target_link_libraries(EngineEditorRenderer PUBLIC EngineSandboxRenderer)
 target_link_libraries(EngineEditorProduct PUBLIC EngineEditorApp EngineEditorRenderer EngineSandboxRenderer EngineAssets EngineProjectSession ole32 uuid shell32 comdlg32 gdi32 PRIVATE dwmapi uxtheme comctl32 gdiplus pathcch)
 
-add_executable(SelfEngineEditor WIN32 Source/ToolLayer/Tools/SelfEngineEditor.cpp)
-se_target(SelfEngineEditor)
-target_link_libraries(SelfEngineEditor PRIVATE EngineEditorProduct)
-set_target_properties(SelfEngineEditor PROPERTIES OUTPUT_NAME FlareEditor)
-foreach(flare_target SelfEngineEditor EngineNative)
-    target_sources(${flare_target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/FlareResources.rc")
+add_executable(FlareEditor WIN32 Source/ToolLayer/Tools/FlareEditor.cpp)
+flare_target(FlareEditor)
+target_link_libraries(FlareEditor PRIVATE EngineEditorProduct)
+foreach(editor_target FlareEditor EngineNative)
+    target_sources(${editor_target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/FlareResources.rc")
 endforeach()
 target_compile_definitions(EngineNative PRIVATE FLARE_NATIVE_LIBRARY)
-# SelfEngineEditor 保留为内部 CMake 目标名，对外交付单一 FlareEditor.exe。
+# FlareEditor 为正式编辑器 CMake 目标名与交付程序名（FlareEditor.exe）。

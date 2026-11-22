@@ -5,7 +5,7 @@ struct D3D12Presentation;
 class D3D12MemoryAllocator;
 struct D3D12PreparedPipeline;
 
-namespace se::rhi
+namespace flare::rhi
 {
 // 平台专项诊断/验证的借用端口，不属于上层 RHI 契约；设备关闭后指针失效。
 struct D3D12DiagnosticsAccess

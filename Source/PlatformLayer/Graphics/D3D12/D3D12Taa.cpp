@@ -46,7 +46,7 @@ bool ValidDepth(const D3D12_RESOURCE_DESC& description,UINT width,UINT height)
 }
 struct VelocityConstants
 {
-    se::Mat4 rasterClipFromLocal,currentClipFromLocal,previousClipFromLocal;
+    flare::Mat4 rasterClipFromLocal,currentClipFromLocal,previousClipFromLocal;
 };
 static_assert(sizeof(VelocityConstants)==48*sizeof(UINT));
 }
@@ -229,13 +229,13 @@ HRESULT D3D12Taa::CreateOutput(ID3D12Resource& hdr,ID3D12Resource& depth,UINT wi
     output=std::move(candidate);return S_OK;
 }
 HRESULT D3D12Taa::RecordVelocity(ID3D12GraphicsCommandList& commands,D3D12StateRecording& states,D3D12TaaOutput& output,
-    std::span<const D3D12MeshDraw> draws,const se::Mat4& rasterClip,const se::Mat4& currentClip,
-    const se::Mat4& previousClip,ID3D12Resource& depth) const
+    std::span<const D3D12MeshDraw> draws,const flare::Mat4& rasterClip,const flare::Mat4& currentClip,
+    const flare::Mat4& previousClip,ID3D12Resource& depth) const
 {
     if(!Ready())return E_UNEXPECTED;
     if(!output.velocity||!output.rtvs||!output.dsvs||!output.width||!output.height
         ||!ValidDepth(depth.GetDesc(),output.width,output.height)
-        ||!se::IsFinite(rasterClip)||!se::IsFinite(currentClip)||!se::IsFinite(previousClip))return E_INVALIDARG;
+        ||!flare::IsFinite(rasterClip)||!flare::IsFinite(currentClip)||!flare::IsFinite(previousClip))return E_INVALIDARG;
     HRESULT result=states.Use(commands,depth,D3D12_RESOURCE_STATE_DEPTH_READ,"Taa.DepthRead");
     if(SUCCEEDED(result))result=states.Use(commands,*output.velocity.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"Taa.Velocity");
     if(FAILED(result))return result;
@@ -250,10 +250,10 @@ HRESULT D3D12Taa::RecordVelocity(ID3D12GraphicsCommandList& commands,D3D12StateR
     for(const auto& draw:draws)
     {
         // 首次出现、批实例或骨骼动作没有逐实例/逐顶点历史；不可用绑定姿态或零速度冒充。
-        if(draw.alphaMode!=se::MaterialAlphaMode::Opaque||!draw.mesh||!draw.mesh->indexCount||!draw.hasPreviousWorld||!draw.instances.empty()||draw.skinJointCount||draw.outline)continue;
+        if(draw.alphaMode!=flare::MaterialAlphaMode::Opaque||!draw.mesh||!draw.mesh->indexCount||!draw.hasPreviousWorld||!draw.instances.empty()||draw.skinJointCount||draw.outline)continue;
         const VelocityConstants constants{rasterClip*draw.world,currentClip*draw.world,previousClip*draw.previousWorld};
-        if(!se::IsFinite(constants.rasterClipFromLocal)||!se::IsFinite(constants.currentClipFromLocal)
-            ||!se::IsFinite(constants.previousClipFromLocal))continue;
+        if(!flare::IsFinite(constants.rasterClipFromLocal)||!flare::IsFinite(constants.currentClipFromLocal)
+            ||!flare::IsFinite(constants.previousClipFromLocal))continue;
         commands.SetPipelineState((draw.compressedVertices?velocityCompressed_:velocityLegacy_).Get());
         commands.SetGraphicsRoot32BitConstants(0,sizeof(constants)/sizeof(UINT),&constants,0);
         commands.IASetVertexBuffers(0,1,&draw.mesh->vertexView);

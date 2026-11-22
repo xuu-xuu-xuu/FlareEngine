@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <tuple>
 
-namespace se
+namespace flare
 {
 using Microsoft::WRL::ComPtr;
 struct TextLayout::State

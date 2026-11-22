@@ -1,5 +1,5 @@
 {
-  "type": "SelfEngine.Material",
+  "type": "FlareEngine.Material",
   "version": 1,
   "name": "03 拉丝金属",
   "baseColor": [0.78, 0.52, 0.23, 1],

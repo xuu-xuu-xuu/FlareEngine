@@ -240,7 +240,7 @@ HRESULT D3D12Exposure::Record(ID3D12GraphicsCommandList& commands,D3D12StateReco
     return S_OK;
 }
 HRESULT D3D12Exposure::UploadLut(ID3D12GraphicsCommandList& commands,D3D12StateRecording& states,
-    D3D12ExposureOutput& output,std::span<const se::Vec3> values) const
+    D3D12ExposureOutput& output,std::span<const flare::Vec3> values) const
 {
     if(!Ready())return E_UNEXPECTED;
     if(!output.lut||!output.lutUpload||!output.lutUploadRowPitch||output.lutUploadRowPitch%256)return E_INVALIDARG;
@@ -262,8 +262,8 @@ HRESULT D3D12Exposure::UploadLut(ID3D12GraphicsCommandList& commands,D3D12StateR
             for(std::uint32_t red=0;red<lutSize;++red)
             {
                 const auto& value=values[(std::size_t{red}*lutSize+green)*lutSize+blue];
-                const std::uint16_t texel[4]{se::FloatToHalf(value.x),se::FloatToHalf(value.y),
-                    se::FloatToHalf(value.z),se::FloatToHalf(1.0f)};
+                const std::uint16_t texel[4]{flare::FloatToHalf(value.x),flare::FloatToHalf(value.y),
+                    flare::FloatToHalf(value.z),flare::FloatToHalf(1.0f)};
                 auto* destination=static_cast<std::byte*>(mapped)
                     +(UINT64{blue}*lutSize+green)*pitch+UINT64{red}*8;
                 std::memcpy(destination,texel,sizeof(texel));

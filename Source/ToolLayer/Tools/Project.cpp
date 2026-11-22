@@ -21,7 +21,7 @@
 #include <set>
 #include <thread>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -127,7 +127,7 @@ bool ReadProject(const fs::path& manifest,ProjectDescription& output,std::vector
         const auto json=Parse(text);ProjectDescription result;result.manifest=fs::canonical(manifest);result.root=result.manifest.parent_path();
         const auto format=json.is_object()&&json.contains("format")&&json.at("format").is_string()?json.at("format").get<std::string>():std::string{};
         if(!json.is_object()||(format!="FlareEngine.Project"&&format!="SelfEngine.Project")||!json.at("version").is_number_integer()||json.at("version")!=1)return Fail(diagnostics,"Project.UnsupportedVersion");
-        const std::set<std::string> supported{"format","version","name","contentRoot","entryScene","scenes","ui","assets","replay"};
+        const std::set<std::string> supported{"format","version","name","contentRoot","entryScene","scenes","ui","assets","replay","showPlayerQualityMenu","playerSettingsId","qualityProfiles"};
         for(auto entry=json.begin();entry!=json.end();++entry)if(!supported.contains(entry.key()))return Fail(diagnostics,"Project.UnsupportedField",entry.key());
         result.name=json.at("name").get<std::string>();if(result.name.empty()||result.name.size()>256)return Fail(diagnostics,"Project.InvalidManifest");
         if(!LocalPath(result.root,json.at("contentRoot"),result.contentRoot)||!LocalPath(result.root,json.at("entryScene"),result.entryScene))return Fail(diagnostics,"Project.PathOutsideRoot");
@@ -217,7 +217,7 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             }
             else if(asset.type=="shader")
             {
-                se::ShaderArtifactSource artifact;
+                flare::ShaderArtifactSource artifact;
                 if(!store.LoadShaderArtifact(asset.id,artifact,assetDiagnostics))
                 {for(const auto& d:assetDiagnostics)diagnostics.push_back({d.key,d.detail});return false;}
             }
@@ -363,7 +363,7 @@ bool ExportProjectDependencies(const fs::path& manifest,const fs::path& output,s
     {
         const auto target=fs::weakly_canonical(output);
         if(std::find(validation.dependencies.begin(),validation.dependencies.end(),target)!=validation.dependencies.end())return Fail(diagnostics,"Project.InvalidOutput");
-        Json result{{"format","SelfEngine.Dependencies"},{"version",1},{"project",validation.project.name},{"files",Json::array()}};
+        Json result{{"format","FlareEngine.Dependencies"},{"version",1},{"project",validation.project.name},{"files",Json::array()}};
         for(const auto& file:validation.dependencies)
         {
             std::vector<std::uint8_t> bytes;if(!asset_io::Read(file,bytes))return Fail(diagnostics,"Project.ReadFailed",asset_io::Utf8(file));
@@ -424,7 +424,7 @@ bool ReplayProject(const fs::path& manifest,const fs::path& outputDirectory,Repl
         if(!fs::create_directory(staging))return Fail(diagnostics,"Project.WriteFailed");
         if(!SaveScene(staging/"final.scene.json",world,error))throw std::runtime_error(error);
         if(profile&&(!profiler.ExportFramesCsv(staging/"cpu-frames.csv",error)||!profiler.ExportSummaryCsv(staging/"cpu-summary.csv",error)))throw std::runtime_error(error);
-        const Json result{{"format","SelfEngine.HeadlessReplay"},{"version",1},{"steps",steps},{"fixedStepSeconds",1.0/60},
+        const Json result{{"format","FlareEngine.HeadlessReplay"},{"version",1},{"steps",steps},{"fixedStepSeconds",1.0/60},
             {"stateSha256",completed.stateHash},{"entities",completed.entities},{"cpuProfiling",profile},{"gpuMeasured",false}};
         if(!WriteJson(staging/"replay.json",result))throw std::runtime_error("Project.WriteFailed");
         std::error_code renameError;

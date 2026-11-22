@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <Windows.h>
 
-namespace se
+namespace flare
 {
 namespace
 {

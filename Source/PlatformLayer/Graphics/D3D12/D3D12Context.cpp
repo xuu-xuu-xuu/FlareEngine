@@ -52,7 +52,7 @@ namespace
         UINT factoryFlags = 0;
 #ifndef NDEBUG
         wchar_t disableDebug[8]{};
-        const bool debugDisabled = GetEnvironmentVariableW(L"SELFENGINE_DISABLE_D3D12_DEBUG", disableDebug, 8) > 0;
+        const bool debugDisabled = GetEnvironmentVariableW(L"FLARE_DISABLE_D3D12_DEBUG", disableDebug, 8) > 0;
         if (!debugDisabled)
         {
             ComPtr<ID3D12Debug> debugController;
@@ -201,7 +201,7 @@ namespace
             D3D12_FEATURE_DATA_SHADER_MODEL sm65{ D3D_SHADER_MODEL_6_5 };
             Microsoft::WRL::ComPtr<ID3D12Device2> device2;
             wchar_t disableMeshShader[8]{};
-            const DWORD disableLength = GetEnvironmentVariableW(L"SELFENGINE_DISABLE_MESH_SHADER", disableMeshShader, 8);
+            const DWORD disableLength = GetEnvironmentVariableW(L"FLARE_DISABLE_MESH_SHADER", disableMeshShader, 8);
             const bool meshShaderDisabled = disableLength > 0 && !(disableLength == 1 && disableMeshShader[0] == L'0');
             context.meshShaderTier1 = !meshShaderDisabled
                 && SUCCEEDED(candidateDevice.As(&device2))
@@ -214,7 +214,7 @@ namespace
             D3D12_FEATURE_DATA_SHADER_MODEL rtSm65{ D3D_SHADER_MODEL_6_5 };
             Microsoft::WRL::ComPtr<ID3D12Device5> device5;
             wchar_t disableRayTracing[8]{};
-            const DWORD rtDisableLength = GetEnvironmentVariableW(L"SELFENGINE_DISABLE_RAYTRACING", disableRayTracing, 8);
+            const DWORD rtDisableLength = GetEnvironmentVariableW(L"FLARE_DISABLE_RAYTRACING", disableRayTracing, 8);
             const bool rayTracingDisabled = rtDisableLength > 0 && !(rtDisableLength == 1 && disableRayTracing[0] == L'0');
             context.rayTracingTier1_1 = !rayTracingDisabled
                 && SUCCEEDED(candidateDevice.As(&device5))
@@ -260,7 +260,7 @@ bool InitializeD3D12Context(D3D12Context& context, const Localization& localizat
     if (!CreateFactory(initialized, localization)) return false;
     // DRED 设置必须在设备创建前生效；调试层由 CreateFactory 先启用。
     long dredResult=0;
-    const bool dred=se::d3d12::EnableDred(&dredResult);
+    const bool dred=flare::d3d12::EnableDred(&dredResult);
     {std::ostringstream message;message<<localization.GetText(dred?"D3D12.DredEnabled":"D3D12.DredUnavailable")
         <<" (0x"<<std::hex<<static_cast<unsigned long>(dredResult)<<")";Log(dred?LogLevel::Info:LogLevel::Warning,message.str());}
     if (!LogAdapters(*initialized.factory.Get(), localization)
@@ -274,7 +274,7 @@ bool InitializeD3D12Context(D3D12Context& context, const Localization& localizat
     initialized.rtvDescriptors=std::make_shared<D3D12DescriptorPool>(*initialized.device.Get(),D3D12_DESCRIPTOR_HEAP_TYPE_RTV,8,1024);
     initialized.dsvDescriptors=std::make_shared<D3D12DescriptorPool>(*initialized.device.Get(),D3D12_DESCRIPTOR_HEAP_TYPE_DSV,8,1024);
     initialized.memory=std::make_shared<D3D12MemoryAllocator>(*initialized.device.Get(),initialized.states);
-    se::rhi::MemorySettings defaultMemory;defaultMemory.budgetBytes=AutomaticD3D12MemoryBudget(initialized.adapter.Get());
+    flare::rhi::MemorySettings defaultMemory;defaultMemory.budgetBytes=AutomaticD3D12MemoryBudget(initialized.adapter.Get());
     if(!initialized.memory->Configure(defaultMemory)){Log(LogLevel::Error,localization.GetText("D3D12.GpuMemoryBudgetExceeded"));return false;}
     initialized.pipelines=std::make_shared<D3D12PipelineCache>(*initialized.device.Get());
     {const auto cache=initialized.pipelines->Stats();Log(LogLevel::Debug,localization.GetText(cache.libraryLoaded?"D3D12.PsoLibraryLoaded":"D3D12.PsoLibraryNew")

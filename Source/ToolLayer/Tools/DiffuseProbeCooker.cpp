@@ -15,7 +15,7 @@
 #include <string_view>
 
 namespace fs=std::filesystem;
-using namespace se;
+using namespace flare;
 namespace
 {
 using Clock=std::chrono::steady_clock;
@@ -122,7 +122,7 @@ int wmain(int argc,wchar_t** argv)
         start=Clock::now();std::vector<std::uint8_t> bytes;
         if(!EncodeDiffuseProbeAsset(asset,bytes,diagnostics))throw std::runtime_error("DiffuseProbe.InvalidAsset");
         const auto encodeMs=Ms(start);
-        nlohmann::json report{{"format","SelfEngine.DiffuseProbeCookReport"},{"version",1},{"algorithm",DiffuseProbeCookerVersion},
+        nlohmann::json report{{"format","FlareEngine.DiffuseProbeCookReport"},{"version",1},{"algorithm",DiffuseProbeCookerVersion},
             {"artifact",asset_io::Utf8(options.output.filename())},{"artifact_bytes",bytes.size()},{"artifact_sha256",Sha256(bytes)},
             {"hdr_width",environment.width},{"hdr_height",environment.height},{"sources",nlohmann::json::array()},
             {"triangles",prepared.triangles.size()},{"point_lights",prepared.lights.size()},{"source_entities",prepared.sourceEntityIds},

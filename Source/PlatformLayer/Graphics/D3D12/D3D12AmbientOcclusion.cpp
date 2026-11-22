@@ -14,13 +14,13 @@
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
-namespace rhi=se::rhi;
+namespace rhi=flare::rhi;
 using Microsoft::WRL::ComPtr;
 namespace
 {
 using Json=nlohmann::json;
 constexpr const char* entries[]{"GtaoHalf","ResolveOcclusion"};
-std::string BlobHash(ID3DBlob& blob){return se::Sha256(std::span(static_cast<const std::uint8_t*>(blob.GetBufferPointer()),blob.GetBufferSize()));}
+std::string BlobHash(ID3DBlob& blob){return flare::Sha256(std::span(static_cast<const std::uint8_t*>(blob.GetBufferPointer()),blob.GetBufferSize()));}
 bool ReadFile(const std::filesystem::path& path,std::vector<std::uint8_t>& bytes)
 {
     std::ifstream input(path,std::ios::binary|std::ios::ate);if(!input)return false;
@@ -33,7 +33,7 @@ Json Identity(const std::filesystem::path& source,const char* entry)
     if(!ReadFile(source,main)||!ReadFile(source.parent_path()/"AmbientOcclusionBindings.hlsli",bindings))return {};
     return {{"schema",1},{"effect","RG104-08"},{"entry",entry},{"profile","cs_5_1"},{"constants",272},
         {"flags",D3D12ShaderCompileFlags()|D3DCOMPILE_IEEE_STRICTNESS},{"geometry_layout",rhi::DepthNormalLayoutVersion},
-        {"source_sha256",se::Sha256(main)},{"bindings_sha256",se::Sha256(bindings)}};
+        {"source_sha256",flare::Sha256(main)},{"bindings_sha256",flare::Sha256(bindings)}};
 }
 bool ValidProgram(ID3DBlob& code,UINT stage)
 {
@@ -174,15 +174,15 @@ bool D3D12AmbientOcclusion::CreateOutput(D3D12Presentation& p,std::shared_ptr<D3
 }
 bool ValidD3D12ScreenSpaceSettings(const rhi::ScreenSpaceOcclusionSettings& s)
 {
-    const auto inverse=se::Inverse(s.clipFromView);
-    if(!se::IsFinite(s.view)||!se::IsFinite(s.clipFromView)||!inverse||!se::IsFinite(*inverse)||!se::IsFinite(s.radius)||s.radius<=0||s.radius>=100
-        ||!se::IsFinite(s.intensity)||s.intensity<0||s.intensity>4||!se::IsFinite(s.bias)||s.bias<0||s.bias>=1
-        ||!se::IsFinite(s.contactLength)||s.contactLength<=0||s.contactLength>=100||!se::IsFinite(s.contactBias)||s.contactBias<0||s.contactBias>=1
-        ||!se::IsFinite(s.contactThickness)||s.contactThickness<=0||s.contactThickness>=100||!se::IsFinite(s.contactFade)||s.contactFade<0||s.contactFade>1)return false;
+    const auto inverse=flare::Inverse(s.clipFromView);
+    if(!flare::IsFinite(s.view)||!flare::IsFinite(s.clipFromView)||!inverse||!flare::IsFinite(*inverse)||!flare::IsFinite(s.radius)||s.radius<=0||s.radius>=100
+        ||!flare::IsFinite(s.intensity)||s.intensity<0||s.intensity>4||!flare::IsFinite(s.bias)||s.bias<0||s.bias>=1
+        ||!flare::IsFinite(s.contactLength)||s.contactLength<=0||s.contactLength>=100||!flare::IsFinite(s.contactBias)||s.contactBias<0||s.contactBias>=1
+        ||!flare::IsFinite(s.contactThickness)||s.contactThickness<=0||s.contactThickness>=100||!flare::IsFinite(s.contactFade)||s.contactFade<0||s.contactFade>1)return false;
     if(std::abs(s.view(3,0))>1e-5f||std::abs(s.view(3,1))>1e-5f||std::abs(s.view(3,2))>1e-5f||std::abs(s.view(3,3)-1)>1e-5f)return false;
-    const se::Vec3 x{s.view(0,0),s.view(0,1),s.view(0,2)},y{s.view(1,0),s.view(1,1),s.view(1,2)},z{s.view(2,0),s.view(2,1),s.view(2,2)};
-    return std::abs(se::LengthSquared(x)-1)<.001f&&std::abs(se::LengthSquared(y)-1)<.001f&&std::abs(se::LengthSquared(z)-1)<.001f
-        &&std::abs(se::Dot(x,y))<.001f&&std::abs(se::Dot(x,z))<.001f&&std::abs(se::Dot(y,z))<.001f&&se::Dot(se::Cross(x,y),z)>.999f;
+    const flare::Vec3 x{s.view(0,0),s.view(0,1),s.view(0,2)},y{s.view(1,0),s.view(1,1),s.view(1,2)},z{s.view(2,0),s.view(2,1),s.view(2,2)};
+    return std::abs(flare::LengthSquared(x)-1)<.001f&&std::abs(flare::LengthSquared(y)-1)<.001f&&std::abs(flare::LengthSquared(z)-1)<.001f
+        &&std::abs(flare::Dot(x,y))<.001f&&std::abs(flare::Dot(x,z))<.001f&&std::abs(flare::Dot(y,z))<.001f&&flare::Dot(flare::Cross(x,y),z)>.999f;
 }
 bool PrepareD3D12AmbientOcclusion(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,UINT width,UINT height,const Localization& text)
 {
@@ -213,8 +213,8 @@ bool PrepareD3D12AmbientOcclusion(D3D12Presentation& p,D3D12FrameContext& frame,
         if(!p.ambientOcclusionBuilder->CreateOutput(p,frame.depthNormals->target,ao,next,text))return fallback(rhi::ScreenSpaceOcclusionFallback::ResourceFailure);
         p.ambientOcclusionOutput=std::move(next);
     }
-    candidate->output=p.ambientOcclusionOutput;const auto inverse=se::Inverse(settings->clipFromView);if(!inverse||!se::IsFinite(*inverse))return fallback(rhi::ScreenSpaceOcclusionFallback::InvalidCamera);
-    const auto direction=se::Normalize(content.forward->directionToLight);const auto transformed=settings->view*se::Vec4{direction.x,direction.y,direction.z,0};
+    candidate->output=p.ambientOcclusionOutput;const auto inverse=flare::Inverse(settings->clipFromView);if(!inverse||!flare::IsFinite(*inverse))return fallback(rhi::ScreenSpaceOcclusionFallback::InvalidCamera);
+    const auto direction=flare::Normalize(content.forward->directionToLight);const auto transformed=settings->view*flare::Vec4{direction.x,direction.y,direction.z,0};
     const D3D12AmbientOcclusionConstants constants{settings->clipFromView,*inverse,settings->view,{float(width),float(height),float(stats.halfWidth),float(stats.halfHeight)},
         {settings->radius,settings->intensity,settings->bias,0},{settings->contactLength,settings->contactBias,settings->contactThickness,settings->contactFade},
         {transformed.x,transformed.y,transformed.z,contact?1.f:0.f},{ao?1.f:0.f,contact?1.f:0.f,0,0}};

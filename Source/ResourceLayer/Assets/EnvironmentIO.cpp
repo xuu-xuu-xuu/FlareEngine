@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <bit>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -20,7 +20,7 @@ bool Invalid(std::vector<AssetDiagnostic>& diagnostics){asset_io::Diagnostic(dia
 bool SaveEnvironment(const std::filesystem::path& path,const EnvironmentAsset& asset,std::vector<AssetDiagnostic>& diagnostics)
 {
     if(!ValidateEnvironment(asset))return Invalid(diagnostics);
-    Json metadata{{"format","SelfEngine.Environment"},{"schema",1},{"algorithm",EnvironmentCookerVersion},{"source_sha256",asset.sourceHash},
+    Json metadata{{"format","FlareEngine.Environment"},{"schema",1},{"algorithm",EnvironmentCookerVersion},{"source_sha256",asset.sourceHash},
         {"cook_key",asset.cookKey},{"options",Options(asset.settings)},{"textures",Json::array()}};
     const char* names[]{"irradiance","specular","brdf"};std::array<std::vector<std::uint8_t>,3> payloads;
     for(size_t index=0;index<3;++index)
@@ -47,7 +47,7 @@ bool DecodeEnvironment(std::span<const std::uint8_t> bytes,EnvironmentAsset& out
     try
     {
         const auto metadata=Json::parse(bytes.begin()+12,bytes.begin()+12+length);
-        if(metadata.at("format")!="SelfEngine.Environment"||metadata.at("schema")!=1||metadata.at("algorithm")!=EnvironmentCookerVersion
+        if(metadata.at("format")!="FlareEngine.Environment"||metadata.at("schema")!=1||metadata.at("algorithm")!=EnvironmentCookerVersion
             ||!metadata.at("textures").is_array()||metadata.at("textures").size()!=3)return Invalid(diagnostics);
         EnvironmentAsset asset;asset.sourceHash=metadata.at("source_sha256").get<std::string>();asset.cookKey=metadata.at("cook_key").get<std::string>();const auto& options=metadata.at("options");
         for(const auto* key:{"cube","irradiance","lut","samples"})if(!options.at(key).is_number_unsigned()||options.at(key).get<std::uint64_t>()>UINT32_MAX)return Invalid(diagnostics);

@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace se
+namespace flare
 {
 struct InstantiatedPrefabScript
 {
@@ -60,4 +60,4 @@ StableEntityId InstantiatePrefab(
     const PrefabDocument& document,
     std::string& error,
     std::vector<InstantiatedPrefabScript>* outScripts = nullptr);
-} // namespace se
+} // namespace flare

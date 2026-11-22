@@ -8,7 +8,7 @@
 
 struct IMFSample;
 
-namespace se::videoencoder
+namespace flare::videoencoder
 {
 // 负责 COM 与 Media Foundation 的成对初始化/清理，失败路径也会回到干净状态。
 class MediaFoundationRuntime
@@ -107,4 +107,4 @@ struct VerificationResult
 bool VerifyMp4File(const std::filesystem::path& path, const EncodeSettings& expected,
     std::uint64_t expectedSamples, bool sourceFirstLastIdentical,
     VerificationResult& result, Diagnostic& diagnostic);
-} // namespace se::videoencoder
+} // namespace flare::videoencoder

@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -409,4 +409,4 @@ const std::string& UiDirectWriteTextService::LastError() const noexcept
     return impl_->lastError;
 }
 
-} // namespace se
+} // namespace flare

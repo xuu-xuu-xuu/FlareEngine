@@ -1,7 +1,7 @@
 #include "TextureResidency.h"
 #include <algorithm>
 
-namespace se
+namespace flare
 {
 std::uint64_t TextureResidency::MipBytes(std::uint64_t baseBytes,std::uint32_t mip,std::uint64_t minimumBytes) noexcept
 {

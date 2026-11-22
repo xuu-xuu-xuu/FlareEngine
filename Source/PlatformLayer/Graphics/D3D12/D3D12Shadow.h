@@ -28,4 +28,4 @@ bool RecordD3D12Shadow(D3D12Presentation& presentation,D3D12FrameContext& frame,
     const D3D12FrameContent& content,D3D12StateRecording& states,const Localization& text);
 
 // 方向光正交矩阵的真实深度跨度和 texel 世界尺度；非法过滤参数/矩阵保持 output 不变。
-bool PrepareD3D12ShadowFilterConstants(const se::rhi::ShadowSettings& settings,se::rhi::ShadowFilterConstants& output);
+bool PrepareD3D12ShadowFilterConstants(const flare::rhi::ShadowSettings& settings,flare::rhi::ShadowFilterConstants& output);

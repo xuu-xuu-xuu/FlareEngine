@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <string_view>
 
-namespace se
+namespace flare
 {
 // CPU 材质、导入与 RHI 共用的覆盖语义；数值固定，不按渲染 Pass 另建一套枚举。
 enum class MaterialAlphaMode : std::uint8_t { Opaque=0,Mask=1,Blend=2 };

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -468,4 +468,4 @@ Vec2 InputActionMap::GetAxis2D(
     }
     return sum;
 }
-} // namespace se
+} // namespace flare

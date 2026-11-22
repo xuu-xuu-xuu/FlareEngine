@@ -2,7 +2,7 @@
 
 #include <fstream>
 
-namespace se
+namespace flare
 {
 bool WriteBuildRestartRequest(const std::filesystem::path& path, std::string& error)
 {
@@ -36,4 +36,4 @@ bool WriteBuildRestartRequest(const std::filesystem::path& path, std::string& er
     }
     return true;
 }
-} // namespace se
+} // namespace flare

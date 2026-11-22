@@ -8,7 +8,7 @@
 
 ### SelectMeshletSubmissionMode
 
-`MeshletSubmissionMode SelectMeshletSubmissionMode(const rhi::DeviceCapabilities&, const MeshletSubmissionSettings&)` 根据设备 `meshShaderTier1` 能力与策略开关在 `Disabled`、`ComputeIndirect`（`RG104-17.01`）与 `MeshShader`（`RG104-17.02`）之间做出确定性选择。硬件不支持 Tier 1、关闭 `preferMeshShader` 或设置 `SELFENGINE_DISABLE_MESH_SHADER=1` 时自动无感回退至 `D3D12Heterogeneous` 的 Compute + `ExecuteIndirect` 路径。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/6f1fea505082d4a90a24b4d1779c45fbf8c6152d/Source/FunctionLayer/Rendering/MeshletSubmission.h#L23)
+`MeshletSubmissionMode SelectMeshletSubmissionMode(const rhi::DeviceCapabilities&, const MeshletSubmissionSettings&)` 根据设备 `meshShaderTier1` 能力与策略开关在 `Disabled`、`ComputeIndirect`（`RG104-17.01`）与 `MeshShader`（`RG104-17.02`）之间做出确定性选择。硬件不支持 Tier 1、关闭 `preferMeshShader` 或设置 `FLARE_DISABLE_MESH_SHADER=1` 时自动无感回退至 `D3D12Heterogeneous` 的 Compute + `ExecuteIndirect` 路径。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/6f1fea505082d4a90a24b4d1779c45fbf8c6152d/Source/FunctionLayer/Rendering/MeshletSubmission.h#L23)
 
 ### BakeMeshletSubmission
 

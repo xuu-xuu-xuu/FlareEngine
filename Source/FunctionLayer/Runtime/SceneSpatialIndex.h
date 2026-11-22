@@ -3,7 +3,7 @@
 #include "CoreLayer/Spatial/BoundsIndex.h"
 #include <map>
 
-namespace se
+namespace flare
 {
 enum class SpatialClass {Static,Dynamic};
 struct SpatialStatistics

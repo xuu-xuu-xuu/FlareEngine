@@ -2,7 +2,7 @@
 #include "EditorSession.h"
 #include "FunctionLayer/Runtime/Camera.h"
 
-namespace se
+namespace flare
 {
 enum class GizmoMode { Translate, Rotate, Scale };
 enum class GizmoAxis { X, Y, Z, Uniform };

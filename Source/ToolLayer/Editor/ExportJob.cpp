@@ -5,7 +5,7 @@
 #include <fstream>
 #include <iterator>
 
-namespace se
+namespace flare
 {
 namespace
 {

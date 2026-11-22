@@ -33,7 +33,7 @@ add_library(EngineGraphics STATIC
     Source/PlatformLayer/Graphics/D3D12/D3D12Dred.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12PipelineLibraryStorage.cpp
     Source/PlatformLayer/Graphics/D3D12/D3D12Context.cpp Source/PlatformLayer/Graphics/D3D12/D3D12Presentation.cpp Source/PlatformLayer/Graphics/D3D12/D3D12Triangle.cpp Source/PlatformLayer/Graphics/D3D12/D3D12Mesh.cpp Source/PlatformLayer/Graphics/D3D12/D3D12Texture.cpp Source/PlatformLayer/Graphics/D3D12/D3D12Buffer.cpp Source/PlatformLayer/Graphics/D3D12/D3D12Rhi.cpp Source/PlatformLayer/Graphics/D3D12/D3D12Shader.cpp Source/PlatformLayer/Graphics/D3D12/D3D12Result.cpp)
-se_target(EngineGraphics)
+flare_target(EngineGraphics)
 if(MSVC)
     set_source_files_properties(Source/PlatformLayer/Graphics/VisibilityData.cpp PROPERTIES COMPILE_OPTIONS "/fp:strict")
 endif()
@@ -77,5 +77,5 @@ add_library(EngineSandboxRenderer STATIC
     Source/FunctionLayer/Rendering/HlodStreamer.cpp
     Source/FunctionLayer/Rendering/HlodProxyCache.cpp
     Source/FunctionLayer/Rendering/HiZ.cpp)
-se_target(EngineSandboxRenderer)
+flare_target(EngineSandboxRenderer)
 target_link_libraries(EngineSandboxRenderer PUBLIC EnginePlatform EngineRuntime EngineGraphics EngineColorGrading PRIVATE EngineAssets)

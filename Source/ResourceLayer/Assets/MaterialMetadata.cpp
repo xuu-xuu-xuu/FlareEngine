@@ -2,7 +2,7 @@
 #include <array>
 #include <limits>
 
-namespace se
+namespace flare
 {
 namespace
 {

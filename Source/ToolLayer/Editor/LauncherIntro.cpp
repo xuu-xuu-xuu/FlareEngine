@@ -6,7 +6,7 @@
 #include <cmath>
 #include <numbers>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -55,7 +55,7 @@ void DrawRing(Graphics& g, SolidBrush& brush, float progress)
 
 void DrawMark(Graphics& g, float time, BYTE opacity)
 {
-    const auto gold = flare::Gold;
+    const auto gold = flare::palette::Gold;
     SolidBrush brush(Color(opacity, gold.r, gold.g, gold.b));
     DrawRing(g, brush, Ease((time - 120.0f) / 1350.0f));
 
@@ -152,7 +152,7 @@ void LauncherIntro::Paint(HDC target) const
     {
         Gdiplus::Graphics g(dc);
         g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-        const auto gray = flare::Background;
+        const auto gray = flare::palette::Background;
         Gdiplus::SolidBrush backdrop(Gdiplus::Color(opacity, gray.r, gray.g, gray.b));
         g.FillRectangle(&backdrop, 0, 0, static_cast<int>(size_.cx), static_cast<int>(size_.cy));
         const float scale = std::min(size_.cx, size_.cy) / 320.0f;

@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 
 enum class UiPaintCommandKind : std::uint8_t
@@ -147,4 +147,4 @@ public:
                std::vector<std::string>& errors);
 };
 
-} // namespace se::ui
+} // namespace flare::ui

@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <string_view>
 
-namespace se
+namespace flare
 {
 struct FrameData;
 enum class PlayerQuality { Project,Performance,Balanced,High };

@@ -1,6 +1,6 @@
 #pragma once
 #include "GuiCompositor.h"
-namespace se
+namespace flare
 {
 struct FrameData;
 class GuiRenderer

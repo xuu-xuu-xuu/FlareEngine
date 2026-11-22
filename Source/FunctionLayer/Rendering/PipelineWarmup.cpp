@@ -1,7 +1,7 @@
 #include "FunctionLayer/Rendering/PipelineWarmup.h"
 #include <chrono>
 
-namespace se
+namespace flare
 {
 PipelineWarmupStats WarmupPipelines(rhi::Device& device,
     std::span<const rhi::PipelineDescription> descriptions,

@@ -8,7 +8,7 @@
 #include <string>
 #include <string_view>
 
-namespace se
+namespace flare
 {
 namespace
 {
@@ -156,4 +156,4 @@ void Win32UiPlatformServices::CancelIme()
     ImmReleaseContext(window_, context);
 }
 
-} // namespace se
+} // namespace flare

@@ -2,7 +2,7 @@
 #include "FunctionLayer/Runtime/SkeletalAnimation.h"
 #include <chrono>
 
-namespace se
+namespace flare
 {
 class AssetStore;
 class EditorSession;

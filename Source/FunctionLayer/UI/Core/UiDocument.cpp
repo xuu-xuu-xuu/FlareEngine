@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 
 struct UiDocument::Slot
@@ -779,4 +779,4 @@ void UiDocument::ClearAllDirty() noexcept
     }
 }
 
-} // namespace se::ui
+} // namespace flare::ui

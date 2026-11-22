@@ -4,7 +4,7 @@
 #include <wrl/client.h>
 #include <fstream>
 
-namespace se::d3d12
+namespace flare::d3d12
 {
 namespace
 {

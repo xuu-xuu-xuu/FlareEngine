@@ -2,7 +2,7 @@
 #include "CoreLayer/Math/Projection.h"
 #include <cstddef>
 #include <cstdint>
-namespace se::rhi
+namespace flare::rhi
 {
 inline constexpr std::uint32_t MaterialLayoutVersion=1,MaterialConstantAlignment=256;
 // RG104-15：独立几何输入格式；不替换绑定布局或 38 号材质 b4。

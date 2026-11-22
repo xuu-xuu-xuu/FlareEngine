@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <string>
 
-namespace se
+namespace flare
 {
 // 正式编辑器入口参数。--worker/--smoke-* 是内部参数，不属于用户工作流。
 struct EditorLaunchOptions

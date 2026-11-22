@@ -4,7 +4,7 @@
 #include <fstream>
 #include <string>
 
-namespace se
+namespace flare
 {
 bool SupportsPlayerQuality(const FrameData& frame)
 {

@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace se::ui
+namespace flare::ui
 {
 
 struct UiRect
@@ -51,4 +51,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace se::ui
+} // namespace flare::ui

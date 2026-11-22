@@ -9,13 +9,13 @@
 #include <map>
 #include <stdexcept>
 
-namespace se
+namespace flare
 {
 namespace
 {
 using Json=nlohmann::json;namespace fs=std::filesystem;
-constexpr wchar_t directoryKey[]=L"SELFENGINE_EXTERNAL_LAUNCH_DIRECTORY";
-constexpr wchar_t tokenKey[]=L"SELFENGINE_EXTERNAL_LAUNCH_TOKEN";
+constexpr wchar_t directoryKey[]=L"FLARE_EXTERNAL_LAUNCH_DIRECTORY";
+constexpr wchar_t tokenKey[]=L"FLARE_EXTERNAL_LAUNCH_TOKEN";
 std::wstring EnvironmentValue(const wchar_t* key)
 {const auto count=GetEnvironmentVariableW(key,nullptr,0);if(!count||count>32768)return {};std::wstring value(count,L'\0');const auto read=GetEnvironmentVariableW(key,value.data(),count);if(!read||read>=count)return {};value.resize(read);return value;}
 // 参数是任意文本，不能借助 filesystem::generic_* 转码，否则会把反斜杠改成路径分隔符。

@@ -9,7 +9,7 @@
 #include <span>
 #include <unordered_map>
 
-namespace se
+namespace flare
 {
 struct ImageData
 {
@@ -71,6 +71,11 @@ public:
     const std::filesystem::path& SourceRoot() const noexcept { return sourceRoot_; }
     const std::filesystem::path& CacheRoot() const noexcept { return cacheRoot_; }
     std::filesystem::path Resolve(const AssetId& id) const;
+    [[nodiscard]] std::shared_ptr<const StaticModel> CachedModel(const AssetId& id) const
+    {
+        if (const auto it = models_.find(id); it != models_.end()) return it->second.data.lock();
+        return {};
+    }
     std::vector<AssetId> ListIds() const;
     void CollectUnused();
 

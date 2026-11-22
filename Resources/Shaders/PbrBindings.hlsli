@@ -1,5 +1,5 @@
-#ifndef SELF_ENGINE_PBR_BINDINGS
-#define SELF_ENGINE_PBR_BINDINGS// 布局 2：与 MaterialLayout.h 的 PbrDrawConstants 精确对应。
+#ifndef FLARE_ENGINE_PBR_BINDINGS
+#define FLARE_ENGINE_PBR_BINDINGS // 布局 2：与 MaterialLayout.h 的 PbrDrawConstants 精确对应。
 cbuffer PbrConstants : register(b0)
 {
     column_major float4x4 clipFromLocal;

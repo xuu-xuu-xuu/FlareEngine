@@ -6,7 +6,7 @@
 
 class Localization;
 
-namespace se
+namespace flare
 {
 // G06.09：运行时遮挡 HUD 的纯 CPU 组帧。输入只读 RHI 已完成的 OcclusionCounters，
 // 输出 UiVisual；不接触 Device/CommandContext/GameUIRenderer，便于独立测试与复用到其它宿主。

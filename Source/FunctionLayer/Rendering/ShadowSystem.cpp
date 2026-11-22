@@ -4,7 +4,7 @@
 #include <algorithm>
 #include "ResourceLayer/Assets/AssetIO.h"
 
-namespace se
+namespace flare
 {
 bool PrepareDirectionalShadow(const DirectionalShadowView& view,const rhi::ForwardLighting& lighting,
     rhi::ShadowSettings& output,std::vector<AssetDiagnostic>& diagnostics)

@@ -1,5 +1,5 @@
 {
-  "type": "SelfEngine.Material",
+  "type": "FlareEngine.Material",
   "version": 1,
   "name": "中性展台",
   "baseColor": [0.22, 0.24, 0.28, 1],

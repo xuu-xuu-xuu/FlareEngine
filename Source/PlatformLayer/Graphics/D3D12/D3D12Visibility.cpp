@@ -11,7 +11,7 @@ namespace
 {
 struct alignas(256) Parameters
 {
-    se::VisibilityFrustum frustum;
+    flare::VisibilityFrustum frustum;
     UINT count,capacity,reserved[2]{};
     std::byte padding[144]{};
 };
@@ -50,22 +50,22 @@ HRESULT D3D12Visibility::Initialize(D3D12Context& context,const std::filesystem:
 }
 HRESULT D3D12Visibility::CreateOutput(UINT capacity,D3D12VisibilityOutput& output) const
 {
-    if(!device_)return E_UNEXPECTED;if(capacity>se::MaximumVisibilityItems)return E_INVALIDARG;
+    if(!device_)return E_UNEXPECTED;if(capacity>flare::MaximumVisibilityItems)return E_INVALIDARG;
     D3D12VisibilityOutput candidate;candidate.capacity=capacity;
     auto result=memory_->Create(Buffer((UINT64{capacity}+2)*sizeof(UINT)),D3D12_RESOURCE_STATE_COMMON,nullptr,candidate.ids,"Visibility.Ids");
     if(FAILED(result))return result;
     result=memory_->Create(Buffer(16),D3D12_RESOURCE_STATE_COMMON,nullptr,candidate.counters,"Visibility.Counters");
     if(FAILED(result))return result;output=std::move(candidate);return S_OK;
 }
-HRESULT D3D12Visibility::Prepare(D3D12UploadArena& arena,std::span<const se::VisibilityItem> items,const se::VisibilityFrustum& frustum,
+HRESULT D3D12Visibility::Prepare(D3D12UploadArena& arena,std::span<const flare::VisibilityItem> items,const flare::VisibilityFrustum& frustum,
     UINT capacity,D3D12VisibilityPrepared& output) const
 {
     if(!device_)return E_UNEXPECTED;
-    if(items.size()>se::MaximumVisibilityItems||capacity>se::MaximumVisibilityItems||!se::ValidVisibilityFrustum(frustum))return E_INVALIDARG;
+    if(items.size()>flare::MaximumVisibilityItems||capacity>flare::MaximumVisibilityItems||!flare::ValidVisibilityFrustum(frustum))return E_INVALIDARG;
     D3D12VisibilityPrepared next;next.count=static_cast<UINT>(items.size());next.capacity=capacity;
-    auto result=arena.Allocate(std::max<std::size_t>(sizeof(se::VisibilityItem),items.size_bytes()),16,next.items);if(FAILED(result))return result;
+    auto result=arena.Allocate(std::max<std::size_t>(sizeof(flare::VisibilityItem),items.size_bytes()),16,next.items);if(FAILED(result))return result;
     result=arena.Allocate(sizeof(Parameters),256,next.constants);if(FAILED(result))return result;
-    if(!items.empty())std::memcpy(next.items.cpu,items.data(),items.size_bytes());else std::memset(next.items.cpu,0,sizeof(se::VisibilityItem));
+    if(!items.empty())std::memcpy(next.items.cpu,items.data(),items.size_bytes());else std::memset(next.items.cpu,0,sizeof(flare::VisibilityItem));
     Parameters parameters{};parameters.frustum=frustum;parameters.count=next.count;parameters.capacity=capacity;
     std::memcpy(next.constants.cpu,&parameters,sizeof(parameters));output=next;return S_OK;
 }
@@ -74,7 +74,7 @@ HRESULT D3D12Visibility::Record(ID3D12GraphicsCommandList& commands,D3D12StateRe
 {
     if(!device_)return E_UNEXPECTED;
     if(!p.items.resource||!p.constants.resource||!output.ids||!output.counters||p.capacity>output.capacity
-        ||output.capacity>se::MaximumVisibilityItems||output.ids->GetDesc().Dimension!=D3D12_RESOURCE_DIMENSION_BUFFER
+        ||output.capacity>flare::MaximumVisibilityItems||output.ids->GetDesc().Dimension!=D3D12_RESOURCE_DIMENSION_BUFFER
         ||output.counters->GetDesc().Dimension!=D3D12_RESOURCE_DIMENSION_BUFFER
         ||output.ids->GetDesc().Width<(UINT64{output.capacity}+2)*4||output.counters->GetDesc().Width<16)return E_INVALIDARG;
     if(timestamps.heap)

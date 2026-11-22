@@ -6,7 +6,7 @@
 #include <string_view>
 #include <unordered_map>
 
-namespace se
+namespace flare
 {
 // 动作输入求值器：只依赖 EngineCore 与 PlatformLayer/InputState.h 值头，支持无状态纯求值与帧更新状态快照。
 class InputActionMap
@@ -83,4 +83,4 @@ private:
     bool keyboardConsumed_ = false;
     bool pointerConsumed_ = false;
 };
-} // namespace se
+} // namespace flare

@@ -1,6 +1,6 @@
 #include "SphericalHarmonics.h"
 
-namespace se
+namespace flare
 {
 bool IsFinite(const Sh9Rgb& value) noexcept
 {for(const auto& coefficient:value.coefficients)if(!IsFinite(coefficient))return false;return true;}

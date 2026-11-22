@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-namespace se::ui
+namespace flare::ui
 {
 
 UiTheme UiTheme::Dark() noexcept
@@ -1049,4 +1049,4 @@ const std::vector<UiStyleDiagnostic>& UiStyleEngine::Diagnostics() const noexcep
     return impl_ ? impl_->diagnostics : empty;
 }
 
-} // namespace se::ui
+} // namespace flare::ui

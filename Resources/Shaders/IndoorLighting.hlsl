@@ -424,9 +424,20 @@ float SunVisibility(float3 world,float distanceView)
     float3 ndc=projected.xyz/max(projected.w,1e-8);
     if(projected.w>0&&all(abs(ndc.xy)<1)&&ndc.z>0&&ndc.z<1)
     {
-    int2 pixel=(int2)((ndc.xy*float2(.5,-.5)+.5)*sunShadowParameters.y);
-    float depth=sunShadowParameters.z>.5?sunCascades.Load(int4(pixel,slice,0)):sunDepth.Load(int3(pixel,0));
-    visibility=step(ndc.z-sunShadowParameters.w,depth);
+    int res=max((int)sunShadowParameters.y,1);
+    float2 texCoord=(ndc.xy*float2(.5,-.5)+.5)*sunShadowParameters.y-0.5;
+    int2 basePixel=(int2)floor(texCoord);
+    float2 fracUv=saturate(texCoord-float2(basePixel));
+    int2 p00=clamp(basePixel,int2(0,0),int2(res-1,res-1));
+    int2 p10=clamp(basePixel+int2(1,0),int2(0,0),int2(res-1,res-1));
+    int2 p01=clamp(basePixel+int2(0,1),int2(0,0),int2(res-1,res-1));
+    int2 p11=clamp(basePixel+int2(1,1),int2(0,0),int2(res-1,res-1));
+    float ref=ndc.z-sunShadowParameters.w;
+    float d00=sunShadowParameters.z>.5?sunCascades.Load(int4(p00,slice,0)):sunDepth.Load(int3(p00,0));
+    float d10=sunShadowParameters.z>.5?sunCascades.Load(int4(p10,slice,0)):sunDepth.Load(int3(p10,0));
+    float d01=sunShadowParameters.z>.5?sunCascades.Load(int4(p01,slice,0)):sunDepth.Load(int3(p01,0));
+    float d11=sunShadowParameters.z>.5?sunCascades.Load(int4(p11,slice,0)):sunDepth.Load(int3(p11,0));
+    visibility=lerp(lerp(step(ref,d00),step(ref,d10),fracUv.x),lerp(step(ref,d01),step(ref,d11),fracUv.x),fracUv.y);
     }
     }
     return visibility;

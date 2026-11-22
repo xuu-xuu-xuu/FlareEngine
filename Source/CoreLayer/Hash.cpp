@@ -2,7 +2,7 @@
 #include <Windows.h>
 #include <bcrypt.h>
 #include <limits>
-namespace se
+namespace flare
 {
 std::string Sha256(std::span<const std::uint8_t> bytes)
 {

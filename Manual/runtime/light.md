@@ -4,11 +4,11 @@
 
 ## LightRuntimeComponent
 
-[`se::LightRuntimeComponent`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Runtime/RuntimeComponents.h#L31) 直接继承 [ComponentBase](component-base.md#componentbase)，声明为 `final`。基类记录组件属于哪个实体。派生类通过成员 `value` 保存一份 [LightComponent](#lightcomponent)，由 [World](world.md#world) 的灯光组件池管理。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Runtime/RuntimeComponents.h#L31)
+[`flare::LightRuntimeComponent`](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Runtime/RuntimeComponents.h#L31) 直接继承 [ComponentBase](component-base.md#componentbase)，声明为 `final`。基类记录组件属于哪个实体。派生类通过成员 `value` 保存一份 [LightComponent](#lightcomponent)，由 [World](world.md#world) 的灯光组件池管理。[查看源码](https://github.com/xuu-xuu-xuu/FlareEngine/blob/e7ca801292037b33172d094cc4a434682ac83c9c/Source/FunctionLayer/Runtime/RuntimeComponents.h#L31)
 
 ## LightComponent
 
-`se::LightComponent` 定义在 `Source/FunctionLayer/Runtime/ComponentValues.h`，是传给 `World::SetLight()` 的参数结构体。新建时默认得到强度为 1 的白色方向光。[World 的灯光写入接口](world.md#setlight)
+`flare::LightComponent` 定义在 `Source/FunctionLayer/Runtime/ComponentValues.h`，是传给 `World::SetLight()` 的参数结构体。新建时默认得到强度为 1 的白色方向光。[World 的灯光写入接口](world.md#setlight)
 
 | 字段 | 默认值 | 含义 |
 | --- | --- | --- |

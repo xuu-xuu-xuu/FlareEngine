@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace se
+namespace flare
 {
 namespace detail
 {

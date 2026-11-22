@@ -5,7 +5,7 @@
 #include <charconv>
 #include <algorithm>
 #include <cmath>
-namespace se
+namespace flare
 {
 namespace
 {

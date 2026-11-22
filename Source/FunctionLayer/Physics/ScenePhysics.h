@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace se
+namespace flare
 {
 bool ValidateScenePhysics(const World&,std::string& error);
 // 只拥有反射组件生成的代理；与脚本手动创建的物理对象共用 PhysicsWorld。
@@ -29,6 +29,7 @@ private:
         BodyHandle handle;
         bool hasBody=false;
         bool hasCollider=false;
+        std::uint32_t entityLayer=0;
         std::vector<PropertyValue> bodyProperties;
         std::vector<PropertyValue> colliderProperties;
         Vec3 scale;

@@ -3,7 +3,7 @@
 #include <cmath>
 #include <limits>
 
-namespace se
+namespace flare
 {
 bool HiZBuffer::Build(std::uint32_t width,std::uint32_t height,std::span<const float> depth)
 {
