@@ -2,14 +2,11 @@
 #include "GeometryCoverage.hlsli"
 #ifdef SE_MATERIAL_SURFACE
 #include "MaterialCoverage.hlsli"
-#ifdef SE_USER_SURFACE
-#include "UserSurfaceContract.hlsli"
-#endif
 #endif
 #ifdef SE_SHADING_EXTENSIONS
 #include "ShadingBindings.hlsli"
 #include "LocalLightBindings.hlsli"
-#define SURFACE_DIRECT(L) SurfaceDirectBrdf(color,metal,rough,n,geometricNormal,v,L,input.tangent.xyz,input.tangent.w*materialParameters.w,logicalFront?1:-1,input.uv,materialUvDx,materialUvDy,surfaceCurvature)
+#define SURFACE_DIRECT(L) SurfaceDirectBrdfEx(color,metal,rough,n,geometricNormal,v,L,input.tangent.xyz,input.tangent.w*materialParameters.w,logicalFront?1:-1,input.uv,materialUvDx,materialUvDy,surfaceCurvature,specularLevel)
 #else
 #define SURFACE_DIRECT(L) DirectBrdf(color,metal,rough,n,v,L)
 #endif
@@ -27,6 +24,9 @@
 #ifdef SE_ENVIRONMENT
 #include "EnvironmentBindings.hlsli"
 #endif
+#endif
+#if defined(SE_MATERIAL_SURFACE) && defined(SE_USER_SURFACE)
+#include "UserSurfaceContract.hlsli"
 #endif
 #ifdef SE_VERTEX_COMPRESSED
 struct VertexInput {float4 position:POSITION;float2 normal:NORMAL;float2 uv:TEXCOORD0;float4 tangent:TANGENT;
@@ -162,8 +162,14 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
         n=UnitVector(t*mapped.x+b*mapped.y+n*mapped.z,n);
     }
     if(!logicalFront){n=-n;geometricNormal=-geometricNormal;}
-    float2 mr=metallicRoughnessMap.Sample(materialSampler,input.uv).gb;
+    float3 orm=metallicRoughnessMap.Sample(materialSampler,input.uv).rgb;
+    float2 mr=orm.gb;
     float metal=saturate(materialParameters.x*mr.y),rough=max(0.045,saturate(materialParameters.y*mr.x));
+    float materialAo=1.0,specularLevel=0.5,translucency=0.0;
+#ifdef SE_SHADING_EXTENSIONS
+    if(layerCoat.w>0.0)materialAo=lerp(1.0,orm.r,saturate(layerCoat.w));
+    specularLevel=saturate(0.5*(1.0+layerAnisotropy.z));
+#endif
     if(skin.w>0.5)
     {
         // skin.w 是每 Draw 常量。导数须在逐实例 normalMapping 条件外计算，
@@ -215,7 +221,7 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
 #endif
         userIn.vertexColor=float4(1,1,1,1);
 #ifdef SE_SHADING_EXTENSIONS
-        userIn.screenUv=saturate(input.position.xy*shadingViewport.zw);
+        userIn.screenUv=saturate(input.position.xy/max(shadingViewport.xy,1.0));
 #else
         userIn.screenUv=frac(input.position.xy/float2(1280.0,720.0));
 #endif
@@ -232,6 +238,9 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
         userS.emissive=float3(0,0,0);
         userS.opacity=baseSample.a*surfaceBaseColorFactor.a;
         userS.alphaCutoff=surfaceCoverage.x;
+        userS.occlusion=materialAo;
+        userS.specular=specularLevel;
+        userS.translucency=(FLARE_SHADING_MODE==3)?0.45:0.0;
 
         FlareSurface(userIn,userS);
 
@@ -242,10 +251,19 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
         metal=saturate(userS.metallic);
         rough=max(0.045,saturate(userS.roughness));
         userEmissive=max(userS.emissive,0.0);
+        materialAo=saturate(userS.occlusion);
+        specularLevel=saturate(userS.specular);
+        translucency=saturate(userS.translucency);
 
         float3 tsN=UnitVector(userS.normalTS,float3(0,0,1));
         n=UnitVector(tBasis*tsN.x+bBasis*tsN.y+baseGeoN*tsN.z,baseGeoN);
         if(!logicalFront)n=-n;
+        if(skin.w>0.5)
+        {
+            float3 userNormalDx=ddx(n),userNormalDy=ddy(n);
+            float saaStrength=lerp(0.18,1.55,smoothstep(0.035,0.20,rough));
+            rough=FilterSpecularRoughness(rough,userNormalDx,userNormalDy,saaStrength);
+        }
     }
 #if defined(SE_FORWARD) && (FLARE_SHADING_MODE == 1)
     {
@@ -285,6 +303,14 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
         if(materialOptions.w!=0)visibility*=screenVisibility.y;
 #endif
         lit+=SURFACE_DIRECT(direction)*frameRadiance.rgb*visibility;
+        if(translucency>1e-4)
+        {
+            float ndlSigned=dot(n,direction);
+            float wrapFill=max(0.0,saturate((ndlSigned+0.32)/1.32)-saturate(ndlSigned))*0.35;
+            float3 transDir=UnitVector(direction+n*0.35,direction);
+            float backScatter=pow(saturate(dot(-v,transDir)),3.0)*saturate(0.35-ndlSigned);
+            lit+=color*(1.0-metal)*(wrapFill+backScatter*0.85)*translucency*frameRadiance.rgb*visibility;
+        }
     }
 #ifdef SE_CLUSTERED
     uint cluster=PixelCluster(input.position.xy,input.worldPosition);
@@ -315,9 +341,9 @@ float4 PSMain(PixelInput input,bool frontFace:SV_IsFrontFace):SV_TARGET
     }
 #ifdef SE_ENVIRONMENT
 #ifdef SE_SHADING_EXTENSIONS
-    lit+=EnvironmentBrdf(color,metal,rough,n,v,input.worldPosition,geometricNormal,input.tangent.xyz,input.tangent.w*materialParameters.w,logicalFront?1:-1,input.uv)*screenVisibility.x;
+    lit+=EnvironmentBrdfEx(color,metal,rough,n,v,input.worldPosition,geometricNormal,input.tangent.xyz,input.tangent.w*materialParameters.w,logicalFront?1:-1,input.uv,materialAo,specularLevel)*screenVisibility.x;
 #else
-    lit+=EnvironmentBrdf(color,metal,rough,n,v);
+    lit+=EnvironmentBrdfEx(color,metal,rough,n,v,materialAo,specularLevel);
 #endif
 #endif
 #ifdef SE_SHADING_EXTENSIONS

@@ -55,9 +55,9 @@ bool PrepareD3D12Forward(D3D12Presentation& p,D3D12FrameContext& frame,const D3D
         const auto& shadow=*content.shadow;
         constants.pointCount.y=shadow.enabled?1.f:0.f;constants.pointCount.z=shadow.pcf?1.f:0.f;
         const flare::rhi::CascadedShadowFrameConstants csm{constants,shadow.cascadeClipFromWorld,
-            {shadow.cascadeSplits[0],shadow.cascadeSplits[1],shadow.cascadeSplits[2],shadow.cascadeNear},
+            {shadow.cascadeSplits[0],shadow.cascadeSplits[1],shadow.cascadeSplits[2],shadow.cascadeSplits[3]},
             shadow.cascadeViewDepth,{1.f/float(frame.shadow->resolution),shadow.depthBias,shadow.slopeBias,shadow.normalBias},
-            {float(shadow.cascadeCount),shadow.cascadeBlend,shadow.cascadeDebug?1.f:0.f,0},{}};
+            {float(shadow.cascadeCount),shadow.cascadeBlend,shadow.cascadeDebug?1.f:0.f,shadow.cascadeNear},{}};
         std::memcpy(frame.forwardConstants.cpu,&csm,sizeof(csm));
     }
     else if(content.shadow)
@@ -165,17 +165,22 @@ void RecordD3D12ForwardSky(D3D12Presentation& p,D3D12FrameContext& frame,const D
         constants.skyFromClip=inverse.value_or(flare::Mat4{});
         // 逆 VP 含透视除法，直接清最后一列会同时抹掉前向基，导致天空朝地面。
         // Shader 以远近两点的齐次差消除平移，保持正确的旋转和 FOV。
-        const auto clamp01=[](float value){return std::isfinite(value)?std::clamp(value,0.0f,1.0f):0.0f;};
-        constants.zenithColor={clamp01(sky.zenithColor.x),clamp01(sky.zenithColor.y),clamp01(sky.zenithColor.z),1};
-        constants.horizonColor={clamp01(sky.horizonColor.x),clamp01(sky.horizonColor.y),clamp01(sky.horizonColor.z),1};
-        constants.groundColor={clamp01(sky.groundColor.x),clamp01(sky.groundColor.y),clamp01(sky.groundColor.z),1};
-        constants.sunColor={clamp01(sky.sunColor.x),clamp01(sky.sunColor.y),clamp01(sky.sunColor.z),1};
+        const auto clampHdr=[](float value){return std::isfinite(value)?std::clamp(value,0.0f,16.0f):0.0f;};
+        constants.zenithColor={clampHdr(sky.zenithColor.x),clampHdr(sky.zenithColor.y),clampHdr(sky.zenithColor.z),1};
+        constants.horizonColor={clampHdr(sky.horizonColor.x),clampHdr(sky.horizonColor.y),clampHdr(sky.horizonColor.z),1};
+        constants.groundColor={clampHdr(sky.groundColor.x),clampHdr(sky.groundColor.y),clampHdr(sky.groundColor.z),1};
+        constants.sunColor={clampHdr(sky.sunColor.x),clampHdr(sky.sunColor.y),clampHdr(sky.sunColor.z),1};
         const auto direction=flare::Normalize(content.forward->directionToLight);
         const auto radius=std::isfinite(sky.sunAngularRadius)?std::clamp(sky.sunAngularRadius,0.001f,0.10f):0.012f;
         constants.sunDirectionIntensity={direction.x,direction.y,direction.z,
             std::isfinite(sky.sunIntensity)?std::clamp(sky.sunIntensity,0.0f,1000.0f):12.0f};
         constants.parameters={float(width),std::cos(radius*1.15f),std::cos(radius*0.85f),float(height)};
-        commands.SetGraphicsRoot32BitConstants(0,40,&constants,0);
+        constants.cloudParameters={
+            std::isfinite(sky.cloudCoverage)?std::clamp(sky.cloudCoverage,0.0f,1.0f):0.0f,
+            std::isfinite(sky.cloudDensity)?std::clamp(sky.cloudDensity,0.0f,8.0f):1.0f,
+            std::isfinite(sky.cloudSpeed)?std::clamp(sky.cloudSpeed,-100.0f,100.0f):1.0f,
+            std::isfinite(sky.timeSeconds)?sky.timeSeconds:0.0f};
+        commands.SetGraphicsRoot32BitConstants(0,44,&constants,0);
     }
     const D3D12_VIEWPORT viewport{0,0,float(width),float(height),0,1};const D3D12_RECT scissor{0,0,LONG(width),LONG(height)};
     commands.RSSetViewports(1,&viewport);commands.RSSetScissorRects(1,&scissor);commands.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);commands.DrawInstanced(3,1,0,0);

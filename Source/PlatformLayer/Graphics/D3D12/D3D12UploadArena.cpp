@@ -35,6 +35,16 @@ HRESULT D3D12UploadArena::Allocate(UINT64 bytes,UINT64 alignment,D3D12UploadSlic
         if(offset<=page.capacity&&bytes<=page.capacity-offset){allocate(page,offset);return S_OK;}
     }
     const auto capacity=Align(bytes,dedicated_?alignment:pageCapacity_);
+    if(!dedicated_&&capacity>budget_-stats_.reservedBytes)
+    {
+        // 当前帧尚未使用的旧页（Reset 前已完成 Fence 等待）可按需回收，避免大贴图页长期碎片化挤占单帧预算。
+        std::erase_if(pages_,[&](Page& page){
+            if(page.cursor!=0)return false;
+            if(page.resource&&page.mapped)page.resource->Unmap(0,nullptr);
+            stats_.reservedBytes-=page.capacity;
+            return true;
+        });
+    }
     if(capacity>budget_-stats_.reservedBytes){++stats_.failures;return E_OUTOFMEMORY;}
     Page page;page.capacity=capacity;
     D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_UPLOAD;heap.CreationNodeMask=heap.VisibleNodeMask=1;

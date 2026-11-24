@@ -993,6 +993,10 @@ bool HandleAssetPropertyAction(ToolkitWorkspaceContext& ctx, const std::string& 
             if (!ParseShaderParamFormValue(ctx.assets, ctx.host.Material().Document(), matKey, value, parsed, formattedOverride))
                 return false;
         }
+        else if (matKey.starts_with("material.shaderTexture."))
+        {
+            parsed = std::string(value);
+        }
         else
         {
             const PropertyDescriptor* descriptor = FindMaterialProperty(matKey);
@@ -1157,6 +1161,23 @@ std::vector<EditorProperty> BuildMaterialFormRows(const EditorMaterialWorkflow& 
         if (assets->LoadSurfaceShader(material.Document().shader, userShader, shaderDiag))
         {
             const std::string paramSection = text.GetText("EditorUi.ShaderParametersSection");
+            for (const auto& tex : userShader.metadata.textures)
+            {
+                std::string curId;
+                if (auto it = material.Document().shaderTextures.find(tex.name);
+                    it != material.Document().shaderTextures.end())
+                {
+                    curId = it->second;
+                }
+                EditorProperty tRow{"material.shaderTexture." + tex.name,
+                                    tex.label.empty() ? tex.name : tex.label,
+                                    EditorPropertyType::Asset,
+                                    curId,
+                                    false};
+                tRow.section = paramSection;
+                tRow.acceptedAssetKind = "texture";
+                rows.push_back(std::move(tRow));
+            }
             for (const auto& param : userShader.metadata.parameters)
             {
                 Vec4 cur = param.defaultValue;
@@ -1331,7 +1352,7 @@ std::vector<EditorProperty> BuildBuildSettingsRows(const BuildSettings& settings
     rows.push_back({"recordVideo", text.GetText("EditorUi.RecordVideo"), EditorPropertyType::Boolean,
                     settings.recordVideo ? "true" : "false"});
     rows.push_back({"videoResolution", text.GetText("EditorUi.VideoResolution"), EditorPropertyType::Combo,
-                    settings.videoResolution, false, {"640x360", "1280x720", "1920x1080"}});
+                    settings.videoResolution, false, {"640x360", "1280x720", "1920x1080", "2560x1440", "3840x2160"}});
     rows.push_back({"videoFps", text.GetText("EditorUi.VideoFps"), EditorPropertyType::Combo,
                     std::to_string(settings.videoFps), false, {"24", "30", "60"}});
     rows.push_back({"videoSeconds", text.GetText("EditorUi.VideoSeconds"), EditorPropertyType::Number,
@@ -1939,6 +1960,10 @@ void BindToolkitWorkspaceForms(ToolkitWorkspaceContext& ctx, const std::function
                 std::string formatted;
                 if (!ParseShaderParamFormValue(ctx.assets, ctx.host.Material().Document(), key, value, parsed, formatted))
                     return false;
+            }
+            else if (key.starts_with("material.shaderTexture."))
+            {
+                parsed = std::string(value);
             }
             else
             {

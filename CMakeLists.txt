@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(FlareEngine VERSION 0.1.0 LANGUAGES C CXX)
+project(FlareEngine VERSION 0.2.0 LANGUAGES C CXX)
 enable_language(RC)
 configure_file(Resources/Branding/FlareResources.rc.in "${CMAKE_CURRENT_BINARY_DIR}/FlareResources.rc" @ONLY)
 set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/FlareResources.rc" PROPERTIES

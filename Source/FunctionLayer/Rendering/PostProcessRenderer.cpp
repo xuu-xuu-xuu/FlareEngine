@@ -35,6 +35,7 @@ rhi::PostProcessSettings PreparePostProcessSettings(const rhi::PostProcessSettin
     auto settings=source;bool limited=false;
     const auto limit=[&](float value,float maximum,float fallback){if(!IsFinite(value)){limited=true;return fallback;}const auto next=std::clamp(value,0.0f,maximum);limited|=next!=value;return next;};
     settings.bloomThreshold=limit(settings.bloomThreshold,65504,1);settings.bloomStrength=limit(settings.bloomStrength,4,0.08f);
+    settings.vignette=limit(settings.vignette,1.0f,0.0f);settings.chromaticAberration=limit(settings.chromaticAberration,1.0f,0.0f);settings.filmGrain=limit(settings.filmGrain,1.0f,0.0f);
     // G15：曝光/LUT 参数与 CPU 参考保持同一合法域；非法值回退默认且只报告一次。
     settings.exposureDeltaSeconds=limit(settings.exposureDeltaSeconds,0.5f,1.0f/60.0f);
     settings.exposureLowPercentile=std::min(limit(settings.exposureLowPercentile,1,0.60f),1.0f);

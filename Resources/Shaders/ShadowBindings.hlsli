@@ -14,9 +14,9 @@ float2 CascadeReceiverGradient(uint slice,float3 normal)
 #if SE_CSM_RECEIVER_PLANE
     // 由正交光矩阵与几何切平面解析求 d(depth)/d(uv)，不借用屏幕 quad 的相邻级导数。
     // 解 row0.dp=2du、row1.dp=-2dv、normal.dp=0；row2 自带 RH 深度的符号。
-    float3 row0=csmClipFromWorld[min(slice,2u)][0].xyz;
-    float3 row1=csmClipFromWorld[min(slice,2u)][1].xyz;
-    float3 row2=csmClipFromWorld[min(slice,2u)][2].xyz;
+    float3 row0=csmClipFromWorld[min(slice,3u)][0].xyz;
+    float3 row1=csmClipFromWorld[min(slice,3u)][1].xyz;
+    float3 row2=csmClipFromWorld[min(slice,3u)][2].xyz;
     float3 planeAxis=cross(row0,row1);
     float determinant=dot(normal,planeAxis);
     if(abs(determinant)>max(length(planeAxis)*1e-5,1e-12))
@@ -27,19 +27,24 @@ float2 CascadeReceiverGradient(uint slice,float3 normal)
 float3 CascadeSelectionForPosition(float3 position)
 {
     float depth=dot(float4(position,1),csmViewDepth);
-    uint count=(uint)clamp(csmOptions.x,1.0,3.0);
-    float last=csmSplits.x;if(count>1)last=csmSplits.y;if(count>2)last=csmSplits.z;
+    uint count=(uint)clamp(csmOptions.x,1.0,4.0);
+    float nearDist=csmOptions.w;
+    float last=csmSplits.x;
+    if(count>1)last=csmSplits.y;
+    if(count>2)last=csmSplits.z;
+    if(count>3)last=csmSplits.w;
     float3 result=float3(-1,-1,0);
-    if(depth>=csmSplits.w&&depth<=last)
+    if(depth>=nearDist&&depth<=last)
     {
         uint selected=0;
         if(count>1&&depth>csmSplits.x)selected=1;
         if(count>2&&depth>csmSplits.y)selected=2;
+        if(count>3&&depth>csmSplits.z)selected=3;
         result=float3(selected,selected,0);
-        [unroll]for(uint i=0;i<2;++i)if(i+1<count)
+        [unroll]for(uint i=0;i<3;++i)if(i+1<count)
         {
-            float split=i==0?csmSplits.x:csmSplits.y;
-            float previous=i==0?csmSplits.w:csmSplits.x;
+            float split=i==0?csmSplits.x:(i==1?csmSplits.y:csmSplits.z);
+            float previous=i==0?nearDist:(i==1?csmSplits.x:csmSplits.y);
             float width=(split-previous)*csmOptions.y;
             if(width>0&&depth>=split-width&&depth<=split+width)
                 result=float3(i,i+1,saturate((depth-split+width)/(2*width)));
@@ -58,7 +63,7 @@ float CascadeVisibility(uint slice,float3 position,float3 normal,float3 lightDir
     else
 #endif
     {
-    float4 clip=mul(csmClipFromWorld[min(slice,2u)],float4(position+normal*shadowParameters.w,1));
+    float4 clip=mul(csmClipFromWorld[min(slice,3u)],float4(position+normal*shadowParameters.w,1));
     if(clip.w>0)
     {
         float3 coordinate=clip.xyz/clip.w;
@@ -121,8 +126,10 @@ float3 CascadeDebugColor(float3 position)
         float3 first=float3(.8,.12,.08),second=first;
         if(selection.x>.5)first=float3(.12,.7,.18);
         if(selection.x>1.5)first=float3(.1,.24,.9);
+        if(selection.x>2.5)first=float3(.85,.72,.12);
         if(selection.y>.5)second=float3(.12,.7,.18);
         if(selection.y>1.5)second=float3(.1,.24,.9);
+        if(selection.y>2.5)second=float3(.85,.72,.12);
         result=lerp(first,second,selection.z);
     }
     return result;

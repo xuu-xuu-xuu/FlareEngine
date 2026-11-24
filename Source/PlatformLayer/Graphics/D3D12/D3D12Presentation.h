@@ -30,6 +30,7 @@ struct D3D12AmbientOcclusionFrame;
 struct D3D12RayTracingSystem;
 struct D3D12RayTracingFrame;
 struct D3D12ShadingDefaults;
+struct D3D12OpaqueBackdrop;
 struct D3D12ShadingFrame;
 class D3D12Heterogeneous;
 class D3D12HeterogeneousPrepared;
@@ -132,7 +133,7 @@ struct D3D12FrameContext
     std::shared_ptr<D3D12SceneOverlayFrame> sceneOverlay;
     std::shared_ptr<D3D12ShadowTarget> shadow;
     bool shadowCachePendingCommit=false;
-    std::array<std::uint64_t,3> pendingShadowCacheHashes{};
+    std::array<std::uint64_t,4> pendingShadowCacheHashes{};
     UINT pendingShadowCacheHits=0,pendingShadowCacheMisses=0;
     std::shared_ptr<D3D12SceneCoverage> coverage;
     std::shared_ptr<D3D12PostTargets> post; // 保持该帧后处理资源至 Fence 完成，视口可独立调整尺寸。
@@ -222,6 +223,7 @@ struct D3D12Presentation
     std::shared_ptr<D3D12RayTracingSystem> rayTracing;
     flare::rhi::RayTracingStatistics rayTracingStatistics;
     std::shared_ptr<D3D12ShadingDefaults> shadingDefaults;
+    std::shared_ptr<D3D12OpaqueBackdrop> opaqueBackdrop;
     std::shared_ptr<D3D12Heterogeneous> heterogeneousBuilder;
     std::shared_ptr<D3D12Meshlet> meshletBuilder;
     std::shared_ptr<D3D12HiZ> heterogeneousHiZBuilder;

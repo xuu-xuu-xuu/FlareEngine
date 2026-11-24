@@ -30,17 +30,24 @@ bool ValidateMaterialDocument(const MaterialDocument& material)
     for(float value:material.baseColor)if(!std::isfinite(value)||value<0||value>1)return false;
     if(!std::isfinite(material.metallic)||material.metallic<0||material.metallic>1
         ||!std::isfinite(material.roughness)||material.roughness<0||material.roughness>1||!std::isfinite(material.normalScale)
+        ||!std::isfinite(material.occlusionStrength)||material.occlusionStrength<0||material.occlusionStrength>1
+        ||!std::isfinite(material.specular)||material.specular<0||material.specular>1
         ||!IsValidMaterialAlphaMode(material.alphaMode)||!std::isfinite(material.alphaCutoff)||material.alphaCutoff<0)return false;
     if(!std::isfinite(material.clearCoat.weight)||material.clearCoat.weight<0||material.clearCoat.weight>1
         ||!std::isfinite(material.clearCoat.roughness)||material.clearCoat.roughness<0||material.clearCoat.roughness>1
         ||!std::isfinite(material.clearCoat.normalScale))return false;
     if(!IsValidMaterialLayer(material.sheen)||!IsValidMaterialLayer(material.anisotropy)||!IsValidMaterialLayer(material.subsurface))return false;
-    if(material.shaderParameters.size()>64)return false;
+    if(material.shaderParameters.size()>64||material.shaderTextures.size()>16)return false;
     for(const auto& [paramName,paramVal]:material.shaderParameters)
     {
         std::u32string paramDecoded;
         if(paramName.empty()||paramName.size()>64||!DecodeUtf8(paramName,paramDecoded))return false;
         if(!std::isfinite(paramVal.x)||!std::isfinite(paramVal.y)||!std::isfinite(paramVal.z)||!std::isfinite(paramVal.w))return false;
+    }
+    for(const auto& [texName,texId]:material.shaderTextures)
+    {
+        std::u32string texDecoded;
+        if(texName.empty()||texName.size()>64||!DecodeUtf8(texName,texDecoded)||!AssetReference(texId))return false;
     }
     return AssetReference(material.baseColorTexture)&&AssetReference(material.normalTexture)
         &&AssetReference(material.metallicRoughnessTexture)&&AssetReference(material.shader)
@@ -53,6 +60,7 @@ std::vector<AssetId> MaterialTextureDependencies(const MaterialDocument& materia
     for(const auto& id:{material.baseColorTexture,material.normalTexture,material.metallicRoughnessTexture,
         material.clearCoatWeightTexture,material.clearCoatRoughnessTexture,material.clearCoatNormalTexture,
         material.sheenColorTexture,material.sheenRoughnessTexture,material.anisotropyTexture})if(!id.empty())ids.push_back(id);
+    for(const auto& [_,id]:material.shaderTextures)if(!id.empty())ids.push_back(id);
     std::sort(ids.begin(),ids.end());ids.erase(std::unique(ids.begin(),ids.end()),ids.end());return ids;
 }
 std::vector<AssetId> MaterialDependencies(const MaterialDocument& material)
@@ -79,6 +87,13 @@ bool SerializeMaterialDocument(const MaterialDocument& material,std::string& out
                 params[k]={v.x,v.y,v.z,v.w};
             json["shaderParameters"]=std::move(params);
         }
+        if(!material.shaderTextures.empty())
+        {
+            nlohmann::json texMap=nlohmann::json::object();
+            for(const auto& [k,v]:material.shaderTextures)
+                if(!v.empty())texMap[k]=v;
+            if(!texMap.empty())json["shaderTextures"]=std::move(texMap);
+        }
         output=json.dump(2);return true;
     }
     catch(const std::exception& error){asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial",error.what());return false;}
@@ -91,7 +106,7 @@ bool DeserializeMaterialDocument(std::string_view text,MaterialDocument& output,
         const auto json=nlohmann::json::parse(text);
         if((json.at("type")!="FlareEngine.Material"&&json.at("type")!="SelfEngine.Material")||json.at("version")!=1)
         {asset_io::Diagnostic(diagnostics,"Assets.MaterialVersionUnsupported");return false;}
-        for(const char* key:{"clearCoat","sheen","anisotropy","subsurface","shaderParameters"})if(json.contains(key)&&!json.at(key).is_object())
+        for(const char* key:{"clearCoat","sheen","anisotropy","subsurface","shaderParameters","shaderTextures"})if(json.contains(key)&&!json.at(key).is_object())
         {asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial",key);return false;}
         MaterialDocument loaded;
         for(const auto& field:MaterialProperties())
@@ -121,6 +136,20 @@ bool DeserializeMaterialDocument(std::string_view text,MaterialDocument& output,
                 loaded.shaderParameters[it.key()]=vec;
             }
         }
+        const auto readCustomTextureMap=[&](const nlohmann::json& obj,bool skipStandard)->bool
+        {
+            static constexpr const char* stdTexKeys[]{"baseColor","normal","metallicRoughness","clearCoatWeight","clearCoatRoughness","clearCoatNormal","sheenColor","sheenRoughness","anisotropy"};
+            for(auto it=obj.begin();it!=obj.end();++it)
+            {
+                if(skipStandard&&std::find(std::begin(stdTexKeys),std::end(stdTexKeys),it.key())!=std::end(stdTexKeys))continue;
+                if(!it.value().is_string()){asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial","shaderTextures");return false;}
+                const auto texId=it.value().get<std::string>();
+                if(!texId.empty())loaded.shaderTextures[it.key()]=texId;
+            }
+            return true;
+        };
+        if(json.contains("textures")&&json.at("textures").is_object()&&!readCustomTextureMap(json.at("textures"),true))return false;
+        if(json.contains("shaderTextures")&&!readCustomTextureMap(json.at("shaderTextures"),false))return false;
         if(!ValidateMaterialDocument(loaded)){asset_io::Diagnostic(diagnostics,"Assets.InvalidMaterial");return false;}
         output=std::move(loaded);return true;
     }

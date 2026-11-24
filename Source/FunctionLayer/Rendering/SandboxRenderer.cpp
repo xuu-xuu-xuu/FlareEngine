@@ -431,6 +431,8 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
     {
         lastShaderReloadGeneration_ = frame.data->shaderReloadGeneration;
         models_.InvalidateMaterials();
+        customSkyShaderKey_.clear();
+        failedSkyShaderKeys_.clear();
     }
     const bool coverageFrame=frame.data&&RequiresMaterialCoverage(*frame.data);
     const bool materialShading=frame.data&&flare::RequiresMaterialShading(*frame.data);
@@ -458,11 +460,13 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
             ||frame.data->diffuseSh||frame.data->localDiffuseSh)));
     const bool shadingFrame=shadingRequested&&ForwardScene(scene_);
     const bool bc7Color=frame.data&&frame.data->bc7Color;
+    const bool rgba8Mips=frame.data&&frame.data->anisotropicFiltering;
     const bool meshletSubmission=frame.data&&frame.data->meshletCulling;
-    if(bc7Color!=models_.Bc7ColorsEnabled()||meshletSubmission!=meshletSubmission_)
+    if(bc7Color!=models_.Bc7ColorsEnabled()||rgba8Mips!=models_.Rgba8MipmapsEnabled()||meshletSubmission!=meshletSubmission_)
     {
         if(!device_->WaitIdle())return RenderResult::Failed;
         models_.EnableBc7Colors(bc7Color,frame.data&&frame.data->assets?frame.data->assets->CacheRoot()/"textures":std::filesystem::path{});
+        models_.SetRgba8Mipmaps(rgba8Mips);
         models_.SetMeshletSubmissionEnabled(meshletSubmission);meshletSubmission_=meshletSubmission;
         // 派生代理也可能强持上个编码版本，切换后重新建立代理及驻留账本。
         hlodProxies_.clear();hlodOverrides_.clear();hlodProxyActive_.clear();
@@ -635,10 +639,11 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         featureEnvironment_||EnvironmentScene(scene_)?(cascadedFrame?flare::rhi::PipelineKind::ClusteredCascadedEnvironmentMesh:flare::rhi::PipelineKind::ClusteredEnvironmentMesh):
         BasicLitScene(scene_)&&!featureFullPbr_?(cascadedFrame?flare::rhi::PipelineKind::ClusteredCascadedBasicLitMesh:flare::rhi::PipelineKind::ClusteredBasicLitMesh):
         cascadedFrame?flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh:flare::rhi::PipelineKind::ClusteredShadowedMesh;
+    const bool anisotropicFrame=frame.data&&frame.data->anisotropicFiltering&&!sceneInstancing&&!customCascadeUnsupported&&ForwardScene(scene_);
     models_.SetMaterialPipelineKind(clusteredFrame?clusteredKind:cascadedFrame?(featureEnvironment_||EnvironmentScene(scene_)?flare::rhi::PipelineKind::CascadedEnvironmentMesh:
         BasicLitScene(scene_)&&!featureFullPbr_?flare::rhi::PipelineKind::CascadedBasicLitMesh:flare::rhi::PipelineKind::CascadedShadowedMesh):
         featureEnvironment_||EnvironmentScene(scene_)?flare::rhi::PipelineKind::EnvironmentMesh:BasicLitScene(scene_)||scene_==SandboxScene::Shadows?flare::rhi::PipelineKind::ShadowedMesh:ForwardScene(scene_)?flare::rhi::PipelineKind::ForwardMesh:flare::rhi::PipelineKind::PbrMesh);
-    models_.SetCustomMaterialPipelinesEnabled(!sceneInstancing&&!cascadedFrame&&!clusteredFrame&&!coverageFrame&&!shadingFrame);
+    models_.SetCustomMaterialPipelinesEnabled(!sceneInstancing&&!cascadedFrame&&!clusteredFrame&&!coverageFrame&&!shadingFrame&&!anisotropicFrame);
     const bool instancing=sceneInstancing;
     // G06.10：Forward 实例化本轮只接 Lighting（无阴影/环境的 FinalOutput HDR 路径）。
     const bool forwardInstancing=instancing&&(scene_==SandboxScene::Lighting||BasicLitScene(scene_));
@@ -1276,7 +1281,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
         // 在分桶之前统一设置逐绘制质量开关；实例批次保留同一帧设置。
         if(frame.data)for(auto& draw:meshes)
         {draw.pbr.multiscatter=frame.data->multiscatter;draw.pbr.specularAA=frame.data->specularAA;}
-        if(coverageFrame||shadingFrame)
+        if(coverageFrame||shadingFrame||anisotropicFrame)
         {
             auto kind=clusteredFrame?clusteredKind:cascadedFrame?
                 (featureEnvironment_||EnvironmentScene(scene_)?flare::rhi::PipelineKind::CascadedEnvironmentMesh:
@@ -1321,12 +1326,14 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                         std::vector<std::string> diags;
                         auto pipeline=surfacePipelines_.LoadUserSurface(*device_,shaders,shaderCacheRoot,*userSurf,
                             flare::rhi::PipelineKind::ShadowDepth,draw.alphaMode,!draw.skinPalette.empty(),false,
-                            draw.compressedVertices,false,false,diags,nullptr,shPassIdx);
+                            draw.compressedVertices,false,false,diags,nullptr,shPassIdx,
+                            flare::rhi::BlendMode::Opaque,flare::rhi::DepthMode::Default,anisotropicFrame);
                         reportUserDiagnostics(diags);
                         if(pipeline)draw.pipeline=*pipeline;
                         else if(draw.alphaMode==flare::MaterialAlphaMode::Mask)
                         {
-                            const auto fb=surfacePipelines_.Load(*device_,shaders,flare::rhi::PipelineKind::ShadowDepth,draw.alphaMode,!draw.skinPalette.empty());
+                            const auto fb=surfacePipelines_.Load(*device_,shaders,flare::rhi::PipelineKind::ShadowDepth,
+                                draw.alphaMode,!draw.skinPalette.empty(),false,false,false,false,anisotropicFrame);
                             if(!fb){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
                             draw.pipeline=*fb;
                         }
@@ -1335,7 +1342,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 else if(draw.alphaMode==flare::MaterialAlphaMode::Mask)
                 {
                     const auto pipeline=surfacePipelines_.Load(*device_,shaders,flare::rhi::PipelineKind::ShadowDepth,
-                        draw.alphaMode,!draw.skinPalette.empty());
+                        draw.alphaMode,!draw.skinPalette.empty(),false,false,false,false,anisotropicFrame);
                     if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
                     draw.pipeline=*pipeline;
                 }
@@ -1401,14 +1408,14 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                         const flare::SurfaceShaderMetadata* fbMeta=nullptr;
                         auto pipeline=surfacePipelines_.LoadUserSurface(*device_,shaders,shaderCacheRoot,*userSurf,materialKind,
                             passAlpha,skin,shadowFilterFrame,passDraw.compressedVertices,models_.Bc5NormalsEnabled()&&!forward,
-                            shadingFrame,diags,&fbMeta,passIdx,passBlendMode,passDepthMode);
+                            shadingFrame,diags,&fbMeta,passIdx,passBlendMode,passDepthMode,anisotropicFrame);
                         reportUserDiagnostics(diags);
                         if(fbMeta)passDraw.userParams=flare::PackSurfaceShaderParameters(*fbMeta,userSurf->materialParameters);
                         if(!pipeline)
                         {
                             if(passIdx>0)continue;
                             pipeline=surfacePipelines_.Load(*device_,shaders,materialKind,passAlpha,skin,shadowFilterFrame,
-                                passDraw.compressedVertices,models_.Bc5NormalsEnabled()&&!forward,shadingFrame);
+                                passDraw.compressedVertices,models_.Bc5NormalsEnabled()&&!forward,shadingFrame,anisotropicFrame);
                         }
                         if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
                         passDraw.pipeline=*pipeline;
@@ -1418,14 +1425,14 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     }
                     continue;
                 }
-                if(draw.alphaMode!=flare::MaterialAlphaMode::Opaque||shadingFrame)
+                if(draw.alphaMode!=flare::MaterialAlphaMode::Opaque||shadingFrame||anisotropicFrame)
                 {
                     const bool skin=!draw.skinPalette.empty();auto materialKind=kind;
                     if(skin&&flare::rhi::IsBasicLit(materialKind))
                         materialKind=flare::rhi::IsClustered(materialKind)?(flare::rhi::IsCascaded(materialKind)?flare::rhi::PipelineKind::ClusteredCascadedShadowedMesh:flare::rhi::PipelineKind::ClusteredShadowedMesh):
                             flare::rhi::IsCascaded(materialKind)?flare::rhi::PipelineKind::CascadedShadowedMesh:flare::rhi::PipelineKind::ShadowedMesh;
                     auto pipeline=surfacePipelines_.Load(*device_,shaders,materialKind,draw.alphaMode,skin,shadowFilterFrame,
-                        draw.compressedVertices,models_.Bc5NormalsEnabled()&&!forward,shadingFrame);
+                        draw.compressedVertices,models_.Bc5NormalsEnabled()&&!forward,shadingFrame,anisotropicFrame);
                     if(!pipeline){Log(LogLevel::Error,localization.GetText("Rendering.MaterialSurfaceUnsupported"));return RenderResult::Failed;}
                     draw.pipeline=*pipeline;
                 }
@@ -1535,6 +1542,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     lighting.indoor.historyValid=indoorHistoryValid_&&previousViewProjectionValid_
                         &&lastSceneWidth_==sceneWidth&&lastSceneHeight_==sceneHeight
                         &&lastIndoorSceneToken_==indoorSceneToken;
+                    lighting.indoor.fogTimeSeconds=static_cast<float>(std::fmod(surfaceElapsedSeconds_,86400.0));
                 }
                 if(camera_&&frame.data->rayTracing.Active())
                 {
@@ -1572,6 +1580,13 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 lighting.cluster.clipFromView=clipFromView;
                 lighting.cluster.nearPlane=camera_->lens.nearPlane;lighting.cluster.farPlane=camera_->lens.farPlane;
             }
+            if(frame.data)
+            {
+                lighting.skySettings.cloudCoverage=frame.data->sky.cloudCoverage;
+                lighting.skySettings.cloudDensity=frame.data->sky.cloudDensity;
+                lighting.skySettings.cloudSpeed=frame.data->sky.cloudSpeed;
+                lighting.skySettings.timeSeconds=static_cast<float>(std::fmod(surfaceElapsedSeconds_,86400.0));
+            }
             if(frame.data&&frame.data->sky.enabled)
             {
                 // W07：项目天空覆盖；太阳方向仍来自场景方向光，圆盘与品牌合成共用同一方向。
@@ -1582,10 +1597,59 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 lighting.skySettings.sunIntensity=frame.data->sky.sunIntensity;
                 lighting.skySettings.sunAngularRadius=frame.data->sky.sunAngularRadius;
             }
+            bool useCustomSkyShader=false;
+            if(frame.data&&!frame.data->sky.shaderAsset.empty()&&frame.data->assets)
+            {
+                const auto skySource=frame.data->assets->Resolve(frame.data->sky.shaderAsset);
+                std::vector<std::uint8_t> skyBytes;
+                if(!skySource.empty()&&flare::asset_io::Read(skySource,skyBytes))
+                {
+                    const auto contentHash=flare::asset_io::Hash(skyBytes);
+                    if(!contentHash.empty()&&contentHash==customSkyShaderKey_&&customSkyPipeline_)
+                    {
+                        useCustomSkyShader=true;
+                    }
+                    else if(!contentHash.empty()&&!failedSkyShaderKeys_.contains(contentHash))
+                    {
+                        const auto stageRoot=frame.data->assets->CacheRoot().empty()
+                            ?(ResourceDirectory()/".shader-cache")
+                            :(frame.data->assets->CacheRoot()/"sky-shaders");
+                        const auto stageDir=stageRoot/contentHash;
+                        std::error_code ec;
+                        std::filesystem::create_directories(stageDir,ec);
+                        const auto builtinShaders=ResourceDirectory()/"Shaders";
+                        for(const char* name:{"Fullscreen.hlsli","UserSkyContract.hlsli","Sky.hlsl"})
+                            std::filesystem::copy_file(builtinShaders/name,stageDir/name,std::filesystem::copy_options::overwrite_existing,ec);
+                        if(flare::asset_io::WriteAtomic(stageDir/"FlareUserSkyBody.hlsli",skyBytes))
+                        {
+                            flare::rhi::PipelineDescription skyDesc{flare::rhi::PipelineKind::Sky,stageDir/"Sky.hlsl",flare::rhi::SkyLayoutVersion};
+                            skyDesc.colorFormat=flare::rhi::ColorFormat::Rgba16Float;
+                            skyDesc.macros.push_back({"SE_USER_SKY","1"});
+                            (void)device_->TakeShaderDiagnostics();
+                            flare::rhi::Pipeline createdSky;
+                            if(device_->CreatePipeline(skyDesc,createdSky))
+                            {
+                                customSkyPipeline_=std::move(createdSky);
+                                customSkyShaderKey_=contentHash;
+                                useCustomSkyShader=true;
+                            }
+                            else
+                            {
+                                failedSkyShaderKeys_.insert(contentHash);
+                                for(const auto& msg:device_->TakeShaderDiagnostics())
+                                    if(!msg.empty()&&frame.data->editorShaderDiagnosticSink)
+                                        frame.data->editorShaderDiagnosticSink("[SkyShader] "+msg);
+                            }
+                        }
+                    }
+                }
+            }
             if(editor&&!frame.data->editorSkyEnabled)
             {
                 lighting.skySettings.zenithColor=lighting.skySettings.horizonColor=lighting.skySettings.groundColor=frame.data->skyColor;
                 lighting.skySettings.sunIntensity=0;
+                lighting.skySettings.cloudCoverage=0;
+                useCustomSkyShader=false;
             }
             // G15：输出 LUT 布局需要 t2；无 LUT 时绑定 1×1 占位，Shader 通过尺寸跳过采样。
             // G15.09：Lighting 使用 FLARE_LUT_FILE 烘出的 strip；BasicLit 只在编辑器有选择时使用 strip。
@@ -1688,7 +1752,7 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                     // 反射、漫反射继续采样 IBL，自定义天空和编辑器的天空开关只决定背景。
                     const bool useProceduralSky=featureEnvironment_&&frame.data&&(frame.data->sky.enabled||(frame.data->todLighting&&frame.data->timeOfDay)
                         ||(frame.data->editorGuiEnabled&&!frame.data->editorSkyEnabled));
-                    const auto sky=useProceduralSky?*featureEnvironmentSky_:*skyPipeline_;
+                    const auto sky=useCustomSkyShader?*customSkyPipeline_:(useProceduralSky?*featureEnvironmentSky_:*skyPipeline_);
                     if(frameGraphEnabled_)
                         result=flare::RecordShadowedFrameGraph(*commands,lighting,shadows,*shadowPipeline_,cascadedFrame?*cascadedOutput_:*outputPipeline_,sky,meshes,casters,environmentBindings?&*environmentBindings:nullptr,
                             settings?&*settings:nullptr,settings?&pipelines:nullptr,overlays,cacheBindings,frameGraph_,sceneWidth,sceneHeight,transparent,
@@ -1701,9 +1765,9 @@ RenderResult SandboxRenderer::Render(const RenderFrame& frame, const Localizatio
                 report(diagnostics);
             }
             else if(frameGraphEnabled_)
-                result=flare::RecordForwardFrameGraph(*commands,lighting,*outputPipeline_,*skyPipeline_,meshes,cacheBindings,
+                result=flare::RecordForwardFrameGraph(*commands,lighting,*outputPipeline_,useCustomSkyShader?*customSkyPipeline_:*skyPipeline_,meshes,cacheBindings,
                     frameGraph_,sceneWidth,sceneHeight,transparent,geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
-            else result=flare::RecordForwardFrame(*commands,lighting,*outputPipeline_,*skyPipeline_,meshes,cacheBindings,transparent,
+            else result=flare::RecordForwardFrame(*commands,lighting,*outputPipeline_,useCustomSkyShader?*customSkyPipeline_:*skyPipeline_,meshes,cacheBindings,transparent,
                 geometrySettings.enabled?&geometrySettings:nullptr,screenSettings?&*screenSettings:nullptr);
         }
         else
@@ -2007,6 +2071,7 @@ void SandboxRenderer::Shutdown() noexcept
     clusteredPipelines_={};
     shadowFilterPipelines_={};
     surfacePipelines_.Clear();
+    customSkyPipeline_.reset();customSkyShaderKey_.clear();failedSkyShaderKeys_.clear();
     shadingResources_.Clear();meshletSubmission_=false;
     featureEnvironmentPipeline_.reset();featureEnvironmentSky_.reset();featureForwardOutput_.reset();featurePbrPipeline_.reset();featureEnvironment_=featureForward_=featureFullPbr_=false;
     cube_.reset();sphere_.reset();pipeline_.reset();instancedPipeline_.reset();forwardInstancedPipeline_.reset();compressedPipeline_.reset();instances_.Clear();outputPipeline_.reset();skyPipeline_.reset();shadowPipeline_.reset();skinnedPipeline_.reset();skinnedShadowPipeline_.reset();skinPaletteStorage_.clear();models_.Clear();models_.SetLodLevels(0);environments_.Clear();post_.Clear();bounds_.Clear();reportedDiagnostics_.clear();device_.reset();

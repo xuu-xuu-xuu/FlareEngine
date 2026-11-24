@@ -75,8 +75,8 @@ bool ValidShadingMaterial(const ShadingMaterialConstants& c)
 {
     for(const auto value:{c.coat,c.sheen,c.anisotropy,c.subsurface,c.subsurfaceColor,c.textureFlags})if(!IsFinite(value))return false;
     const auto unit=[](float value){return value>=0&&value<=1;};
-    return unit(c.coat.x)&&unit(c.coat.y)&&c.coat.z>=-8&&c.coat.z<=8&&unit(c.sheen.x)&&unit(c.sheen.y)&&unit(c.sheen.z)&&unit(c.sheen.w)
-        &&unit(c.anisotropy.x)&&unit(c.subsurface.x)&&c.subsurface.y>=0&&c.subsurface.y<100
+    return unit(c.coat.x)&&unit(c.coat.y)&&c.coat.z>=-8&&c.coat.z<=8&&unit(c.coat.w)&&unit(c.sheen.x)&&unit(c.sheen.y)&&unit(c.sheen.z)&&unit(c.sheen.w)
+        &&unit(c.anisotropy.x)&&c.anisotropy.z>=-1.f&&c.anisotropy.z<=1.f&&unit(c.subsurface.x)&&c.subsurface.y>=0&&c.subsurface.y<100
         &&unit(c.subsurfaceColor.x)&&unit(c.subsurfaceColor.y)&&unit(c.subsurfaceColor.z)
         &&c.textureFlags.x>=0&&c.textureFlags.x<=63&&std::floor(c.textureFlags.x)==c.textureFlags.x;
 }
@@ -94,6 +94,14 @@ bool ValidShadingTexture(const D3D12Texture& texture,bool frame,UINT slot)
     // 只有sheenColor的RGB颜色槽允许现有颜色压缩；与生产LayerData无损缓存一致。
     if(slot!=3)return f==TextureFormat::Rgba8||floating;
     return floating||f==TextureFormat::Rgba8||f==TextureFormat::Bc1Unorm||f==TextureFormat::Bc1UnormSrgb||f==TextureFormat::Bc7Unorm||f==TextureFormat::Bc7UnormSrgb;
+}
+bool ValidUserTexture(const D3D12Texture& texture)
+{
+    if(!texture.resource||!texture.views||texture.views->Count()<2||texture.cube||texture.arrayLayers!=1)return false;
+    const auto f=texture.format;
+    return f==TextureFormat::Rgba8||f==TextureFormat::Rgba16Float||f==TextureFormat::Rgba32Float
+        ||f==TextureFormat::Bc1Unorm||f==TextureFormat::Bc1UnormSrgb||f==TextureFormat::Bc5Unorm
+        ||f==TextureFormat::Bc4Unorm||f==TextureFormat::Bc7Unorm||f==TextureFormat::Bc7UnormSrgb;
 }
 std::atomic<std::uint64_t> nextDevice{1};
 struct Entry {virtual ~Entry()=default;std::uint64_t lastUse=0;};
@@ -380,6 +388,7 @@ struct CommandContext::Impl
     bool depthNormalsRecorded=false,screenSpaceRecorded=false;
     std::array<std::shared_ptr<TextureEntry>,5> shadingTextures;
     std::vector<std::array<std::shared_ptr<TextureEntry>,6>> layerTextures;
+    std::vector<std::array<std::shared_ptr<TextureEntry>,4>> userTextures;
     std::vector<D3D12Mesh> geometry;
     std::vector<DrawIndexed> draws;
     std::vector<std::vector<GeometryCluster>> geometryClusters;
@@ -897,7 +906,9 @@ Result CommandContext::ConfigureForward(const ForwardLighting& lighting,Pipeline
     {
         const auto range=[](float v,float low,float high){return IsFinite(v)&&v>=low&&v<=high;};
         if(!range(indoor.indirectStrength,0,4)||!range(indoor.reflectionStrength,0,1)||!range(indoor.fogDensity,0,1)
-            ||!range(indoor.fogDistance,.1f,500)||!range(indoor.fogAlbedo.x,0,1)||!range(indoor.fogAlbedo.y,0,1)||!range(indoor.fogAlbedo.z,0,1)
+            ||!range(indoor.fogDistance,.1f,5000)||!range(indoor.fogHeightFalloff,0,4)||!range(indoor.fogBaseHeight,-4000,8000)||!range(indoor.fogSunScatter,0,8)
+            ||!range(indoor.fogTurbulence,0,1)||!range(indoor.fogWindSpeed,-50,50)||!IsFinite(indoor.fogTimeSeconds)
+            ||!range(indoor.fogAlbedo.x,0,1)||!range(indoor.fogAlbedo.y,0,1)||!range(indoor.fogAlbedo.z,0,1)
             ||!IsFinite(indoor.view)||!IsFinite(indoor.clipFromView)||!Inverse(indoor.view)||!Inverse(indoor.clipFromView))return Fail(Error::InvalidArgument);
     }
     if(!ValidD3D12RayTracingSettings(lighting.rayTracing))return Fail(Error::InvalidArgument);
@@ -1004,7 +1015,7 @@ Result CommandContext::ConfigureShadows(const ShadowSettings& shadows,PipelineHa
         ||!IsFinite(shadows.normalBias)||shadows.normalBias<0||shadows.normalBias>0.25f)return Fail(Error::InvalidArgument);
     if(shadows.cascadeCount)
     {
-        if(shadows.cascadeCount>3||!IsFinite(shadows.cascadeNear)||shadows.cascadeNear<=0
+        if(shadows.cascadeCount>4||!IsFinite(shadows.cascadeNear)||shadows.cascadeNear<=0
             ||!IsFinite(shadows.cascadeBlend)||shadows.cascadeBlend<0||shadows.cascadeBlend>.5f
             ||!IsFinite(shadows.cascadeViewDepth.x)||!IsFinite(shadows.cascadeViewDepth.y)
             ||!IsFinite(shadows.cascadeViewDepth.z)||!IsFinite(shadows.cascadeViewDepth.w))return Fail(Error::InvalidArgument);
@@ -1073,6 +1084,9 @@ Result CommandContext::ConfigurePostProcess(const PostProcessSettings& settings,
     if(!device||!device->Usable()||impl_->phase||!impl_->forward||impl_->post)return Fail(Error::InvalidState);
     if(!IsFinite(settings.bloomThreshold)||settings.bloomThreshold<0||settings.bloomThreshold>65504
         ||!IsFinite(settings.bloomStrength)||settings.bloomStrength<0||settings.bloomStrength>4
+        ||!IsFinite(settings.vignette)||settings.vignette<0||settings.vignette>1
+        ||!IsFinite(settings.chromaticAberration)||settings.chromaticAberration<0||settings.chromaticAberration>1
+        ||!IsFinite(settings.filmGrain)||settings.filmGrain<0||settings.filmGrain>1
         ||!IsFinite(settings.exposureDeltaSeconds)||settings.exposureDeltaSeconds<0||settings.exposureDeltaSeconds>0.5
         ||!IsFinite(settings.exposureLowPercentile)||settings.exposureLowPercentile<0||settings.exposureLowPercentile>1
         ||!IsFinite(settings.exposureHighPercentile)||settings.exposureHighPercentile<0||settings.exposureHighPercentile>1
@@ -1280,6 +1294,7 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
     if(forward&&IsClustered(pipeline->kind)!=impl_->forward->cluster.enabled)return Fail(Error::Unsupported);
     if(forward&&(pipeline->mesh.prepared->program->source.shadingLayoutVersion!=0)!=impl_->forward->shading.enabled)return Fail(Error::Unsupported);
     std::array<std::shared_ptr<TextureEntry>,6> layerTextures;
+    std::array<std::shared_ptr<TextureEntry>,4> userTextures;
     if(forward&&impl_->forward->shading.enabled)
     {
         if(!ValidShadingMaterial(draw.layers.constants))return Fail(Error::InvalidArgument);
@@ -1291,6 +1306,14 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
             auto textureEntry=device->textures.Get(draw.layers.textures[slot],device->id);if(!textureEntry)return Fail(Error::InvalidHandle);
             if(!device->Ready(*textureEntry))return Fail(Error::InvalidState);
             if(!ValidShadingTexture(textureEntry->native,false,slot))return Fail(Error::Unsupported);layerTextures[slot]=std::move(textureEntry);
+        }
+        for(UINT slot=0;slot<4;++slot)
+        {
+            if(!draw.layers.userTextures[slot])continue;
+            auto textureEntry=device->textures.Get(draw.layers.userTextures[slot],device->id);if(!textureEntry)return Fail(Error::InvalidHandle);
+            if(!device->Ready(*textureEntry))return Fail(Error::InvalidState);
+            if(!ValidUserTexture(textureEntry->native))return Fail(Error::Unsupported);
+            userTextures[slot]=std::move(textureEntry);
         }
     }
     if(shadow&&impl_->shadow->filter.pcss&&!IsShadowFilterLayout(pipeline->mesh.prepared->program->source.layoutVersion))return Fail(Error::Unsupported);
@@ -1326,8 +1349,14 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
     if(environment)source+="Environment:";
     if(forward&&impl_->forward->shading.enabled)
     {
-        source+="Shading:";
+        source+=draw.alphaMode==MaterialAlphaMode::Blend?"ShadingTrans:":"Shading:";
         for(const auto& textureEntry:layerTextures)source+=textureEntry?std::to_string(textureEntry->native.views->Cpu().ptr)+":":"white:";
+        for(UINT slot=0;slot<4;++slot)
+        {
+            const auto& textureEntry=userTextures[slot];
+            source+=textureEntry?std::to_string(textureEntry->native.views->Cpu(draw.layers.userTextureLinear[slot]?1:0).ptr)+":"
+                :("def"+std::to_string(draw.layers.userTextureDefaults[slot])+":");
+        }
     }
     if(!impl_->descriptors.contains(source)&&(impl_->descriptors.size()+1)*((environment?7:shadow?4:pbr?3:1)+(IsClustered(pipeline->kind)?4:0)+(forward&&impl_->forward->shading.enabled?D3D12ShadingTextureCount:0))>device->presentation.frames[0].descriptors.Maximum())
     {++device->descriptorRejections;return Fail(Error::CapacityExceeded);}
@@ -1343,6 +1372,7 @@ Result CommandContext::DrawInstanced(const DrawIndexed& draw,std::span<const Ins
     if(forward&&impl_->forward->shading.enabled)
     {
         for(const auto& entry:layerTextures)if(entry)impl_->leases.push_back(entry);impl_->layerTextures.push_back(std::move(layerTextures));
+        for(const auto& entry:userTextures)if(entry)impl_->leases.push_back(entry);impl_->userTextures.push_back(std::move(userTextures));
     }
     impl_->drawPipelines.push_back(pipeline);
     if(!impl_->pipeline){impl_->pipeline=pipeline;impl_->pipelineHandle=draw.pipeline;impl_->viewProjection=draw.viewProjection;}
@@ -1420,7 +1450,12 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
         draws.back().userParams=draw.userParams;
         draws.back().worldBounds=draw.worldBounds;draws.back().hasWorldBounds=draw.hasWorldBounds;draws.back().geometryClusters=draw.geometryClusters;
         if(c.forward&&c.forward->shading.enabled)
+        {
             for(UINT slot=0;slot<6;++slot)if(c.layerTextures[i][slot])draws.back().layerTextures[slot]=&c.layerTextures[i][slot]->native;
+            draws.back().userTextureDefaults=draw.layers.userTextureDefaults;
+            draws.back().userTextureLinear=draw.layers.userTextureLinear;
+            for(UINT slot=0;slot<4;++slot)if(c.userTextures[i][slot])draws.back().userTextures[slot]=&c.userTextures[i][slot]->native;
+        }
     }
     // G06.08：批处理对象必须活到 RenderD3D12Frame 返回；这里只做本地借用。
     D3D12FrameContent content;content.viewProjection=c.viewProjection;content.meshes=draws;content.opaqueDrawCount=c.transparentPass?c.opaqueDrawCount:draws.size();content.sourceFrame=c.sourceFrame;content.cacheOpaqueBindings=c.cacheOpaqueBindings;
@@ -1668,7 +1703,7 @@ Result Device::Submit(CommandContext& commands,CompletionToken& token,Image* cap
     for(const auto& entry:c.leases)entry->lastUse=std::max(entry->lastUse,fence);
     impl_->inFlight.push_back({fence,std::move(c.leases)});impl_->pending.clear();
     c.geometry.clear();c.draws.clear();c.drawPipelines.clear();c.instances.clear();c.shadowGeometry.clear();c.shadowWorlds.clear();
-    c.layerTextures.clear();c.shadingTextures={};c.geometryClusters.clear();
+    c.layerTextures.clear();c.userTextures.clear();c.shadingTextures={};c.geometryClusters.clear();
     c.shadowMaterials.clear();c.shadowPalettes.clear();c.shadowJointCounts.clear();c.shadowJointOffsets.clear();c.shadowPipelines.clear();c.pipeline.reset();c.outputPipeline.reset();c.skyPipeline.reset();c.shadowPipeline.reset();
     c.occlusion={};
     c.guiScene.reset();c.guiComposite.reset();c.guiPipeline.reset();c.guiTextures.clear();c.guiGeometry={};c.phase=6;

@@ -72,6 +72,8 @@ bool IsAssetPathCompatible(std::string_view assetPathUtf8, std::string_view acce
     if (acceptedKind == "scene") return endsWith(".scene.json");
     if (acceptedKind == "shader")
         return endsWith(".fshader.hlsl") || endsWith(".fshader.json") || endsWith(".sebin");
+    if (acceptedKind == "skyshader")
+        return endsWith(".sky.hlsl") || (endsWith(".hlsl") && !endsWith(".fshader.hlsl"));
     return true;
 }
 

@@ -90,10 +90,12 @@ float AoUpsample(int2 pixel,float3 center,float3 normal)
                 if(value.y>.5&&AoReadSurface(min(halfPixel*2,int2(aoViewport.xy)-1),samplePosition,sampleNormal))
                 {
                     float difference=abs(samplePosition.z-center.z),agreement=dot(normal,sampleNormal);
-                    // 任一边界失配就拒绝，不能用AND把前景/背景或薄片边缘混在一起。
-                    if(difference<=depthLimit&&agreement>=.8)
+                    bool closeContact=difference<=depthLimit*0.16;
+                    // 深度边界严格拒绝前景/背景混色；零深度差的真实接触根部允许跨折角保留根部遮蔽。
+                    if(difference<=depthLimit&&agreement>=(closeContact?0.35:0.8))
                     {
-                        float weight=exp2(-4*difference/max(depthLimit,1e-6))*pow(saturate(agreement),8)/(1+tapX*tapX+tapY*tapY);
+                        float effectiveAgreement=closeContact?max(agreement,0.72):agreement;
+                        float weight=exp2(-4*difference/max(depthLimit,1e-6))*pow(saturate(effectiveAgreement),8)/(1+tapX*tapX+tapY*tapY);
                         // 累加遮挡量而非可见度：常量白输入恒为0，避免a/a倒数优化后半精度变暗。
                         weighted+=(1-saturate(value.x))*weight;total+=weight;
                     }

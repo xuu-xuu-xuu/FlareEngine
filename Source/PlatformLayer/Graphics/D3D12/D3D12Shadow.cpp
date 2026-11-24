@@ -91,7 +91,7 @@ bool ValidateShadowDraws(D3D12FrameContext& frame,const D3D12FrameContent& conte
 }
 bool RecordLayers(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12FrameContent& content,
     D3D12ShadowTarget& target,std::span<const flare::Mat4> matrices,bool enabled,
-    const std::array<std::uint64_t,3>* staticCacheHashes,D3D12StateRecording& states,const Localization& text)
+    const std::array<std::uint64_t,4>* staticCacheHashes,D3D12StateRecording& states,const Localization& text)
 {
     auto& commands=*p.commandList.Get();const auto& pipeline=*content.shadowPipeline;
     std::vector<size_t> staticIndices,dynamicIndices;
@@ -218,7 +218,7 @@ bool PrepareD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D1
     if(resolution<256||resolution>4096||((resolution&(resolution-1))&&!(cascaded&&resolution==1536))||!flare::IsFinite(content.shadow->clipFromWorld))
         return CheckGraphicsResult(E_INVALIDARG,text,"D3D12.ShadowTargetsFailed");
     if(!AcquireTarget(p,resolution,cascaded?content.shadow->cascadeCount:1,cascaded,false,frame.shadow,text))return false;
-    if(content.shadow->staticShadowCache&&content.shadow->enabled&&!frame.shadow->staticCacheDepth&&frame.shadow->layers<=3)
+    if(content.shadow->staticShadowCache&&content.shadow->enabled&&!frame.shadow->staticCacheDepth&&frame.shadow->layers<=4)
     {
         Microsoft::WRL::ComPtr<ID3D12Device> device;if(FAILED(p.queue->GetDevice(IID_PPV_ARGS(device.GetAddressOf()))))return false;
         D3D12_RESOURCE_DESC desc{};desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=desc.Height=resolution;
@@ -255,7 +255,7 @@ bool RecordD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12
     const auto& settings=*content.shadow;
     const auto matrices=settings.cascadeCount?std::span<const flare::Mat4>(settings.cascadeClipFromWorld).first(settings.cascadeCount):
         std::span<const flare::Mat4>(&settings.clipFromWorld,1);
-    const auto* staticHashes=(settings.staticShadowCache&&settings.enabled&&frame.shadow->staticCacheDepth&&frame.shadow->layers<=3)
+    const auto* staticHashes=(settings.staticShadowCache&&settings.enabled&&frame.shadow->staticCacheDepth&&frame.shadow->layers<=4)
         ?&settings.staticCascadeHashes:nullptr;
     if(!RecordLayers(p,frame,content,*frame.shadow,matrices,settings.enabled,staticHashes,states,text))return false;
     if(frame.shading&&frame.shading->localShadow)
@@ -266,7 +266,7 @@ bool RecordD3D12Shadow(D3D12Presentation& p,D3D12FrameContext& frame,const D3D12
 bool PrepareD3D12ShadowFilterConstants(const flare::rhi::ShadowSettings& settings,flare::rhi::ShadowFilterConstants& output)
 {
     const auto& filter=settings.filter;
-    if(settings.cascadeCount<1||settings.cascadeCount>3||!settings.resolution
+    if(settings.cascadeCount<1||settings.cascadeCount>4||!settings.resolution
         ||!flare::IsFinite(filter.angularRadius)||filter.angularRadius<0||filter.angularRadius>.2f
         ||!flare::IsFinite(filter.blockerSearchDistance)||filter.blockerSearchDistance<.01f||filter.blockerSearchDistance>100
         ||!flare::IsFinite(filter.maximumRadiusTexels)||filter.maximumRadiusTexels<1||filter.maximumRadiusTexels>32

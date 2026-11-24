@@ -12,13 +12,14 @@ class MaterialSurfacePipelineCache
 {
 public:
     rhi::Pipeline Load(rhi::Device& device,const std::filesystem::path& shaders,rhi::PipelineKind kind,
-        MaterialAlphaMode mode,bool skinned=false,bool filtered=false,bool compressed=false,bool normalBc5=false,bool shading=false);
+        MaterialAlphaMode mode,bool skinned=false,bool filtered=false,bool compressed=false,bool normalBc5=false,bool shading=false,
+        bool anisotropic=false);
     rhi::Pipeline LoadUserSurface(rhi::Device& device,const std::filesystem::path& builtinShaders,
         const std::filesystem::path& cacheRoot,const UserSurfaceShaderSource& userShader,rhi::PipelineKind kind,
         MaterialAlphaMode mode,bool skinned,bool filtered,bool compressed,bool normalBc5,bool shading,
         std::vector<std::string>& outDiagnostics,const SurfaceShaderMetadata** outFallbackMetadata=nullptr,
         std::size_t passIndex=0,rhi::BlendMode blendOverride=rhi::BlendMode::Opaque,
-        rhi::DepthMode depthOverride=rhi::DepthMode::Default);
+        rhi::DepthMode depthOverride=rhi::DepthMode::Default,bool anisotropic=false);
     void Clear() noexcept
     {
         pipelines_.clear();
@@ -33,9 +34,9 @@ private:
         rhi::Pipeline pipeline;
         SurfaceShaderMetadata metadata;
     };
-    using Key=std::tuple<std::filesystem::path,rhi::PipelineKind,MaterialAlphaMode,bool,bool,bool,bool,bool>;
-    using UserKey=std::tuple<std::string,std::size_t,rhi::PipelineKind,MaterialAlphaMode,rhi::BlendMode,rhi::DepthMode,bool,bool,bool,bool,bool>;
-    using SourceFallbackKey=std::tuple<std::filesystem::path,std::size_t,rhi::PipelineKind,MaterialAlphaMode,rhi::BlendMode,rhi::DepthMode,bool,bool,bool,bool,bool>;
+    using Key=std::tuple<std::filesystem::path,rhi::PipelineKind,MaterialAlphaMode,bool,bool,bool,bool,bool,bool>;
+    using UserKey=std::tuple<std::string,std::size_t,rhi::PipelineKind,MaterialAlphaMode,rhi::BlendMode,rhi::DepthMode,bool,bool,bool,bool,bool,bool>;
+    using SourceFallbackKey=std::tuple<std::filesystem::path,std::size_t,rhi::PipelineKind,MaterialAlphaMode,rhi::BlendMode,rhi::DepthMode,bool,bool,bool,bool,bool,bool>;
     std::map<Key,rhi::Pipeline> pipelines_;
     std::map<UserKey,rhi::Pipeline> userPipelines_;
     std::map<SourceFallbackKey,FallbackUserPipeline> lastGoodUserPipelines_;

@@ -30,6 +30,7 @@ struct PbrRenderMaterial
     std::array<Vec4,8> userParams{};
     rhi::ShadingMaterialBindings layers;
     std::array<rhi::Texture,6> layerTextures{}; // b6 六贴图的自有句柄，顺序与 t19..24 相同。
+    std::array<rhi::Texture,4> userTextures{};  // 自定义表面着色器额外贴图的自有句柄（t28..t31）。
 };
 // W03：skinned 表示顶点缓冲是 80 字节 v3 布局（rhi::SkinnedVertex），
 // skinJointCount 是资产的关节数，用于校验调色板大小；静态网格保持 48 字节参考布局。
@@ -83,6 +84,8 @@ public:
     // 切换前由调用方排空GPU；保留派生磁盘目录，按格式/编码器键失效。
     void EnableBc7Colors(bool enabled,std::filesystem::path bakeDirectory={});
     bool Bc7ColorsEnabled() const noexcept {return bc7Colors_;}
+    void SetRgba8Mipmaps(bool enabled){if(enabled!=rgba8Mipmaps_){Clear();rgba8Mipmaps_=enabled;}}
+    bool Rgba8MipmapsEnabled() const noexcept {return rgba8Mipmaps_;}
     std::size_t BakedTextureCount() const noexcept {return bakeCache_.Count();}
     std::uint64_t BakedTextureBytes() const noexcept {return bakeCache_.Bytes();}
     std::uint64_t CompressedUploads() const noexcept {return compressedUploads_;}
@@ -114,7 +117,7 @@ private:
     struct MaterialRevision
     {
         std::shared_ptr<const MaterialDocument> source;
-        std::array<std::shared_ptr<const ImageData>,9> images;
+        std::array<std::shared_ptr<const ImageData>,13> images;
         std::shared_ptr<const PbrRenderMaterial> gpu;
         std::string previewKey;
         std::string shaderKey; // 用户产物内容 SHA-256；空表示默认 PBR。
@@ -128,6 +131,7 @@ private:
     bool bc1DataTextures_=false;
     bool bc5Normals_=false;
     bool bc7Colors_=false;
+    bool rgba8Mipmaps_=false;
     std::uint64_t compressedUploads_=0;
     TextureBakeCache bakeCache_;
     TextureResidency residency_{512ull*1024*1024};

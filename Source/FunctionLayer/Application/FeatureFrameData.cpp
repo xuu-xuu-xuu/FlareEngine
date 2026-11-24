@@ -64,6 +64,7 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame,RenderDefaults de
         frame.sceneRenderSettings=true;frame.exposure=number("render.exposure");frame.acesToneMap=flag("render.aces");frame.modelLod=flag("render.lod");frame.fullPbr=flag("render.fullPbr");
         frame.instancing=flag("render.instancing");frame.occlusion=flag("render.occlusion");frame.occlusionCounters=flag("render.occlusionCounters");frame.occlusionTiming=flag("render.occlusionTiming");frame.frameGraph=flag("render.frameGraph");
         frame.multiscatter=flag("render.multiscatter");frame.specularAA=flag("render.specularAA");
+        frame.anisotropicFiltering=flag("render.anisotropicFiltering");
         frame.bc7Color=flag("render.bc7Color");
         frame.indoor.indirect=flag("render.indirect");
         frame.indoor.indirectStrength=number("render.indirectStrength");
@@ -73,6 +74,28 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame,RenderDefaults de
         frame.indoor.fogDensity=number("render.fogDensity");
         frame.indoor.fogDistance=number("render.fogDistance");
         frame.indoor.fogAlbedo=std::get<Vec3>(get("render.fogAlbedo"));
+        frame.indoor.fogHeightFalloff=number("render.fogHeightFalloff");
+        frame.indoor.fogBaseHeight=number("render.fogBaseHeight");
+        frame.indoor.fogSunScatter=number("render.fogSunScatter");
+        frame.indoor.fogTurbulence=number("render.fogTurbulence");
+        frame.indoor.fogWindSpeed=number("render.fogWindSpeed");
+        frame.sky.cloudCoverage=number("render.cloudCoverage");
+        frame.sky.cloudDensity=number("render.cloudDensity");
+        frame.sky.cloudSpeed=number("render.cloudSpeed");
+        frame.sky.shaderAsset=std::get<std::string>(get("render.skyShader"));
+        if(flag("render.proceduralSky")||!frame.sky.shaderAsset.empty())
+        {
+            frame.sky.enabled=true;
+            frame.sky.zenith=std::get<Vec3>(get("render.skyZenithColor"));
+            frame.sky.horizon=std::get<Vec3>(get("render.skyHorizonColor"));
+            frame.sky.ground=std::get<Vec3>(get("render.skyGroundColor"));
+            for(const auto& item:frame.lights)if(item.light.type==LightType::Directional)
+            {
+                frame.sky.sunColor=Clamp01(item.light.color);
+                frame.sky.sunIntensity=std::clamp(item.light.intensity*3.0f,0.0f,1000.0f);
+                break;
+            }
+        }
         frame.rayTracing={};
         frame.rayTracing.enabled=flag("render.rayTracing");
         frame.rayTracing.shadows=flag("render.rtShadows");
@@ -107,6 +130,7 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame,RenderDefaults de
         frame.shadow.cascadeCount=static_cast<std::uint32_t>(number("render.cascadeCount"));
         frame.shadow.cascadeResolution=static_cast<std::uint32_t>(number("render.cascadeResolution"));
         frame.shadow.cascadeDistance=number("render.cascadeDistance");
+        frame.shadow.cascadeSplitLambda=number("render.cascadeSplitLambda");
         frame.shadow.cascadeDepthBias=number("render.cascadeBias");frame.shadow.cascadeSlopeBias=number("render.cascadeSlopeBias");
         frame.shadow.cascadeNormalBias=number("render.cascadeNormalBias");
         frame.shadow.filter.pcss=flag("render.shadowPcss");
@@ -119,6 +143,7 @@ void ApplyFeatureFrameData(const World& world,FrameData& frame,RenderDefaults de
         {
             rhi::PostProcessSettings settings;settings.bloom=flag("render.bloom");settings.bloomThreshold=number("render.bloomThreshold");settings.bloomStrength=number("render.bloomStrength");
             settings.fxaa=flag("render.fxaa");settings.taa=flag("render.taa");settings.supersample4x=flag("render.supersample4x");settings.autoExposure=flag("render.autoExposure");settings.lutEnabled=flag("render.lutEnabled");
+            settings.vignette=number("render.vignette");settings.chromaticAberration=number("render.chromaticAberration");settings.filmGrain=number("render.filmGrain");
             settings.transientAliasing=frame.transientAliasing;
             const auto lift=std::get<Vec3>(get("render.lutLift")),gamma=std::get<Vec3>(get("render.lutGamma")),gain=std::get<Vec3>(get("render.lutGain"));
             const float l[]{lift.x,lift.y,lift.z},g[]{gamma.x,gamma.y,gamma.z},n[]{gain.x,gain.y,gain.z};

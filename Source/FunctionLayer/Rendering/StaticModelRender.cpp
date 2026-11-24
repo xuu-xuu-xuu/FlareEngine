@@ -6,8 +6,10 @@
 #include "FunctionLayer/Rendering/MeshOptimization.h"
 #include "ResourceLayer/Assets/AssetTasks.h"
 #include "ResourceLayer/Assets/AssetIO.h"
+#include "ResourceLayer/Assets/TextureMip.h"
 #include "CoreLayer/Hash.h"
 #include <algorithm>
+#include <bit>
 #include <utility>
 #include <unordered_set>
 
@@ -57,12 +59,13 @@ struct BatchGuard
     rhi::Result Finish(){finished=true;rhi::CompletionToken token;return device.EndUploadBatch(token);}
 };
 void ConfigureLayers(const ClearCoatParameters& coat,const SheenParameters& sheen,const AnisotropyParameters& anisotropy,
-    const SubsurfaceParameters& subsurface,PbrRenderMaterial& output,std::string_view name,std::vector<AssetDiagnostic>& diagnostics)
+    const SubsurfaceParameters& subsurface,PbrRenderMaterial& output,std::string_view name,std::vector<AssetDiagnostic>& diagnostics,
+    float occlusionStrength=0.f,float specular=0.5f)
 {
     auto& c=output.layers.constants;
-    c.coat={coat.weight,coat.roughness,NormalScale(coat.normalScale,name,diagnostics),0};
+    c.coat={coat.weight,coat.roughness,NormalScale(coat.normalScale,name,diagnostics),std::clamp(occlusionStrength,0.f,1.f)};
     c.sheen={sheen.color.x,sheen.color.y,sheen.color.z,sheen.roughness};
-    c.anisotropy={anisotropy.strength,std::remainder(anisotropy.rotation,2*Pi),0,0};
+    c.anisotropy={anisotropy.strength,std::remainder(anisotropy.rotation,2*Pi),std::clamp(specular*2.f-1.f,-1.f,1.f),0};
     c.subsurface={subsurface.weight,subsurface.radius,0,0};c.subsurfaceColor={subsurface.color.x,subsurface.color.y,subsurface.color.z,0};
 }
 void BindLayerTextures(PbrRenderMaterial& material)
@@ -71,6 +74,8 @@ void BindLayerTextures(PbrRenderMaterial& material)
     for(std::size_t i=0;i<material.layerTextures.size();++i)if(material.layerTextures[i])
     {material.layers.textures[i]=*material.layerTextures[i];flags|=1u<<i;}
     material.layers.constants.textureFlags={float(flags),0,0,0};
+    for(std::size_t i=0;i<material.userTextures.size();++i)
+        material.layers.userTextures[i]=material.userTextures[i]?*material.userTextures[i]:rhi::TextureHandle{};
 }
 }
 
@@ -188,6 +193,30 @@ bool StaticModelRenderCache::UploadTexture(const ImageData& image,std::string_vi
     auto found=textures_.find(key);
     texture=found==textures_.end()?rhi::Texture{}:found->second.handle.lock();
     if(texture)return true;
+    if(rgba8Mipmaps_&&(image.width>=4||image.height>=4))
+    {
+        const auto mipCount=static_cast<std::uint32_t>(std::bit_width((std::max)(image.width,image.height)));
+        std::vector<std::vector<std::uint8_t>> mipChain;
+        mipChain.reserve(mipCount>1?mipCount-1:0);
+        std::vector<rhi::TextureSubresource> subresources;
+        subresources.reserve(mipCount);
+        subresources.push_back({image.rgba8,0});
+        std::span<const std::uint8_t> prevBytes=image.rgba8;
+        std::uint32_t prevW=image.width,prevH=image.height;
+        for(std::uint32_t mip=1;mip<mipCount;++mip)
+        {
+            std::vector<std::uint8_t> nextBytes;
+            std::uint32_t nextW=1,nextH=1;
+            asset_mip::DownsampleHalf(prevBytes,prevW,prevH,nextBytes,nextW,nextH);
+            mipChain.push_back(std::move(nextBytes));
+            prevBytes=mipChain.back();prevW=nextW;prevH=nextH;
+            subresources.push_back({prevBytes,0});
+        }
+        const auto mipResult=device.CreateTextureSubresources(
+            {image.width,image.height,mipCount,1,rhi::TextureFormat::Rgba8,std::string(name)},subresources,texture);
+        if(!mipResult){asset_io::Diagnostic(diagnostics,mipResult.Key(),std::string(name));return false;}
+        textures_.insert_or_assign(key,TextureEntry{texture,mipCount,0,0});return true;
+    }
     const auto result=device.CreateTexture({image.width,image.height,1,1,rhi::TextureFormat::Rgba8,std::string(name)},image.rgba8,texture);
     if(!result){asset_io::Diagnostic(diagnostics,result.Key(),std::string(name));return false;}
     textures_.insert_or_assign(key,TextureEntry{texture,1,0,0});return true;
@@ -542,10 +571,23 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
             asset_io::Diagnostic(diagnostics,"Material.ShaderFallback",source->shader);
         }
     }
-    const AssetId ids[]{source->baseColorTexture,source->normalTexture,source->metallicRoughnessTexture,
+    AssetId ids[13]{source->baseColorTexture,source->normalTexture,source->metallicRoughnessTexture,
         source->clearCoatWeightTexture,source->clearCoatRoughnessTexture,source->clearCoatNormalTexture,source->sheenColorTexture,source->sheenRoughnessTexture,source->anisotropyTexture};
-    std::array<std::shared_ptr<const ImageData>,9> images;
-    for(std::size_t index=0;index<9;++index)if(!ids[index].empty())
+    std::array<std::uint8_t,4> userDefKinds{};
+    std::array<bool,4> userLinear{};
+    if(loadedUserSurface)
+    {
+        for(const auto& texMeta:loadedUserSurface->metadata.textures)
+        {
+            if(texMeta.slotIndex>=4)continue;
+            userDefKinds[texMeta.slotIndex]=static_cast<std::uint8_t>(texMeta.defaultKind);
+            userLinear[texMeta.slotIndex]=(texMeta.defaultKind==SurfaceTextureDefault::Bump);
+            if(const auto it=source->shaderTextures.find(texMeta.name);it!=source->shaderTextures.end())
+                ids[9+texMeta.slotIndex]=it->second;
+        }
+    }
+    std::array<std::shared_ptr<const ImageData>,13> images;
+    for(std::size_t index=0;index<13;++index)if(!ids[index].empty())
     {images[index]=assets.LoadTextureImage(ids[index],diagnostics);if(!images[index])return old;}
     if(previous!=materials_.end()&&previous->second.source==source&&previous->second.images==images
         &&previous->second.previewKey==previewKey&&previous->second.shaderKey==shaderKey)return old;
@@ -558,14 +600,20 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
         if(loadedUserSurface->metadata.doubleSidedOverride)gpu->doubleSided=*loadedUserSurface->metadata.doubleSidedOverride;
         gpu->userParams=PackSurfaceShaderParameters(loadedUserSurface->metadata,source->shaderParameters);
         gpu->userSurface=loadedUserSurface;
+        gpu->layers.userTextureDefaults=userDefKinds;
+        gpu->layers.userTextureLinear=userLinear;
     }
     gpu->normalScale=NormalScale(source->normalScale,source->name,diagnostics);gpu->normalMapping=!source->normalTexture.empty();
-    ConfigureLayers(source->clearCoat,source->sheen,source->anisotropy,source->subsurface,*gpu,source->name,diagnostics);
-    rhi::Texture* targets[]{&gpu->baseColor,&gpu->normal,&gpu->metallicRoughness,&gpu->layerTextures[0],&gpu->layerTextures[1],&gpu->layerTextures[2],&gpu->layerTextures[3],&gpu->layerTextures[4],&gpu->layerTextures[5]};
-    const auto roleFor=[&](std::size_t index){return index>=3?(index==6?TextureRole::LayerColor:TextureRole::LayerData)
-        :index==0?((gpu->alphaMode==MaterialAlphaMode::Opaque&&!(loadedUserSurface&&loadedUserSurface->metadata.usesAlphaCoverage))?TextureRole::Color:TextureRole::CoverageColor):index==1?TextureRole::Normal:TextureRole::Data;};
-    std::array<const ImageData*,9> pixels{};std::array<std::string,9> keys;bool needsUpload=false;
-    for(std::size_t index=0;index<9;++index)
+    ConfigureLayers(source->clearCoat,source->sheen,source->anisotropy,source->subsurface,*gpu,source->name,diagnostics,source->occlusionStrength,source->specular);
+    rhi::Texture* targets[]{&gpu->baseColor,&gpu->normal,&gpu->metallicRoughness,&gpu->layerTextures[0],&gpu->layerTextures[1],&gpu->layerTextures[2],&gpu->layerTextures[3],&gpu->layerTextures[4],&gpu->layerTextures[5],
+        &gpu->userTextures[0],&gpu->userTextures[1],&gpu->userTextures[2],&gpu->userTextures[3]};
+    const auto roleFor=[&](std::size_t index){
+        if(index>=9)return userLinear[index-9]?TextureRole::LayerData:TextureRole::LayerColor;
+        return index>=3?(index==6?TextureRole::LayerColor:TextureRole::LayerData)
+            :index==0?((gpu->alphaMode==MaterialAlphaMode::Opaque&&!(loadedUserSurface&&loadedUserSurface->metadata.usesAlphaCoverage))?TextureRole::Color:TextureRole::CoverageColor):index==1?TextureRole::Normal:TextureRole::Data;
+    };
+    std::array<const ImageData*,13> pixels{};std::array<std::string,13> keys;bool needsUpload=false;
+    for(std::size_t index=0;index<13;++index)
     {
         if(index>=3&&!images[index])continue;
         pixels[index]=images[index]?images[index].get():&DefaultTextureImage(index==1?DefaultTextureKind::FlatNormal:DefaultTextureKind::White);
@@ -576,14 +624,40 @@ std::shared_ptr<const PbrRenderMaterial> StaticModelRenderCache::LoadMaterial(As
     }
     if(needsUpload)
     {
-        auto result=device.BeginUploadBatch();if(!result){asset_io::Diagnostic(diagnostics,result.Key(),id);return old;}
-        BatchGuard batch{device};
-        for(std::size_t index=0;index<9;++index)
+        // 多贴图高分辨率材质（如 4K 图集 + 多槽自定义 2D 贴图）未压缩 mip 链总和可超单帧 256 MB 上传池；
+        // 按 128 MB 阈值分批提交 UploadBatch，普通材质仍保持单批次零额外开销。
+        constexpr std::uint64_t maxBatchBytes=128ull*1024*1024;
+        struct ScopedUploadBatch
         {
-            if(!pixels[index])continue;const auto role=roleFor(index);
-            if(!*targets[index]&&!UploadTexture(*pixels[index],source->name,device,*targets[index],diagnostics,keys[index],role))return old;
+            rhi::Device* dev=nullptr;
+            ~ScopedUploadBatch(){if(dev){rhi::CompletionToken ignored;dev->EndUploadBatch(ignored);}}
+            rhi::Result Flush(){auto* d=std::exchange(dev,nullptr);rhi::CompletionToken token;return d->EndUploadBatch(token);}
+        } activeBatch;
+        std::uint64_t batchBytes=0;
+        for(std::size_t index=0;index<13;++index)
+        {
+            if(!pixels[index]||*targets[index])continue;
+            const auto estBytes=static_cast<std::uint64_t>(pixels[index]->rgba8.size())*3ull/2ull+65536ull;
+            if(activeBatch.dev&&batchBytes>0&&batchBytes+estBytes>maxBatchBytes)
+            {
+                const auto flushed=activeBatch.Flush();batchBytes=0;
+                if(!flushed){asset_io::Diagnostic(diagnostics,flushed.Key(),id);return old;}
+            }
+            if(!activeBatch.dev)
+            {
+                const auto started=device.BeginUploadBatch();
+                if(!started){asset_io::Diagnostic(diagnostics,started.Key(),id);return old;}
+                activeBatch.dev=&device;
+            }
+            const auto role=roleFor(index);
+            if(!UploadTexture(*pixels[index],source->name,device,*targets[index],diagnostics,keys[index],role))return old;
+            batchBytes+=estBytes;
         }
-        result=batch.Finish();if(!result){asset_io::Diagnostic(diagnostics,result.Key(),id);return old;}
+        if(activeBatch.dev)
+        {
+            const auto finished=activeBatch.Flush();
+            if(!finished){asset_io::Diagnostic(diagnostics,finished.Key(),id);return old;}
+        }
     }
     BindLayerTextures(*gpu);
     if(!shaderKey.empty()&&!loadedUserSurface)
@@ -705,9 +779,10 @@ void AppendPbrModelDraws(const StaticRenderModel& model,const Mat4& entityWorld,
         // W03：蒙皮部件按 80 字节布局绘制；调色板或蒙皮 PSO 缺失时不画（绝不按参考布局误读）。
         if(mesh.skinned&&(skinPalette.empty()||!skinPipeline||!skinJointCount))continue;
         const auto indices=LevelIndices(mesh,lodLevel);
+        const bool userUnlit=material->userSurface&&material->userSurface->metadata.shadingModel==SurfaceShadingModel::Unlit;
         rhi::DrawIndexed draw{*mesh.vertices,*indices,*material->baseColor,
             mesh.skinned?skinPipeline:(material->pipeline?*material->pipeline:pipeline),DrawWorld(model,part,entityWorld),viewProjection,
-            material->color,false,model.fallbackMeshes[part.mesh]&&!overridden};
+            material->color,false,(model.fallbackMeshes[part.mesh]&&!overridden)||userUnlit};
         draw.normalTexture=*material->normal;draw.metallicRoughnessTexture=*material->metallicRoughness;
         draw.alphaMode=material->alphaMode;draw.alphaCutoff=material->alphaCutoff;
         draw.layers=material->layers;

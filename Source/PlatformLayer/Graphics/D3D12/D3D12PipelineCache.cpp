@@ -54,7 +54,7 @@ D3D12PipelineCache::D3D12PipelineCache(ID3D12Device& device):impl_(std::make_uni
     // W06：逐绘制常量新增外观覆盖/蒙皮槽（PbrDrawConstants 288→320），旧库条目不再兼容，提升到 v4。
     // W03：根签名扩到 5 个参数（t8 调色板）、v3 顶点布局、31 号绑定布局与 Skinning.hlsli 进入
     // 着色器依赖；旧 v4 库条目的键与本版本不同，提升到 v5 直接作废旧库。
-    static constexpr const char* libraryVersion="v5";
+    static constexpr const char* libraryVersion="v6";
     std::ostringstream name;name<<"library-"<<libraryVersion<<"-"<<std::hex<<luid.HighPart<<"-"<<luid.LowPart<<".bin";
     p.libraryPath=directory/name.str();
     if(std::filesystem::exists(p.libraryPath,error)&&!error)
@@ -163,7 +163,7 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
     D3D12_ROOT_PARAMETER parameters[16]{};
     parameters[0].ParameterType=mesh?D3D12_ROOT_PARAMETER_TYPE_CBV:D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     parameters[0].ShaderVisibility=mesh||environmentSky||overlay?D3D12_SHADER_VISIBILITY_ALL:fullscreen?D3D12_SHADER_VISIBILITY_PIXEL:D3D12_SHADER_VISIBILITY_VERTEX;
-    if(!mesh)parameters[0].Constants={0,0,description.kind==rhi::PipelineKind::Sky?40u:post?12u:environmentSky?20u:fullscreen?4u:16u};
+    if(!mesh)parameters[0].Constants={0,0,description.kind==rhi::PipelineKind::Sky?44u:post?12u:environmentSky?20u:fullscreen?4u:16u};
     if(gui)parameters[0].Constants={0,0,4};
     const bool userSurf=(description.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion);
     parameters[1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;parameters[1].DescriptorTable={1,&range};parameters[1].ShaderVisibility=userSurf?D3D12_SHADER_VISIBILITY_ALL:D3D12_SHADER_VISIBILITY_PIXEL;
@@ -178,8 +178,8 @@ std::shared_ptr<const D3D12PreparedPipeline> D3D12PipelineCache::Prepare(const r
         parameters[bonesParameter].Descriptor={8,0};
         parameters[bonesParameter].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
     }
-    D3D12_STATIC_SAMPLER_DESC sampler{};sampler.Filter=D3D12_FILTER_MIN_MAG_MIP_POINT;sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-    sampler.MaxAnisotropy=1;sampler.ComparisonFunc=D3D12_COMPARISON_FUNC_ALWAYS;sampler.BorderColor=D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+    D3D12_STATIC_SAMPLER_DESC sampler{};sampler.Filter=description.anisotropicSampling?D3D12_FILTER_ANISOTROPIC:D3D12_FILTER_MIN_MAG_MIP_POINT;sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sampler.MaxAnisotropy=description.anisotropicSampling?16u:1u;sampler.ComparisonFunc=D3D12_COMPARISON_FUNC_ALWAYS;sampler.BorderColor=D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
     sampler.MaxLOD=D3D12_FLOAT32_MAX;sampler.ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC samplers[]{sampler,sampler,sampler};
     if(userSurf)samplers[0].ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;

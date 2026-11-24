@@ -918,7 +918,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     if(!PrepareD3D12AmbientOcclusion(presentation,frame,aoContent,rasterWidth,rasterHeight,localization))
     {presentation.commandList->Close();return false;}
     SyncD3D12RayTracingScreenFallback(frame);
-    if(!PrepareD3D12ShadingExtensions(presentation,frame,content,localization))
+    if(!PrepareD3D12ShadingExtensions(presentation,frame,content,rasterDepth,rasterWidth,rasterHeight,localization))
     {presentation.commandList->Close();return false;}
     const bool shadowDebugOrPreview=content.shadow&&(content.shadow->preview
         ||content.shadow->filter.debug!=flare::rhi::ShadowFilterDebugMode::None);
@@ -1209,6 +1209,7 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
             if(!beforeOpaqueWork)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,shadow?6:4);
         }
     }
+    if(!RecordD3D12ShadingExtensionsPreDepthNormals(presentation,frame,states,localization))return false;
     if(depthNormals)
     {
         if(presentation.timingEnabled)presentation.commandList->EndQuery(frame.timestampQueries.Get(),D3D12_QUERY_TYPE_TIMESTAMP,23);
@@ -1339,7 +1340,11 @@ bool RenderD3D12Frame(D3D12Presentation& presentation, const Localization& local
     if(!transparentMeshes.empty())
     {
         if(!RecordD3D12OpaqueTemporal(presentation,frame,content,opaqueMeshes,*rasterColor,*rasterDepth,states,localization))return false;
-        if(!use(rasterDepth,D3D12_RESOURCE_STATE_DEPTH_READ,"Transparent.Depth")
+        if(!RecordD3D12ShadingExtensionsPreTransparent(presentation,frame,*rasterColor,states,localization))return false;
+        const auto transparentDepthState=(frame.shading&&frame.shading->backdrop)
+            ?(D3D12_RESOURCE_STATE_DEPTH_READ|D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+            :D3D12_RESOURCE_STATE_DEPTH_READ;
+        if(!use(rasterDepth,transparentDepthState,"Transparent.Depth")
             ||!use(samples?samples->color.resource.Get():content.sceneHdr?content.sceneHdr->color.resource.Get():presentation.hdr.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"Transparent.HDR"))return false;
         const auto readOnlyDsv=frame.transparentDsv->Cpu();presentation.commandList->OMSetRenderTargets(1,&rtv,FALSE,&readOnlyDsv);
         {
@@ -1651,6 +1656,7 @@ void ReleaseD3D12Presentation(D3D12Presentation& presentation) noexcept
     presentation.rtvs.reset();presentation.gameUiRtvs.reset();
     presentation.depth.Reset();
     presentation.dsv.reset();
+    presentation.opaqueBackdrop.reset();presentation.shadingDefaults.reset();
     presentation.hdr.Reset();presentation.hdrRtv.reset();presentation.hdrSrv.reset();presentation.post.reset();presentation.srvPool.reset();presentation.rtvPool.reset();
     presentation.shadow.reset();presentation.shadowTargets.clear();presentation.shadowCacheHits=0;presentation.shadowCacheMisses=0;presentation.clusterBuilder.reset();presentation.opaqueTemporal.reset();presentation.depthNormalBuilder.reset();presentation.depthNormalTarget.reset();presentation.depthNormalStatistics={};presentation.ambientOcclusionBuilder.reset();presentation.ambientOcclusionOutput.reset();presentation.screenSpaceStatistics={};presentation.shadingDefaults.reset();presentation.heterogeneousBuilder.reset();presentation.meshletBuilder.reset();presentation.heterogeneousHiZBuilder.reset();presentation.gpuDrivenStatistics={};presentation.cpuMeshSubmitMilliseconds=0;presentation.cpuShadowRecordMilliseconds=0;presentation.meshShaderTier1=false;presentation.rayTracingTier1_1=false;presentation.clustered={};presentation.dsvPool.reset();
     presentation.swapChain.Reset();

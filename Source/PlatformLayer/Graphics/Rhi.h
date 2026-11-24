@@ -169,6 +169,7 @@ struct PipelineDescription
     std::uint32_t materialLayoutVersion=0; // 0 保留旧材质；38 在既有绑定布局上追加独立 b4。
     MaterialAlphaMode alphaMode=MaterialAlphaMode::Opaque; // PSO pass/depth/blend 合同，surface 程序共享动态覆盖能力。
     std::uint32_t shadingLayoutVersion=0; // 0 原布局；40 尾追加 b5/b6/t13..24。
+    bool anisotropicSampling=false; // false 保留底层默认点采样基准；项目级材质可启用 16× 各向异性过滤。
 };
 inline bool ValidMaterialSurfacePipeline(const PipelineDescription& pipeline)
 {
@@ -227,6 +228,10 @@ struct ShadingMaterialBindings
     ShadingMaterialConstants constants;
     // t19 coatFactor / t20 coatRough / t21 coatNormal / t22 sheenColor / t23 sheenRough / t24 anisotropy。
     std::array<TextureHandle,6> textures{};
+    // t28..t31 自定义表面着色器额外 2D 贴图槽；userTextureDefaults: 0=White, 1=Black, 2=Gray, 3=Bump。
+    std::array<TextureHandle,4> userTextures{};
+    std::array<std::uint8_t,4> userTextureDefaults{};
+    std::array<bool,4> userTextureLinear{};
 };
 struct GeometryCluster
 {
@@ -326,17 +331,17 @@ struct ShadowSettings
     std::uint32_t resolution=1024;
     float depthBias=0.0008f,slopeBias=0.002f,normalBias=0.015f;
     bool enabled=true,pcf=true,preview=false;
-    // G08：0 保持旧单图；1..3 为真实深度数组，矩阵已经包含混合带与 caster 深度。
+    // G08：0 保持旧单图；1..4 为真实深度数组，矩阵已经包含混合带与 caster 深度。
     std::uint32_t cascadeCount=0;
-    std::array<Mat4,3> cascadeClipFromWorld{};
-    std::array<float,3> cascadeSplits{};
+    std::array<Mat4,4> cascadeClipFromWorld{};
+    std::array<float,4> cascadeSplits{};
     Vec4 cascadeViewDepth{}; // dot(world.xyz1, cascadeViewDepth) 得正视深。
     float cascadeNear=0.1f,cascadeBlend=0.10f;
     bool cascadeDebug=false;
     ShadowFilterSettings filter; // 独立新布局消费；默认沿用旧 point / 5x5 PCF。
     // RG104-18：逐级静态阴影缓存；哈希非 0 时启用底图复用，任一依赖变化立即按级重绘底图。
     bool staticShadowCache=false;
-    std::array<std::uint64_t,3> staticCascadeHashes{};
+    std::array<std::uint64_t,4> staticCascadeHashes{};
 };
 struct EnvironmentBindings
 {
@@ -348,6 +353,7 @@ struct PostProcessSettings
 {
     bool bloom=true,toneMapping=true,fxaa=true;
     float bloomThreshold=1,bloomStrength=0.08f;
+    float vignette=0.0f,chromaticAberration=0.0f,filmGrain=0.0f;
     // G15：GPU 自动曝光与 33³ LUT。默认关闭，保持既有 Reinhard/FXAA 路径逐字节不变。
     // 曝光为 1×1 R32_FLOAT ping-pong；LUT 只在参数变化时重建，关闭时 ToneMap 不采样。
     bool autoExposure=false,lutEnabled=false;
@@ -412,11 +418,17 @@ struct SkySettings
     Vec3 sunColor{1.0f,0.96f,0.90f};
     float sunIntensity=12.0f;
     float sunAngularRadius=0.012f;
+    float cloudCoverage=0.0f;
+    float cloudDensity=1.0f;
+    float cloudSpeed=1.0f;
+    float timeSeconds=0.0f;
 };
 struct IndoorLightingSettings
 {
     bool indirect=false,reflections=false,volumetricFog=false;
     float indirectStrength=1,reflectionStrength=1,fogDensity=.035f,fogDistance=25;
+    float fogHeightFalloff=0.0f,fogBaseHeight=0.0f,fogSunScatter=0.0f;
+    float fogTurbulence=0.0f,fogWindSpeed=1.0f,fogTimeSeconds=0.0f;
     Vec3 fogAlbedo{.85f,.9f,1};
     Mat4 view,clipFromView; // 与本帧几何实际抖动投影一致。
     Mat4 previousClipFromWorld=Mat4::Identity();

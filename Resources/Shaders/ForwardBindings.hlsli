@@ -7,7 +7,7 @@ cbuffer ForwardConstants:register(b1)
     float4 pointPositionRadius[8];
     float4 pointRadiance[8];
 #if defined(SE_CASCADED) || defined(SE_CLUSTERED)
-    column_major float4x4 csmClipFromWorld[3];
+    column_major float4x4 csmClipFromWorld[4];
     float4 csmSplits;
     float4 csmViewDepth;
     float4 shadowParameters;

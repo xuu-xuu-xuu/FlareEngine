@@ -1,4 +1,5 @@
 #include "ShadingResources.h"
+#include "ResourceLayer/Assets/SurfaceShader.h"
 #include "ResourceLayer/Assets/BrdfEnergyBake.h"
 #include "ResourceLayer/Assets/LtcBake.h"
 #include "ResourceLayer/Assets/SheenEnergyBake.h"
@@ -20,10 +21,21 @@ template<class Material>void Include(const Material& m,Usage& u)
     u.sheen|=m.sheen.color.x>0||m.sheen.color.y>0||m.sheen.color.z>0;
     u.skin|=m.subsurface.weight>0;u.layers|=m.clearCoat.weight>0||u.sheen||u.skin||m.anisotropy.strength>0;
 }
+void IncludeDocumentExtras(const MaterialDocument& m,Usage& u)
+{
+    u.layers|=(m.occlusionStrength>0.f)||(std::abs(m.specular-0.5f)>1e-5f);
+}
 Usage MaterialUsage(const FrameData& frame)
 {
     Usage result;std::vector<AssetDiagnostic> ignored;std::set<AssetId> models,materials;
-    if(frame.materialPreview)Include(frame.materialPreview->document,result);
+    if(frame.materialPreview)
+    {
+        Include(frame.materialPreview->document,result);
+        IncludeDocumentExtras(frame.materialPreview->document,result);
+        if(!frame.materialPreview->document.shader.empty()&&frame.assets
+            &&IsUserSurfaceAssetPath(frame.assets->Resolve(frame.materialPreview->document.shader)))
+            result.layers=true;
+    }
     for(const auto& mesh:frame.meshes)
     {
         for(const auto& id:mesh.mesh.materials)if(!id.empty())materials.insert(id);
@@ -37,8 +49,14 @@ Usage MaterialUsage(const FrameData& frame)
     }
     for(const auto& id:materials)
     {
-        if(frame.materialPreview&&frame.materialPreview->id==id)Include(frame.materialPreview->document,result);
-        else if(const auto material=frame.assets->LoadMaterial(id,ignored))Include(*material,result);
+        if(frame.materialPreview&&frame.materialPreview->id==id){Include(frame.materialPreview->document,result);IncludeDocumentExtras(frame.materialPreview->document,result);}
+        else if(const auto material=frame.assets->LoadMaterial(id,ignored))
+        {
+            Include(*material,result);
+            IncludeDocumentExtras(*material,result);
+            if(!material->shader.empty()&&IsUserSurfaceAssetPath(frame.assets->Resolve(material->shader)))
+                result.layers=true;
+        }
         else result.layers=true;
     }
     return result;
@@ -233,6 +251,18 @@ bool ShadingResourceCache::Prepare(const FrameData& frame,const CameraSnapshot& 
                 result.constants.rectHalfV[count]={e.halfV.x,e.halfV.y,e.halfV.z,0};result.constants.rectRadiance[count]={e.radiance.x,e.radiance.y,e.radiance.z,0};++count;
             }
             result.constants.modes.w=float(count);
+        }
+        if(IsFinite(camera.projection)&&IsFinite(camera.view))
+        {
+            result.constants.globalSh[0].w=camera.projection(2,2);
+            result.constants.globalSh[1].w=camera.projection(2,3);
+            result.constants.globalSh[2].w=camera.projection(3,2);
+            result.constants.globalSh[3].w=camera.projection(3,3);
+            result.constants.globalSh[4].w=camera.view(2,0);
+            result.constants.globalSh[5].w=camera.view(2,1);
+            result.constants.globalSh[6].w=camera.view(2,2);
+            result.constants.globalSh[7].w=camera.view(2,3);
+            result.constants.globalSh[8].w=1.f;
         }
         output=result;return true;
     }

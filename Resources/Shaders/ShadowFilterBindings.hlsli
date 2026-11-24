@@ -4,7 +4,7 @@ cbuffer ShadowFilterConstants:register(b3)
 {
     float4 filterParameters; // tan(angle)、搜索世界距离、最大 texel 半径、启用。
     float4 filterOptions; // debug mode、保留。
-    float4 filterCascadeMetrics[3]; // 世界深度跨度、世界 texel XY、保留。
+    float4 filterCascadeMetrics[4]; // 世界深度跨度、世界 texel XY、保留。
 };
 // 16 点黄金角 Vogel 低差异圆盘，配合逐像素 IGN 旋转与硬件 2x2 双线性比较采样（等效覆盖 64 纹素）。
 static const float2 ShadowFilterVogel16[16]={
@@ -32,7 +32,7 @@ struct ShadowFilterEvaluation
 ShadowFilterEvaluation EvaluateShadowFilter(uint slice,float3 position,float3 normal,float3 lightDirection,float2 screenPixel)
 {
     ShadowFilterEvaluation result;result.visibility=1;result.penumbraWorld=0;result.blockerGapWorld=0;result.blockerFraction=0;
-    uint level=min(slice,2u);
+    uint level=min(slice,3u);
     float4 shifted=mul(csmClipFromWorld[level],float4(position+normal*shadowParameters.w,1));
     float4 original=mul(csmClipFromWorld[level],float4(position,1));
     if(shifted.w>0&&original.w>0)

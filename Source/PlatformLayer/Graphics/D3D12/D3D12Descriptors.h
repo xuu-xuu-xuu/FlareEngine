@@ -9,8 +9,8 @@
 
 struct D3D12DescriptorStatistics
 {UINT used=0,capacity=0,peak=0;UINT64 heapsCreated=0,allocations=0,failures=0;};
-// Environment 7 + cluster 4 + shading 13；skin/coverage/PCSS 使用独立根参数。
-inline constexpr UINT D3D12ShadingTextureCount=13,D3D12MaximumMaterialTableWidth=7+4+D3D12ShadingTextureCount;
+// Environment 7 + cluster 4 + shading 19（t13..t25 既有扩展 + t26 场景深度 + t27 场景颜色 + t28..t31 自定义贴图）。
+inline constexpr UINT D3D12ShadingTextureCount=19,D3D12MaximumMaterialTableWidth=7+4+D3D12ShadingTextureCount;
 class D3D12DescriptorPool;
 // 仅呈现线程；Range 最后一个共享所有者退出时才归还持久 CPU 槽。
 class D3D12DescriptorRange

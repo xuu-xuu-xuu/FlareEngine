@@ -80,7 +80,7 @@ try {
         if($build.PSObject.Properties['videoResolution']){$videoResolution=$build.videoResolution}
         if($build.PSObject.Properties['videoFps']){$videoFps=$build.videoFps}
         if($build.PSObject.Properties['videoSeconds']){$videoSeconds=$build.videoSeconds}
-        if($videoResolution -notin @('640x360','1280x720','1920x1080') -or
+        if($videoResolution -notin @('640x360','1280x720','1920x1080','2560x1440','3840x2160') -or
             ($videoFps -isnot [int] -and $videoFps -isnot [long]) -or $videoFps -notin @(24,30,60) -or
             ($videoSeconds -isnot [int] -and $videoSeconds -isnot [long]) -or $videoSeconds -lt 1 -or $videoSeconds -gt [math]::Floor(100000/$videoFps)){
             Fail 'Export.InvalidSettings' 'video'
@@ -262,8 +262,10 @@ try {
     if(Test-Path -LiteralPath (Join-Path $workspace 'Docs/ExportedGameReadme.md') -PathType Leaf){
         Copy-Item -LiteralPath (Join-Path $workspace 'Docs/ExportedGameReadme.md') -Destination (Join-Path $stage 'README.md')
     }
-    if(Test-Path -LiteralPath (Join-Path $copiedProject '.cache/assets/user-shaders')){
-        Remove-Item -LiteralPath (Join-Path $copiedProject '.cache/assets/user-shaders') -Recurse -Force -ErrorAction SilentlyContinue
+    foreach($shaderTemp in @('.cache/assets/user-shaders','.cache/assets/sky-shaders')){
+        if(Test-Path -LiteralPath (Join-Path $copiedProject $shaderTemp)){
+            Remove-Item -LiteralPath (Join-Path $copiedProject $shaderTemp) -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
     $report.phase='manifest';Report
     $files=@(Get-ChildItem -LiteralPath $stage -File -Recurse | Sort-Object FullName | ForEach-Object {[ordered]@{path=$_.FullName.Substring($stage.Length+1).Replace('\','/');bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}})

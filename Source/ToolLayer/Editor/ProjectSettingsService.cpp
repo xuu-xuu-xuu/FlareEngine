@@ -17,7 +17,7 @@ using Json=nlohmann::json;
 bool ValidVideo(const BuildSettings& settings)
 {
     const auto& size=settings.videoResolution;
-    return (size=="640x360"||size=="1280x720"||size=="1920x1080")
+    return (size=="640x360"||size=="1280x720"||size=="1920x1080"||size=="2560x1440"||size=="3840x2160")
         &&(settings.videoFps==24||settings.videoFps==30||settings.videoFps==60)
         &&settings.videoSeconds>=1&&settings.videoSeconds<=100000/settings.videoFps;
 }

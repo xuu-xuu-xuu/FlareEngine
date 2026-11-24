@@ -297,7 +297,7 @@ bool IsReservedUserMacroIdent(std::string_view s) noexcept
     return s == "_Time" || s == "_SinTime" || s == "_CosTime" || s == "unity_DeltaTime" ||
            s == "_MainTex" || s == "_BumpMap" || s == "_MetallicGlossMap" ||
            s == "Input" || s == "SurfaceOutput" || s == "SurfaceOutputStandard" ||
-           s == "VertexInput" || s == "appdata_full" || s == "tex2D" || s == "tex2Dlod" ||
+           s == "VertexInput" || s == "appdata_full" || s == "tex2D" || s == "tex2Dlod" || s == "tex2Dgrad" ||
            s == "flareTime" || s == "flareUserParams";
 }
 
@@ -313,7 +313,51 @@ bool ParseTypedParam(std::string_view nameView, std::string label, std::string_v
     }
     const std::string lowerType = LowerAscii(Trim(typeSpec));
     // Built-in Unity texture slots in Properties (e.g. _MainTex ("Albedo", 2D) = "white" {}) are bound automatically by Material slots.
-    if (lowerType == "2d" || lowerType == "2darray" || lowerType == "cube" || lowerType == "cubearray" || lowerType == "3d" || lowerType == "any")
+    if (lowerType == "2d")
+    {
+        if (nameView == "_MainTex" || nameView == "_BumpMap" || nameView == "_MetallicGlossMap")
+            return true;
+        if (IsReservedUserMacroIdent(nameView))
+        {
+            errorMessage = "Line " + std::to_string(lineNum) + ": texture property '" + std::string(nameView) +
+                           "' conflicts with a built-in shader identifier.";
+            return false;
+        }
+        for (const auto& existingTex : output.textures)
+        {
+            if (existingTex.name == nameView)
+            {
+                errorMessage = "Line " + std::to_string(lineNum) + ": duplicate texture property '" + std::string(nameView) + "'.";
+                return false;
+            }
+        }
+        for (const auto& existingParam : output.parameters)
+        {
+            if (existingParam.name == nameView)
+            {
+                errorMessage = "Line " + std::to_string(lineNum) + ": duplicate property '" + std::string(nameView) + "'.";
+                return false;
+            }
+        }
+        if (output.textures.size() >= MaxSurfaceShaderTextureSlots)
+        {
+            errorMessage = "Line " + std::to_string(lineNum) + ": exceeded maximum custom 2D texture slots (4 extra slots beyond _MainTex/_BumpMap/_MetallicGlossMap).";
+            return false;
+        }
+        SurfaceShaderTexture tex;
+        tex.name = std::string(nameView);
+        tex.label = label.empty() ? tex.name : std::move(label);
+        tex.slotIndex = static_cast<std::uint32_t>(output.textures.size());
+        const std::string lowerDef = LowerAscii(defSpec);
+        if (lowerDef.find("bump") != std::string::npos) tex.defaultKind = SurfaceTextureDefault::Bump;
+        else if (lowerDef.find("black") != std::string::npos) tex.defaultKind = SurfaceTextureDefault::Black;
+        else if (lowerDef.find("gray") != std::string::npos || lowerDef.find("grey") != std::string::npos)
+            tex.defaultKind = SurfaceTextureDefault::Gray;
+        else tex.defaultKind = SurfaceTextureDefault::White;
+        output.textures.push_back(std::move(tex));
+        return true;
+    }
+    if (lowerType == "2darray" || lowerType == "cube" || lowerType == "cubearray" || lowerType == "3d" || lowerType == "any")
     {
         return true;
     }
@@ -322,6 +366,14 @@ bool ParseTypedParam(std::string_view nameView, std::string label, std::string_v
         errorMessage = "Line " + std::to_string(lineNum) + ": parameter name '" + std::string(nameView) +
                        "' is a built-in shader identifier; please choose another name.";
         return false;
+    }
+    for (const auto& existingTex : output.textures)
+    {
+        if (existingTex.name == nameView)
+        {
+            errorMessage = "Line " + std::to_string(lineNum) + ": duplicate property '" + std::string(nameView) + "'.";
+            return false;
+        }
     }
     for (const auto& existing : output.parameters)
     {
@@ -461,6 +513,7 @@ std::uint32_t LineNumberAt(std::string_view src, std::size_t offset)
 
 std::string SanitizeUserHlslBody(std::string_view rawSlice,
                                  const std::vector<SurfaceShaderParam>& parameters,
+                                 const std::vector<SurfaceShaderTexture>& textures,
                                  SurfaceShadingModel* ioShading)
 {
     std::string rawBody(rawSlice);
@@ -519,6 +572,11 @@ std::string SanitizeUserHlslBody(std::string_view rawSlice,
                 if (lp.find("surface") != std::string::npos)
                 {
                     if (lp.find("unlit") != std::string::npos) *ioShading = SurfaceShadingModel::Unlit;
+                    else if (lp.find("foliage") != std::string::npos || lp.find("vegetation") != std::string::npos ||
+                             lp.find("twosidedfoliage") != std::string::npos)
+                    {
+                        *ioShading = SurfaceShadingModel::Foliage;
+                    }
                     else if (lp.find("toon") != std::string::npos || lp.find("lambert") != std::string::npos ||
                              lp.find("ramp") != std::string::npos)
                     {
@@ -567,6 +625,13 @@ std::string SanitizeUserHlslBody(std::string_view rawSlice,
                             for (const auto& p : parameters)
                             {
                                 if (p.name == varName) { commentOutLine = true; break; }
+                            }
+                            if (!commentOutLine)
+                            {
+                                for (const auto& t : textures)
+                                {
+                                    if (t.name == varName) { commentOutLine = true; break; }
+                                }
                             }
                         }
                     }
@@ -666,11 +731,12 @@ bool ParsePassRenderStates(std::string_view rawHeader, std::string_view cleanHea
             {
                 const std::string lm = LowerAscii(mode);
                 if (lm == "lit" || lm == "standard" || lm == "pbr") pass.shadingModel = SurfaceShadingModel::Lit;
+                else if (lm == "foliage" || lm == "vegetation") pass.shadingModel = SurfaceShadingModel::Foliage;
                 else if (lm == "toon" || lm == "cel") pass.shadingModel = SurfaceShadingModel::Toon;
                 else if (lm == "unlit") pass.shadingModel = SurfaceShadingModel::Unlit;
                 else
                 {
-                    errorMessage = "Unknown Shading mode '" + mode + "' (expected Lit, Toon, or Unlit).";
+                    errorMessage = "Unknown Shading mode '" + mode + "' (expected Lit, Foliage, Toon, or Unlit).";
                     return false;
                 }
                 if (outExplicitShading) *outExplicitShading = true;
@@ -957,6 +1023,7 @@ bool ParseUnityStyleShaderBlock(std::string_view hlslText, std::string_view clea
                     ++cur;
                     while (cur < propsClose && !(cleanText[cur] == '"' && cleanText[cur - 1] != '\\')) ++cur;
                     if (cur < propsClose) ++cur;
+                    defPart = Trim(hlslText.substr(valStart, cur - valStart));
                     while (cur < propsClose && std::isspace(static_cast<unsigned char>(cleanText[cur]))) ++cur;
                     if (cur < propsClose && cleanText[cur] == '{')
                     {
@@ -1043,7 +1110,7 @@ bool ParseUnityStyleShaderBlock(std::string_view hlslText, std::string_view clea
             const std::size_t absBodyEnd = subBase + incEnd;
             if (sharedIncludeHlsl.empty()) sharedIncludeLine = LineNumberAt(hlslText, absBodyStart);
             else sharedIncludeHlsl += "\n";
-            sharedIncludeHlsl += SanitizeUserHlslBody(hlslText.substr(absBodyStart, absBodyEnd - absBodyStart), output.parameters, nullptr);
+            sharedIncludeHlsl += SanitizeUserHlslBody(hlslText.substr(absBodyStart, absBodyEnd - absBodyStart), output.parameters, output.textures, nullptr);
             std::fill(subClean.begin() + static_cast<std::ptrdiff_t>(incKw),
                       subClean.begin() + static_cast<std::ptrdiff_t>(incEnd + endTok.size()), ' ');
             std::fill(cleanStateText.begin() + static_cast<std::ptrdiff_t>(subBase + incKw),
@@ -1148,7 +1215,7 @@ bool ParseUnityStyleShaderBlock(std::string_view hlslText, std::string_view clea
         outPass.includeStartLine = sharedIncludeLine;
         outPass.bodyStartLine = LineNumberAt(hlslText, absBody);
         outPass.bodyHlsl = SanitizeUserHlslBody(
-            hlslText.substr(absBody, absEnd - absBody), output.parameters, hasExplicitShading ? nullptr : &outPass.shadingModel);
+            hlslText.substr(absBody, absEnd - absBody), output.parameters, output.textures, hasExplicitShading ? nullptr : &outPass.shadingModel);
 
         const std::string combinedClean = StripCommentsPreserveLines(outPass.includeHlsl + "\n" + outPass.bodyHlsl);
         outPass.usesUnitySurfaceEntry = HasFunctionDefinition(combinedClean, "surf");
@@ -1637,6 +1704,11 @@ std::string BuildSurfaceShaderUserInclude(const SurfaceShaderMetadata& metadata,
     out << "#define fixed4 float4\n";
     out << "#define tex2D(slot, uv) FlareSampleTex2D((slot), (uv))\n";
     out << "#define tex2Dlod(slot, uvLod) FlareSampleTex2DLod((slot), (uvLod))\n";
+    out << "#define tex2Dgrad(slot, uv, dx, dy) FlareSampleTex2DGrad((slot), (uv), (dx), (dy))\n";
+    for (const auto& tex : metadata.textures)
+    {
+        out << "static const uint " << tex.name << " = " << (3u + tex.slotIndex) << "u;\n";
+    }
     std::string sanitizedName(sourceDebugName);
     for (char& ch : sanitizedName)
     {
@@ -1713,6 +1785,9 @@ std::string BuildSurfaceShaderUserInclude(const SurfaceShaderMetadata& metadata,
             << "    o.Metallic    = dstOut.metallic;\n"
             << "    o.Smoothness  = initSmooth;\n"
             << "    o.Roughness   = initRough;\n"
+            << "    o.Occlusion   = dstOut.occlusion;\n"
+            << "    o.Specular    = dstOut.specular;\n"
+            << "    o.Translucency= dstOut.translucency;\n"
             << "    o.Alpha       = dstOut.opacity;\n"
             << "    o.AlphaCutoff = dstOut.alphaCutoff;\n"
             << "    surf(IN, o);\n";
@@ -1725,11 +1800,14 @@ std::string BuildSurfaceShaderUserInclude(const SurfaceShaderMetadata& metadata,
             << "    dstOut.emissive    = o.Emission;\n"
             << "    dstOut.metallic    = o.Metallic;\n"
             << "    dstOut.roughness   = (abs(o.Roughness - initRough) > 1e-5) ? o.Roughness : (1.0 - saturate(o.Smoothness));\n"
+            << "    dstOut.occlusion   = o.Occlusion;\n"
+            << "    dstOut.specular    = o.Specular;\n"
+            << "    dstOut.translucency= o.Translucency;\n"
             << "    dstOut.opacity     = " << (forceSolidAlpha ? "1.0" : "o.Alpha") << ";\n"
             << "    dstOut.alphaCutoff = o.AlphaCutoff;\n"
             << "}\n";
     }
-    out << "#undef tex2Dlod\n#undef tex2D\n";
+    out << "#undef tex2Dgrad\n#undef tex2Dlod\n#undef tex2D\n";
     out << "#undef fixed4\n#undef fixed3\n#undef fixed2\n#undef fixed\n";
     out << "#undef VertexInput\n#undef SurfaceOutputStandard\n#undef SurfaceOutput\n#undef Input\n";
     return out.str();

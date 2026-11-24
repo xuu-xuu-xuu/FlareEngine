@@ -15,7 +15,11 @@ cbuffer ShadingMaterialConstants : register(b6)
 {
     float4 layerCoat,layerSheen,layerAnisotropy,layerSubsurface,layerSubsurfaceColor,layerTextureFlags;
 };
+#ifndef SE_DEPTH_NORMALS
 Texture2D<float2> screenOcclusionMap : register(t13);
+Texture2D<float> sceneDepthMap : register(t26);
+Texture2D<float4> sceneColorMap : register(t27);
+#endif
 Texture2D<float4> directEnergyMap : register(t14);
 Texture2D<float4> diffuseProbeMap : register(t15);
 Texture2D<float4> ltcMatrixMap : register(t16);
@@ -27,6 +31,10 @@ Texture2D<float4> coatNormalMap : register(t21);
 Texture2D<float4> sheenColorMap : register(t22);
 Texture2D<float4> sheenRoughnessMap : register(t23);
 Texture2D<float4> anisotropyMap : register(t24);
+Texture2D<float4> userTex0Map : register(t28);
+Texture2D<float4> userTex1Map : register(t29);
+Texture2D<float4> userTex2Map : register(t30);
+Texture2D<float4> userTex3Map : register(t31);
 // 扩展资源共享已有 s0 的采样状态；LUT 手动双线性，不能沿用 wrap/point。
 float4 ShadingLinear(Texture2D<float4> image,float2 uv)
 {
@@ -40,10 +48,14 @@ float4 ShadingMaterialSample(Texture2D<float4> image,float2 uv,float2 uvDx,float
 {return image.SampleGrad(materialSampler,uv,uvDx,uvDy);}
 float2 ScreenOcclusion(float2 pixel,bool transparent)
 {
+#ifdef SE_DEPTH_NORMALS
+    return float2(1,1);
+#else
     uint w=1,h=1;screenOcclusionMap.GetDimensions(w,h);
     int2 p=clamp((int2)pixel,int2(0,0),int2(w-1,h-1));
     float2 value=saturate(screenOcclusionMap.Load(int3(p,0)));
     return transparent?float2(1,1):lerp(float2(1,1),value,step(.5,shadingViewport.zw));
+#endif
 }
 float3 DiffuseSh(float3 p,float3 n,float3 globalNormal,out bool usedLocal)
 {
@@ -95,12 +107,13 @@ float3 LayerTangent(float3 n,float3 tangent)
     float3 fallback=abs(n.z)<.9?cross(float3(0,0,1),n):cross(float3(0,1,0),n);
     return UnitVector(tangent-n*dot(n,tangent),UnitVector(fallback,float3(1,0,0)));
 }
-float3 SurfaceDirectBrdf(float3 color,float metal,float rough,float3 n,float3 geometricNormal,float3 v,float3 l,
-    float3 tangent,float bitangentSign,float faceSign,float2 uv,float2 uvDx,float2 uvDy,float curvature)
+float3 SurfaceDirectBrdfEx(float3 color,float metal,float rough,float3 n,float3 geometricNormal,float3 v,float3 l,
+    float3 tangent,float bitangentSign,float faceSign,float2 uv,float2 uvDx,float2 uvDy,float curvature,float dielectricSpec)
 {
     const float pi=3.141592653589793;
     float nl=saturate(dot(n,l)),nv=max(saturate(dot(n,v)),.0001);
-    float3 h=UnitVector(v+l,n),f0=lerp(.04.xxx,color,metal),F=FresnelSchlick(f0,dot(v,h));
+    float dielectricF0=abs(dielectricSpec-0.5)>1e-5?(0.08*saturate(dielectricSpec)):0.04;
+    float3 h=UnitVector(v+l,n),f0=lerp(dielectricF0.xxx,color,metal),F=FresnelSchlick(f0,dot(v,h));
     float3 t=LayerTangent(n,tangent),b=cross(n,t)*bitangentSign*faceSign;
     float strength=saturate(layerAnisotropy.x),angle=layerAnisotropy.y;
     if(LayerTexture(5))
@@ -171,11 +184,14 @@ float3 SurfaceDirectBrdf(float3 color,float metal,float rough,float3 n,float3 ge
         float fv=.04+.96*pow(1-cv,5),fl=.04+.96*pow(1-cl,5),fh=.04+.96*pow(1-saturate(dot(v,h)),5);
         result*= (1-cw*fv)*(1-cw*fl);result+=cw*D*V*fh*cl;
     }
-    // 各层权重为零、无直接补偿时恢复原算式，避免改变默认材质图。
-    if(strength==0&&layerSubsurface.x==0&&cw==0&&all(sheen==0)&&shadingModes.x<.5)
+    // 各层权重为零、无直接补偿且默认 F0=0.04 时恢复原算式，避免改变默认材质图。
+    if(strength==0&&layerSubsurface.x==0&&cw==0&&all(sheen==0)&&shadingModes.x<.5&&abs(dielectricSpec-0.5)<=1e-5)
         result=DirectBrdf(color,metal,rough,n,v,l);
     return max(result,0);
 }
+float3 SurfaceDirectBrdf(float3 color,float metal,float rough,float3 n,float3 geometricNormal,float3 v,float3 l,
+    float3 tangent,float bitangentSign,float faceSign,float2 uv,float2 uvDx,float2 uvDy,float curvature)
+{return SurfaceDirectBrdfEx(color,metal,rough,n,geometricNormal,v,l,tangent,bitangentSign,faceSign,uv,uvDx,uvDy,curvature,0.5*(1.0+layerAnisotropy.z));}
 // 固定UV参考调用；生产PS显式传入其quad导数，不在变长灯循环内重新求导。
 float3 SurfaceDirectBrdf(float3 color,float metal,float rough,float3 n,float3 geometricNormal,float3 v,float3 l,
     float3 tangent,float bitangentSign,float faceSign,float2 uv,float curvature)

@@ -217,7 +217,9 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             }
             else if(asset.type=="shader")
             {
-                if(!store.IsValidMaterialShaderReference(asset.id,assetDiagnostics))
+                const auto fileUtf8=asset_io::Utf8(source.filename());
+                const bool skyShader=fileUtf8.ends_with(".sky.hlsl");
+                if(!skyShader&&!store.IsValidMaterialShaderReference(asset.id,assetDiagnostics))
                 {for(const auto& d:assetDiagnostics)diagnostics.push_back({d.key,d.detail});return false;}
             }
             else if(asset.type=="environment")
@@ -279,7 +281,13 @@ bool ValidateProject(const fs::path& manifest,ProjectValidation& output,std::vec
             for(const auto entity:world.Entities())if(world.FindComponent(entity,EnvironmentSettingsComponent::TypeId))
             {const auto id=std::get<std::string>(FeatureValue(world,entity,"environmentmap.asset"));if(!assetReference(id,"environment"))return Fail(diagnostics,"Project.MissingAsset",id);}
             for(const auto entity:world.Entities())if(world.FindComponent(entity,RenderSettingsComponent::TypeId))
-            {const auto id=std::get<std::string>(FeatureValue(world,entity,"render.diffuseProbe"));if(!assetReference(id,"data"))return Fail(diagnostics,"Project.MissingAsset",id);}
+            {
+                const auto id=std::get<std::string>(FeatureValue(world,entity,"render.diffuseProbe"));
+                if(!assetReference(id,"data"))return Fail(diagnostics,"Project.MissingAsset",id);
+                const auto skyId=std::get<std::string>(FeatureValue(world,entity,"render.skyShader"));
+                if(!skyId.empty()&&!assetReference(skyId,"shader")&&!assetReference(skyId,"data"))
+                    return Fail(diagnostics,"Project.MissingAsset",skyId);
+            }
             for(const auto entity:world.Entities())if(world.FindComponent(entity,AudioSourceComponent::TypeId))
             {const auto id=std::get<std::string>(FeatureValue(world,entity,"audio.clip"));if(!assetReference(id,"audio"))return Fail(diagnostics,"Project.MissingAsset",id);}
             for(const auto entity:world.Entities())if(world.FindComponent(entity,NavigationAgentComponent::TypeId))

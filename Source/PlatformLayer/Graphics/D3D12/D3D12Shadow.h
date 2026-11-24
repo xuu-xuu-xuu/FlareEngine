@@ -16,7 +16,7 @@ struct D3D12ShadowTarget
     std::shared_ptr<D3D12DescriptorRange> dsv,srv;
     Microsoft::WRL::ComPtr<ID3D12Resource> staticCacheDepth;
     std::shared_ptr<D3D12DescriptorRange> staticCacheDsv;
-    std::array<std::uint64_t,3> cachedCascadeHashes{};
+    std::array<std::uint64_t,4> cachedCascadeHashes{};
     UINT resolution=0;
     UINT layers=1;
 };

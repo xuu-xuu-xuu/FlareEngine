@@ -20,6 +20,7 @@ struct WindowState
     bool callbackFailed = false;
     bool postQuitOnDestroy = true;
     UINT minimumClientWidthDip = 0, minimumClientHeightDip = 0;
+    UINT maximumTrackWidth = 0, maximumTrackHeight = 0;
     std::function<std::optional<LRESULT>(HWND,UINT,WPARAM,LPARAM)> messageHandler;
     bool interactiveResize = false;
     ULONGLONG lastResizeDrawTick = 0;

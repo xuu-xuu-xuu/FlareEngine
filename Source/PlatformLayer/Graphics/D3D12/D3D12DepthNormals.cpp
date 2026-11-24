@@ -116,34 +116,74 @@ bool D3D12DepthNormals::Prepare(D3D12Presentation& p,D3D12FrameContext& frame,co
             cached.supported=SupportedPrepared(prepared,expectedShaderDir);
             if(cached.supported)
             {
-                const bool basic=rhi::IsBasicLit(prepared.program->source.kind),surface=prepared.materialRootParameter!=UINT_MAX;
-                const auto& builtinDir=expectedShaderDir.empty()?prepared.program->source.path.parent_path():expectedShaderDir;
+                const auto& source=prepared.program->source;
+                const bool basic=rhi::IsBasicLit(source.kind),surface=prepared.materialRootParameter!=UINT_MAX;
+                const bool userSurface=source.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion&&!basic;
+                const auto& builtinDir=expectedShaderDir.empty()?source.path.parent_path():expectedShaderDir;
                 const UINT slot=(basic?2u:0u)+(surface?1u:0u);
-                if(!pixels_[slot])
+                Microsoft::WRL::ComPtr<ID3DBlob> userPixelBlob;
+                std::string pixelIdentity;
+                if(userSurface)
                 {
-                    rhi::PipelineDescription description{rhi::PipelineKind::PbrMesh,builtinDir/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl"),rhi::PbrMaterialLayoutVersion};
-                    description.macros.push_back({"SE_DEPTH_NORMALS","1"});description.materialLayoutVersion=surface?rhi::MaterialSurfaceLayoutVersion:0;
-                    D3D12ShaderSource source;if(!ReadD3D12ShaderSource(description,source,text))return false;
-                    pixels_[slot]=LoadD3D12ShaderProgram(std::move(source),shaderStatistics_,text);if(!pixels_[slot])return false;
+                    const bool forward=rhi::IsForward(source.kind),shading=prepared.shadingFrameParameter!=UINT_MAX;
+                    const bool normalBc5=std::any_of(source.macros.begin(),source.macros.end(),[](const auto& m){return m.name=="SE_NORMAL_BC5"&&m.value=="1";});
+                    const auto userKey=flare::Sha256(prepared.program->bytecodeKey+(material?":user-ps-indoor:v2":":user-ps-main:v2")
+                        +(forward?":fwd":"")+(shading?":shd":"")+(normalBc5?":bc5":""));
+                    auto foundBlob=userPixels_.find(userKey);
+                    if(foundBlob!=userPixels_.end())userPixelBlob=foundBlob->second;
+                    else
+                    {
+                        std::vector<D3D_SHADER_MACRO> defines{{"SE_DEPTH_NORMALS","1"},{"SE_MATERIAL_SURFACE","1"},{"SE_USER_SURFACE","1"}};
+                        if(forward)defines.push_back({"SE_FORWARD","1"});
+                        if(shading)defines.push_back({"SE_SHADING_EXTENSIONS","1"});
+                        if(normalBc5)defines.push_back({"SE_NORMAL_BC5","1"});
+                        defines.push_back({nullptr,nullptr});
+                        const auto userPath=source.path.parent_path()/"DepthNormals.hlsl";
+                        if(!CompileD3D12Shader(userPath,material?"PSIndoor":"PSMain","ps_5_1",userPixelBlob,text,0,defines.data()))return false;
+                        userPixels_.emplace(userKey,userPixelBlob);
+                    }
+                    pixelIdentity=userKey;
                 }
-                if(material&&!indoorPixels_[slot])
+                else
                 {
-                    const D3D_SHADER_MACRO defines[]{{"SE_MATERIAL_SURFACE","1"},{nullptr,nullptr}};
-                    const auto path=builtinDir/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl");
-                    if(!CompileD3D12Shader(path,"PSIndoor","ps_5_1",indoorPixels_[slot],text,0,surface?defines:nullptr))return false;
+                    if(!pixels_[slot])
+                    {
+                        rhi::PipelineDescription description{rhi::PipelineKind::PbrMesh,builtinDir/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl"),rhi::PbrMaterialLayoutVersion};
+                        description.macros.push_back({"SE_DEPTH_NORMALS","1"});description.materialLayoutVersion=surface?rhi::MaterialSurfaceLayoutVersion:0;
+                        D3D12ShaderSource builtinSource;if(!ReadD3D12ShaderSource(description,builtinSource,text))return false;
+                        pixels_[slot]=LoadD3D12ShaderProgram(std::move(builtinSource),shaderStatistics_,text);if(!pixels_[slot])return false;
+                    }
+                    if(material&&!indoorPixels_[slot])
+                    {
+                        const D3D_SHADER_MACRO defines[]{{"SE_MATERIAL_SURFACE","1"},{nullptr,nullptr}};
+                        const auto path=builtinDir/(basic?"DepthNormalsBasic.hlsl":"DepthNormals.hlsl");
+                        if(!CompileD3D12Shader(path,"PSIndoor","ps_5_1",indoorPixels_[slot],text,0,surface?defines:nullptr))return false;
+                    }
+                    pixelIdentity=pixels_[slot]->bytecodeKey;
                 }
-                const auto key=flare::Sha256(prepared.key+":"+pixels_[slot]->bytecodeKey+(material?":indoor-material:v1":":geometry39:independent-d32-rg16-less:v1"));
+                const auto key=flare::Sha256(prepared.key+":"+pixelIdentity+(material?":indoor-material:v2":":geometry39:independent-d32-rg16-less:v2"));
                 auto found=pipelines_.find(key);std::shared_ptr<const D3D12DepthNormalPipeline> pair=found==pipelines_.end()?nullptr:found->second.lock();
                 if(!pair)
                 {
-                    auto next=std::make_shared<D3D12DepthNormalPipeline>();next->main=main->prepared;next->pixel=pixels_[slot];
+                    auto next=std::make_shared<D3D12DepthNormalPipeline>();next->main=main->prepared;if(!userSurface)next->pixel=pixels_[slot];
                     auto derived=std::make_shared<D3D12PreparedPipeline>(prepared);derived->key=key;
-                    auto description=prepared.description;description.PS={next->pixel->pixel->GetBufferPointer(),next->pixel->pixel->GetBufferSize()};
+                    auto description=prepared.description;
+                    if(userSurface)
+                    {
+                        description.PS={userPixelBlob->GetBufferPointer(),userPixelBlob->GetBufferSize()};
+                    }
+                    else
+                    {
+                        description.PS={next->pixel->pixel->GetBufferPointer(),next->pixel->pixel->GetBufferSize()};
+                    }
                     description.NumRenderTargets=1;description.RTVFormats[0]=DXGI_FORMAT_R16G16_FLOAT;description.CachedPSO={};
                     description.BlendState.RenderTarget[0].BlendEnable=FALSE;description.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_RED|D3D12_COLOR_WRITE_ENABLE_GREEN;
                     if(material)
                     {
-                        auto* pixel=indoorPixels_[slot].Get();description.PS={pixel->GetBufferPointer(),pixel->GetBufferSize()};
+                        if(!userSurface)
+                        {
+                            auto* pixel=indoorPixels_[slot].Get();description.PS={pixel->GetBufferPointer(),pixel->GetBufferSize()};
+                        }
                         description.NumRenderTargets=2;description.RTVFormats[1]=DXGI_FORMAT_R16G16B16A16_FLOAT;
                         description.BlendState.IndependentBlendEnable=TRUE;
                         description.BlendState.RenderTarget[1]=description.BlendState.RenderTarget[0];

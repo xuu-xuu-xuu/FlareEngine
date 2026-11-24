@@ -39,6 +39,7 @@ struct DirectionalShadowView
     bool cascades=false,cascadeDebug=false;
     std::uint32_t cascadeCount=3,cascadeResolution=2048;
     float cascadeDistance=100;
+    float cascadeSplitLambda=0.80f;
     float cascadeDepthBias=.00003f,cascadeSlopeBias=.0002f,cascadeNormalBias=.01f;
     rhi::ShadowFilterSettings filter;
 };
@@ -49,6 +50,8 @@ struct SkyView
     bool enabled=false;
     Vec3 zenith{0.10f,0.18f,0.34f},horizon{0.55f,0.66f,0.78f},ground{0.16f,0.15f,0.14f},sunColor{1.0f,0.96f,0.90f};
     float sunIntensity=12.0f,sunAngularRadius=0.012f;
+    float cloudCoverage=0.0f,cloudDensity=1.0f,cloudSpeed=1.0f;
+    std::string shaderAsset;
 };
 // 一帧自有 CPU 快照，不含可变 World 指针、COM 对象或 GPU 句柄。
 struct FrameData
@@ -115,7 +118,7 @@ struct FrameData
     std::filesystem::path colorLutPath;
     bool frustumCulling=false; // 只裁剪主相机不透明列表，阴影投射列表独立保留。
     bool sortOpaque=false,cacheOpaqueBindings=false; // 两项独立，默认保留原始提交路径。
-    bool multiscatter=false,specularAA=false; // RG104：只影响相应 PBR 路径。
+    bool multiscatter=false,specularAA=false,anisotropicFiltering=false; // RG104：只影响相应 PBR 路径。
     bool bc7Color=false; // 显式颜色压缩，数据纹理格式保持独立。
     bool depthNormals=false,gtao=false,contactShadows=false;
     float aoRadius=.6f,aoIntensity=.8f,contactLength=.5f;

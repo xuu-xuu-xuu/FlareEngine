@@ -185,20 +185,20 @@ bool ExtraFields(ID3D12ShaderReflection& shader,bool output,std::string& reason,
     const Field frameFields[]{{"frameDirection",0,0},{"frameRadiance",16,0},{"frameSkyExposure",32,0},{"framePointCount",48,0},{"pointPositionRadius",64,8},{"pointRadiance",192,8},
         {"shadowClipFromWorld",320,0,true},{"shadowParameters",384,0},{"environmentParameters",400,0}};
     const Field cascadedFields[]{{"frameDirection",0,0},{"frameRadiance",16,0},{"frameSkyExposure",32,0},{"framePointCount",48,0},
-        {"pointPositionRadius",64,8},{"pointRadiance",192,8},{"csmClipFromWorld",320,3,true},
-        {"csmSplits",512,0},{"csmViewDepth",528,0},{"shadowParameters",544,0},{"csmOptions",560,0},{"environmentParameters",576,0}};
+        {"pointPositionRadius",64,8},{"pointRadiance",192,8},{"csmClipFromWorld",320,4,true},
+        {"csmSplits",576,0},{"csmViewDepth",592,0},{"shadowParameters",608,0},{"csmOptions",624,0},{"environmentParameters",640,0}};
     const Field clusteredFields[]{{"frameDirection",0,0},{"frameRadiance",16,0},{"frameSkyExposure",32,0},{"framePointCount",48,0},
-        {"pointPositionRadius",64,8},{"pointRadiance",192,8},{"csmClipFromWorld",320,3,true},
-        {"csmSplits",512,0},{"csmViewDepth",528,0},{"shadowParameters",544,0},{"csmOptions",560,0},{"environmentParameters",576,0},
-        {"clusterView",592,0,true},{"clusterProjection",656,0,true},{"clusterInverseProjection",720,0,true},
-        {"clusterParameters",784,0},{"clusterViewport",800,0},{"clusterModes",816,0}};
+        {"pointPositionRadius",64,8},{"pointRadiance",192,8},{"csmClipFromWorld",320,4,true},
+        {"csmSplits",576,0},{"csmViewDepth",592,0},{"shadowParameters",608,0},{"csmOptions",624,0},{"environmentParameters",640,0},
+        {"clusterView",656,0,true},{"clusterProjection",720,0,true},{"clusterInverseProjection",784,0,true},
+        {"clusterParameters",848,0},{"clusterViewport",864,0},{"clusterModes",880,0}};
     const Field outputFields[]{{sky?"skyColor":"exposureAndUnused",0,0}};
     const Field skyFields[]{{"skyFromClip",0,0,true},{"environmentParameters",64,0}};
     const Field plainSkyFields[]{{"skyFromClip",0,0,true},{"zenithColor",64,0},{"horizonColor",80,0},{"groundColor",96,0},
-        {"sunDirectionIntensity",112,0},{"sunColor",128,0},{"parameters",144,0}};
+        {"sunDirectionIntensity",112,0},{"sunColor",128,0},{"parameters",144,0},{"cloudParameters",160,0}};
     const auto fields=sky&&environment?std::span<const Field>(skyFields):sky?std::span<const Field>(plainSkyFields):output?std::span<const Field>(outputFields):clustered?std::span<const Field>(clusteredFields):cascaded?std::span<const Field>(cascadedFields):std::span<const Field>(frameFields,environment?9:shadow?8:6);
     const auto size=sky&&environment?sizeof(rhi::EnvironmentSkyConstants):sky?sizeof(rhi::SkyConstants):output?16:clustered?sizeof(rhi::ClusteredFrameConstants):cascaded?sizeof(rhi::CascadedShadowFrameConstants):environment?sizeof(rhi::EnvironmentFrameConstants):shadow?sizeof(rhi::ShadowFrameConstants):sizeof(rhi::ForwardFrameConstants);
-    if(!constants||FAILED(constants->GetDesc(&buffer))||buffer.Size!=size||buffer.Variables!=fields.size()||buffer.Type!=D3D_CT_CBUFFER)
+    if(!constants||FAILED(constants->GetDesc(&buffer))||!((sky&&!environment)?(buffer.Size>=16&&buffer.Size<=size):(buffer.Size==size))||buffer.Variables!=fields.size()||buffer.Type!=D3D_CT_CBUFFER)
     {reason=std::string(name)+": size="+(constants?std::to_string(buffer.Size):"missing")+", variables="+(constants?std::to_string(buffer.Variables):"missing")
         +", expected="+std::to_string(size)+"/"+std::to_string(fields.size());return false;}
     for(const auto& field:fields)
@@ -247,7 +247,7 @@ bool ShadowFilterFields(ID3D12ShaderReflection& shader,std::string& reason)
     auto* buffer=shader.GetConstantBufferByName("ShadowFilterConstants");D3D12_SHADER_BUFFER_DESC desc{};
     if(!buffer||FAILED(buffer->GetDesc(&desc))||desc.Type!=D3D_CT_CBUFFER||desc.Size!=sizeof(rhi::ShadowFilterConstants)||desc.Variables!=3)
     {reason="ShadowFilterConstants: size/fields";return false;}
-    const char* names[]{"filterParameters","filterOptions","filterCascadeMetrics"};const UINT offsets[]{0,16,32},sizes[]{16,16,48},elements[]{0,0,3};
+    const char* names[]{"filterParameters","filterOptions","filterCascadeMetrics"};const UINT offsets[]{0,16,32},sizes[]{16,16,64},elements[]{0,0,4};
     for(UINT i=0;i<3;++i)
     {
         auto* variable=buffer->GetVariableByName(names[i]);D3D12_SHADER_VARIABLE_DESC value{};D3D12_SHADER_TYPE_DESC type{};
@@ -407,7 +407,7 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
     {
         D3D12_SHADER_INPUT_BIND_DESC binding{};if(FAILED(shader.GetResourceBindingDesc(index,&binding)))return false;
         if((binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint>=5&&binding.BindPoint<=7)
-            ||(binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint>=13&&binding.BindPoint<=25))++expected;
+            ||(binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint>=13&&binding.BindPoint<=31))++expected;
     }
     if(!userSurface&&desc.BoundResources!=expected){reason="bindings="+std::to_string(desc.BoundResources)+", expected="+std::to_string(expected);return false;}
     bool constants=false,frame=false,instances=false,bones=false,filter=false,material=false,shadingFrame=false,shadingMaterial=false,localLights=false,localShadow=false;UINT samplers=0,textures=0,clusters=0,shadingTextures=0;
@@ -425,10 +425,10 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
         else if(shadingLayout&&!vertex&&binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint==25
             &&binding.Dimension==D3D_SRV_DIMENSION_TEXTURE2DARRAY&&binding.ReturnType==D3D_RETURN_TYPE_FLOAT)
         {localShadow=true;if(std::strcmp(binding.Name,"localShadowMap")){reason="local shadow texture register/name";return false;}}
-        else if(shadingLayout&&!vertex&&binding.Type==D3D_SIT_TEXTURE&&binding.BindPoint>=13&&binding.BindPoint<=24
+        else if(shadingLayout&&!vertex&&binding.Type==D3D_SIT_TEXTURE&&((binding.BindPoint>=13&&binding.BindPoint<=24)||(binding.BindPoint>=26&&binding.BindPoint<=31))
             &&binding.Dimension==D3D_SRV_DIMENSION_TEXTURE2D&&binding.ReturnType==D3D_RETURN_TYPE_FLOAT&&!(shadingTextures&(1u<<(binding.BindPoint-13))))
         {
-            const char* names[]{"screenOcclusionMap","directEnergyMap","diffuseProbeMap","ltcMatrixMap","ltcAmplitudeMap","skinDiffuseMap","coatWeightMap","coatRoughnessMap","coatNormalMap","sheenColorMap","sheenRoughnessMap","anisotropyMap"};
+            const char* names[]{"screenOcclusionMap","directEnergyMap","diffuseProbeMap","ltcMatrixMap","ltcAmplitudeMap","skinDiffuseMap","coatWeightMap","coatRoughnessMap","coatNormalMap","sheenColorMap","sheenRoughnessMap","anisotropyMap","localShadowMap","sceneDepthMap","sceneColorMap","userTex0Map","userTex1Map","userTex2Map","userTex3Map"};
             if(std::strcmp(binding.Name,names[binding.BindPoint-13])){reason="shading texture register/name";return false;}
             shadingTextures|=1u<<(binding.BindPoint-13);
         }
@@ -469,6 +469,7 @@ bool Bindings(ID3D12ShaderReflection& shader,rhi::PipelineKind kind,bool vertex,
 
 bool DepthNormalBindings(ID3D12ShaderReflection& shader,UINT materialLayout,bool basic,std::string& reason)
 {
+    (void)basic;
     const bool surface=rhi::IsMaterialSurfaceLayout(materialLayout);
     D3D12_SHADER_DESC description{};if(FAILED(shader.GetDesc(&description)))return false;
     bool constants=false,material=false,sampler=false;UINT textures=0;
@@ -477,12 +478,12 @@ bool DepthNormalBindings(ID3D12ShaderReflection& shader,UINT materialLayout,bool
         D3D12_SHADER_INPUT_BIND_DESC binding{};if(FAILED(shader.GetResourceBindingDesc(index,&binding))||binding.Space||binding.BindCount!=1)return false;
         if(binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==0&&!constants){constants=Fields(shader,true,true,reason);if(!constants)return false;}
         else if(surface&&binding.Type==D3D_SIT_CBUFFER&&binding.BindPoint==4&&!material){material=MaterialSurfaceFields(shader,materialLayout,reason);if(!material)return false;}
-        else if(binding.Type==D3D_SIT_TEXTURE&&((surface&&binding.BindPoint==0)||(basic&&binding.BindPoint==1))
+        else if(binding.Type==D3D_SIT_TEXTURE&&((surface&&binding.BindPoint==0)||binding.BindPoint==1)
             &&binding.Dimension==D3D_SRV_DIMENSION_TEXTURE2D&&!(textures&(1u<<binding.BindPoint)))textures|=1u<<binding.BindPoint;
-        else if((surface||basic)&&binding.Type==D3D_SIT_SAMPLER&&binding.BindPoint==0&&!sampler)sampler=true;
+        else if(binding.Type==D3D_SIT_SAMPLER&&binding.BindPoint==0&&!sampler)sampler=true;
         else {reason="depth/normal resource interface";return false;}
     }
-    return constants&&material==surface&&sampler==(surface||basic)&&textures==((surface?1u:0u)|(basic?2u:0u));
+    return constants&&material==surface&&sampler&&textures==((surface?1u:0u)|2u);
 }
 bool Layout(const D3D12ShaderProgram& program,std::string* detail=nullptr)
 {
@@ -665,7 +666,9 @@ bool ReadD3D12ShaderSource(const rhi::PipelineDescription& description,D3D12Shad
         ||(skinnedLayout!=(description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned))
         ||!rhi::ValidPipelineKind(description.kind))return false;
     D3D12ShaderSource source;source.path=description.shader;source.kind=description.kind;
-    source.flags=(description.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion)
+    const bool userSky=description.kind==rhi::PipelineKind::Sky
+        &&std::any_of(description.macros.begin(),description.macros.end(),[](const auto& m){return m.name=="SE_USER_SKY"&&m.value=="1";});
+    source.flags=(description.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion||userSky)
         ?(D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_OPTIMIZATION_LEVEL1)
         :D3D12ShaderCompileFlags();
     source.layoutVersion=description.bindingLayoutVersion;source.macros=description.macros;source.compressedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionCompressed;source.skinnedVertex=description.vertexLayoutVersion==rhi::VertexLayoutVersionSkinned;
@@ -717,7 +720,7 @@ bool ReadD3D12ShaderSource(const rhi::PipelineDescription& description,D3D12Shad
         messages=std::any_of(begin,begin+diagnostics->GetBufferSize(),[](char c){return c!='\0'&&c!='\r'&&c!='\n'&&c!=' '&&c!='\t';});
     }
     // 预处理 API 没有 warnings-as-errors 标志；内建着色器将预处理诊断视为失败，用户自定义表面着色器仅在预处理失败时拦截。
-    const bool allowPreprocessWarnings=(source.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion);
+    const bool allowPreprocessWarnings=(source.materialLayoutVersion==rhi::UserSurfaceMaterialLayoutVersion||userSky);
     if(FAILED(preprocessResult)||(!allowPreprocessWarnings&&messages))
     {Diagnostic(text,"D3D12.ShaderCompileFailed",source.path,diagnostics.Get(),"preprocess");return false;}
     source.preprocessed.assign(static_cast<const char*>(preprocessed->GetBufferPointer()),preprocessed->GetBufferSize());

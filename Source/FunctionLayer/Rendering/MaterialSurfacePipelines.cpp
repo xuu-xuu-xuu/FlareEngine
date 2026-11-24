@@ -30,10 +30,11 @@ std::string ShaderName(rhi::PipelineKind kind,bool skin)
 }
 }
 rhi::Pipeline MaterialSurfacePipelineCache::Load(rhi::Device& device,const std::filesystem::path& shaders,
-    rhi::PipelineKind kind,MaterialAlphaMode mode,bool skinned,bool filtered,bool compressed,bool normalBc5,bool shading)
+    rhi::PipelineKind kind,MaterialAlphaMode mode,bool skinned,bool filtered,bool compressed,bool normalBc5,bool shading,
+    bool anisotropic)
 {
     if(!IsValidMaterialAlphaMode(mode)||(mode==MaterialAlphaMode::Blend&&!rhi::IsForward(kind)))return {};
-    const Key key{shaders,kind,mode,skinned,filtered,compressed,normalBc5,shading};
+    const Key key{shaders,kind,mode,skinned,filtered,compressed,normalBc5,shading,anisotropic};
     if(const auto found=pipelines_.find(key);found!=pipelines_.end())return found->second;
     auto file=ShaderName(kind,skinned);if(file.empty())return {};
     if(filtered){if(!rhi::IsCascaded(kind)||!rhi::IsShadowed(kind))return {};file="Pcss"+file;}
@@ -42,6 +43,7 @@ rhi::Pipeline MaterialSurfacePipelineCache::Load(rhi::Device& device,const std::
     rhi::PipelineDescription description{kind,shaders/file,layout};
     description.materialLayoutVersion=mode!=MaterialAlphaMode::Opaque?rhi::MaterialSurfaceLayoutVersion:0;description.alphaMode=mode;
     description.shadingLayoutVersion=shading?rhi::ShadingExtensionLayoutVersion:0;
+    description.anisotropicSampling=anisotropic;
     description.colorFormat=rhi::IsForward(kind)?rhi::ColorFormat::Rgba16Float:rhi::ColorFormat::Rgba8Unorm;
     description.vertexLayoutVersion=skinned?rhi::VertexLayoutVersionSkinned:compressed?rhi::VertexLayoutVersionCompressed:rhi::VertexLayoutVersionLegacy;
     if(skinned)description.macros.push_back({"SE_SKINNED","1"});
@@ -54,7 +56,7 @@ rhi::Pipeline MaterialSurfacePipelineCache::LoadUserSurface(rhi::Device& device,
     const std::filesystem::path& cacheRoot,const UserSurfaceShaderSource& userShader,rhi::PipelineKind kind,
     MaterialAlphaMode mode,bool skinned,bool filtered,bool compressed,bool normalBc5,bool shading,
     std::vector<std::string>& outDiagnostics,const SurfaceShaderMetadata** outFallbackMetadata,
-    std::size_t passIndex,rhi::BlendMode blendOverride,rhi::DepthMode depthOverride)
+    std::size_t passIndex,rhi::BlendMode blendOverride,rhi::DepthMode depthOverride,bool anisotropic)
 {
     if(outFallbackMetadata)*outFallbackMetadata=nullptr;
     if(!IsValidMaterialAlphaMode(mode)||(mode==MaterialAlphaMode::Blend&&!rhi::IsForward(kind)))return {};
@@ -65,10 +67,10 @@ rhi::Pipeline MaterialSurfacePipelineCache::LoadUserSurface(rhi::Device& device,
         ?((depthOverride==rhi::DepthMode::ReadOnlyGreater||depthOverride==rhi::DepthMode::Disabled)?depthOverride:rhi::DepthMode::ReadOnlyLessEqual)
         :rhi::DepthMode::Default;
 
-    const UserKey ukey{userShader.content_sha256,passIndex,kind,mode,resolvedBlend,resolvedDepth,skinned,filtered,compressed,normalBc5,shading};
+    const UserKey ukey{userShader.content_sha256,passIndex,kind,mode,resolvedBlend,resolvedDepth,skinned,filtered,compressed,normalBc5,shading,anisotropic};
     if(const auto found=userPipelines_.find(ukey);found!=userPipelines_.end())return found->second;
 
-    const SourceFallbackKey fbKey{userShader.source,passIndex,kind,mode,resolvedBlend,resolvedDepth,skinned,filtered,compressed,normalBc5,shading};
+    const SourceFallbackKey fbKey{userShader.source,passIndex,kind,mode,resolvedBlend,resolvedDepth,skinned,filtered,compressed,normalBc5,shading,anisotropic};
     const auto fallback=[&]()->rhi::Pipeline
     {
         if(const auto prev=lastGoodUserPipelines_.find(fbKey);prev!=lastGoodUserPipelines_.end())
@@ -104,6 +106,7 @@ rhi::Pipeline MaterialSurfacePipelineCache::LoadUserSurface(rhi::Device& device,
     description.materialLayoutVersion=rhi::UserSurfaceMaterialLayoutVersion;
     description.alphaMode=mode;
     description.shadingLayoutVersion=shading?rhi::ShadingExtensionLayoutVersion:0;
+    description.anisotropicSampling=anisotropic;
     description.colorFormat=rhi::IsForward(kind)?rhi::ColorFormat::Rgba16Float:rhi::ColorFormat::Rgba8Unorm;
     description.vertexLayoutVersion=skinned?rhi::VertexLayoutVersionSkinned:compressed?rhi::VertexLayoutVersionCompressed:rhi::VertexLayoutVersionLegacy;
     if(skinned)description.macros.push_back({"SE_SKINNED","1"});

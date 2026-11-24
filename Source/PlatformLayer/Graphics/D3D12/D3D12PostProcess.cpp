@@ -219,11 +219,11 @@ bool RecordD3D12PostProcess(D3D12Presentation& p,D3D12FrameContext& frame,const 
         ||!use(*targets.ldr.resource.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,"ToneMapTarget"))return false;
     // G15：ToneMap 预算只统计采样+全屏绘制本身；资源屏障属于帧级提交成本，单独由帧时间覆盖。
     stamp(3,false);
-    fullscreen(2,3,width,height,targets.ldr.rtv->Cpu(),{settings.autoExposure?1.0f:0.0f,settings.lutEnabled?1.0f:0.0f,0,0});stamp(3,true);
+    fullscreen(2,3,width,height,targets.ldr.rtv->Cpu(),{settings.autoExposure?1.0f:0.0f,settings.lutEnabled?1.0f:0.0f,settings.vignette,settings.chromaticAberration});stamp(3,true);
     stamp(4,false);
     const auto destination=content.sceneLdr?content.sceneLdr->color.resource.Get():p.backBuffers[backBufferIndex].Get();
     if(!use(*targets.ldr.resource.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,"FxaaInput")||!use(*destination,D3D12_RESOURCE_STATE_RENDER_TARGET,"FxaaTarget"))return false;
-    const auto output=content.sceneLdr?content.sceneLdr->srgbRtv->Cpu():targets.outputRtvs->Cpu(backBufferIndex);fullscreen(3,4,width,height,output,{settings.fxaa?1.0f:0.0f,0,0,0});stamp(4,true);
+    const auto output=content.sceneLdr?content.sceneLdr->srgbRtv->Cpu():targets.outputRtvs->Cpu(backBufferIndex);fullscreen(3,4,width,height,output,{settings.fxaa?1.0f:0.0f,settings.filmGrain,float(p.submittedFrames&1023u),0});stamp(4,true);
     stamp(5,false);
     if(!content.overlays.empty())
     {

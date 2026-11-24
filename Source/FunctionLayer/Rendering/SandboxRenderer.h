@@ -212,4 +212,7 @@ private:
     SandboxDrawStatistics drawStatistics_;
     double surfaceElapsedSeconds_=0.0;
     std::uint64_t lastShaderReloadGeneration_=0;
+    std::string customSkyShaderKey_;
+    flare::rhi::Pipeline customSkyPipeline_;
+    std::unordered_set<std::string> failedSkyShaderKeys_;
 };

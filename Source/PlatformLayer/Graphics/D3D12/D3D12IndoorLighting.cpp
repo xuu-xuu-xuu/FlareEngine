@@ -161,7 +161,14 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
     constants.sampling={shift,1.f/float(stride),float(bounceWidth),float(bounceHeight)};
     constants.strengths={indoor.indirect?indoor.indirectStrength:0.f,indoor.reflections?indoor.reflectionStrength:0.f,
         indoor.volumetricFog?indoor.fogDensity:0.f,indoor.fogDistance};
-    constants.fogAlbedo=Vector(indoor.fogAlbedo);
+    const float fogWindPhase=(std::isfinite(indoor.fogTimeSeconds)?indoor.fogTimeSeconds:0.f)
+        *(std::isfinite(indoor.fogWindSpeed)?std::clamp(indoor.fogWindSpeed,-50.f,50.f):1.f);
+    constants.fogAlbedo=Vector(indoor.fogAlbedo,fogWindPhase);
+    constants.fogParameters={
+        std::isfinite(indoor.fogHeightFalloff)?std::clamp(indoor.fogHeightFalloff,0.f,4.f):0.f,
+        std::isfinite(indoor.fogBaseHeight)?std::clamp(indoor.fogBaseHeight,-4000.f,8000.f):0.f,
+        std::isfinite(indoor.fogSunScatter)?std::clamp(indoor.fogSunScatter,0.f,8.f):0.f,
+        std::isfinite(indoor.fogTurbulence)?std::clamp(indoor.fogTurbulence,0.f,1.f):0.f};
     constants.sunDirection=Vector(lighting.directionToLight);if(lighting.directionalEnabled)constants.sunRadiance=Vector(lighting.directionalRadiance);
     if(content.environment)
     {
@@ -180,7 +187,7 @@ bool RecordD3D12IndoorLighting(D3D12Presentation& p,D3D12FrameContext& frame,con
     {
         const auto& s=*content.shadow;const bool cascaded=s.cascadeCount>0;
         constants.sunClip=s.cascadeClipFromWorld;if(!cascaded)constants.sunClip[0]=s.clipFromWorld;
-        constants.sunSplits={s.cascadeSplits[0],s.cascadeSplits[1],s.cascadeSplits[2],0};
+        constants.sunSplits={s.cascadeSplits[0],s.cascadeSplits[1],s.cascadeSplits[2],s.cascadeSplits[3]};
         constants.sunShadowParameters={float(cascaded?s.cascadeCount:1),float(frame.shadow->resolution),cascaded?1.f:0.f,s.depthBias};
     }
 

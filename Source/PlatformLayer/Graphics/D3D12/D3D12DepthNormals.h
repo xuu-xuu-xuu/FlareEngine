@@ -35,6 +35,7 @@ public:
 private:
     std::array<std::shared_ptr<const D3D12ShaderProgram>,4> pixels_;
     std::array<Microsoft::WRL::ComPtr<ID3DBlob>,4> indoorPixels_;
+    std::unordered_map<std::string,Microsoft::WRL::ComPtr<ID3DBlob>> userPixels_;
     D3D12ShaderLoadStatistics shaderStatistics_;
     UINT64 pipelineCreations_=0;
     std::unordered_map<std::string,std::weak_ptr<const D3D12DepthNormalPipeline>> pipelines_;

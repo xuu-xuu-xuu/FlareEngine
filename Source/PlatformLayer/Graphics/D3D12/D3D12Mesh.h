@@ -61,6 +61,9 @@ struct D3D12MeshDraw
     float alphaCutoff=.5f;
     flare::rhi::ShadingMaterialConstants layers;
     std::array<const D3D12Texture*,6> layerTextures{};
+    std::array<const D3D12Texture*,4> userTextures{};
+    std::array<std::uint8_t,4> userTextureDefaults{};
+    std::array<bool,4> userTextureLinear{};
     flare::Aabb worldBounds;
     bool hasWorldBounds=false;
     bool staticShadowCaster=false;

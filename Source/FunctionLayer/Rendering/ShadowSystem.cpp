@@ -45,10 +45,12 @@ bool PrepareDirectionalCascadeShadow(const DirectionalShadowView& view,const rhi
     if(!IsFinite(view.cascadeDistance)||view.cascadeDistance<=0)
     {asset_io::Diagnostic(diagnostics,"Rendering.ShadowInvalid");return false;}
     const auto distance=std::min(view.cascadeDistance,camera.lens.farPlane);
+    const auto casterPadding=std::clamp(distance*1.5f,100.f,2000.f);
     if(!PrepareCascadeShadows(camera.view,camera.projection,camera.lens.nearPlane,camera.lens.farPlane,
-        distance,lighting.directionToLight,view.cascadeCount,view.cascadeResolution,fit,100.f,
+        distance,lighting.directionToLight,view.cascadeCount,view.cascadeResolution,fit,casterPadding,
         view.filter.pcss&&view.pcf&&view.filter.angularRadius>0?std::max(3.f,std::ceil(view.filter.maximumRadiusTexels)+1.f):3.f,
-        view.filter.pcss&&view.pcf&&view.filter.angularRadius>0?view.cascadeNormalBias:0.f))
+        view.filter.pcss&&view.pcf&&view.filter.angularRadius>0?view.cascadeNormalBias:0.f,
+        view.cascadeSplitLambda))
     {asset_io::Diagnostic(diagnostics,"Rendering.CsmUnavailable");return false;}
     candidate.resolution=fit.resolution;candidate.cascadeCount=fit.cascadeCount;
     candidate.cascadeClipFromWorld=fit.clipFromWorld;candidate.cascadeSplits=fit.splitDistances;

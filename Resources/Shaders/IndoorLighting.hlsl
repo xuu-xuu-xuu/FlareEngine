@@ -10,13 +10,14 @@ cbuffer IndoorConstants : register(b0)
     float4 environment;   // 强度、cos(yaw)、sin(yaw)、镜面最大 mip
     float4 ordinaryLightCount;
     float4 ordinaryPosition[8],ordinaryRadiance[8];
-    column_major float4x4 sunClip[3];
+    column_major float4x4 sunClip[4];
     float4 sunSplits,sunShadowParameters;
     float4 sampling;      // x=shift, y=1/stride, z=bounceWidth, w=bounceHeight
     uint indoorFrameIndex;
     float indoorHistoryBlendWeight;
     float indoorHistoryValid;
     uint indoorAtrousStep;
+    float4 fogParameters; // x=heightFalloff, y=baseHeight, z=sunScatter, w=turbulence
 };
 cbuffer IndoorFilterPassConstants : register(b1)
 {
@@ -414,31 +415,36 @@ float SunVisibility(float3 world,float distanceView)
     float visibility=1;
     if(count>0&&!(sunShadowParameters.z>.5&&distanceView>sunSplits[max(count-1,0)]))
     {
-    uint slice=0;
-    if(sunShadowParameters.z>.5)
-    {
-        slice=(distanceView>sunSplits.x?1u:0u)+(distanceView>sunSplits.y&&count>1?1u:0u);
-        slice=min(slice,(uint)(count-1));
-    }
-    float4 projected=mul(sunClip[slice],float4(world,1));
-    float3 ndc=projected.xyz/max(projected.w,1e-8);
-    if(projected.w>0&&all(abs(ndc.xy)<1)&&ndc.z>0&&ndc.z<1)
-    {
-    int res=max((int)sunShadowParameters.y,1);
-    float2 texCoord=(ndc.xy*float2(.5,-.5)+.5)*sunShadowParameters.y-0.5;
-    int2 basePixel=(int2)floor(texCoord);
-    float2 fracUv=saturate(texCoord-float2(basePixel));
-    int2 p00=clamp(basePixel,int2(0,0),int2(res-1,res-1));
-    int2 p10=clamp(basePixel+int2(1,0),int2(0,0),int2(res-1,res-1));
-    int2 p01=clamp(basePixel+int2(0,1),int2(0,0),int2(res-1,res-1));
-    int2 p11=clamp(basePixel+int2(1,1),int2(0,0),int2(res-1,res-1));
-    float ref=ndc.z-sunShadowParameters.w;
-    float d00=sunShadowParameters.z>.5?sunCascades.Load(int4(p00,slice,0)):sunDepth.Load(int3(p00,0));
-    float d10=sunShadowParameters.z>.5?sunCascades.Load(int4(p10,slice,0)):sunDepth.Load(int3(p10,0));
-    float d01=sunShadowParameters.z>.5?sunCascades.Load(int4(p01,slice,0)):sunDepth.Load(int3(p01,0));
-    float d11=sunShadowParameters.z>.5?sunCascades.Load(int4(p11,slice,0)):sunDepth.Load(int3(p11,0));
-    visibility=lerp(lerp(step(ref,d00),step(ref,d10),fracUv.x),lerp(step(ref,d01),step(ref,d11),fracUv.x),fracUv.y);
-    }
+        uint startSlice=0;
+        if(sunShadowParameters.z>.5)
+        {
+            startSlice=(distanceView>sunSplits.x?1u:0u)+(distanceView>sunSplits.y&&count>1?1u:0u)+(distanceView>sunSplits.z&&count>2?1u:0u);
+            startSlice=min(startSlice,(uint)(count-1));
+        }
+        uint maxSlice=sunShadowParameters.z>.5?(uint)(count-1):0u;
+        [loop]for(uint slice=startSlice;slice<=maxSlice;++slice)
+        {
+            float4 projected=mul(sunClip[slice],float4(world,1));
+            float3 ndc=projected.xyz/max(projected.w,1e-8);
+            if(projected.w>0&&all(abs(ndc.xy)<0.992)&&ndc.z>0.0005&&ndc.z<0.9995)
+            {
+                int res=max((int)sunShadowParameters.y,1);
+                float2 texCoord=(ndc.xy*float2(.5,-.5)+.5)*sunShadowParameters.y-0.5;
+                int2 basePixel=(int2)floor(texCoord);
+                float2 fracUv=saturate(texCoord-float2(basePixel));
+                int2 p00=clamp(basePixel,int2(0,0),int2(res-1,res-1));
+                int2 p10=clamp(basePixel+int2(1,0),int2(0,0),int2(res-1,res-1));
+                int2 p01=clamp(basePixel+int2(0,1),int2(0,0),int2(res-1,res-1));
+                int2 p11=clamp(basePixel+int2(1,1),int2(0,0),int2(res-1,res-1));
+                float ref=ndc.z-sunShadowParameters.w;
+                float d00=sunShadowParameters.z>.5?sunCascades.Load(int4(p00,slice,0)):sunDepth.Load(int3(p00,0));
+                float d10=sunShadowParameters.z>.5?sunCascades.Load(int4(p10,slice,0)):sunDepth.Load(int3(p10,0));
+                float d01=sunShadowParameters.z>.5?sunCascades.Load(int4(p01,slice,0)):sunDepth.Load(int3(p01,0));
+                float d11=sunShadowParameters.z>.5?sunCascades.Load(int4(p11,slice,0)):sunDepth.Load(int3(p11,0));
+                visibility=lerp(lerp(step(ref,d00),step(ref,d10),fracUv.x),lerp(step(ref,d01),step(ref,d11),fracUv.x),fracUv.y);
+                break;
+            }
+        }
     }
     return visibility;
 }
@@ -475,27 +481,198 @@ float IntegrateLocalFog(float3 origin,float3 direction,float rayLength,float3 ce
     }
     return strengths.z*result;
 }
-float3 ApplyFog(float3 color,float3 nearView,float3 endView)
+float FogOpticalDepth(float density,float falloff,float baseHeight,float originY,float dirY,float rayLength)
+{
+    float opticalDepth=density*rayLength;
+    if(falloff>1e-6)
+    {
+        float sigma0=density*exp(clamp(-falloff*(originY-baseHeight),-12.0,4.0));
+        float k=-falloff*dirY*rayLength;
+        opticalDepth=abs(k)>1e-4?sigma0*rayLength*(exp(clamp(k,-20.0,12.0))-1.0)/k:sigma0*rayLength*(1.0+0.5*k);
+    }
+    return opticalDepth;
+}
+float FogHash31(float3 p)
+{
+    uint3 q=uint3(int3(floor(p))*int3(1597334673,3812015801u,2798796415u));
+    uint n=(q.x^q.y^q.z)*1597334673u;
+    n^=n>>15;
+    return float(n)*(1.0/4294967296.0);
+}
+float FogValueNoise3D(float3 p)
+{
+    float3 i=floor(p),f=frac(p);
+    float3 u=f*f*(3.0-2.0*f);
+    float n000=FogHash31(i),n100=FogHash31(i+float3(1,0,0));
+    float n010=FogHash31(i+float3(0,1,0)),n110=FogHash31(i+float3(1,1,0));
+    float n001=FogHash31(i+float3(0,0,1)),n101=FogHash31(i+float3(1,0,1));
+    float n011=FogHash31(i+float3(0,1,1)),n111=FogHash31(i+float3(1,1,1));
+    return lerp(lerp(lerp(n000,n100,u.x),lerp(n010,n110,u.x),u.y),
+                lerp(lerp(n001,n101,u.x),lerp(n011,n111,u.x),u.y),u.z);
+}
+float FogTurbulentDensityFactor(float3 worldPos,float turbulence,float windPhase)
+{
+    float3 windOffset=float3(windPhase*3.2,windPhase*0.45,windPhase*1.7);
+    float3 q=(worldPos+windOffset)*float3(0.014,0.032,0.014);
+    float fbm=FogValueNoise3D(q)*0.65+FogValueNoise3D(q*2.37+float3(11.3,4.7,19.1))*0.35;
+    // 保持均值接近 1.0，使开合处产生浓密云雾团块与清透缝隙。
+    float billow=smoothstep(0.20,0.80,fbm)*1.65+0.18;
+    return lerp(1.0,billow,saturate(turbulence));
+}
+float SoftVolumetricSunVisibility(float3 sampleWorld,float distanceView,float t,float turbulence,float windPhase)
+{
+    float result=1.0;
+    if(sunShadowParameters.x>0)
+    {
+        // 气溶胶前向散射与太阳视直径半影：沿垂直日光平面做平滑 3D 扰动 + 4 点旋转柔化采样，根除合成感激光硬切边。
+        float3 L=Unit(sunDirection.xyz,float3(0,1,0));
+        float3 T=Unit(cross(abs(L.y)<0.98?float3(0,1,0):float3(1,0,0),L),float3(1,0,0));
+        float3 B=cross(L,T);
+        float3 wind=float3(windPhase*2.6,windPhase*0.35,windPhase*1.4);
+        float3 wq=(sampleWorld+wind)*0.022;
+        float2 aeroDrift=float2(FogValueNoise3D(wq)-0.5,FogValueNoise3D(wq+float3(13.7,5.3,9.1))-0.5);
+        float penumbraRadius=turbulence*(2.6+0.036*t);
+        float3 centerPos=sampleWorld+(T*aeroDrift.x+B*aeroDrift.y)*(penumbraRadius*2.2);
+
+        float v0=SunVisibility(centerPos+T*penumbraRadius,distanceView);
+        float v1=SunVisibility(centerPos-T*penumbraRadius,distanceView);
+        float v2=SunVisibility(centerPos+B*penumbraRadius,distanceView);
+        float v3=SunVisibility(centerPos-B*penumbraRadius,distanceView);
+        float softVis=0.25*(v0+v1+v2+v3);
+
+        // 高空流云斑驳透射调制（Cloud Gobo）：让丁达尔光柱呈现自然破云浓淡层次而非均匀光幕。
+        float cloudProjScale=(140.0-sampleWorld.y)/max(L.y,0.14);
+        float2 cloudUv=(sampleWorld.xz+L.xz*cloudProjScale+float2(windPhase*4.2,windPhase*1.9))*0.0075;
+        float cloudFbm=FogValueNoise3D(float3(cloudUv.x,0.35,cloudUv.y))*0.65
+                      +FogValueNoise3D(float3(cloudUv.x*2.4+7.1,1.7,cloudUv.y*2.4+3.9))*0.35;
+        float cloudGobo=lerp(1.0,smoothstep(0.20,0.78,cloudFbm)*0.82+0.26,saturate(turbulence*0.92));
+        result=softVis*cloudGobo;
+    }
+    return result;
+}
+float FogNearMoteScintillation(float3 worldPos,float t,float turbulence,float windPhase)
+{
+    float result=0.0;
+    float nearMask=(1.0-smoothstep(5.0,32.0,t))*smoothstep(0.8,3.6,t);
+    if(nearMask>1e-4)
+    {
+        float3 drift=float3(windPhase*1.2,-windPhase*0.22,windPhase*0.8);
+        float m1=FogValueNoise3D((worldPos+drift)*0.55);
+        float m2=FogValueNoise3D((worldPos-drift*0.6)*1.15+float3(5.2,9.8,3.1));
+        float speck=smoothstep(0.24,0.74,m1*m2*1.90);
+        result=speck*nearMask*saturate(turbulence)*0.28;
+    }
+    return result;
+}
+float3 ApplyFog(float3 color,float3 nearView,float3 endView,int2 pixel)
 {
     float3 segment=endView-nearView;float lengthView=length(segment);
     float3 dir=segment/max(lengthView,1e-6),worldDirection=mul((float3x3)indoorInverseView,dir);
     float rayLength=min(lengthView,strengths.w);
-    float transmittance=exp(-strengths.z*rayLength);float3 scattering=0;
     float3 worldOrigin=mul(indoorInverseView,float4(nearView,1)).xyz;
-    if(any(sunRadiance.rgb>0))
+    float transmittance=1.0;
+    float3 scattering=0;
+    const float turbulence=saturate(fogParameters.w);
+    const float windPhase=fogAlbedo.w;
+    const bool heightOrScatter=(fogParameters.x>1e-6)||(fogParameters.z>1e-6)||(turbulence>1e-4);
+    if(!heightOrScatter)
     {
-        float sunIntegral=1-transmittance;
-        if(sunShadowParameters.x>0)
+        transmittance=exp(-strengths.z*rayLength);
+        if(any(sunRadiance.rgb>0))
         {
-            float ds=rayLength/16,stepT=exp(-strengths.z*ds),running=1;sunIntegral=0;
-            [loop]for(uint i=0;i<16;++i)
+            float sunIntegral=1-transmittance;
+            if(sunShadowParameters.x>0)
             {
-                float t=(i+.5)*ds;
-                sunIntegral+=running*(1-stepT)*SunVisibility(worldOrigin+worldDirection*t,-(nearView.z+dir.z*t));
+                float ds=rayLength/16,stepT=exp(-strengths.z*ds),running=1;sunIntegral=0;
+                [loop]for(uint i=0;i<16;++i)
+                {
+                    float t=(i+.5)*ds;
+                    sunIntegral+=running*(1-stepT)*SunVisibility(worldOrigin+worldDirection*t,-(nearView.z+dir.z*t));
+                    running*=stepT;
+                }
+            }
+            scattering+=sunRadiance.rgb*Phase(dot(worldDirection,sunDirection.xyz))*sunIntegral;
+        }
+    }
+    else
+    {
+        float falloff=max(fogParameters.x,0.0);
+        float baseHeight=fogParameters.y;
+        float ign=frac(52.9829189*frac(dot(float2(pixel),float2(0.06711056,0.00583715))));
+        if(turbulence>1e-4)
+        {
+            // 非线性平方分布步进：近景山谷雾团、柔边斑驳丁达尔光束与逆光微尘高精度采样。
+            float running=1.0;
+            float sunIntegral=0.0;
+            float moteIntegral=0.0;
+            const bool evalSun=any(sunRadiance.rgb>0);
+            [loop]for(uint i=0;i<24;++i)
+            {
+                float u0=float(i)/24.0,u1=float(i+1u)/24.0;
+                float t0=rayLength*lerp(u0,u0*u0,0.48);
+                float t1=rayLength*lerp(u1,u1*u1,0.48);
+                float ds=max(t1-t0,1e-4);
+                float t=lerp(t0,t1,ign);
+                float3 sampleWorld=worldOrigin+worldDirection*t;
+                float baseSigma=strengths.z*exp(clamp(-falloff*(sampleWorld.y-baseHeight),-12.0,4.0));
+                float localSigma=baseSigma*FogTurbulentDensityFactor(sampleWorld,turbulence,windPhase);
+                float stepT=exp(-localSigma*ds);
+                if(evalSun)
+                {
+                    float vis=SoftVolumetricSunVisibility(sampleWorld,-(nearView.z+dir.z*t),t,turbulence,windPhase);
+                    sunIntegral+=running*(1.0-stepT)*vis;
+                    float moteStepT=exp(-localSigma*min(ds,1.25));
+                    moteIntegral+=running*(1.0-moteStepT)*vis*FogNearMoteScintillation(sampleWorld,t,turbulence,windPhase);
+                }
                 running*=stepT;
             }
+            transmittance=running;
+            if(evalSun)
+            {
+                float cosSun=dot(worldDirection,sunDirection.xyz);
+                float g=0.74,g2=g*g;
+                float hgForward=(1.0-g2)/(4.0*Pi*pow(max(1.0+g2-2.0*g*cosSun,1e-3),1.5));
+                float phaseVal=Phase(cosSun)+fogParameters.z*hgForward;
+                scattering+=sunRadiance.rgb*(phaseVal*sunIntegral+(min(phaseVal,0.65)*0.55+0.08)*moteIntegral);
+            }
+            // 天光环境多重散射底光（对齐 UE5 VolumetricFog Sky Inscattering）：消除前景物体与背景阴影雾的抠图脱节感。
+            if(environment.x>0)
+            {
+                float3 ambDir=Unit(lerp(worldDirection,float3(0,1,0),0.48),float3(0,1,0));
+                float3 envDir=float3(environment.y*ambDir.x-environment.z*ambDir.z,ambDir.y,environment.z*ambDir.x+environment.y*ambDir.z);
+                float3 skyAmb=sceneEnvironment.SampleLevel(indoorSampler,envDir,environment.w).rgb*environment.x;
+                scattering+=skyAmb*(1.0-transmittance)*0.85;
+            }
         }
-        scattering+=sunRadiance.rgb*Phase(dot(worldDirection,sunDirection.xyz))*sunIntegral;
+        else
+        {
+            float tauTotal=FogOpticalDepth(strengths.z,falloff,baseHeight,worldOrigin.y,worldDirection.y,rayLength);
+            transmittance=exp(-tauTotal);
+            if(any(sunRadiance.rgb>0))
+            {
+                float cosSun=dot(worldDirection,sunDirection.xyz);
+                float g=0.76,g2=g*g;
+                float hgForward=(1.0-g2)/(4.0*Pi*pow(max(1.0+g2-2.0*g*cosSun,1e-3),1.5));
+                float phaseVal=Phase(cosSun)+fogParameters.z*hgForward;
+                float sunIntegral=1.0-transmittance;
+                if(sunShadowParameters.x>0)
+                {
+                    float ds=rayLength/16.0;
+                    float running=1.0;
+                    sunIntegral=0.0;
+                    [loop]for(uint i=0;i<16;++i)
+                    {
+                        float t=(float(i)+ign)*ds;
+                        float3 sampleWorld=worldOrigin+worldDirection*t;
+                        float localSigma=strengths.z*exp(clamp(-falloff*(sampleWorld.y-baseHeight),-12.0,4.0));
+                        float stepT=exp(-localSigma*ds);
+                        sunIntegral+=running*(1.0-stepT)*SunVisibility(sampleWorld,-(nearView.z+dir.z*t));
+                        running*=stepT;
+                    }
+                }
+                scattering+=sunRadiance.rgb*phaseVal*sunIntegral;
+            }
+        }
     }
     [loop]for(uint k=0;k<(uint)ordinaryLightCount.x;++k)
         scattering+=ordinaryRadiance[k].rgb*IntegrateLocalFog(worldOrigin,worldDirection,rayLength,ordinaryPosition[k].xyz,ordinaryPosition[k].w,k,false);
@@ -523,6 +700,6 @@ float4 PSMain(float4 position:SV_POSITION):SV_Target
                 color.rgb+=strengths.y*ReflectedChange(p,n,eye,f0,rough);
         }
     }
-    if(strengths.z>0)color.rgb=ApplyFog(max(color.rgb,0),nearView,p);
+    if(strengths.z>0)color.rgb=ApplyFog(max(color.rgb,0),nearView,p,pixel);
     return float4(clamp(color.rgb,0,65504),color.a);
 }

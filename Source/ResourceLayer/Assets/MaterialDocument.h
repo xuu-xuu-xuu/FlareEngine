@@ -14,10 +14,15 @@ struct MaterialDocument
     bool doubleSided=false;
     AssetId baseColorTexture,normalTexture,metallicRoughnessTexture;
     float normalScale=1;
+    // glTF 烘焙微遮蔽强度（读取 metallicRoughness 贴图 R 通道；默认 0 保持旧材质无损，1 表示完整消费烘焙 AO）与电介质 Specular（0.5=F0 0.04）。
+    float occlusionStrength=0.0f;
+    float specular=0.5f;
     // 可选用户 Shader 资产（.sebin、.fshader.hlsl 或 .fshader.json）；空表示内置默认 PBR，旧材质缺省行为不变。
     AssetId shader;
     // 可选自定义着色器材质参数覆盖（键为 @Param 参数名，值为最多 4 分量浮点）。为空时不写入 JSON。
     std::map<std::string, Vec4> shaderParameters;
+    // 可选自定义着色器 2D 贴图覆盖（键为 Properties 内的贴图属性名如 _CliffTex，值为贴图 AssetId）。为空时不写入 JSON。
+    std::map<std::string, AssetId> shaderTextures;
     // 沿用 baseColor[3] 为唯一因子 alpha；贴图 alpha 与该因子相乘，不复制 opacity。
     MaterialAlphaMode alphaMode=MaterialAlphaMode::Opaque;
     float alphaCutoff=0.5f;

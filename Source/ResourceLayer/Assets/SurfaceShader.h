@@ -13,13 +13,31 @@
 namespace flare
 {
 inline constexpr std::size_t MaxSurfaceShaderVec4Slots = 8;
+inline constexpr std::size_t MaxSurfaceShaderTextureSlots = 4;
 inline constexpr std::size_t MaxSurfaceShaderPasses = 8;
+
+enum class SurfaceTextureDefault : std::uint8_t
+{
+    White = 0,
+    Black = 1,
+    Gray = 2,
+    Bump = 3,
+};
+
+struct SurfaceShaderTexture
+{
+    std::string name;
+    std::string label;
+    SurfaceTextureDefault defaultKind = SurfaceTextureDefault::White;
+    std::uint32_t slotIndex = 0; // 0..3 -> shader slot 3u..6u (t28..t31)
+};
 
 enum class SurfaceShadingModel : std::uint8_t
 {
     Lit = 0,
     Unlit = 1,
     Toon = 2,
+    Foliage = 3,
 };
 
 enum class SurfaceCullMode : std::uint8_t
@@ -97,6 +115,7 @@ struct SurfaceShaderMetadata
     bool usesAlphaCoverage = false;
     std::optional<std::size_t> shadowPassIndex = 0;
     std::vector<SurfaceShaderParam> parameters;
+    std::vector<SurfaceShaderTexture> textures;
     std::vector<SurfaceShaderPass> passes;
     std::string bodyHlsl;
     std::uint32_t bodyStartLine = 1;

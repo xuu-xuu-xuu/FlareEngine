@@ -37,10 +37,29 @@ float3 SampleColorLut(float3 displayLinear)
 }
 float4 PSMain(float4 position:SV_POSITION):SV_TARGET
 {
+    float2 uv=position.xy/max(postResolution.xy,1.0);
     float3 radiance=max(inputScene.Load(int3(int2(position.xy),0)).rgb,0);
-    if(postParameters.z>0)radiance+=bloomScene.SampleLevel(linearClamp,position.xy/postResolution.xy,0).rgb*postParameters.z;
+    // postOptions.w：真实光学镜头径向色差（中心零位移保锐，向四角按 r^2 散射，并对极高反差暗剪影限制红蓝溢出）。
+    if(postOptions.w>1e-5)
+    {
+        float2 centered=uv-0.5;
+        float2 aspectVec=float2(centered.x*(postResolution.x/max(postResolution.y,1.0)),centered.y);
+        float2 caShift=centered*(dot(aspectVec,aspectVec)*postOptions.w*0.016);
+        float maxLocal=max(max(radiance.r,max(radiance.g,radiance.b))*2.1+0.12,0.12);
+        float r=min(0.5*(inputScene.SampleLevel(linearClamp,saturate(uv+caShift*0.5),0).r+inputScene.SampleLevel(linearClamp,saturate(uv+caShift),0).r),maxLocal);
+        float b=min(0.5*(inputScene.SampleLevel(linearClamp,saturate(uv-caShift*0.5),0).b+inputScene.SampleLevel(linearClamp,saturate(uv-caShift),0).b),maxLocal);
+        radiance=max(float3(r,radiance.g,b),0);
+    }
+    if(postParameters.z>0)radiance+=bloomScene.SampleLevel(linearClamp,uv,0).rgb*postParameters.z;
     // postOptions.x 选择 GPU 自动曝光（1×1 纹理）或既有 CPU 曝光常量；默认走常量路径。
     radiance*=(postOptions.x>0.5?exposureTexture.Load(int3(0,0,0)):postParameters.x);
+    // postOptions.z：HDR 线性空间 cos^4 光学暗角，在 ACES 映射前自然压暗四角而不发灰。
+    if(postOptions.z>1e-5)
+    {
+        float2 vigUv=(uv-0.5)*float2(1.20,1.08);
+        float vig=1.0/pow(1.0+dot(vigUv,vigUv)*postOptions.z*0.92,2.0);
+        radiance*=vig;
+    }
 #ifdef SE_TONEMAP_ACES
     float3 mapped=TonemapAces(radiance);
 #else

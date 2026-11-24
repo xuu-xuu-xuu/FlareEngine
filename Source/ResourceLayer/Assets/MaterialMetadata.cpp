@@ -13,6 +13,8 @@ const std::array fields{
     PropertyDescriptor{"material.roughness","EditorUi.Roughness",PropertyType::Number,1.0f,0.0f,1.0f,true,{},PropertyPresentation::Slider},
     PropertyDescriptor{"material.doubleSided","EditorUi.DoubleSided",PropertyType::Boolean,false,std::nullopt,std::nullopt},
     PropertyDescriptor{"material.normalScale","Property.Material.NormalScale",PropertyType::Number,1.0f,std::nullopt,std::nullopt,true,{},PropertyPresentation::Default,true},
+    PropertyDescriptor{"material.occlusionStrength","Property.Material.OcclusionStrength",PropertyType::Number,0.0f,0.0f,1.0f,true,"occlusionStrength",PropertyPresentation::Slider,true},
+    PropertyDescriptor{"material.specular","Property.Material.Specular",PropertyType::Number,0.5f,0.0f,1.0f,true,"specular",PropertyPresentation::Slider,true},
     PropertyDescriptor{"material.baseColorTexture","EditorUi.BaseColorTexture",PropertyType::AssetId,std::string{},std::nullopt,std::nullopt,true,"textures/baseColor"},
     PropertyDescriptor{"material.normalTexture","EditorUi.NormalTexture",PropertyType::AssetId,std::string{},std::nullopt,std::nullopt,true,"textures/normal"},
     PropertyDescriptor{"material.metallicRoughnessTexture","EditorUi.MetallicRoughnessTexture",PropertyType::AssetId,std::string{},std::nullopt,std::nullopt,true,"textures/metallicRoughness"},
@@ -43,11 +45,19 @@ bool ReadMaterialProperty(const MaterialDocument& m,std::string_view key,Propert
 {
     error.clear();
     constexpr std::string_view paramPrefix="material.shaderParam.";
+    constexpr std::string_view texPrefix="material.shaderTexture.";
     if(key.starts_with(paramPrefix))
     {
         const std::string paramName(key.substr(paramPrefix.size()));
         const auto it=m.shaderParameters.find(paramName);
         value=(it!=m.shaderParameters.end())?it->second:Vec4{0,0,0,1};
+        return true;
+    }
+    if(key.starts_with(texPrefix))
+    {
+        const std::string texName(key.substr(texPrefix.size()));
+        const auto it=m.shaderTextures.find(texName);
+        value=(it!=m.shaderTextures.end())?it->second:std::string{};
         return true;
     }
     if(!FindMaterialProperty(key)){error="Metadata.UnknownProperty";return false;}
@@ -57,6 +67,8 @@ bool ReadMaterialProperty(const MaterialDocument& m,std::string_view key,Propert
     else if(key=="material.roughness")value=m.roughness;
     else if(key=="material.doubleSided")value=m.doubleSided;
     else if(key=="material.normalScale")value=m.normalScale;
+    else if(key=="material.occlusionStrength")value=m.occlusionStrength;
+    else if(key=="material.specular")value=m.specular;
     else if(key=="material.baseColorTexture")value=m.baseColorTexture;
     else if(key=="material.normalTexture")value=m.normalTexture;
     else if(key=="material.metallicRoughnessTexture")value=m.metallicRoughnessTexture;
@@ -85,6 +97,7 @@ bool WriteMaterialProperty(MaterialDocument& material,std::string_view key,const
 {
     error.clear();
     constexpr std::string_view paramPrefix="material.shaderParam.";
+    constexpr std::string_view texPrefix="material.shaderTexture.";
     if(key.starts_with(paramPrefix))
     {
         const std::string paramName(key.substr(paramPrefix.size()));
@@ -100,6 +113,18 @@ bool WriteMaterialProperty(MaterialDocument& material,std::string_view key,const
         material=std::move(copy);
         return true;
     }
+    if(key.starts_with(texPrefix))
+    {
+        const std::string texName(key.substr(texPrefix.size()));
+        const auto* str=std::get_if<std::string>(&value);
+        if(texName.empty()||texName.size()>64||!str){error="Metadata.InvalidValue";return false;}
+        auto copy=material;
+        if(str->empty())copy.shaderTextures.erase(texName);
+        else copy.shaderTextures[texName]=*str;
+        if(!ValidateMaterialDocument(copy)){error="Assets.InvalidMaterial";return false;}
+        material=std::move(copy);
+        return true;
+    }
     const auto* field=FindMaterialProperty(key);
     if(!field){error="Metadata.UnknownProperty";return false;}
     if(!field->editable||!ValidatePropertyValue(*field,value)){error="Metadata.InvalidValue";return false;}
@@ -110,6 +135,8 @@ bool WriteMaterialProperty(MaterialDocument& material,std::string_view key,const
     else if(key=="material.roughness")copy.roughness=std::get<float>(value);
     else if(key=="material.doubleSided")copy.doubleSided=std::get<bool>(value);
     else if(key=="material.normalScale")copy.normalScale=std::get<float>(value);
+    else if(key=="material.occlusionStrength")copy.occlusionStrength=std::get<float>(value);
+    else if(key=="material.specular")copy.specular=std::get<float>(value);
     else if(key=="material.baseColorTexture")copy.baseColorTexture=std::get<std::string>(value);
     else if(key=="material.normalTexture")copy.normalTexture=std::get<std::string>(value);
     else if(key=="material.metallicRoughnessTexture")copy.metallicRoughnessTexture=std::get<std::string>(value);

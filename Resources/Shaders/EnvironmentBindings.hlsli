@@ -7,13 +7,16 @@ float3 EnvironmentDirection(float3 direction)
     return float3(environmentParameters.y*direction.x-environmentParameters.z*direction.z,direction.y,
         environmentParameters.z*direction.x+environmentParameters.y*direction.z);
 }
-float3 EnvironmentBrdf(float3 color,float metal,float rough,float3 n,float3 v
+float3 EnvironmentBrdfEx(float3 color,float metal,float rough,float3 n,float3 v
 #ifdef SE_SHADING_EXTENSIONS
     ,float3 position,float3 geometricNormal,float3 tangent,float bitangentSign,float faceSign,float2 materialUv
 #endif
-)
+    ,float materialAo,float dielectricSpec)
 {
-    float nv=saturate(dot(n,v));float3 f0=lerp(0.04.xxx,color,metal);
+    float nv=saturate(dot(n,v));
+    float dielectricF0=abs(dielectricSpec-0.5)>1e-5?(0.08*saturate(dielectricSpec)):0.04;
+    float3 f0=lerp(dielectricF0.xxx,color,metal);
+    float specAo=materialAo<0.9999?saturate(pow(abs(nv+materialAo),exp2(-16.0*rough-1.0))-1.0+materialAo):1.0;
     float3 fresnel=f0+(1-f0)*pow(1-nv,5);
     float3 diffuse=irradianceMap.SampleLevel(environmentSampler,EnvironmentDirection(n),0).rgb*color*(1-metal)*(1-fresnel)/3.141592653589793;
 #ifdef SE_SHADING_EXTENSIONS
@@ -28,9 +31,9 @@ float3 EnvironmentBrdf(float3 color,float metal,float rough,float3 n,float3 v
     float3 reflected=reflect(-v,n);
     float3 radiance=specularMap.SampleLevel(environmentSampler,EnvironmentDirection(reflected),rough*environmentParameters.w).rgb;
     float2 integrated=brdfMap.SampleLevel(environmentSampler,float2(nv,rough),0).rg;
-    float3 result=(diffuse+radiance*(f0*integrated.x+integrated.y))*environmentParameters.x;
+    float3 result=(diffuse*materialAo+radiance*(f0*integrated.x+integrated.y)*specAo)*environmentParameters.x;
 #ifdef SE_SHADING_EXTENSIONS
-    result=diffuse*diffuseGain+radiance*(f0*integrated.x+integrated.y)*environmentParameters.x;
+    result=diffuse*diffuseGain*materialAo+radiance*(f0*integrated.x+integrated.y)*environmentParameters.x*specAo;
 #endif
     if(skin.z>0.5)
     {
@@ -51,10 +54,10 @@ float3 EnvironmentBrdf(float3 color,float metal,float rough,float3 n,float3 v
 #endif
 #ifdef SE_SHADING_EXTENSIONS
         // SH只替换漫反射；窄瓣镜面和多散射镜面仍使用同一原环境参考。
-        result=(radiance*singleScatter+environmentDiffuseRadiance*multipleScatter)*environmentParameters.x
-            +diffuseRadiance*diffuseWeight*diffuseGain;
+        result=(radiance*singleScatter*specAo+environmentDiffuseRadiance*multipleScatter*materialAo)*environmentParameters.x
+            +diffuseRadiance*diffuseWeight*diffuseGain*materialAo;
 #else
-        result=(radiance*singleScatter+diffuseRadiance*(multipleScatter+diffuseWeight))*environmentParameters.x;
+        result=(radiance*singleScatter*specAo+diffuseRadiance*(multipleScatter+diffuseWeight)*materialAo)*environmentParameters.x;
 #endif
     }
 #ifdef SE_SHADING_EXTENSIONS
@@ -84,4 +87,16 @@ float3 EnvironmentBrdf(float3 color,float metal,float rough,float3 n,float3 v
     }
 #endif
     return result;
+}
+float3 EnvironmentBrdf(float3 color,float metal,float rough,float3 n,float3 v
+#ifdef SE_SHADING_EXTENSIONS
+    ,float3 position,float3 geometricNormal,float3 tangent,float bitangentSign,float faceSign,float2 materialUv
+#endif
+)
+{
+    return EnvironmentBrdfEx(color,metal,rough,n,v
+#ifdef SE_SHADING_EXTENSIONS
+        ,position,geometricNormal,tangent,bitangentSign,faceSign,materialUv
+#endif
+        ,1.0,0.5);
 }

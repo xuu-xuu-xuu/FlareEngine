@@ -32,6 +32,7 @@ std::string AcceptedKindForFeatureProperty(std::string_view propKey)
     if (propKey == "navagent.asset") return "navmesh";
     if (propKey == "environmentmap.asset") return "env";
     if (propKey == "render.diffuseProbe") return "probe";
+    if (propKey == "render.skyShader") return "skyshader";
     return {};
 }
 
@@ -40,9 +41,9 @@ std::string UnitForFeatureProperty(std::string_view propKey)
     if (propKey.ends_with("Meters") || propKey == "body.halfExtents" || propKey == "character.radius" ||
         propKey == "character.segmentHalfHeight" || propKey == "navagent.stoppingDistance" ||
         propKey == "rectangle.width" || propKey == "rectangle.height" || propKey == "render.aoRadius" ||
-        propKey == "render.contactLength" || propKey == "render.fogDistance" || propKey == "render.rtMaxDistance" ||
-        propKey == "render.rtAoRadius" || propKey == "render.cascadeDistance" || propKey == "render.shadowDistance" ||
-        propKey == "render.shadowExtent")
+        propKey == "render.contactLength" || propKey == "render.fogDistance" || propKey == "render.fogBaseHeight" ||
+        propKey == "render.rtMaxDistance" || propKey == "render.rtAoRadius" || propKey == "render.cascadeDistance" ||
+        propKey == "render.shadowDistance" || propKey == "render.shadowExtent")
     {
         return "m";
     }
@@ -222,6 +223,9 @@ void AppendSingleFeatureComponent(const EditorSession& session, const Localizati
     const bool rHlod = rBool("render.hlod");
     const bool rOcclusion = rBool("render.occlusion");
     const bool rFog = rBool("render.volumetricFog");
+    const bool rProcSky = rBool("render.proceduralSky");
+    const bool rTod = rBool("render.todLighting");
+    const bool rHasSkyShader = rendering && !std::get<std::string>(FeatureValue(world, entity, "render.skyShader")).empty();
     const bool rRt = rBool("render.rayTracing");
 
     auto pushSubheader = [&](const char* idSuffix, const char* labelKey) {
@@ -269,13 +273,15 @@ void AppendSingleFeatureComponent(const EditorSession& session, const Localizati
             if (!rPost && (pk == "render.bloom" || pk == "render.bloomThreshold" || pk == "render.bloomStrength" ||
                            pk == "render.fxaa" || pk == "render.taa" || pk == "render.autoExposure" ||
                            pk == "render.aces" || pk == "render.lutEnabled" || pk == "render.lutLift" ||
-                           pk == "render.lutGamma" || pk == "render.lutGain"))
+                           pk == "render.lutGamma" || pk == "render.lutGain" ||
+                           pk == "render.vignette" || pk == "render.chromaticAberration" || pk == "render.filmGrain"))
                 continue;
             if (rPost && !rBloom && (pk == "render.bloomThreshold" || pk == "render.bloomStrength")) continue;
             if (rPost && !rLut && (pk == "render.lutLift" || pk == "render.lutGamma" || pk == "render.lutGain")) continue;
 
             if (!rShadow && (pk == "render.shadowPcf" || pk == "render.cascades" || pk == "render.cascadeCount" ||
-                             pk == "render.cascadeResolution" || pk == "render.cascadeDistance" || pk == "render.cascadeDebug" ||
+                             pk == "render.cascadeResolution" || pk == "render.cascadeDistance" || pk == "render.cascadeSplitLambda" ||
+                             pk == "render.cascadeDebug" ||
                              pk == "render.cascadeBias" || pk == "render.cascadeSlopeBias" || pk == "render.cascadeNormalBias" ||
                              pk == "render.shadowExtent" || pk == "render.shadowDistance" || pk == "render.shadowBias" ||
                              pk == "render.shadowNormalBias" || pk == "render.shadowPcss" || pk == "render.shadowAngularRadius" ||
@@ -283,7 +289,8 @@ void AppendSingleFeatureComponent(const EditorSession& session, const Localizati
                              pk == "render.staticShadowCache"))
                 continue;
             if (rShadow && !rCascades && (pk == "render.cascadeCount" || pk == "render.cascadeResolution" ||
-                                          pk == "render.cascadeDistance" || pk == "render.cascadeDebug" ||
+                                          pk == "render.cascadeDistance" || pk == "render.cascadeSplitLambda" ||
+                                          pk == "render.cascadeDebug" ||
                                           pk == "render.cascadeBias" || pk == "render.cascadeSlopeBias" ||
                                           pk == "render.cascadeNormalBias"))
                 continue;
@@ -294,7 +301,14 @@ void AppendSingleFeatureComponent(const EditorSession& session, const Localizati
             if (!rGtao && (pk == "render.aoRadius" || pk == "render.aoIntensity")) continue;
             if (!rContact && pk == "render.contactLength") continue;
             if (!rDiffuseSh && (pk == "render.localDiffuseSh" || pk == "render.diffuseProbe")) continue;
-            if (!rFog && (pk == "render.fogDensity" || pk == "render.fogDistance" || pk == "render.fogAlbedo")) continue;
+            if (!rFog && (pk == "render.fogDensity" || pk == "render.fogDistance" || pk == "render.fogAlbedo" ||
+                          pk == "render.fogHeightFalloff" || pk == "render.fogBaseHeight" || pk == "render.fogSunScatter" ||
+                          pk == "render.fogTurbulence" || pk == "render.fogWindSpeed"))
+                continue;
+            if (!rProcSky && !rHasSkyShader && (pk == "render.skyZenithColor" || pk == "render.skyHorizonColor" || pk == "render.skyGroundColor"))
+                continue;
+            if (!rProcSky && !rTod && !rHasSkyShader && (pk == "render.cloudCoverage" || pk == "render.cloudDensity" || pk == "render.cloudSpeed"))
+                continue;
             if (!rRt && pk.starts_with("render.rt")) continue;
         }
 
@@ -331,8 +345,8 @@ void AppendSingleFeatureComponent(const EditorSession& session, const Localizati
             EditorProperty row{std::string(pk), label, EditorPropertyType::Combo, std::to_string(iv), !property.editable, {}, title};
             if (pk == "render.cascadeCount")
             {
-                row.options = {"1", "2", "3"};
-                row.optionLabels = {"1", "2", "3"};
+                row.options = {"1", "2", "3", "4"};
+                row.optionLabels = {"1", "2", "3", "4"};
             }
             else if (pk == "render.cascadeResolution")
             {

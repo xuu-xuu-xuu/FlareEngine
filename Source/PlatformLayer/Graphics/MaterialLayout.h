@@ -20,20 +20,22 @@ struct alignas(16) IndoorLightingConstants
     Mat4 previousClipFromWorld;
     Vec4 viewport,strengths,fogAlbedo,sunDirection,sunRadiance,environment,ordinaryLightCount;
     std::array<Vec4,8> ordinaryPosition{},ordinaryRadiance{};
-    std::array<Mat4,3> sunClip{};
+    std::array<Mat4,4> sunClip{};
     Vec4 sunSplits{},sunShadowParameters{},sampling{};
     std::uint32_t frameIndex=0;
     float historyBlendWeight=0.0f;
     float historyValid=0.0f;
     std::uint32_t atrousStep=1;
+    Vec4 fogParameters{}; // x=heightFalloff, y=baseHeight, z=sunScatter, w=turbulence
 };
-static_assert(sizeof(IndoorLightingConstants)==944&&alignof(IndoorLightingConstants)==16);
+static_assert(sizeof(IndoorLightingConstants)==1024&&alignof(IndoorLightingConstants)==16);
 static_assert(offsetof(IndoorLightingConstants,previousClipFromWorld)==256);
 static_assert(offsetof(IndoorLightingConstants,sunClip)==688);
-static_assert(offsetof(IndoorLightingConstants,frameIndex)==928
-    &&offsetof(IndoorLightingConstants,historyBlendWeight)==932
-    &&offsetof(IndoorLightingConstants,historyValid)==936
-    &&offsetof(IndoorLightingConstants,atrousStep)==940);
+static_assert(offsetof(IndoorLightingConstants,frameIndex)==992
+    &&offsetof(IndoorLightingConstants,historyBlendWeight)==996
+    &&offsetof(IndoorLightingConstants,historyValid)==1000
+    &&offsetof(IndoorLightingConstants,atrousStep)==1004
+    &&offsetof(IndoorLightingConstants,fogParameters)==1008);
 struct alignas(16) ParticleInstanceGpuData
 {
     float position[3]{};
@@ -78,12 +80,12 @@ inline constexpr std::uint32_t SkyLayoutVersion=9;
 struct alignas(16) SkyConstants
 {
     Mat4 skyFromClip;
-    Vec4 zenithColor,horizonColor,groundColor,sunDirectionIntensity,sunColor,parameters;
+    Vec4 zenithColor,horizonColor,groundColor,sunDirectionIntensity,sunColor,parameters,cloudParameters;
 };
-static_assert(sizeof(SkyConstants)==160&&offsetof(SkyConstants,zenithColor)==64);
+static_assert(sizeof(SkyConstants)==176&&offsetof(SkyConstants,zenithColor)==64);
 static_assert(offsetof(SkyConstants,horizonColor)==80&&offsetof(SkyConstants,groundColor)==96);
 static_assert(offsetof(SkyConstants,sunDirectionIntensity)==112&&offsetof(SkyConstants,sunColor)==128);
-static_assert(offsetof(SkyConstants,parameters)==144);
+static_assert(offsetof(SkyConstants,parameters)==144&&offsetof(SkyConstants,cloudParameters)==160);
 struct alignas(16) GuiConstants {Vec4 scaleTranslate;};
 static_assert(sizeof(GuiConstants)==16);
 struct alignas(16) InstanceGpuData
@@ -199,20 +201,20 @@ inline constexpr std::uint32_t SkinnedCascadedLayoutVersion=32;
 struct alignas(16) CascadedShadowFrameConstants
 {
     ForwardFrameConstants lights;
-    std::array<Mat4,3> clipFromWorld;
-    Vec4 splits; // xyz 为级端点，w 为 near。
+    std::array<Mat4,4> clipFromWorld;
+    Vec4 splits; // xyzw 为最多四级分割远距。
     Vec4 viewDepth; // 世界位置到正视深的平面方程。
     Vec4 parameters; // inverseResolution、depthBias、slopeBias、normalBias。
-    Vec4 options; // cascadeCount、blendFraction、debug、保留。
+    Vec4 options; // cascadeCount、blendFraction、debug、cascadeNear。
     Vec4 environment;
 };
-static_assert(sizeof(CascadedShadowFrameConstants)==592);
+static_assert(sizeof(CascadedShadowFrameConstants)==656);
 static_assert(offsetof(CascadedShadowFrameConstants,clipFromWorld)==320);
-static_assert(offsetof(CascadedShadowFrameConstants,splits)==512);
-static_assert(offsetof(CascadedShadowFrameConstants,viewDepth)==528);
-static_assert(offsetof(CascadedShadowFrameConstants,parameters)==544);
-static_assert(offsetof(CascadedShadowFrameConstants,options)==560);
-static_assert(offsetof(CascadedShadowFrameConstants,environment)==576);
+static_assert(offsetof(CascadedShadowFrameConstants,splits)==576);
+static_assert(offsetof(CascadedShadowFrameConstants,viewDepth)==592);
+static_assert(offsetof(CascadedShadowFrameConstants,parameters)==608);
+static_assert(offsetof(CascadedShadowFrameConstants,options)==624);
+static_assert(offsetof(CascadedShadowFrameConstants,environment)==640);
 
 inline constexpr std::uint32_t SkinnedClusteredLayoutVersion=33;
 // G08.02：独立 b3 阴影过滤常量，不改变既有 CSM/Forward+ 的 b1 或根签名。
@@ -249,9 +251,9 @@ struct alignas(16) ShadowFilterConstants
 {
     Vec4 parameters; // tan(角半径)、搜索世界距离、最大半径 texel、启用。
     Vec4 options; // debug 模式（0 正常、1 visibility、2 世界半径/距离/命中比）、保留。
-    std::array<Vec4,3> cascadeMetrics; // 世界深度跨度、每 texel 的世界 XY 尺度、保留。
+    std::array<Vec4,4> cascadeMetrics; // 世界深度跨度、每 texel 的世界 XY 尺度、保留。
 };
-static_assert(sizeof(ShadowFilterConstants)==80&&alignof(ShadowFilterConstants)==16);
+static_assert(sizeof(ShadowFilterConstants)==96&&alignof(ShadowFilterConstants)==16);
 static_assert(offsetof(ShadowFilterConstants,options)==16&&offsetof(ShadowFilterConstants,cascadeMetrics)==32);
 
 struct alignas(16) ClusteredFrameConstants
@@ -262,10 +264,10 @@ struct alignas(16) ClusteredFrameConstants
     Vec4 clusterViewport; // 实际光栅宽高及倒数，包含空间采样倍数。
     Vec4 clusterModes; // debug,bruteForce,保留。
 };
-static_assert(sizeof(ClusteredFrameConstants)==832);
-static_assert(offsetof(ClusteredFrameConstants,view)==592&&offsetof(ClusteredFrameConstants,projection)==656);
-static_assert(offsetof(ClusteredFrameConstants,inverseProjection)==720&&offsetof(ClusteredFrameConstants,clusterParameters)==784);
-static_assert(offsetof(ClusteredFrameConstants,clusterViewport)==800&&offsetof(ClusteredFrameConstants,clusterModes)==816);
+static_assert(sizeof(ClusteredFrameConstants)==896);
+static_assert(offsetof(ClusteredFrameConstants,view)==656&&offsetof(ClusteredFrameConstants,projection)==720);
+static_assert(offsetof(ClusteredFrameConstants,inverseProjection)==784&&offsetof(ClusteredFrameConstants,clusterParameters)==848);
+static_assert(offsetof(ClusteredFrameConstants,clusterViewport)==864&&offsetof(ClusteredFrameConstants,clusterModes)==880);
 
 struct LayoutVersionRecord
 {
@@ -278,8 +280,8 @@ struct LayoutVersionRecord
 inline constexpr LayoutVersionRecord GSeriesLayoutVersions[] =
 {
     {VertexCompressedLayoutVersion,"G03","position/normal/uv/tangent 压缩布局",0},
-    {ClusteredForwardLayoutVersion,"G09","32B点光/uint32索引/固定集群，b1=832B",832},
-    {CascadedShadowLayoutVersion,"G08","三级矩阵、分割/视深/混合/环境（b1）",592},
+    {ClusteredForwardLayoutVersion,"G09","32B点光/uint32索引/固定集群，b1=896B",896},
+    {CascadedShadowLayoutVersion,"G08","四级矩阵、分割/视深/混合/环境（b1）",656},
     {AtmosphereLayoutVersion,"G11","大气 LUT 与太阳参数",0},
     {AmbientOcclusionLayoutVersion,"G10","AO 半径、深度重建与升采样参数",0},
     {VolumetricFogLayoutVersion,"G11","雾密度、风与光线步进参数",0},
@@ -289,17 +291,17 @@ inline constexpr LayoutVersionRecord GSeriesLayoutVersions[] =
     {OutputLutLayoutVersion,"G15","输出 LUT strip（t0 场景/t1 阴影/t2 33³，Rgba8 或 Rgba16F）",0},
     {ForwardInstancingLayoutVersion,"G06","Forward 实例化（b0/纹理表/b1/实例 SRV）",0},
     {SkinnedLayoutVersion,"W03","蒙皮调色板（受光：b0/纹理表/b1/t8；阴影深度：b0/t8）",0},
-    {SkinnedCascadedLayoutVersion,"G08/W03","CSM 帧常量与 t8 蒙皮调色板",592},
-    {SkinnedClusteredLayoutVersion,"G09/W03","集群帧常量及 t8 蒙皮",832},
-    {CascadedShadowFilterLayoutVersion,"G08.02","CSM b1 保持592B，追加80B过滤b3",80},
-    {SkinnedCascadedShadowFilterLayoutVersion,"G08.02/W03","CSM蒙皮追加80B过滤b3",80},
-    {ClusteredShadowFilterLayoutVersion,"G08.02/G09","集群b1保持832B，追加80B过滤b3",80},
-    {SkinnedClusteredShadowFilterLayoutVersion,"G08.02/G09/W03","集群蒙皮追加80B过滤b3",80},
+    {SkinnedCascadedLayoutVersion,"G08/W03","CSM 帧常量与 t8 蒙皮调色板",656},
+    {SkinnedClusteredLayoutVersion,"G09/W03","集群帧常量及 t8 蒙皮",896},
+    {CascadedShadowFilterLayoutVersion,"G08.02","CSM b1 656B，追加96B过滤b3",96},
+    {SkinnedCascadedShadowFilterLayoutVersion,"G08.02/W03","CSM蒙皮追加96B过滤b3",96},
+    {ClusteredShadowFilterLayoutVersion,"G08.02/G09","集群b1 896B，追加96B过滤b3",96},
+    {SkinnedClusteredShadowFilterLayoutVersion,"G08.02/G09/W03","集群蒙皮追加96B过滤b3",96},
     {MaterialSurfaceLayoutVersion,"RG104-05/15","独立材质覆盖b4：RGBA因子/cutoff/mode/doubleSided",32},
     {DepthNormalLayoutVersion,"RG104-15/G10","独立 D32 + RG16F 世界几何法线 oct（每像素8B，非CB）",8},
-    {ShadingExtensionLayoutVersion,"RG104-08/09/10/11/12","独立光照扩展 b5=480B/b6=96B/t13..24，覆盖38正交",480},
+    {ShadingExtensionLayoutVersion,"RG104-08/09/10/11/12","独立光照扩展 b5=480B/b6=96B/t13..31，覆盖38正交",480},
     {ParticleLayoutVersion,"RG104-16","GPU粒子广告牌实例(t0 48B)与常量b0=112B",112},
-    {IndoorLightingLayoutVersion,"RG104-SSGI","室内SSGI时域重投影、帧抖动、历史权重与À-Trous常量b0=944B",944},
+    {IndoorLightingLayoutVersion,"RG104-SSGI","室内SSGI时域重投影、帧抖动、历史权重、À-Trous与湍流雾常量b0=1024B",1024},
     {UserSurfaceMaterialLayoutVersion,"SurfaceShader","自定义表面着色器b4：RGBA/覆盖/时间/8×Vec4参数",176},
 };
 }

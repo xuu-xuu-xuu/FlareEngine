@@ -68,10 +68,24 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wParam,LPARAM lParam)
 	switch (message)
 	{
         case WM_GETMINMAXINFO:
-            if (lParam && ApplyEngineWindowMinimumTrackSize(hwnd,*reinterpret_cast<MINMAXINFO*>(lParam),
-                    state->minimumClientWidthDip,state->minimumClientHeightDip))
-                return 0;
+        {
+            bool updated = false;
+            if (lParam)
+            {
+                auto& limits = *reinterpret_cast<MINMAXINFO*>(lParam);
+                if (state->maximumTrackWidth && state->maximumTrackHeight)
+                {
+                    limits.ptMaxTrackSize.x = std::max(limits.ptMaxTrackSize.x, static_cast<LONG>(state->maximumTrackWidth));
+                    limits.ptMaxTrackSize.y = std::max(limits.ptMaxTrackSize.y, static_cast<LONG>(state->maximumTrackHeight));
+                    updated = true;
+                }
+                if (ApplyEngineWindowMinimumTrackSize(hwnd, limits,
+                        state->minimumClientWidthDip, state->minimumClientHeightDip))
+                    updated = true;
+            }
+            if (updated) return 0;
             break;
+        }
 
         case WM_ERASEBKGND:
             return 1;
@@ -304,8 +318,14 @@ bool SetEngineWindowClientSize(WindowState& window,UINT width,UINT height)
     const auto style=static_cast<DWORD>(GetWindowLongPtrW(window.hwnd,GWL_STYLE)),extended=static_cast<DWORD>(GetWindowLongPtrW(window.hwnd,GWL_EXSTYLE));
     RECT size{0,0,LONG(width),LONG(height)};
     const UINT dpi=GetDpiForWindow(window.hwnd);
-    if(!AdjustWindowRectExForDpi(&size,style,GetMenu(window.hwnd)!=nullptr,extended,dpi?dpi:96)
-        ||!SetWindowPos(window.hwnd,nullptr,0,0,size.right-size.left,size.bottom-size.top,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE))return false;
+    if(!AdjustWindowRectExForDpi(&size,style,GetMenu(window.hwnd)!=nullptr,extended,dpi?dpi:96))return false;
+    const LONG outerWidth=size.right-size.left,outerHeight=size.bottom-size.top;
+    if(outerWidth>0&&outerHeight>0)
+    {
+        window.maximumTrackWidth=std::max(window.maximumTrackWidth,static_cast<UINT>(outerWidth));
+        window.maximumTrackHeight=std::max(window.maximumTrackHeight,static_cast<UINT>(outerHeight));
+    }
+    if(!SetWindowPos(window.hwnd,nullptr,0,0,outerWidth,outerHeight,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE))return false;
     RECT actual{};return GetClientRect(window.hwnd,&actual)&&actual.right-actual.left==LONG(width)&&actual.bottom-actual.top==LONG(height);
 }
 
